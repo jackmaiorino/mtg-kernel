@@ -1296,6 +1296,7 @@ mod paid {
             token_counter_replacement_v48: None,
             starting_life_self_bonuses_v1: d.starting_life_self_bonuses_v1,
             source_type_hexproof_v1: None,
+            creature_type_entry_v1: None,
             other_controlled_nontoken_death_v1: None,
         }
     }

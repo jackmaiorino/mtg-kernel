@@ -351,6 +351,7 @@ pub(crate) fn definition_fixture(d: &crate::card_def::CardDef) -> crate::card_de
         starting_life_self_bonuses_v1: d.starting_life_self_bonuses_v1,
         source_type_hexproof_v1: d.source_type_hexproof_v1,
         other_controlled_nontoken_death_v1: d.other_controlled_nontoken_death_v1,
+        creature_type_entry_v1: d.creature_type_entry_v1,
     }
 }
 

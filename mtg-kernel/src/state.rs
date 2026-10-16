@@ -78,6 +78,10 @@ pub struct Counters {
     /// the historical snapshot and hash sequence exactly.
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub revival: i32,
+    /// Banner of Kinship's distinct counter kind. Counter storage alone grants
+    /// no consumer admission; zero retains every predecessor encoding.
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub fellowship: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -103,6 +107,7 @@ impl Counters {
             || self.soul != 0
             || self.incubation != 0
             || self.revival != 0
+            || self.fellowship != 0
     }
 }
 
@@ -151,6 +156,10 @@ impl std::hash::Hash for Counters {
             b"revival_counters_v1".hash(state);
             self.revival.hash(state);
         }
+        if self.fellowship != 0 {
+            b"fellowship_counters_v1".hash(state);
+            self.fellowship.hash(state);
+        }
     }
 }
 
@@ -197,6 +206,10 @@ pub struct GoadStateV4 {
 /// than assigning zero a meaning that would change when mechanics arrive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectStateV4 {
+    /// Native Banner choice for this exact incarnation, committed before entry
+    /// observers. Zone-change reset erases it; absent snapshots stay unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kinship_type_v1: Option<crate::creature_types_v60::CreatureTypeV60>,
     pub is_token: bool,
     pub face_index: u8,
     pub effective_color_mask: u8,
@@ -412,6 +425,10 @@ impl Hash for ObjectStateV4 {
             "face_down/v1".hash(state);
             face_down.hash(state);
         }
+        if let Some(chosen) = self.kinship_type_v1 {
+            "kinship-type/v1".hash(state);
+            chosen.hash(state);
+        }
     }
 }
 
@@ -433,6 +450,7 @@ impl ObjectStateV4 {
         subtype_ids.sort_unstable();
         subtype_ids.dedup();
         ObjectStateV4 {
+            kinship_type_v1: None,
             is_token: def.is_token,
             face_index: 0,
             effective_color_mask: crate::card_def::mana_colors_mask(def.colors),

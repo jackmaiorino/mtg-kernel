@@ -190,6 +190,7 @@ pub(crate) fn printing(id: u16, kind: Kind) -> Result<&'static CardDef, String> 
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
     let shape = match kind {
         Kind::Spinner => {
@@ -288,7 +289,8 @@ pub(crate) fn printing(id: u16, kind: Kind) -> Result<&'static CardDef, String> 
         && d.damage_replacement_v1.is_none()
         && d.token_counter_replacement_v48.is_none()
         && d.starting_life_self_bonuses_v1.is_empty()
-        && d.source_type_hexproof_v1.is_none();
+        && d.source_type_hexproof_v1.is_none()
+        && d.creature_type_entry_v1.is_none();
     if !valid {
         return Err("unsupported immutable printing fields".into());
     }

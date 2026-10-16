@@ -1762,6 +1762,9 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         departure_history_index: u64,
     },
+    KinshipEntryV1 {
+        journal: Box<crate::banner_of_kinship_v1::entry::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2186,7 +2189,8 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let reads_soul = live.counters.soul != 0 || definition_reads_soul_lki_v1(live.card_def);
     let reads_revival = live.counters.revival != 0
         || crate::card_def::CARD_DEFS[usize::from(live.card_def)].name == "Nine-Lives Familiar";
-    if !reads_standard && !reads_soul && !reads_revival {
+    let reads_fellowship = live.counters.fellowship != 0;
+    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
@@ -4301,6 +4305,19 @@ fn commit_with_entry_batch_and_source_color(
         _ => None,
     };
     if let Some(object) = entry_counter_object {
+        if crate::linked_aura_operation_v1::initialize_kinship_entry(
+            state,
+            &entry_color_proposal,
+            object,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
         // All fixed, X and token-entry counters already exist, while no entry
         // event or observer has been published. Use the original batch input.
         if crate::giada_v1::apply_entry_counters(state, object, counter_input.as_ref()).is_err() {
@@ -4437,6 +4454,14 @@ fn commit_with_entry_batch_and_source_color(
             object,
             entry_history_index,
         )
+        .and_then(|_| {
+            crate::linked_aura_operation_v1::commit_kinship_entry(
+                state,
+                &entry_color_proposal,
+                object,
+                entry_history_index,
+            )
+        })
         .is_err()
         {
             state.engine.halted = Some((

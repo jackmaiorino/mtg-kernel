@@ -2398,6 +2398,14 @@ pub enum AsEntersColorChoiceDefV1 {
     AnyWubrg,
 }
 
+/// Choose a legal creature type before entry, count the pre-entry controlled
+/// creatures of that type for fellowship counters, then grant a current-counter
+/// anthem to controlled creatures of that type. No predecessor meaning covers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CreatureTypeEntryDefV1 {
+    FellowshipAndChosenTypeAnthem,
+}
+
 /// A printed continuous power/toughness modification using the source's
 /// own pre-entry color choice and its current controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2681,6 +2689,9 @@ pub struct CardDef {
     /// Definition-owned controlled, other, nontoken death recipe. Absent
     /// descriptors preserve predecessor trigger and catalog identities.
     pub other_controlled_nontoken_death_v1: Option<OtherControlledNontokenDeathDefV1>,
+    /// Distinct native type-entry and fellowship anthem descriptor. Earlier
+    /// complete printing/meaning shapes explicitly refuse a present value.
+    pub creature_type_entry_v1: Option<CreatureTypeEntryDefV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

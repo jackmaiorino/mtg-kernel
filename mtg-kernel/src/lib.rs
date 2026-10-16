@@ -44,6 +44,7 @@ pub mod async_rollout_v2;
 pub mod attack_target_v1;
 pub mod banishing_light_v1;
 pub mod banner_observation_v1;
+pub mod banner_of_kinship_v1;
 pub mod bloodthirsty_conqueror_v49;
 pub mod bo3_match;
 pub mod bo3_session;

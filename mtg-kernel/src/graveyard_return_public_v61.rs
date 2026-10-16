@@ -226,7 +226,11 @@ pub(crate) fn counter_values(state: &GameState, id: ObjectId) -> Result<Counters
         soul,
         incubation,
         revival,
+        fellowship,
     } = live.counters;
+    if fellowship != 0 {
+        return Err("V61 does not expose fellowship counters".into());
+    }
     let lifelink = live.v4.lifelink_keyword_counters;
     if [
         i64::from(plus1_plus1),

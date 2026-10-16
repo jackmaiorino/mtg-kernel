@@ -466,7 +466,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.token_counter_replacement_v48.is_none()
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
-        && d.other_controlled_nontoken_death_v1.is_none()
+        && (d.other_controlled_nontoken_death_v1.is_none() && d.creature_type_entry_v1.is_none())
         && crate::trigger::triggers_for(id).is_empty())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -614,7 +614,7 @@ pub(super) fn elenda_printing(id: u16) -> Result<Value> {
         crate::rules_meaning_elenda_v52::RootV52::CreatureSpellAndPrintedStatics,
     )
     .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
-    if d.other_controlled_nontoken_death_v1.is_some()
+    if (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
         || d.cost.x_count != 0
         || (d.spell_effect)()
             != Some(EffectOp::MoveObject {
@@ -969,6 +969,7 @@ pub(super) fn validate_family_permanent_recipe(id: u16, d: &CardDef) -> Result<(
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
     if d.object_name != d.name
         || d.capability != CardCapability::Full
@@ -1044,7 +1045,7 @@ pub(super) fn validate_family_permanent_recipe(id: u16, d: &CardDef) -> Result<(
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1262,7 +1263,7 @@ pub(super) fn attack_or_banner_printing(id: u16, d: &CardDef) -> Result<Option<V
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1465,7 +1466,7 @@ pub(super) fn sower_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1666,7 +1667,7 @@ pub(super) fn wildwood_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }

@@ -230,6 +230,12 @@ pub fn feature_identity() -> String {
             include_str!("trigger.rs"),
             include_str!("effect.rs"),
             include_str!("state.rs"),
+            include_str!("banner_of_kinship_v1.rs"),
+            include_str!("banner_of_kinship_v1/entry.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("heraldic_banner_v1.rs"),
+            include_str!("creature_types_v60.rs"),
+            include_str!("../../data/rules/creature_types_v60.json"),
             include_str!("event.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());

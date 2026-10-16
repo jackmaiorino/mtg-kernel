@@ -470,6 +470,7 @@ fn closed_fields(d: &CardDef) {
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
 }
 fn ordinary_foreign_fields_absent(d: &CardDef, giada: bool) -> bool {
@@ -528,6 +529,7 @@ fn ordinary_foreign_fields_absent(d: &CardDef, giada: bool) -> bool {
         && d.damage_replacement_v1.is_none()
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
+        && d.creature_type_entry_v1.is_none()
         && d.other_controlled_nontoken_death_v1.is_none()
         && if giada {
             d.produces_mana == [ManaColor::W]

@@ -10437,6 +10437,16 @@ fn codegen(cards: &[CardJson]) -> String {
         .unwrap();
         writeln!(
             out,
+            "        creature_type_entry_v1: {},",
+            if executable && c.name == "Banner of Kinship" {
+                "Some(CreatureTypeEntryDefV1::FellowshipAndChosenTypeAnthem)"
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
             "        chosen_color_creature_boost_v1: {},",
             if executable {
                 chosen_color_creature_boost_v1(&c.name)
@@ -10736,6 +10746,9 @@ fn codegen(cards: &[CardJson]) -> String {
         {
             canon
                 .push_str("as_enters_color_choice_v1=AnyWubrg|chosen_color_creature_boost_v1=1,0|");
+        }
+        if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Banner of Kinship" {
+            canon.push_str("creature_type_entry_v1=FellowshipAndChosenTypeAnthem:domain324:preentry_scene:checked_replacements:current_counter_controller_anthem|");
         }
         if c.engine_capability != EngineCapabilityJson::NoEffect
             && damage_replacement_v1(&c.name) != "None"

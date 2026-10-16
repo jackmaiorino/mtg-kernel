@@ -310,7 +310,13 @@ fn counters(state: &GameState, id: ObjectId, scope: CounterScopeV61) -> Result<C
         soul,
         incubation,
         revival,
+        fellowship,
     } = live.counters;
+    if fellowship != 0 {
+        return Err(error(
+            "optional trigger public projection does not expose fellowship counters",
+        ));
+    }
     if scope == CounterScopeV61::CompleteV61 {
         crate::graveyard_return_public_v61::counter_values(state, id)?;
     }

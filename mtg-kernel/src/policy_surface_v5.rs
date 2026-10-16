@@ -89,6 +89,7 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseVariableCastTargets { player, .. }
                     | Decision::ChooseVariableCastKicker { player, .. }
                     | Decision::ChooseEntryColorV36 { player, .. }
+                    | Decision::ChooseEntryCreatureTypeV1 { player, .. }
                     | Decision::ChooseOptionalCost { player, .. }
                     | Decision::ChooseSpellCopyPayment { player, .. }
                     | Decision::ChooseSpellCopyRetarget { player, .. }
