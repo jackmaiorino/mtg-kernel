@@ -2500,6 +2500,72 @@ fn source_card_def_matches(
         )
 }
 
+/// A resolved permanent spell copy is now a token, but keeps its immutable
+/// spell ancestry. Its independent entry snapshot, not a mutable token flag,
+/// distinguishes that ability source from an unentered or ceased Stack copy.
+fn validate_historical_permanent_copy_source(
+    state: &GameState,
+    contract: AbilitySourceContractV4,
+    live: &crate::state::GameObject,
+) -> Result<(), String> {
+    let mut entries = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, event)| match event {
+            CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                if entry.object == contract.source
+                    && entry.snapshot.spell_copy_origin.is_some() =>
+            {
+                Some((at, entry.as_ref()))
+            }
+            _ => None,
+        });
+    let entry = entries.next();
+    if live.spell_copy_origin.is_none() && entry.is_none() {
+        return Ok(());
+    }
+    let invalid = || "ability source contract is structurally inconsistent".to_string();
+    let origin = live.spell_copy_origin.ok_or_else(invalid)?;
+    let (observation, entry) = entry.ok_or_else(invalid)?;
+    let snapshot = &entry.snapshot;
+    let original = usize::try_from(entry.entry_history_index).map_err(|_| invalid())?;
+    // Native spell-copy constructors allocate a fresh arena object at generation
+    // zero. Its one Stack-to-battlefield transition creates generation one;
+    // later departures can retain that original ability's LKI, not reenter it.
+    if entries.next().is_some()
+        || original >= observation
+        || contract.zone != Zone::Battlefield
+        || contract.zone_change_count != 1
+        || snapshot.zone != Zone::Battlefield
+        || snapshot.zone_change_count != contract.zone_change_count
+        || snapshot.owner != contract.owner
+        || snapshot.card_def != origin.parent_card_def
+        || snapshot.spell_copy_origin != Some(origin)
+        || !snapshot.v4.is_token
+        || !live.v4.is_token
+        || snapshot.v4.spell_cast_origin.is_some()
+        || origin.parent.0 >= contract.source.0
+        || state.objects.try_get(origin.parent).is_none_or(|parent| parent.owner != origin.parent_owner)
+        || state.stack.iter().any(|item| item.kind == StackItemKind::Spell && item.source == contract.source)
+        || state.engine.event_history[..original].iter().any(|event|
+            matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == contract.source))
+        || state.engine.event_history.iter().filter(|event|
+            matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. }
+                if *object == contract.source)).count() != 1
+        || state.engine.event_history.iter().filter(|event|
+            matches!(event, CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                if entry.object == contract.source)).count() != 1
+        || !matches!(state.engine.event_history.get(original),
+            Some(CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, controller_before })
+                if *object == contract.source && *controller_before == snapshot.controller)
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_historical_ability_source_contract(
     state: &GameState,
     contract: AbilitySourceContractV4,
@@ -2512,11 +2578,10 @@ pub(crate) fn validate_historical_ability_source_contract(
         || contract.owner != live.owner
         || live.zone_change_count < contract.zone_change_count
         || (live.zone_change_count == contract.zone_change_count && live.zone != contract.zone)
-        || live.spell_copy_origin.is_some()
     {
         return Err("ability source contract is structurally inconsistent".to_string());
     }
-    Ok(())
+    validate_historical_permanent_copy_source(state, contract, live)
 }
 
 pub(crate) fn validate_equipment_granted_trigger_contract(

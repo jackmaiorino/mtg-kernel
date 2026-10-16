@@ -1289,7 +1289,146 @@ fn assert_genuine_permanent_spell_copy_entry(
         crate::arahbo_v1::validate_state(&branch).unwrap();
         validate_token_journals(&branch).unwrap();
         assert_eq!(restore(&branch), branch);
+        assert_permanent_copy_ability_custody(&original, &branch, copy);
     }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn assert_permanent_copy_ability_custody(
+    unentered: &GameState,
+    entered: &GameState,
+    copy: ObjectId,
+) {
+    use crate::engine;
+    let waiting = AbilitySourceContractV4::capture(unentered, copy);
+    let before = bytes(unentered);
+    assert!(engine::validate_historical_ability_source_contract(unentered, waiting).is_err());
+    assert_eq!(bytes(unentered), before);
+    let mut flag_only = restore(unentered);
+    flag_only.objects.get_mut(copy).v4.is_token = true;
+    let before = bytes(&flag_only);
+    assert!(engine::validate_historical_ability_source_contract(&flag_only, waiting).is_err());
+    assert_eq!(bytes(&flag_only), before);
+    let mut ceased = restore(unentered);
+    assert!(event::cease_to_exist(&mut ceased, copy));
+    let before = bytes(&ceased);
+    assert!(engine::validate_historical_ability_source_contract(&ceased, waiting).is_err());
+    assert_eq!(bytes(&ceased), before);
+
+    let source = AbilitySourceContractV4::capture(entered, copy);
+    let before = bytes(entered);
+    engine::validate_historical_ability_source_contract(entered, source).unwrap();
+    assert_eq!(bytes(entered), before);
+    // Native control primitive: the old trigger keeps its controller, while a
+    // later ability can capture the new controller of that same incarnation.
+    let mut controlled = restore(entered);
+    crate::standard_cards_v1::gain_control(&mut controlled, copy, source.controller.opponent());
+    let later = AbilitySourceContractV4::capture(&controlled, copy);
+    assert_ne!(later.controller, source.controller);
+    let before = bytes(&controlled);
+    engine::validate_historical_ability_source_contract(&controlled, source).unwrap();
+    engine::validate_historical_ability_source_contract(&controlled, later).unwrap();
+    assert_eq!(bytes(&controlled), before);
+    let observation = entered
+        .engine
+        .event_history
+        .iter()
+        .position(|event| {
+            matches!(event,
+        event::CommittedEvent::GarrukEntryObservationV1 { entry, .. } if entry.object == copy)
+        })
+        .unwrap();
+    let event::CommittedEvent::GarrukEntryObservationV1 { entry, .. } =
+        &entered.engine.event_history[observation]
+    else {
+        unreachable!()
+    };
+    let entry_at = entry.entry_history_index as usize;
+    for mutation in 0..12 {
+        let mut forged = restore(entered);
+        match mutation {
+            0 => forged.objects.get_mut(copy).v4.is_token = false,
+            1 => {
+                let origin = forged
+                    .objects
+                    .get_mut(copy)
+                    .spell_copy_origin
+                    .as_mut()
+                    .unwrap();
+                origin.parent_controller = origin.parent_controller.opponent();
+            }
+            2 => forged.objects.get_mut(copy).spell_copy_origin = None,
+            3..=6 => {
+                let event::CommittedEvent::GarrukEntryObservationV1 { entry, .. } =
+                    &mut forged.engine.event_history[observation]
+                else {
+                    unreachable!()
+                };
+                match mutation {
+                    3 => entry.snapshot.v4.is_token = false,
+                    4 => entry.snapshot.zone_change_count += 1,
+                    5 => entry.snapshot.owner = source.owner.opponent(),
+                    6 => entry.snapshot.controller = source.controller.opponent(),
+                    _ => unreachable!(),
+                }
+            }
+            7 => {
+                forged.engine.event_history[observation] =
+                    event::CommittedEvent::Tap { object: copy }
+            }
+            8 => {
+                let duplicate = forged.engine.event_history[observation].clone();
+                forged.engine.event_history.push(duplicate);
+            }
+            9 => {
+                let event::CommittedEvent::ZoneChange { from, .. } =
+                    &mut forged.engine.event_history[entry_at]
+                else {
+                    unreachable!()
+                };
+                *from = Zone::Hand;
+            }
+            10 => forged.stack.push(
+                unentered
+                    .stack
+                    .iter()
+                    .find(|item| {
+                        item.source == copy && item.kind == crate::state::StackItemKind::Spell
+                    })
+                    .unwrap()
+                    .clone(),
+            ),
+            11 => {
+                let duplicate = forged.engine.event_history[entry_at].clone();
+                forged.engine.event_history.push(duplicate);
+            }
+            _ => unreachable!(),
+        }
+        let before = bytes(&forged);
+        assert!(
+            engine::validate_historical_ability_source_contract(&forged, source).is_err(),
+            "copy custody mutation {mutation}"
+        );
+        assert!(
+            crate::arahbo_v1::validate_state(&forged).is_err(),
+            "Arahbo custody mutation {mutation}"
+        );
+        assert_eq!(bytes(&forged), before);
+    }
+    // Native departure/cease primitives test the retained original ability's LKI.
+    // This is not a paid removal spell or a fabricated new trigger/capability.
+    let mut departed = restore(entered);
+    event::propose_and_commit(
+        &mut departed,
+        ProposedEvent::zone_change(copy, Zone::Graveyard),
+    );
+    assert!(event::cease_to_exist(&mut departed, copy));
+    let before = bytes(&departed);
+    engine::validate_historical_ability_source_contract(&departed, source).unwrap();
+    assert_eq!(bytes(&departed), before);
 }
 
 #[test]
