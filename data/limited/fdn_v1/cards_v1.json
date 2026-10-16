@@ -8046,6 +8046,26 @@
       "mechanics": ["flying", "opponent_noncombat_damage_draw_actual_amount", "no_maximum_hand_size_while_controlled"],
       "java_file": "Mage.Sets/src/mage/cards/n/NivMizzetVisionary.java",
       "is_token": false
+    },
+    {
+      "name": "Embercleave",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": ["R"],
+      "types": ["Artifact"],
+      "subtypes": ["Equipment"],
+      "supertypes": ["Legendary"],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": ["FDN_reference_embercleave_partial.dck"],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": ["flash", "generic_reduction_current_controlled_attacking_creatures", "etb_attach_exact_source_to_controlled_creature", "equipped_plus_one_double_strike_trample", "equip_three"],
+      "java_file": "Mage.Sets/src/mage/cards/e/Embercleave.java",
+      "is_token": false
     }
   ]
 }

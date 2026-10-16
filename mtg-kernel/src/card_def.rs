@@ -3102,15 +3102,15 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 461 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 462 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
-        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, and Niv-Mizzet Partial registrations at 457-461.
+        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, and Embercleave Partial registrations at 457-462.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                462
+                463
             } else {
                 192
             }
@@ -3572,6 +3572,7 @@ mod tests {
                 (459, "Valkyrie's Call"),
                 (460, "Perforating Artist"),
                 (461, "Niv-Mizzet, Visionary"),
+                (462, "Embercleave"),
             ]
         } else {
             &[]
