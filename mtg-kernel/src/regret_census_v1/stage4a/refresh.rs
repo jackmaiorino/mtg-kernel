@@ -1189,6 +1189,50 @@ mod tests {
         }
     }
 
+    /// SD1's root map (`root_rebuild.rs`) is the executor's own mapping at a
+    /// new root: at fixture decisions, every storage edge maps to the live
+    /// candidate a fresh repaired-key cursor executes for it (`Cursor::live`),
+    /// and some live menus are not in storage order.
+    #[test]
+    fn root_rebuild_map_is_the_new_root_cursors_mapping() {
+        let mut s = game(11);
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "root-map".into(),
+        };
+        let (mut checked, mut reordered) = (0, 0);
+        while let Some(d) = decision(&s) {
+            if checked == 40 {
+                break;
+            }
+            if d.legal_action_count >= 2 && d.acting_player == crate::rl::PlayerSeatV1::P0 {
+                let rm = super::super::root_rebuild::root_map(&s, d).unwrap();
+                let mut keyer = Keyer::new(KeyMode::Repaired, KeyStats::default());
+                let st = keyer.step(&s, d).unwrap();
+                let (key, pk, pe, cn) = keyer.storage(&st);
+                let mut tree = Tree::default();
+                let node = super::super::tree::Node::new(&key, pk, pe, cn.clone(), 1, &seeds);
+                tree.nodes.insert(key, node);
+                let mut cursor = Cursor::new(tree, 0, KeyMode::Repaired, false);
+                let (lookup, hit) = cursor.lookup(&s, d).unwrap();
+                assert_eq!(lookup, Lookup::Unsupported);
+                let hit = hit.unwrap();
+                assert_eq!(rm.map.len(), d.legal_action_count as usize);
+                for (e, &l) in rm.map.iter().enumerate() {
+                    assert_eq!(l, cursor.live(&hit, e).unwrap());
+                }
+                let mut sorted = rm.map.clone();
+                sorted.sort_unstable();
+                assert!(sorted.into_iter().eq(0..d.legal_action_count));
+                reordered += usize::from(rm.map.iter().enumerate().any(|(e, &l)| l != e as u32));
+                checked += 1;
+            }
+            s.step(d.episode_id, d.step, 0).unwrap();
+        }
+        assert!(checked >= 20, "too few focal decisions");
+        assert!(reordered > 0, "every live menu was already in edge order");
+    }
+
     /// Live plain and opponent policies are separate from the search roles:
     /// a search between two live decisions leaves the live draws exactly as
     /// a reference with no search.
