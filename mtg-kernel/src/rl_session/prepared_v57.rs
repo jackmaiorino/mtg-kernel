@@ -1,5 +1,6 @@
 //! Private Prepared V57 binding, separate from predecessor session modes.
 
+use super::ravenous_v51::diagnose_origin_error;
 use super::*;
 use crate::prepared_observation_v57::PreparedObservationV57;
 #[cfg(all(
@@ -170,14 +171,22 @@ fn validate_additional_origin(
             &current.origin_decision,
             (current.substep_index, current.substep_count),
         )
-        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?
+        .map_err(|_| {
+            diagnose_origin_error(
+                "prepared_v57.additional.hunter_header",
+                FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+            )
+        })?
     {
         return Ok(true);
     }
     if crate::linked_aura_operation_v1::has_pending(&session.state) {
         let PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)) = &current.origin_decision
         else {
-            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            return Err(diagnose_origin_error(
+                "prepared_v57.additional.linked_origin_shape",
+                FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+            ));
         };
         let mut probe = session.state.clone();
         let actual = crate::engine::advance_until_decision(&mut probe);
@@ -187,7 +196,10 @@ fn validate_additional_origin(
             || current.substep_index != 0
             || current.substep_count != 1
         {
-            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            return Err(diagnose_origin_error(
+                "prepared_v57.additional.linked_readonly",
+                FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+            ));
         }
         return Ok(true);
     }
@@ -195,7 +207,12 @@ fn validate_additional_origin(
         &session.state,
         &current.origin_decision,
     )
-    .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?
+    .map_err(|_| {
+        diagnose_origin_error(
+            "prepared_v57.additional.variable_context",
+            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+        )
+    })?
     .is_some()
         || matches!(&current.origin_decision,
             PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass { castable_spells, .. }))
@@ -204,7 +221,10 @@ fn validate_additional_origin(
     {
         let PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)) = &current.origin_decision
         else {
-            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            return Err(diagnose_origin_error(
+                "prepared_v57.additional.variable_origin_shape",
+                FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+            ));
         };
         let mut probe = session.state.clone();
         let actual = crate::engine::advance_until_decision(&mut probe);
@@ -214,7 +234,10 @@ fn validate_additional_origin(
             || current.substep_index != 0
             || current.substep_count != 1
         {
-            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            return Err(diagnose_origin_error(
+                "prepared_v57.additional.variable_readonly",
+                FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+            ));
         }
         return Ok(true);
     }
@@ -232,7 +255,12 @@ fn validate_additional_origin(
     ) {
         return Ok(false);
     }
-    let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    let invalid = || {
+        diagnose_origin_error(
+            "prepared_v57.additional.special_origin",
+            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+        )
+    };
     if current.decision_kind != FastActorDecisionKindV1::Surface
         || current.substep_index != 0
         || current.substep_count != 1
@@ -293,7 +321,10 @@ pub(super) fn normalized_origin(
     {
         let PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)) = &current.origin_decision
         else {
-            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            return Err(diagnose_origin_error(
+                "prepared_v57.normalized.mandatory_origin_shape",
+                FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+            ));
         };
         let mut probe = session.state.clone();
         let before = serde_json::to_vec(&probe)
@@ -304,7 +335,10 @@ pub(super) fn normalized_origin(
                 .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?
                 != before
         {
-            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            return Err(diagnose_origin_error(
+                "prepared_v57.normalized.mandatory_readonly",
+                FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+            ));
         }
     }
     let mut original = current.clone();
@@ -313,29 +347,46 @@ pub(super) fn normalized_origin(
     original.flat_action_cache_v2 = None;
     original.flat_action_cache_error_v2 = None;
     original.candidates =
-        actual_candidates(&current.origin_decision, &session.state, &session.surface)
-            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
-    flat_validate_current_binding_header_akroma_inner(session, &original, true)?;
-    if !validate_additional_origin(session, &original)?
-        && !crate::twinflame_tyrant_v1::combat::has_pending(&session.state)
+        actual_candidates(&current.origin_decision, &session.state, &session.surface).map_err(
+            |_| {
+                diagnose_origin_error(
+                    "prepared_v57.normalized.actual_candidates",
+                    FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+                )
+            },
+        )?;
+    flat_validate_current_binding_header_akroma_inner(session, &original, true)
+        .map_err(|error| diagnose_origin_error("prepared_v57.normalized.binding_header", error))?;
+    if !validate_additional_origin(session, &original).map_err(|error| {
+        diagnose_origin_error("prepared_v57.normalized.additional_origin", error)
+    })? && !crate::twinflame_tyrant_v1::combat::has_pending(&session.state)
     {
         flat_validate_origin_decision_common_scoped_v42(
             &original,
             &session.state,
             true,
             crate::rl::CommonProjectionScopeV42::PreparedV57,
-        )?;
+        )
+        .map_err(|error| diagnose_origin_error("prepared_v57.normalized.common_origin", error))?;
     }
     let common =
         crate::rl::policy_observation_extensions_prepared_v57(&session.state, current.actor)
-            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+            .map_err(|_| {
+                diagnose_origin_error(
+                    "prepared_v57.normalized.common_projection",
+                    FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+                )
+            })?;
     if !crate::linked_aura_operation_v1::has_pending(&session.state) {
         super::flat_action_v3::normalize_candidates(
             &mut original.candidates,
             &common,
             session,
             &original.origin_decision,
-        )?;
+        )
+        .map_err(|error| {
+            diagnose_origin_error("prepared_v57.normalized.candidate_operands", error)
+        })?;
     }
     let projection = crate::prepared_observation_v57::observe_v57(
         &session.state,
@@ -345,13 +396,21 @@ pub(super) fn normalized_origin(
         current.physical_decision_id,
         (current.substep_index, current.substep_count),
     )
-    .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    .map_err(|_| {
+        diagnose_origin_error(
+            "prepared_v57.normalized.observation",
+            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+        )
+    })?;
     for candidate in &mut original.candidates {
         candidate.semantic = visible_semantic(
             &session.state,
             &projection.common.common.projection,
             candidate.semantic.clone(),
-        )?;
+        )
+        .map_err(|error| {
+            diagnose_origin_error("prepared_v57.normalized.visible_semantic", error)
+        })?;
     }
     Ok(original.candidates)
 }
@@ -373,7 +432,12 @@ pub(super) fn prepare_current(
         current.physical_decision_id,
         (current.substep_index, current.substep_count),
     )
-    .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    .map_err(|_| {
+        diagnose_origin_error(
+            "prepared_v57.prepare.observation",
+            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+        )
+    })?;
     Ok(())
 }
 
