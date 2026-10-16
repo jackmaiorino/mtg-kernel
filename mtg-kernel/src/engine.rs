@@ -8904,6 +8904,11 @@ pub(crate) fn available_mana_ability_choices_into(
     }
     if primary_payable {
         for restricted in def.restricted_mana_abilities {
+            if mana::resolved_source_restriction_v60(state, source, restricted.restriction)
+                .is_none()
+            {
+                continue;
+            }
             for &color in restricted.colors {
                 if !out.contains(color) {
                     out.push(color);
@@ -9087,7 +9092,12 @@ fn activate_mana_ability_for_with_checkpoint(
             }
             let unit = mana::RestrictedManaUnitV1 {
                 color: choice,
-                restriction: restricted.restriction,
+                restriction: mana::resolved_source_restriction_v60(
+                    state,
+                    source,
+                    restricted.restriction,
+                )
+                .ok_or("chosen-type restricted mana lost its authentic entry choice")?,
                 source: ObjectLinkV4 {
                     object: source,
                     zone_change_count: state.objects.get(source).zone_change_count,

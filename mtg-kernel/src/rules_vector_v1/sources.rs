@@ -887,7 +887,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
             match restricted.restriction {
-                crate::card_def::ManaSpendRestrictionDef::SpellWithSubtype(_) => {
+                crate::card_def::ManaSpendRestrictionDef::SpellWithSubtype(_)
+                | crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(_) => {
                     panic!("subtype-only spell mana requires its precise successor");
                 }
                 crate::card_def::ManaSpendRestrictionDef::Unrestricted => {}

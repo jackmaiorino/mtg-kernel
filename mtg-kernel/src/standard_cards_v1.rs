@@ -1363,7 +1363,7 @@ pub(crate) fn create_token_copy(
 ) -> Option<ObjectId> {
     if !crate::linked_aura_operation_v1::locally_owned(state)
         && (crate::heraldic_banner_v1::owns_definition(state.objects.get(original).card_def)
-            || crate::banner_of_kinship_v1::entry::owns_definition(
+            || crate::banner_of_kinship_v1::entry::owns_entry_definition(
                 state.objects.get(original).card_def,
             ))
     {
@@ -1376,7 +1376,7 @@ pub(crate) fn create_token_copy(
         let history_start = state.engine.event_history.len();
         crate::linked_aura_operation_v1::event(
             state,
-            if crate::banner_of_kinship_v1::entry::owns_definition(source.card_def) {
+            if crate::banner_of_kinship_v1::entry::owns_entry_definition(source.card_def) {
                 crate::linked_aura_operation_v1::OperationV1::CopyTokenKinshipV1 {
                     source,
                     controller,

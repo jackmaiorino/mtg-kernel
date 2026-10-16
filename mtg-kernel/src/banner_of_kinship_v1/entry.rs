@@ -1,4 +1,5 @@
-//! Private native entry receipts. No public observation or owner admission.
+//! Private native chosen-type entry receipts for Banner and Courtyard.
+//! No public observation or owner admission.
 use super::*;
 use crate::{
     card_def::{self, CardCapability, CreatureTypeEntryDefV1, Keywords, TargetSpec},
@@ -44,7 +45,40 @@ fn exact_definition(d: &card_def::CardDef) -> bool {
                 object: ObjectRef::ThisSource,
                 to_zone: Zone::Battlefield,
             })
-        && foreign_fields_absent(d)
+        && foreign_fields_absent(d, false)
+}
+
+/// This native entry primitive is shared; Banner's printed anthem selector
+/// above stays closed to463. Courtyard never receives fellowship or an anthem.
+pub(crate) fn owns_courtyard(id: u16) -> bool {
+    cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) && id == 470
+        && CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+            d.name == "Secluded Courtyard"
+                && d.object_name == d.name
+                && d.capability == CardCapability::Partial
+                && d.creature_type_entry_v1
+                    == Some(CreatureTypeEntryDefV1::ChosenTypeCreatureSpellOrAbilityMana)
+                && d.cost == crate::mana::Cost::zero()
+                && d.mana_value == 0
+                && d.types == [CardType::Land]
+                && d.subtypes.is_empty()
+                && d.supertypes.is_empty()
+                && d.colors.is_empty()
+                && d.power.is_none()
+                && d.toughness.is_none()
+                && d.keywords == Keywords::NONE
+                && !d.is_token
+                && d.target_spec == TargetSpec::None
+                && (d.spell_effect)().is_none()
+                && foreign_fields_absent(d, true)
+                && crate::trigger::triggers_for(id).is_empty()
+        })
+}
+pub(crate) fn owns_entry_definition(id: u16) -> bool {
+    owns_definition(id) || owns_courtyard(id)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,7 +105,7 @@ pub(crate) fn choice(
                 .objects
                 .try_get(z.object)
                 .ok_or("Kinship entry object absent")?;
-            if !owns_definition(live.card_def) || live.zone == Zone::Battlefield {
+            if !owns_entry_definition(live.card_def) || live.zone == Zone::Battlefield {
                 return Ok(None);
             }
             if z.battlefield_face_index.is_some_and(|face| face != 0)
@@ -90,7 +124,7 @@ pub(crate) fn choice(
                 Some(live.clone()),
             )
         }
-        ProposedEvent::CreateToken(t) if owns_definition(t.token_def) => {
+        ProposedEvent::CreateToken(t) if owns_entry_definition(t.token_def) => {
             if t.entry_face_index.is_some_and(|face| face != 0) {
                 return Err("Kinship token face changed".into());
             }
@@ -100,7 +134,10 @@ pub(crate) fn choice(
     };
     let mut counts = vec![0i32; CreatureTypeV60::ALL.len()];
     for (id, live) in state.objects.iter() {
-        if live.zone != Zone::Battlefield || live.controller != controller {
+        if owns_courtyard(card_def)
+            || live.zone != Zone::Battlefield
+            || live.controller != controller
+        {
             continue;
         }
         for chosen in CreatureTypeV60::ALL {
@@ -133,6 +170,15 @@ pub(crate) fn amount(choice: &ChoiceV1, chosen: CreatureTypeV60) -> Result<i32, 
         || choice.replacement.controller != choice.controller
     {
         return Err("Kinship entry count/replacement shape changed".into());
+    }
+    if owns_courtyard(choice.card_def) {
+        if choice.counts.iter().any(|n| *n != 0) {
+            return Err("Courtyard entry cannot invent creature counts or counters".into());
+        }
+        return Ok(0);
+    }
+    if !owns_definition(choice.card_def) {
+        return Err("chosen type entry has an unsupported definition".into());
     }
     let base = choice.counts[usize::from(chosen.choice_index())];
     let doublings = choice
@@ -229,7 +275,7 @@ pub(crate) fn validate_entered(
         return Err("Kinship entry capture absent".into());
     };
     if *operation != entered.operation
-        || !owns_definition(choice.card_def)
+        || !owns_entry_definition(choice.card_def)
         || entered.source.card_def != choice.card_def
         || entered.source.controller != choice.controller
         || entered.source.zone != Zone::Battlefield
@@ -365,7 +411,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             JournalV1::Captured { operation, choice } => {
                 if *operation as usize >= at
                     || !matches!(journal(state, *operation), Some(JournalV1::Started { .. }))
-                    || !owns_definition(choice.card_def)
+                    || !owns_entry_definition(choice.card_def)
                     || choice.counts.len() != CreatureTypeV60::ALL.len()
                     || choice.counts.iter().any(|n| *n < 0)
                     || choice.replacement.controller != choice.controller
@@ -396,7 +442,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         }
     }
     for (id, live) in state.objects.iter() {
-        if live.zone == Zone::Battlefield && owns_definition(live.card_def) {
+        if live.zone == Zone::Battlefield && owns_entry_definition(live.card_def) {
             if live.counters.fellowship < 0 {
                 return Err("negative live Kinship fellowship counters".into());
             }
@@ -442,6 +488,39 @@ pub(crate) fn authenticated_type(
     Ok(rows[0].chosen)
 }
 
+pub(crate) fn historical_courtyard_type(
+    state: &GameState,
+    source: ObjectLinkV4,
+    card_def: u16,
+) -> Result<CreatureTypeV60, String> {
+    if !owns_courtyard(card_def) {
+        return Err("Courtyard source definition changed".into());
+    }
+    let mut rows = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, event)| match event {
+            CommittedEvent::KinshipEntryV1 { journal } => match journal.as_ref() {
+                JournalV1::Committed { entered }
+                    if entered.source.source == source.object
+                        && entered.source.zone_change_count == source.zone_change_count =>
+                {
+                    Some((at, entered))
+                }
+                _ => None,
+            },
+            _ => None,
+        });
+    let (at, entered) = rows.next().ok_or("Courtyard producing entry absent")?;
+    if rows.next().is_some() || entered.source.card_def != card_def {
+        return Err("Courtyard producing entry ambiguous or foreign".into());
+    }
+    validate_entered(state, entered, at)?;
+    Ok(entered.chosen)
+}
+
 pub(crate) fn controlled_boost(
     state: &GameState,
     recipient: ObjectId,
@@ -482,10 +561,10 @@ pub(crate) fn controlled_boost(
     Ok((total, total))
 }
 
-fn foreign_fields_absent(d: &card_def::CardDef) -> bool {
+fn foreign_fields_absent(d: &card_def::CardDef, courtyard: bool) -> bool {
     closed_fields(d);
     d.object_name == d.name
-        && !d.is_land
+        && d.is_land == courtyard
         && d.generic_cost_reduction.is_none()
         && d.ward_cost.is_none()
         && !d.spell_cannot_be_countered
@@ -497,7 +576,20 @@ fn foreign_fields_absent(d: &card_def::CardDef) -> bool {
         && d.game_outcome_protection_v1.is_none()
         && d.controlled_creature_grant.is_none()
         && d.activated_abilities.is_empty()
-        && (d.mana_ability)().is_none()
+        && (d.mana_ability)()
+            == if courtyard {
+                Some(EffectOp::Sequence(vec![
+                    EffectOp::TapObject {
+                        object: ObjectRef::ThisSource,
+                    },
+                    EffectOp::AddMana {
+                        player: crate::effect::PlayerRef::Controller,
+                        colors: vec![crate::mana::ManaColor::C],
+                    },
+                ]))
+            } else {
+                None
+            }
         && d.alt_cost.is_none()
         && d.kicker_cost.is_none()
         && d.additional_cost.is_none()
@@ -509,7 +601,12 @@ fn foreign_fields_absent(d: &card_def::CardDef) -> bool {
         && d.additional_modes.is_empty()
         && d.kicked_target_spec.is_none()
         && d.escape.is_none()
-        && d.mana_ability_choices.is_empty()
+        && d.mana_ability_choices
+            == if courtyard {
+                &[crate::mana::ManaColor::C][..]
+            } else {
+                &[][..]
+            }
         && !d.enters_battlefield_tapped
         && d.mana_ability_def.is_none()
         && d.minimum_blockers == 1
@@ -539,8 +636,17 @@ fn foreign_fields_absent(d: &card_def::CardDef) -> bool {
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
         && d.other_controlled_nontoken_death_v1.is_none()
-        && d.produces_mana.is_empty()
-        && d.restricted_mana_abilities.is_empty()
+        && d.produces_mana
+            == if courtyard {
+                &[crate::mana::ManaColor::C][..]
+            } else {
+                &[][..]
+            }
+        && if courtyard {
+            matches!(d.restricted_mana_abilities, [ability] if ability.colors == [crate::mana::ManaColor::W,crate::mana::ManaColor::U,crate::mana::ManaColor::B,crate::mana::ManaColor::R,crate::mana::ManaColor::G] && ability.restriction == card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(None))
+        } else {
+            d.restricted_mana_abilities.is_empty()
+        }
         && d.token_counter_replacement_v48.is_none()
 }
 fn closed_fields(d: &card_def::CardDef) {
@@ -620,3 +726,11 @@ fn closed_fields(d: &card_def::CardDef) {
         creature_type_entry_v1: _,
     } = d;
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "courtyard_tests.rs"]
+mod courtyard_tests;

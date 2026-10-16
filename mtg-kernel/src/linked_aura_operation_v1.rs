@@ -576,7 +576,7 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
                 || live.owner != source.owner
                 || live.card_def != source.card_def
                 || live.v4.face_down_v1.is_some()
-                || !crate::banner_of_kinship_v1::entry::owns_definition(source.card_def)
+                || !crate::banner_of_kinship_v1::entry::owns_entry_definition(source.card_def)
             {
                 return Err("Banner copy lost actual original template incarnation".into());
             }
@@ -600,7 +600,7 @@ fn potential_operation(state: &GameState) -> bool {
         || state
             .objects
             .iter()
-            .any(|(_, o)| crate::banner_of_kinship_v1::entry::owns_definition(o.card_def))
+            .any(|(_, o)| crate::banner_of_kinship_v1::entry::owns_entry_definition(o.card_def))
         || crate::heraldic_banner_v1::potentially_enters(state)
         || !crate::doubling_season_v48::sources(state, state.active_player).is_empty()
         || !crate::doubling_season_v48::sources(state, state.active_player.opponent()).is_empty()
@@ -1416,7 +1416,7 @@ pub(crate) fn needs_event_owner(state: &GameState) -> bool {
                 .enumerate()
                 .any(|(id, _)| {
                     crate::heraldic_banner_v1::owns_definition(id as u16)
-                        || crate::banner_of_kinship_v1::entry::owns_definition(id as u16)
+                        || crate::banner_of_kinship_v1::entry::owns_entry_definition(id as u16)
                 }))
 }
 
@@ -1899,7 +1899,9 @@ pub(crate) fn initialize_kinship_entry(
     proposal: &ProposedEvent,
     object: crate::ids::ObjectId,
 ) -> Result<(), String> {
-    if !crate::banner_of_kinship_v1::entry::owns_definition(state.objects.get(object).card_def) {
+    if !crate::banner_of_kinship_v1::entry::owns_entry_definition(
+        state.objects.get(object).card_def,
+    ) {
         return Ok(());
     }
     let r = state
@@ -1974,7 +1976,9 @@ pub(crate) fn commit_kinship_entry(
     entry: usize,
 ) -> Result<(), String> {
     use crate::banner_of_kinship_v1::entry::{EnteredV1, JournalV1};
-    if !crate::banner_of_kinship_v1::entry::owns_definition(state.objects.get(object).card_def) {
+    if !crate::banner_of_kinship_v1::entry::owns_entry_definition(
+        state.objects.get(object).card_def,
+    ) {
         return Ok(());
     }
     let r = state

@@ -146,6 +146,7 @@ pub(super) struct SpellComponentChoicesV1 {
 pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) legendary_spell: bool,
     pub(super) spell_subtypes: Vec<u16>,
+    pub(super) all_creature_types_v60: bool,
     pub(super) costs: Vec<Cost>,
     pub(super) component_groups: Vec<&'static [CostComponent]>,
     pub(super) types: &'static [CardType],
@@ -328,17 +329,19 @@ impl SelectedSpellManaCostsV1 {
             })
             .sum::<u32>();
         if self.convoke {
-            let (mana, convoke_tapped) = mana::plan_spell_mana_total_with_convoke_subtypes_v1(
-                &pips,
-                generic,
-                player,
-                state,
-                self.types.contains(&CardType::Creature),
-                reserved,
-                additional_life,
-                self.legendary_spell,
-                &self.spell_subtypes,
-            )?;
+            let (mana, convoke_tapped) =
+                mana::plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
+                    &pips,
+                    generic,
+                    player,
+                    state,
+                    self.types.contains(&CardType::Creature),
+                    reserved,
+                    additional_life,
+                    self.legendary_spell,
+                    &self.spell_subtypes,
+                    self.all_creature_types_v60,
+                )?;
             return Some(SpellManaPaymentV1 {
                 mana,
                 convoke_tapped,
@@ -358,7 +361,7 @@ impl SelectedSpellManaCostsV1 {
         // Preserve deterministic minimum-exile, oldest-first Delve payment.
         let max_exiled = graveyard.len().min(generic as usize);
         for exiled in 0..=max_exiled {
-            if let Some(mana) = mana::plan_spell_mana_total_with_restrictions_v1(
+            if let Some(mana) = mana::plan_spell_mana_total_with_restrictions_v1_typed_v60(
                 &pips,
                 generic - exiled as u32,
                 player,
@@ -368,6 +371,7 @@ impl SelectedSpellManaCostsV1 {
                 additional_life,
                 self.legendary_spell,
                 &self.spell_subtypes,
+                self.all_creature_types_v60,
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -436,6 +440,13 @@ pub(super) fn selected_spell_mana_costs_v1(
             .supertypes
             .contains(&card_def::Supertype::Legendary)
             && method != CastMethodV4::Omen,
+        all_creature_types_v60: definition.changeling
+            && method != CastMethodV4::Omen
+            && method != CastMethodV4::Bestow
+            && !(method == CastMethodV4::Alternative
+                && definition
+                    .alt_cost
+                    .is_some_and(|a| a.condition == card_def::AltCostCondition::DisguiseFromHand)),
         spell_subtypes: definition
             .subtypes
             .iter()
