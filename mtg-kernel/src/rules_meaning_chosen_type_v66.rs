@@ -4,6 +4,7 @@ use crate::{
     card_def::{self, CardType, Subtype, Supertype, CARD_DEFS},
     creature_types_v60::CreatureTypeV60,
     mana::ManaColor,
+    optional_trigger_public_v1::SupertypeV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -78,7 +79,7 @@ pub struct MeaningV66 {
     pub types: Vec<CardType>,
     pub colors: Vec<ManaColor>,
     pub subtypes: Vec<Subtype>,
-    pub supertypes: Vec<Supertype>,
+    pub supertypes: Vec<SupertypeV1>,
     pub power: Option<i16>,
     pub toughness: Option<i16>,
     pub keyword_bits: u32,
@@ -204,7 +205,15 @@ pub fn printed_meaning(family: FamilyV66) -> Result<MeaningV66, String> {
         types: d.types.to_vec(),
         colors: d.colors.to_vec(),
         subtypes: d.subtypes.to_vec(),
-        supertypes: d.supertypes.to_vec(),
+        supertypes: d
+            .supertypes
+            .iter()
+            .map(|s| match s {
+                Supertype::Basic => SupertypeV1::Basic,
+                Supertype::Snow => SupertypeV1::Snow,
+                Supertype::Legendary => SupertypeV1::Legendary,
+            })
+            .collect(),
         power: d.power,
         toughness: d.toughness,
         keyword_bits: d.keywords.0,
