@@ -64,7 +64,7 @@ pub(crate) fn validate_continuation(
     {
         return Err("controlled-death reveal lost its definition-owned recipe".into());
     }
-    let EffectOp::Choice { options, .. } = root else {
+    let EffectOp::Choice { options, .. } = &root else {
         unreachable!()
     };
     match pending.choice.as_ref() {
@@ -75,12 +75,13 @@ pub(crate) fn validate_continuation(
             purpose: EffectOptionChoicePurpose::Generic,
         }) if *player == source.controller
             && path.is_empty()
-            && actual == &options
+            && actual == options
             && pending.frames.is_empty() =>
         {
             Ok(())
         }
         None => match pending.frames.as_slice() {
+            [EffectFrame::Program { op, path }] if op == &root && path.is_empty() => Ok(()),
             [EffectFrame::Program { op, path }]
                 if path.len() == 1 && options.get(usize::from(path[0])) == Some(op) =>
             {

@@ -173,9 +173,13 @@ fn library(state: &mut GameState, actor: PlayerId, names: &[&str]) -> Vec<Object
     for id in state.players[actor.index()].library.clone() {
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Exile));
     }
+    // Putting a card into the library prepends it. Insert in reverse so the
+    // fixture's named order is the actual top-to-bottom library order.
     names
         .iter()
+        .rev()
         .map(|name| put(state, actor, name, Zone::Library))
+        .rev()
         .collect()
 }
 
@@ -696,6 +700,7 @@ fn v54_paid_control_copy_and_suppression_use_actual_effective_source_both_seats(
                 }
                 assert!(on_stack);
                 // Change actual control again while the original trigger is on the stack.
+                put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
                 cast(
                     &mut state,
                     actor,
