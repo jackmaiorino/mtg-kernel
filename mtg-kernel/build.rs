@@ -10462,7 +10462,7 @@ fn codegen(cards: &[CardJson]) -> String {
             "        restricted_mana_abilities: {},",
             if executable && c.name == "Secluded Courtyard" {
                 "&[RestrictedManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], restriction: ManaSpendRestrictionDef::ChosenCreatureTypeV60(None) }]"
-            } else { standard.restricted_mana_abilities }
+            } else { standard.restricted_mana_abilities.as_str() }
         )
         .unwrap();
         writeln!(out, "        animation: {},", standard.animation).unwrap();
