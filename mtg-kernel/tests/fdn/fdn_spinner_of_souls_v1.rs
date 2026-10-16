@@ -175,12 +175,13 @@ fn library(state: &mut GameState, actor: PlayerId, names: &[&str]) -> Vec<Object
     }
     // Putting a card into the library prepends it. Insert in reverse so the
     // fixture's named order is the actual top-to-bottom library order.
-    names
+    let mut cards: Vec<_> = names
         .iter()
         .rev()
         .map(|name| put(state, actor, name, Zone::Library))
-        .rev()
-        .collect()
+        .collect();
+    cards.reverse();
+    cards
 }
 
 fn await_choice(state: &mut GameState, actor: PlayerId, spinner: ObjectId) {
