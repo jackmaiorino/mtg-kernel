@@ -451,10 +451,9 @@ pub(super) fn prepare_current(
     if session.flat_action_contract_mode == FlatActionContractModeV1::ElendaV52 {
         return super::elenda_v52::prepare_current(session, current);
     }
-    // The same immutable reconstruction already builds and validates the complete
-    // public parts. Candidate/cache updates below change none of its inputs.
-    let (candidates, _validated_public_parts) = normalized_origin_with_parts(session, current)?;
-    current.candidates = candidates;
+    // Normalization already builds and validates the complete public parts.
+    // Candidate/cache updates below change none of that observation's inputs.
+    current.candidates = normalized_origin(session, current)?;
     current.flat_action_cache = None;
     current.flat_action_cache_error = None;
     current.flat_action_cache_v2 = None;
