@@ -324,6 +324,18 @@ pub(crate) fn observe_parts_v57(
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::PreparedObservePartsInclusive,
     );
+    crate::drake_hatcher_v1::custody::with_observation_replay_keys(state, |state| {
+        observe_parts_v57_in_frame(state, surface, actor_and_origin, step, physical, substep)
+    })
+}
+fn observe_parts_v57_in_frame(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<PreparedPublicPartsV57, RlContractError> {
     validate_state(state)
         .map_err(|error| diagnostic("prepared.state", error))
         .map_err(RlContractError)?;

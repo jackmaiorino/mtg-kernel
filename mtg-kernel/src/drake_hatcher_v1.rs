@@ -1116,6 +1116,89 @@ mod tests {
     }
 
     #[test]
+    fn genuine_paid_observation_key_frame_keeps_foreign_tamper_restore_and_borrow_boundaries_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, _) = paid_replay_memo_state(actor);
+            custody::validate(&state).unwrap();
+            custody::validate(&state).unwrap();
+            let bytes = serde_json::to_vec(&state).unwrap();
+            let foreign = restored(&state);
+            assert_eq!(foreign, state);
+            custody::reset_replay_key_frame_stats_for_test();
+            custody::with_observation_replay_keys(&state, |borrowed| {
+                custody::validate(borrowed).unwrap();
+                assert_eq!(custody::replay_key_frame_stats_for_test(), (1, 0));
+                custody::validate(borrowed).unwrap();
+                assert_eq!(custody::replay_key_frame_stats_for_test(), (1, 1));
+
+                // Equal restored worlds have distinct live allocations. They
+                // must build their own exact typed-history keys.
+                custody::validate(&foreign).unwrap();
+                assert_eq!(custody::replay_key_frame_stats_for_test(), (2, 1));
+                custody::with_observation_replay_keys(&foreign, |nested| {
+                    custody::validate(nested).unwrap();
+                    custody::validate(nested).unwrap();
+                });
+                assert_eq!(custody::replay_key_frame_stats_for_test(), (3, 2));
+                custody::validate(borrowed).unwrap();
+                assert_eq!(custody::replay_key_frame_stats_for_test(), (3, 3));
+
+                let mut changed = borrowed.clone();
+                last_replay_output(&mut changed).players[actor.index()].life += 1;
+                let changed_bytes = serde_json::to_vec(&changed).unwrap();
+                assert_eq!(
+                    custody::validate(&changed).unwrap_err(),
+                    "Drake complete enclosing original operation/history replay differs"
+                );
+                assert!(custody::replay_key_frame_stats_for_test().0 > 3);
+                assert_eq!(serde_json::to_vec(&changed).unwrap(), changed_bytes);
+
+                let mut private = borrowed.clone();
+                crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
+                    last_replay_output(&mut private),
+                );
+                assert_eq!(serde_json::to_vec(&private).unwrap(), bytes);
+                assert_ne!(private, *borrowed);
+                let original_private = private.clone();
+                assert_eq!(
+                    custody::validate(&private).unwrap_err(),
+                    "Drake complete enclosing original operation/history replay differs"
+                );
+                assert_eq!(private, original_private);
+                let before = custody::replay_key_frame_stats_for_test();
+                custody::validate(borrowed).unwrap();
+                let after = custody::replay_key_frame_stats_for_test();
+                assert_eq!(after, (before.0, before.1 + 1));
+            });
+            let before = custody::replay_key_frame_stats_for_test();
+            custody::validate(&state).unwrap();
+            assert_eq!(
+                custody::replay_key_frame_stats_for_test(),
+                (before.0 + 1, before.1)
+            );
+            assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+
+            // Unwinding an inner scope restores its predecessor; unwinding the
+            // outer scope removes all keys before a later validation call.
+            let stopped = std::panic::catch_unwind(|| {
+                custody::with_observation_replay_keys(&state, |borrowed| {
+                    custody::validate(borrowed).unwrap();
+                    panic!("intentional observation-frame unwind");
+                });
+            });
+            assert!(stopped.is_err());
+            let before = custody::replay_key_frame_stats_for_test();
+            custody::validate(&state).unwrap();
+            assert_eq!(
+                custody::replay_key_frame_stats_for_test(),
+                (before.0 + 1, before.1)
+            );
+            assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+        }
+    }
+
+    #[test]
     fn genuine_paid_enclosing_replay_memo_changed_output_and_private_runtime_fallback_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, _) = paid_replay_memo_state(actor);
