@@ -291,16 +291,38 @@ On Linux it runs in the tool's process group, so a signal to that group (or a
 host_slots kill or suspension of the tool) reaches it too, and its wrapper is
 the subreaper of every process it starts. On Windows it runs in its own
 one-CPU job nested in the declaration's job, whose affinity is read back
-before the command runs. Every process of it still running when it exits or
-times out, or when its wrapper is interrupted or terminated, is stopped, on
-Linux even one that started a session of its own. Post CPUs are declared and
-share no physical core with a slot. In the command,
-`{name}`, `{report}` and `{request_root}` are replaced and other text, braces
-included, stays. A post command that fails, cannot start or outlives
-`post_timeout_seconds` also stops new starts. The tool writes `root/log.jsonl`
-and `root/summary.json` (every failure, the members not started, and each
-member's own and rewritten request pins) and exits nonzero unless every member
-completed.
+before the command runs. Post CPUs are declared and share no physical core
+with a slot. In the command, `{name}`, `{report}` and `{request_root}` are
+replaced and other text, braces included, stays. A post command that fails,
+cannot start or outlives `post_timeout_seconds` also stops new starts. The
+tool writes `root/log.jsonl` and `root/summary.json` (every failure, the
+members not started, and each member's own and rewritten request pins) and
+exits nonzero unless every member completed.
+
+**What a stopped post leaves running.** A member's own records are complete
+before its post command starts, and stopping the post never touches them; only
+the trace can be cut short.
+
+- When the command exits or outlives its timeout, every process it started is
+  killed, on Linux even one in a session of its own.
+- On Linux, SIGHUP, SIGINT or SIGTERM to the wrapper kills the command and
+  every process it started in the same way, however many signals arrive, and
+  the wrapper exits 128 plus the number of the signal it stopped for. The same
+  signal to the tool's process group also reaches the command, but the wrapper
+  kills what is left at once, with no grace period, so a trace that finishes
+  its output on SIGTERM can still be cut off mid-write.
+- On Linux, a SIGKILL of the wrapper alone stops nothing: the command and
+  everything it started keep running. A SIGKILL of the tool's process group (a
+  host_slots kill) ends the group but not a process the command started in a
+  session of its own, and a SIGSTOP of the group (a host_slots suspension)
+  does not pause that process either.
+- On Windows the post's job is closed when its wrapper ends, however it ends,
+  which kills every process in it.
+
+So use a trace only when its member's `post-end` record in `log.jsonl` shows
+exit code 0 (a run stopped during a post leaves a `post-start` with no
+`post-end`), or when the trace writes its output atomically, to a temporary
+name renamed into place once complete.
 
 ## Host reservation on Linux
 

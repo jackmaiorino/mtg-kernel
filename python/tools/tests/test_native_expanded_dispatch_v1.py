@@ -912,6 +912,20 @@ class StartBarrierTests(unittest.TestCase):
         self.assertGreaterEqual(dispatch.await_release(self.barrier("c", owner=gone), self.request_path,
                                                        poll=0.01, owner_poll=0.0), 0)
 
+    def test_a_release_written_as_its_pack_tool_ends_still_counts(self):
+        # The tool renames the release into place and ends between the trial's look
+        # at the release and its look at the tool.
+        release = self.root / "release.json"
+
+        def released_then_gone(*_):
+            release.write_text('{"go": true}')
+            return "absent"
+
+        with patch.object(reservations, "process_state", side_effect=released_then_gone) as state:
+            self.assertGreaterEqual(dispatch.await_release(self.barrier("a"), self.request_path,
+                                                           poll=0.01, owner_poll=0.0), 0)
+        state.assert_called_once()
+
 
 TOPOLOGY = [{"cpus": "0-1", "efficiency_class": 1, "smt": True}, {"cpus": "2-3", "efficiency_class": 1, "smt": True},
             {"cpus": "4", "efficiency_class": 0, "smt": False}, {"cpus": "5", "efficiency_class": 0, "smt": False}]

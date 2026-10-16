@@ -163,11 +163,21 @@ class PostTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "on Windows the wrapper's job is closed when it ends")
     def test_a_post_wrapper_stopped_by_a_signal_stops_what_it_started(self):
-        for number in (signal.SIGINT, signal.SIGTERM):
+        for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=number.name):
                 wrapper, _, counter = self.running_post(number.name, "sleep")
                 os.kill(wrapper.pid, number)  # the wrapper alone, not its group
                 self.assertEqual(wrapper.wait(timeout=60), 128 + number)
+                self.assert_stopped(counter)
+
+    @unittest.skipIf(os.name == "nt", "on Windows the wrapper's job is closed when it ends")
+    def test_a_second_signal_does_not_cut_the_stop_short(self):
+        for attempt in range(3):
+            with self.subTest(attempt=attempt):
+                wrapper, _, counter = self.running_post(f"twice-{attempt}", "sleep")
+                os.kill(wrapper.pid, signal.SIGINT)  # back to back, before the wrapper acts on either
+                os.kill(wrapper.pid, signal.SIGTERM)
+                self.assertIn(wrapper.wait(timeout=60), (128 + signal.SIGINT, 128 + signal.SIGTERM))
                 self.assert_stopped(counter)
 
 
