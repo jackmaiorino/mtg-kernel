@@ -86,6 +86,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::DrakeIncubationFromCaptureV1 { .. }
         | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::LoseLifeEqualControllerTurnGainsV1
+        | EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+        | EffectOp::CreateAttachedAuraCopyV1 { .. }
         | EffectOp::IncubationFromCombatDamageV1 { amount: _ }
         | EffectOp::AddSoulCounterToAbilitySourceV1
         | EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { .. }
@@ -326,6 +329,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
+        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
         EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 => {
@@ -334,6 +338,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             out.atoms.push(Atom::Opaque);
         }
         EffectOp::CreateControlledCreatureTargetCopyV1 => out.atoms.push(Atom::Opaque),
+        EffectOp::DealXDamageThenCreateTokensForExcess { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
         | EffectOp::StandardLegendV1(_)

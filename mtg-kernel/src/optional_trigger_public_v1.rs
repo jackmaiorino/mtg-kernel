@@ -182,6 +182,19 @@ pub(crate) fn root(
     })
 }
 pub(crate) fn current(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, form)
+}
+/// Successor-only current form query. The roster, concealment and printed-ID
+/// selection stay identical to the frozen helper; only selected public forms
+/// use the engine's shared checked final PT result.
+pub(crate) fn current_checked(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, checked_form)
+}
+fn current_with_form(
+    state: &GameState,
+    id: u16,
+    form: fn(&GameState, ObjectId) -> Result<FormV1, String>,
+) -> Result<Vec<CurrentV1>, String> {
     let mut rows = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for (seat, p) in state.players.iter().enumerate() {
@@ -238,12 +251,28 @@ pub(crate) fn held(state: &GameState) -> Vec<&crate::trigger::PendingTrigger> {
         .collect()
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    validate_state_with_pt(state, false)
+}
+/// Keep all native root/pending checks while using the current engine's checked
+/// final PT envelope. Existing predecessor validators keep the frozen prefix.
+pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
+    validate_state_with_pt(state, true)
+}
+fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String> {
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Err("public facts cannot project a private synchronous operation tail".into());
     }
     for (id, o) in state.objects.iter() {
         if o.zone == Zone::Battlefield {
-            native_pt_prefix(state, id)?;
+            if checked {
+                let has_pt = crate::engine::effective_base_power(state, id).is_some()
+                    || crate::engine::effective_base_toughness(state, id).is_some();
+                if has_pt {
+                    crate::engine::checked_effective_pt(state, id)?;
+                }
+            } else {
+                native_pt_prefix(state, id)?;
+            }
         }
     }
     crate::effect::validate_pending_effect_choice(state)?;
@@ -334,9 +363,27 @@ fn native_pt_prefix(state: &GameState, id: ObjectId) -> Result<(Option<i32>, Opt
     Ok((power, toughness))
 }
 fn form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
+    form_inner(state, id, false)
+}
+fn checked_form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
+    form_inner(state, id, true)
+}
+fn form_inner(state: &GameState, id: ObjectId, checked: bool) -> Result<FormV1, String> {
     let live = state.objects.get(id);
-    let (base_power, base_toughness) = native_pt_prefix(state, id)?;
+    let (base_power, base_toughness) = if checked {
+        (
+            crate::engine::effective_base_power(state, id),
+            crate::engine::effective_base_toughness(state, id),
+        )
+    } else {
+        native_pt_prefix(state, id)?
+    };
     let has_pt = base_power.is_some() || base_toughness.is_some();
+    let checked_pt = if checked && has_pt {
+        Some(crate::engine::checked_effective_pt(state, id)?)
+    } else {
+        None
+    };
     let printed = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
     let removed = crate::continuous_characteristics_v1::removal_timestamp(state, id).is_some();
     let keyword_bits = (0..u32::BITS).fold(0, |bits, bit| {
@@ -377,8 +424,12 @@ fn form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
         color_mask: crate::engine::object_color_mask(state, id),
         base_power,
         base_toughness,
-        power: has_pt.then(|| crate::engine::effective_power(state, id)),
-        toughness: has_pt.then(|| crate::engine::effective_toughness(state, id)),
+        power: has_pt.then(|| {
+            checked_pt.map_or_else(|| crate::engine::effective_power(state, id), |pt| pt.0)
+        }),
+        toughness: has_pt.then(|| {
+            checked_pt.map_or_else(|| crate::engine::effective_toughness(state, id), |pt| pt.1)
+        }),
         keyword_bits,
         ward_generic: if live.v4.face_down_v1.is_some_and(|face| face.disguised) && !removed {
             2

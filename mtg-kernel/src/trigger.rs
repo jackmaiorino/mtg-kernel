@@ -273,6 +273,8 @@ pub enum TriggerCondition {
     OtherControlledNontokenCreatureDiesV1,
     /// Actual opposing casts; spell copies emit no cast event.
     OpponentCastsSpellV1,
+    /// Precommit death capture checks the departed effective subtypes.
+    DiesUnlessSubtype(Subtype),
 }
 
 pub struct TriggeredAbilityDef {
@@ -712,6 +714,12 @@ const PHYREXIAN_ARENA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
         controller_only: true,
     },
     ..etb_trigger(phyrexian_arena_effect)
+}];
+const EXTRAVAGANT_REPLICATION_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    ..etb_trigger(crate::extravagant_replication_v1::root)
 }];
 const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
@@ -1696,6 +1704,11 @@ static AUTHORITY_OF_THE_CONSULS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredA
     intervening_if_controls_another_source_card: false,
     face_index: 0,
     effect: authority_entry_effect,
+}];
+
+const MIDNIGHT_SNACK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
+    ..etb_trigger(crate::midnight_snack_v1::raid)
 }];
 
 const SEARSLICER_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -3610,6 +3623,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Wardens of the Cycle" => &WARDENS_OF_THE_CYCLE_TRIGGERS,
         "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
         "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
+        "Extravagant Replication" => &EXTRAVAGANT_REPLICATION_TRIGGERS,
         "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,
         "Gleaming Barrier" => &GLEAMING_BARRIER_TRIGGERS,
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
@@ -3674,6 +3688,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
 
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
+        "Midnight Snack" => &MIDNIGHT_SNACK_TRIGGERS,
+        "Infernal Vessel" => &crate::infernal_vessel_v1::TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
@@ -3864,6 +3880,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Extravagant Replication" => TargetSpec::AnotherControlledNonlandPermanent,
         "Lagrella, the Magpie" => TargetSpec::UpToTwoOtherCreaturesDifferentControllers,
         "Halana and Alena, Partners" | "Ashroot Animist" => TargetSpec::AnotherControlledCreature,
         "Restless Bivouac" => TargetSpec::ControlledCreature,
@@ -5316,6 +5333,7 @@ fn triggers_from_events(
                     def.condition,
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherNontokenCreatureDies
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                         | TriggerCondition::OpponentLosesLifeBatchV49
@@ -6418,6 +6436,7 @@ fn trigger_matches(
                 ..
             },
         ) => *object == source,
+        (TriggerCondition::DiesUnlessSubtype(_), _) => false,
         (
             TriggerCondition::DiesWithoutCounters,
             CommittedEvent::ZoneChange {

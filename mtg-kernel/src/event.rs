@@ -125,6 +125,9 @@ pub struct ZoneChangeProposed {
     /// Original X placement and optional actual host of an effect entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battlefield_x_v48: Option<crate::doubling_season_v48::EffectXEntryV48>,
+    /// A resolving entry effect adds this subtype simultaneously with entry (611.2e).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_added_subtype_v1: Option<crate::card_def::Subtype>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -227,6 +230,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -243,6 +247,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -259,6 +264,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -278,6 +284,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -307,6 +314,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -339,6 +347,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -2892,6 +2901,23 @@ fn commit_with_entry_batch_and_source_color(
             entry.1.attached_to = request.host;
             entry.1.bestowed = request.host.is_some();
         }
+        // A destination rewrite that does not enter the battlefield must not
+        // install the entry-only characteristic on the card in another zone.
+        if change.to_zone == Zone::Battlefield {
+            if let Some(subtype) = change.battlefield_added_subtype_v1 {
+                let entry = entry_context
+                    .0
+                    .get_or_insert_with(|| (change.object, Default::default()));
+                if entry.0 != change.object {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        change.object,
+                    ));
+                    return;
+                }
+                entry.1.added_subtype_v1 = Some(subtype);
+            }
+        }
     }
     let counter_input =
         frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
@@ -3500,6 +3526,17 @@ fn commit_with_entry_batch_and_source_color(
         | CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     };
+    if let Some(object) = entry_counter_object {
+        // All fixed, X and token-entry counters already exist, while no entry
+        // event or observer has been published. Use the original batch input.
+        if crate::giada_v1::apply_entry_counters(state, object, counter_input.as_ref()).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
+    }
     let left_battlefield = match &committed {
         CommittedEvent::ZoneChange {
             object,
@@ -3689,16 +3726,83 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    let (events, token_requests) = match crate::doubling_season_v48::expand_tokens(state, events) {
-        Ok(expanded) => expanded,
-        Err(_) => {
+    batch_with_aura_token_hosts_v1(state, events, attachments, None, None);
+}
+
+/// The bound copy continuation supplies one untargeted host per actual expanded
+/// Aura. Expansion still records the original single request and replacement
+/// world; these entry choices never resubmit each member through replacement.
+pub(crate) fn batch_with_copied_aura_hosts_v1(
+    state: &mut GameState,
+    event: ProposedEvent,
+    hosts: Vec<crate::state::ObjectLinkV4>,
+) {
+    batch_with_aura_token_hosts_v1(state, vec![event], Vec::new(), Some(hosts), None);
+}
+/// Consumes one private genuine finishing permit. It cannot be reconstructed
+/// from serialized frames or reused for a second batch.
+pub(crate) fn commit_goblin_excess_tokens_owned(
+    state: &mut GameState,
+    permit: crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>,
+) -> Result<(), String> {
+    let events = permit.events()?;
+    if !permit.allows(state, &events) {
+        return Err("excess token batch lost exact continuation owner".into());
+    }
+    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, Some(&permit));
+    if state.engine.halted.is_some() {
+        return Err("excess token batch halted".into());
+    }
+    Ok(())
+}
+fn batch_with_aura_token_hosts_v1(
+    state: &mut GameState,
+    events: Vec<ProposedEvent>,
+    attachments: Vec<(
+        crate::effect::EffectObjectBinding,
+        crate::effect::EffectObjectBinding,
+    )>,
+    aura_hosts: Option<Vec<crate::state::ObjectLinkV4>>,
+    excess_permit: Option<&crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>>,
+) {
+    if excess_permit.is_some_and(|permit| !permit.allows(state, &events)) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    let (mut events, token_requests) =
+        match crate::doubling_season_v48::expand_tokens(state, events) {
+            Ok(expanded) => expanded,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        };
+    if let Some(hosts) = aura_hosts {
+        let valid = hosts.len() == events.len() && events.iter().all(|event| {
+            matches!(event, ProposedEvent::CreateToken(token)
+                if crate::card_def::CARD_DEFS[usize::from(token.token_def)].attachment.is_some()
+                && token.initialization_v48.as_ref().is_some_and(|init| init.copied && init.attached_to.is_none()))
+        });
+        if !valid {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
             ));
             return;
         }
-    };
+        for (event, host) in events.iter_mut().zip(hosts) {
+            let ProposedEvent::CreateToken(token) = event else {
+                unreachable!()
+            };
+            token.initialization_v48.as_mut().unwrap().attached_to = Some(host);
+        }
+    }
     if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
         || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
     {
@@ -3737,7 +3841,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
-    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+    if excess_permit.is_none() && crate::effect::crystal_prevention_v1::validate(state).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             crate::ids::ObjectId(0),
@@ -4549,6 +4653,10 @@ fn commit_zone_change(
     }
 
     let turn = state.turn_key_v1();
+    let entry_added_subtype = (to_zone == Zone::Battlefield)
+        .then(|| entering_characteristics.and_then(|entry| entry.added_subtype_v1))
+        .flatten()
+        .map(|subtype| (subtype, crate::engine::next_timestamp(state)));
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped
             || (entering_face_down.is_none()
@@ -4582,6 +4690,9 @@ fn commit_zone_change(
             }
         }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        // CR 611.2e: this resolving entry effect belongs to the new incarnation
+        // before entry statics, counter replacements, and committed observers.
+        obj.v4.added_subtype_v1 = entry_added_subtype;
         // 707.10f: a resolving permanent spell copy becomes a token. This
         // is a zone entry, not token creation, so no creation replacement applies.
         if from_zone == Zone::Stack

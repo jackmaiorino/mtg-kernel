@@ -92,7 +92,7 @@ pub struct ProgramChoiceOperationV3 {
     pub before: Box<EffectContinuation>,
     pub option: u16,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionStepV1 {
     pub frame: EffectFrame,
     pub conditional_result: Option<bool>,
@@ -108,6 +108,29 @@ pub struct ExecutionStepV1 {
     pub discard_capture: Option<DiscardCaptureV2>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub damage_operation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excess_capture: Option<crate::goblin_negotiation_v1::owned::CaptureV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excess_finish: Option<crate::goblin_negotiation_v1::owned::FinishV1>,
+}
+impl std::hash::Hash for ExecutionStepV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        use std::hash::Hash;
+        self.frame.hash(h);
+        self.conditional_result.hash(h);
+        self.offered_menu.hash(h);
+        self.damage_history.hash(h);
+        self.nondamage_history.hash(h);
+        self.batch_capture.hash(h);
+        self.creature_power_capture.hash(h);
+        self.discard_capture.hash(h);
+        self.damage_operation.hash(h);
+        if self.excess_capture.is_some() || self.excess_finish.is_some() {
+            "goblin-excess-step/v1".hash(h);
+            self.excess_capture.hash(h);
+            self.excess_finish.hash(h);
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BatchDamageV2 {
@@ -525,7 +548,7 @@ impl OwnerV1 {
         *item == self.expected
     }
 }
-fn context(item: &StackItem) -> ExecCtx {
+pub(crate) fn context(item: &StackItem) -> ExecCtx {
     ExecCtx {
         stack_item_id: Some(item.v4.stack_item_id),
         source: item.source,
@@ -565,10 +588,13 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // Conqueror custody authenticates a mandatory gain-only root.
         EffectOp::ConquerorGainFromCaptureV49 { .. }
         | EffectOp::DrakeIncubationFromCaptureV1 { .. }
-        | EffectOp::DrakeCreateTokenFromPaidV1 => true,
+        | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::LoseLifeEqualControllerTurnGainsV1 => true,
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => true,
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1) => true,
+        EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+        | EffectOp::CreateAttachedAuraCopyV1 { .. } => true,
         EffectOp::Sequence(ops) => ops.iter().all(ordinary_nondamage),
         EffectOp::Conditional { then, else_, .. } => {
             ordinary_nondamage(then) && ordinary_nondamage(else_)
@@ -662,6 +688,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
         | EffectOp::ReturnAllGraveyardCreaturesUnderController
+        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
         | EffectOp::ExileTargetLinkedToSource { .. }
         | EffectOp::ReturnObjectsExiledBySource
         | EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature
@@ -693,6 +720,18 @@ fn original_damage(
 ) -> Result<DamageProposed, String> {
     if matches!(op, EffectOp::FieryAnnihilation) {
         return crate::twinflame_tyrant_v1::fiery::damage(state, ctx, path);
+    }
+    if let EffectOp::DealXDamageThenCreateTokensForExcess { target_index, .. } = op {
+        let target = *ctx
+            .targets
+            .get(usize::from(*target_index))
+            .ok_or("excess damage target absent")?;
+        let crate::event::ProposedEvent::Damage(damage) =
+            crate::event::ProposedEvent::damage(ctx.source, target, i32::from(ctx.x_value))
+        else {
+            unreachable!()
+        };
+        return Ok(damage);
     }
     if crate::twinflame_tyrant_v1::sampling::selected(op) {
         return crate::twinflame_tyrant_v1::sampling::damage(state, ctx, op, path);
@@ -918,6 +957,7 @@ fn has_damage(op: &EffectOp) -> bool {
     }
     match op {
         EffectOp::FieryAnnihilation
+        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
         | EffectOp::DealDamage { .. }
         | EffectOp::DealDamageDynamic { .. }
         | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -955,7 +995,9 @@ pub(crate) fn authenticates_legacy_frame(
         .v4
         .crystal_prevention_started_v1
         .is_empty()
-        || !(optional_discard_draw(op) || matches!(op, EffectOp::FieryAnnihilation))
+        || !(optional_discard_draw(op)
+            || matches!(op, EffectOp::FieryAnnihilation)
+            || crate::goblin_negotiation_v1::owned::selected(op))
     {
         return Ok(false);
     }
@@ -984,6 +1026,7 @@ fn supported(op: &EffectOp) -> bool {
             ..
         } => true,
         EffectOp::FieryAnnihilation
+        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
         | EffectOp::DealDamage { .. }
         | EffectOp::DealDamageDynamic { .. }
         | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -1036,7 +1079,17 @@ pub(crate) fn acquire_owner(
     initial: bool,
 ) -> Result<Option<OwnerV1>, String> {
     let started = item.v4.crystal_prevention_started_v1.0.is_some();
+    let excess_root = item
+        .inline_effect
+        .clone()
+        .or_else(|| {
+            let definition =
+                &crate::card_def::CARD_DEFS[usize::from(state.objects.get(item.source).card_def)];
+            (definition.spell_effect)()
+        })
+        .is_some_and(|op| crate::goblin_negotiation_v1::owned::selected(&op));
     if !(started
+        || excess_root
         || mixed_environment(state)
         || crate::twinflame_tyrant_v1::has_active_source(state)
         || crate::fixed_source_damage_v3::tracked(state, item)
@@ -1362,7 +1415,9 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                     let damage = choice_original_damage(state, &p.ctx, op, choice)?;
                     let mut frames = Vec::new();
                     remaining(&b.root, &choice.path, &[], &mut frames)?;
-                    if matches!(op, EffectOp::FieryAnnihilation) {
+                    if matches!(op, EffectOp::FieryAnnihilation)
+                        || crate::goblin_negotiation_v1::owned::selected(op)
+                    {
                         frames.push(EffectFrame::Program {
                             op: op.clone(),
                             path: choice.path.clone(),
@@ -1526,6 +1581,8 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             creature_power_capture: None,
             discard_capture: None,
             damage_operation: None,
+            excess_capture: None,
+            excess_finish: None,
         };
         match op {
             EffectOp::Sequence(ops) => {
@@ -1559,6 +1616,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 });
             }
             EffectOp::FieryAnnihilation
+            | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
             | EffectOp::DealDamage { .. }
             | EffectOp::DealDamageDynamic { .. }
             | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -1582,6 +1640,24 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                         continue;
                     }
                     crate::twinflame_tyrant_v1::fiery::capture(state, owner, &pending.ctx, path)?;
+                }
+                if crate::goblin_negotiation_v1::owned::selected(op) {
+                    if let Some(capture) =
+                        crate::goblin_negotiation_v1::owned::lookup(state, &pending.ctx, path)?
+                    {
+                        step.excess_finish = Some(crate::goblin_negotiation_v1::owned::finish(
+                            state, owner, &capture,
+                        )?);
+                        steps.push(step);
+                        continue;
+                    }
+                    step.excess_capture = Some(crate::goblin_negotiation_v1::owned::capture(
+                        state,
+                        owner,
+                        &pending.ctx,
+                        op,
+                        path,
+                    )?);
                 }
                 if let Some(gorehorn) = owner.gorehorn.as_ref() {
                     crate::gorehorn_damage_v1::crystal::prepare_owned(
@@ -1610,6 +1686,11 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 }
                 let damage = original_damage(state, &pending.ctx, op, path)?;
                 if damage.amount <= 0 {
+                    if let Some(capture) = step.excess_capture.as_ref() {
+                        step.excess_finish = Some(crate::goblin_negotiation_v1::owned::finish(
+                            state, owner, capture,
+                        )?);
+                    }
                     if matches!(op, EffectOp::FieryAnnihilation) {
                         crate::twinflame_tyrant_v1::fiery::finish(
                             state,
@@ -1621,7 +1702,10 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     steps.push(step);
                     continue;
                 }
-                if matches!(op, EffectOp::FieryAnnihilation) && needs_choice(state, &damage) {
+                if (matches!(op, EffectOp::FieryAnnihilation)
+                    || crate::goblin_negotiation_v1::owned::selected(op))
+                    && needs_choice(state, &damage)
+                {
                     pending.frames.push(EffectFrame::Program {
                         op: op.clone(),
                         path: path.clone(),
@@ -1655,6 +1739,11 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 }
                 if matches!(op, EffectOp::FieryAnnihilation) {
                     crate::twinflame_tyrant_v1::fiery::finish(state, owner, &pending.ctx, path)?;
+                }
+                if let Some(capture) = step.excess_capture.as_ref() {
+                    step.excess_finish = Some(crate::goblin_negotiation_v1::owned::finish(
+                        state, owner, capture,
+                    )?);
                 }
             }
             EffectOp::MayPayCostThen { .. } if optional_discard_draw(op) => {
@@ -2027,6 +2116,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                 && (!matches!(
                     op,
                     EffectOp::FieryAnnihilation
+                        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
                         | EffectOp::DealDamage { .. }
                         | EffectOp::DealDamageDynamic { .. }
                         | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -2056,6 +2146,12 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                     "Crystal damage/structural instruction carries foreign life gain".into(),
                 );
             }
+            crate::goblin_negotiation_v1::owned::validate_step(
+                state,
+                execution,
+                step,
+                &pending.ctx,
+            )?;
             match op {
                 EffectOp::Choice { options, .. } if optional_source_fight(op) => {
                     if step.conditional_result.is_some()
@@ -2105,6 +2201,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                     });
                 }
                 EffectOp::FieryAnnihilation
+                | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
                 | EffectOp::DealDamage { .. }
                 | EffectOp::DealDamageDynamic { .. }
                 | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -2139,6 +2236,20 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         )?;
                         continue;
                     }
+                    if crate::goblin_negotiation_v1::owned::selected(op)
+                        && step.excess_capture.is_none()
+                    {
+                        if step.excess_finish.is_none()
+                            || step.offered_menu.is_some()
+                            || !step.damage_history.is_empty()
+                            || step.damage_operation.is_some()
+                        {
+                            return Err(
+                                "excess completion repeated damage or skipped result".into()
+                            );
+                        }
+                        continue;
+                    }
                     let damage = original_damage(state, &pending.ctx, op, path)?;
                     if step.conditional_result.is_some() {
                         return Err("Crystal damage carries a foreign branch".into());
@@ -2158,7 +2269,9 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         else {
                             return Err("Crystal execution offered a foreign menu".into());
                         };
-                        if matches!(op, EffectOp::FieryAnnihilation) {
+                        if matches!(op, EffectOp::FieryAnnihilation)
+                            || crate::goblin_negotiation_v1::owned::selected(op)
+                        {
                             pending.frames.push(EffectFrame::Program {
                                 op: op.clone(),
                                 path: path.clone(),
@@ -4510,13 +4623,16 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
     }
     let op = effect_op_at_structural_path(&root, &choice.path)
         .ok_or("Crystal choice lost its actual damage instruction")?;
+    crate::goblin_negotiation_v1::owned::validate_live_choice(state, pending, op, &choice.path)?;
     let damage = choice_original_damage(state, &pending.ctx, op, choice)?;
     if let Some(index) = choice.creature_power {
         validate_live_creature_power(state, creature_power_at(state, index, &choice.path)?)?;
     }
     let mut expected_frames = Vec::new();
     remaining(&root, &choice.path, &[], &mut expected_frames)?;
-    if matches!(op, EffectOp::FieryAnnihilation) {
+    if matches!(op, EffectOp::FieryAnnihilation)
+        || crate::goblin_negotiation_v1::owned::selected(op)
+    {
         expected_frames.push(EffectFrame::Program {
             op: op.clone(),
             path: choice.path.clone(),

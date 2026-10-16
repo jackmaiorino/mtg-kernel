@@ -1090,6 +1090,8 @@ pub enum TargetSpec {
     /// graveyard. The signed bound is captured source power, not a fixed
     /// printed mana value. A negative bound offers no targets.
     AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(i32),
+    /// Exactly one other nonland permanent controlled by the trigger controller.
+    AnotherControlledNonlandPermanent,
 }
 
 impl TargetSpec {
@@ -1184,6 +1186,7 @@ impl TargetSpec {
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
             TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
             TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => 103,
+            TargetSpec::AnotherControlledNonlandPermanent => 104,
         }
     }
 }
@@ -1793,12 +1796,14 @@ pub enum ManaSpendRestrictionDef {
     LegendarySpell,
     Unrestricted,
     CreatureSpellOrCreatureAbility,
+    /// Spend only on casting a spell with the named subtype, never an activation.
+    SpellWithSubtype(Subtype),
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
-/// spending restriction. It is never an explicit action: the payment
-/// planner offers these colors from the source only while paying the total
-/// cost of a spell the restriction allows, so restricted mana never floats.
+/// spending restriction. Spell payment offers the source only for eligible
+/// casts. Explicit activation retains the restriction on each floating unit,
+/// including after its producing incarnation leaves the battlefield.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RestrictedManaAbilityDef {
     pub colors: &'static [ManaColor],
@@ -2091,6 +2096,9 @@ pub enum DamageReplacementDefV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TokenCounterReplacementDefV48 {
     DoubleEffectTokensAndControlledPermanentCounters,
+    /// Each OTHER controlled permanent of this subtype enters with one
+    /// additional +1/+1 counter per already-controlled permanent of that subtype.
+    OtherControlledSubtypeEntry(Subtype),
 }
 
 /// One additive, battlefield-only self bonus. The threshold reads the live
@@ -2464,7 +2472,8 @@ impl CardDef {
         self.is_executable()
             && (!self.mana_ability_choices.is_empty()
                 || self.mana_ability_includes_chosen_color
-                || !self.additional_mana_abilities.is_empty())
+                || !self.additional_mana_abilities.is_empty()
+                || !self.restricted_mana_abilities.is_empty())
     }
 
     /// Automatic spell-cost payment may only tap sources whose entire printed
@@ -2760,14 +2769,14 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 451 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 456 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // The seven prospective Full candidates occupy ids 444-448 and 450-451.
+        // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                452
+                457
             } else {
                 192
             }
@@ -3217,7 +3226,17 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn capability_is_the_fail_closed_source_for_programs_and_deck_preflight() {
-        let expected_partial: &[(u16, &str)] = &[];
+        let expected_partial: &[(u16, &str)] = if cfg!(feature = "limited-fdn-fixtures") {
+            &[
+                (452, "Midnight Snack"),
+                (453, "Extravagant Replication"),
+                (454, "Infernal Vessel"),
+                (455, "Giada, Font of Hope"),
+                (456, "Goblin Negotiation"),
+            ]
+        } else {
+            &[]
+        };
         let partial = CARD_DEFS
             .iter()
             .enumerate()
@@ -3252,7 +3271,7 @@ mod tests {
                 .filter(|(_, def)| def.capability != CardCapability::Full)
                 .map(|(id, def)| (id, def.name, def.capability))
                 .collect();
-            assert!(non_full.is_empty());
+            assert_eq!(non_full, expected_partial.iter().map(|(id, name)| (usize::from(*id), *name, CardCapability::Partial)).collect::<Vec<_>>());
             for id in [444, 445, 446, 447, 448, 450, 451] {
                 assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Full);
                 assert!(preflight_fully_supported_deck(&[id]).is_ok());

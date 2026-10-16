@@ -558,6 +558,7 @@ mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
 pub(crate) mod combat_static_rules_v1;
+mod extravagant_replication_v1;
 pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub(crate) mod life_loss_turn_v1;
@@ -734,6 +735,9 @@ pub mod rules_meaning_quandary_v55;
 pub mod rules_meaning_spinner_v54;
 pub mod spinner_public_v54;
 
+pub mod giada_v1;
+pub mod infernal_vessel_v1;
+pub mod midnight_snack_v1;
 pub mod prepared_observation_v57;
 
 #[cfg(all(
@@ -749,3 +753,14 @@ pub(crate) mod fake_full_engine_admission_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 pub(crate) mod ravenous_full_engine_admission_v1_tests;
+
+pub mod midnight_snack_public_v58;
+pub mod rules_meaning_midnight_snack_v58;
+
+pub mod goblin_negotiation_v1;
+pub mod next_five_public_v59;
+pub mod rules_meaning_next_five_v59;
+
+pub mod next_five_observation_v59;
+
+pub mod limited_next_five_session_v6;

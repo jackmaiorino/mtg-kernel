@@ -1826,6 +1826,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker
         | TargetSpec::CreatureEnchantmentOrPlaneswalker
         | TargetSpec::AnotherControlledCreature
+        | TargetSpec::AnotherControlledNonlandPermanent
         | TargetSpec::ControlledCreatureWithSubtype(_)
         | TargetSpec::UpToOneCardInGraveyards
         | TargetSpec::CardInGraveyards
@@ -3242,7 +3243,9 @@ fn triggered_ability_targeting_source(
         other_than,
         original_source_incarnation_only: matches!(
             effect,
-            EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. }
+            EffectOp::AshrootAttackBoostV1 { .. }
+                | EffectOp::AshrootBoostFromCaptureV2 { .. }
+                | EffectOp::CreateAnotherControlledNonlandTargetCopyV1
         ),
     })
 }
@@ -3613,6 +3616,19 @@ fn legal_targets_for_controller_from_source(
                 .filter(|&id| {
                     state.objects.get(id).controller == controller
                         && object_has_type(state, id, CardType::Creature)
+                        && (Some(id) != excluded
+                            || source.is_some_and(|source| source.original_source_incarnation_only
+                                && state.objects.get(id).zone_change_count != source.zone_change_count))
+                })
+                .map(Target::Object)
+                .collect()
+        }
+        TargetSpec::AnotherControlledNonlandPermanent => {
+            let excluded = source.map(|source| source.other_than.unwrap_or(source.object));
+            battlefield_objects(state)
+                .filter(|&id| {
+                    state.objects.get(id).controller == controller
+                        && !object_has_type(state, id, CardType::Land)
                         && (Some(id) != excluded
                             || source.is_some_and(|source| source.original_source_incarnation_only
                                 && state.objects.get(id).zone_change_count != source.zone_change_count))
@@ -4218,7 +4234,8 @@ pub(crate) fn effect_target_is_legal_from_ability_source(
                 zone: source.zone,
                 zone_change_count: source.zone_change_count,
                 other_than: None,
-                original_source_incarnation_only: false,
+                original_source_incarnation_only: spec
+                    == TargetSpec::AnotherControlledNonlandPermanent,
             }),
             state,
         )
@@ -14564,7 +14581,9 @@ fn validated_stack_item_target_metadata(
     {
         let contract = if crate::ashroot_animist_v1::owns_item(item) {
             crate::ashroot_animist_v1::normalize_target(state, contract)
-        } else if crate::self_reflection_v1::owns_spell(state, item) {
+        } else if crate::self_reflection_v1::owns_spell(state, item)
+            || crate::extravagant_replication_v1::owns_item(item)
+        {
             crate::self_reflection_v1::normalize_historical_target(state, contract)
         } else if effect::temporary_control_v1::owns_spell(state, item)
             || crate::stromkirk_bloodthief_v1::owns_item(item)
@@ -14698,7 +14717,9 @@ pub(crate) fn stack_targets_still_legal(
                 target,
                 crate::ashroot_animist_v1::normalize_target(state, contract),
             )
-        } else if crate::self_reflection_v1::owns_spell(state, item) {
+        } else if crate::self_reflection_v1::owns_spell(state, item)
+            || crate::extravagant_replication_v1::owns_item(item)
+        {
             crate::self_reflection_v1::target_matches_live(state, target, contract)
         } else if effect::temporary_control_v1::owns_spell(state, item)
             || crate::stromkirk_bloodthief_v1::owns_item(item)
@@ -15441,6 +15462,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if targets_legal && crate::goblin_negotiation_v1::preflight_resolution(state, item).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     let squad_owner = match effect::acquire_squad_rallier_resolution_owner(
         state,
         state.stack.last().expect("resolving genuine stack item"),
@@ -15660,6 +15688,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let midnight_owner = match crate::midnight_snack_v1::acquire(state, &current, targets_legal) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let ravenous_owner = match crate::ravenous_amulet_v1::acquire(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -15811,6 +15849,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     if let Some(owner) = drake_owner {
         if crate::drake_hatcher_v1::custody::resolve(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = midnight_owner {
+        if crate::midnight_snack_v1::resolve(state, owner, &ctx, targets_legal).is_err() {
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
@@ -18198,6 +18244,13 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
             |(characteristics, _)| vec![characteristics.subtype.stable_id()],
         )
     });
+    if object.zone == Zone::Battlefield {
+        if let Some((subtype, timestamp)) = object.v4.added_subtype_v1 {
+            if replacement_timestamp.is_none_or(|replacement| timestamp > replacement) {
+                subtype_ids.push(subtype.stable_id());
+            }
+        }
+    }
     if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
         subtype_ids.extend(animation.subtypes.iter().map(|subtype| subtype.stable_id()));
     }

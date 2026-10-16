@@ -22,6 +22,7 @@ use standard_look::ConvokeLookChoice;
 mod standard_copy;
 use standard_copy::CopyTargetChoice;
 mod discard_payment_v1;
+pub(crate) mod nonland_copy_v1;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
 mod scavenging_ooze_v1;
@@ -1740,6 +1741,23 @@ pub enum EffectOp {
     },
     /// Printed activation root, executable only with its actual paid input.
     DrakeCreateTokenFromPaidV1,
+    /// Exact resolved controller turn-total; only original removed activation executes.
+    LoseLifeEqualControllerTurnGainsV1,
+    /// Definition-owned target copy; Aura host selection precedes token entry.
+    CreateAnotherControlledNonlandTargetCopyV1,
+    /// Interpreter-owned answered Aura-copy continuation, never a printed root.
+    CreateAttachedAuraCopyV1 {
+        choice: nonland_copy_v1::CopyChoiceV1,
+        host: EffectObjectBinding,
+    },
+    /// Bound departed source returns with actual entry counters and Demon subtype.
+    ReturnSourceAsDemonWithTwoCountersV1,
+    /// Deal the chosen X, then create tokens from actual committed excess damage.
+    /// Appended to preserve predecessor effect Hash discriminants.
+    DealXDamageThenCreateTokensForExcess {
+        target_index: u8,
+        token_def: u16,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2550,6 +2568,9 @@ pub enum EffectTargetSelectionPurpose {
     DiscardPaymentV1 {
         choice: discard_payment_v1::DiscardPaymentChoiceV1,
     },
+    AttachCopiedAuraV1 {
+        choice: nonland_copy_v1::CopyChoiceV1,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2942,6 +2963,10 @@ pub enum EffectAnsweredChoiceGuard {
     ChosenExilePlayPermission {
         frame: Box<EffectFrame>,
     },
+    AttachCopiedAuraV1 {
+        choice: nonland_copy_v1::CopyChoiceV1,
+        host: EffectObjectBinding,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3189,6 +3214,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
         | EffectOp::ResolveInitiativeTrigger { .. }
         | EffectOp::ReturnTargetPermanentToBattlefield { .. }
+        | EffectOp::CreateAnotherControlledNonlandTargetCopyV1
         | EffectOp::ResolveUndercityThrone { .. }
         | EffectOp::LookAtTopMayRevealThen { .. }
         | EffectOp::LookTopMayKeepOneRestGraveyard { .. }
@@ -3244,6 +3270,7 @@ fn begin_resumable_resolution_with_inspiration_owner(
         return Err("cannot begin an effect while another continuation is pending".to_string());
     }
     validate_resumable_program(op)?;
+    nonland_copy_v1::preflight(state, op, ctx, &resolving_item)?;
     let owned_gourmand =
         vampire_gourmand_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     let owned_squad_look =
@@ -3289,7 +3316,8 @@ fn begin_resumable_resolution_with_inspiration_owner(
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
     if state.engine.pending_effect.as_ref().is_some_and(|pending| {
-        requires_ferocious_payment_stage(pending)
+        nonland_copy_v1::requires_stage(pending)
+            || requires_ferocious_payment_stage(pending)
             || requires_printed_optional_trigger_stage(state, pending)
     }) {
         validate_pending_effect_choice(state)?;
@@ -4594,6 +4622,9 @@ fn complete_resumable_target_selection(
                     frame: Box::new(frame.clone()),
                 });
             continuation.frames.push(frame);
+        }
+        EffectTargetSelectionPurpose::AttachCopiedAuraV1 { choice } => {
+            nonland_copy_v1::answer(continuation, choice, objects, path)?;
         }
         EffectTargetSelectionPurpose::AttachReturningAura {
             aura,
@@ -7515,7 +7546,14 @@ fn validate_answered_choice_guard(
 ) -> Result<(), String> {
     for frame in &pending.frames {
         if let EffectFrame::Program { op, path } = frame {
-            if matches!(op, EffectOp::PutBoundAuraOntoBattlefieldAttached { .. }) {
+            if matches!(op, EffectOp::CreateAttachedAuraCopyV1 { .. }) {
+                if !matches!(
+                    pending.answered_choice_guard,
+                    Some(EffectAnsweredChoiceGuard::AttachCopiedAuraV1 { .. })
+                ) {
+                    return Err("copied Aura lost answered host guard".into());
+                }
+            } else if matches!(op, EffectOp::PutBoundAuraOntoBattlefieldAttached { .. }) {
                 if !matches!(
                     pending.answered_choice_guard,
                     Some(EffectAnsweredChoiceGuard::AttachReturningAura { .. })
@@ -7865,6 +7903,9 @@ fn validate_answered_choice_guard(
                 return Err("Throne answered continuation frame stack changed".to_string());
             }
             validate_undercity_throne_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::AttachCopiedAuraV1 { choice, host }) => {
+            nonland_copy_v1::validate_answer(state, pending, choice, *host)?;
         }
         Some(EffectAnsweredChoiceGuard::AttachReturningAura {
             aura,
@@ -8406,6 +8447,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::spinner_of_souls_v1::validate_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
+    nonland_copy_v1::validate_boundary(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
         let discard = state
             .engine
@@ -8783,6 +8825,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     {
                         return Err("Ward card choice shape changed".into());
                     }
+                }
+                EffectTargetSelectionPurpose::AttachCopiedAuraV1 { choice } => {
+                    nonland_copy_v1::validate_prompt(state, pending, choice)?;
                 }
                 EffectTargetSelectionPurpose::AttachReturningAura {
                     aura,
@@ -10369,6 +10414,9 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             return Err(
                 "generated programs cannot contain an already-bound owner-library move".to_string(),
             );
+        }
+        EffectOp::CreateAttachedAuraCopyV1 { .. } => {
+            return Err("generated program contains answered Aura copy".into())
         }
         EffectOp::PutBoundAuraOntoBattlefieldAttached { .. } => {
             return Err("generated programs cannot contain a bound Aura attachment".to_string());
@@ -12369,6 +12417,18 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 }
                 continuation.answered_choice_guard = None;
                 crate::standard_cards_v1::apply_chosen_permanent(state, chosen, action);
+            }
+            EffectOp::CreateAnotherControlledNonlandTargetCopyV1 => {
+                if nonland_copy_v1::stage(state,&mut continuation,path)? {
+                    state.engine.pending_effect=Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::CreateAttachedAuraCopyV1 {choice,host} => {
+                if nonland_copy_v1::apply_answer(state,&mut continuation,choice,host,path)? {
+                    state.engine.pending_effect=Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::ReturnTargetPermanentToBattlefield { target_index } => {
                 let index = usize::from(target_index);
@@ -17540,6 +17600,15 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 );
             }
         }
+        EffectOp::DealXDamageThenCreateTokensForExcess { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::ReturnSourceAsDemonWithTwoCountersV1 => {
+            crate::infernal_vessel_v1::resolve(state, ctx);
+        }
         EffectOp::ReturnSourceAsEnduringEnchantment => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {
                 let object = state.objects.get(contract.source);
@@ -17981,7 +18050,8 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::IncubationFromCombatDamageV1 { .. }
         | EffectOp::DrakeIncubationFromCaptureV1 { .. }
-        | EffectOp::DrakeCreateTokenFromPaidV1 => {
+        | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::LoseLifeEqualControllerTurnGainsV1 => {
             // Public inline programs cannot manufacture damage or payment authority.
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -19733,6 +19803,13 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 })
                 .collect();
             event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+        | EffectOp::CreateAttachedAuraCopyV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::CreateControlledCreatureTargetCopyV1 => {
             crate::self_reflection_v1::execute(state, ctx);

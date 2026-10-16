@@ -7603,7 +7603,9 @@
       "java_file": "Mage.Sets/src/mage/cards/s/SpinnerOfSouls.java",
       "is_token": false,
       "other_controlled_nontoken_death_v1": "may_reveal_creature_to_hand_random_bottom",
-      "intrinsic_keywords_v1": ["reach"]
+      "intrinsic_keywords_v1": [
+        "reach"
+      ]
     },
     {
       "name": "Painful Quandary",
@@ -7757,6 +7759,164 @@
         "double_controlled_permanent_effect_counters"
       ],
       "java_file": "Mage.Sets/src/mage/cards/d/DoublingSeason.java",
+      "is_token": false
+    },
+    {
+      "name": "Midnight Snack",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_midnight_snack_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "raid_endstep_food",
+        "sacrifice_source_opponent_loses_controller_total_life_gained_this_turn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MidnightSnack.java",
+      "is_token": false
+    },
+    {
+      "name": "Extravagant Replication",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_extravagant_replication_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controller_upkeep",
+        "another_controlled_nonland_target_copy",
+        "untargeted_aura_attachment_before_entry"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ExtravagantReplication.java",
+      "is_token": false
+    },
+    {
+      "name": "Infernal Vessel",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Cleric"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_infernal_vessel_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "dies_if_departed_incarnation_not_demon",
+        "owner_return_with_two_plus_one_counters",
+        "add_demon_to_new_incarnation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InfernalVessel.java",
+      "is_token": false
+    },
+    {
+      "name": "Giada, Font of Hope",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [
+        "W"
+      ],
+      "decks": [
+        "FDN_reference_giada_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "vigilance",
+        "other_controlled_angel_enters_with_counters_per_preentry_angel",
+        "tap_white_only_to_cast_angel_spell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GiadaFontOfHope.java",
+      "is_token": false
+    },
+    {
+      "name": "Goblin Negotiation",
+      "engine_capability": "partial",
+      "mana_cost": "{X}{R}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_goblin_negotiation_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "x_damage_target_creature",
+        "create_goblins_equal_actual_excess_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GoblinNegotiation.java",
       "is_token": false
     }
   ]

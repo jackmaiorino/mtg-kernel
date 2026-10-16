@@ -102,6 +102,30 @@ pub(crate) fn candidates_fake_scoped_v50(
     accept_conqueror: bool,
     accept_fake: bool,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    candidates_current_scope(
+        state,
+        surface,
+        decision,
+        (accept_hunter, accept_panda, accept_conqueror, accept_fake),
+        false,
+    )
+}
+pub(crate) fn candidates_next_five_v59(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    candidates_current_scope(state, surface, decision, (true, true, true, true), true)
+}
+fn candidates_current_scope(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    let (accept_hunter, accept_panda, accept_conqueror, accept_fake) = capabilities;
+
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {
@@ -301,14 +325,18 @@ pub(crate) fn candidates_fake_scoped_v50(
                 }
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
-                let old = crate::rl::core_policy_action_candidates_fake_scoped_v50(
-                    decision,
-                    state,
-                    accept_hunter,
-                    accept_panda,
-                    accept_conqueror,
-                    accept_fake,
-                )?;
+                let old = if accept_next_five {
+                    crate::rl::core_policy_action_candidates_next_five_v59(decision, state)?
+                } else {
+                    crate::rl::core_policy_action_candidates_fake_scoped_v50(
+                        decision,
+                        state,
+                        accept_hunter,
+                        accept_panda,
+                        accept_conqueror,
+                        accept_fake,
+                    )?
+                };
                 let feasible = if matches!(
                     decision,
                     PolicyDecisionV5::AttackerInclusion { .. }

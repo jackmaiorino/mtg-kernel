@@ -55,6 +55,9 @@ impl Scan<'_> {
             AjaniLoyaltyV42 { .. }
             | DrakeIncubationFromCaptureV1 { .. }
             | DrakeCreateTokenFromPaidV1
+            | LoseLifeEqualControllerTurnGainsV1
+            | CreateAnotherControlledNonlandTargetCopyV1
+            | CreateAttachedAuraCopyV1 {..}
             | FiendishPandaCounterFromCaptureV1 { .. }
             | ConquerorGainFromCaptureV49 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,
@@ -261,6 +264,8 @@ impl Scan<'_> {
             | ExileSingleGraveyardTargetsThenDrainTwoV1
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
+            | ReturnSourceAsDemonWithTwoCountersV1
+            | DealXDamageThenCreateTokensForExcess { .. }
             | SearchLibraryCardsToDestination { .. }
             | CreateTokensDynamic { .. }
             | BackupTarget { .. }
@@ -591,6 +596,7 @@ impl Scan<'_> {
                     || self.bs(original_candidates)
                     || later.as_ref().is_some_and(|(_, cards)| self.bs(cards))
             }
+            AttachCopiedAuraV1 { .. } => true,
             AttachReturningAura {
                 aura,
                 original_candidates,
@@ -923,6 +929,7 @@ fn continuation_conflicts(
             | SearchLibraryToBattlefieldTapped { frame }
             | UndercityRoute { frame }
             | UndercityThrone { frame } => s.f(frame),
+            AttachCopiedAuraV1 { .. } => true,
             AttachReturningAura {
                 aura,
                 host,

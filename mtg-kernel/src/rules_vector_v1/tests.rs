@@ -61,7 +61,23 @@ fn supported_v1_card_ids() -> Vec<u16> {
     let excluded: Vec<u16> = CARD_DEFS
         .iter()
         .enumerate()
-        .filter(|(_, def)| {
+        .filter(|(id, def)| {
+            if matches!(
+                (def.spell_effect)(),
+                Some(EffectOp::DealXDamageThenCreateTokensForExcess { .. })
+            ) {
+                return true;
+            }
+            if crate::trigger::triggers_for(*id as u16).iter().any(|t| {
+                matches!(
+                    (t.effect)(),
+                    EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+                        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
+                        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
+                )
+            }) {
+                return true;
+            }
             def.activated_abilities.iter().any(|a| {
                 a.cost.iter().any(|c| {
                     matches!(
@@ -97,6 +113,10 @@ fn supported_v1_card_ids() -> Vec<u16> {
             expected.push(card_id("Spinner of Souls"));
             expected.push(card_id("Drake Hatcher"));
             expected.push(card_id("Doubling Season"));
+            expected.push(card_id("Extravagant Replication"));
+            expected.push(card_id("Infernal Vessel"));
+            expected.push(card_id("Giada, Font of Hope"));
+            expected.push(card_id("Goblin Negotiation"));
         }
         assert_eq!(excluded, expected);
         assert!(matches!(
@@ -1522,4 +1542,16 @@ fn full_ajani_keeps_each_native_program_opaque_in_frozen_v1() {
 #[should_panic(expected = "effect token and counter replacement requires its precise successor")]
 fn registered_partial_season_still_refuses_frozen_v1_extraction() {
     card_rules(card_id("Doubling Season"));
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+#[should_panic(
+    expected = "nonland token copy with Aura entry choice requires its precise successor"
+)]
+fn replication_partial_still_refuses_frozen_rules_vector_v1() {
+    card_rules(card_id("Extravagant Replication"));
 }
