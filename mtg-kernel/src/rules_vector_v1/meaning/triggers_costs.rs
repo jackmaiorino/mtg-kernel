@@ -43,7 +43,6 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
     match condition {
         TriggerCondition::DiesUnlessSubtype(_)
         | TriggerCondition::DiesWithRevivalCounterV1
-        | TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
         | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_) => {
             out.atoms.push(Atom::Opaque)
         }

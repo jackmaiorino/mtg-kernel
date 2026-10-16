@@ -142,7 +142,7 @@ fn assert_effect_only_call_tampering_is_rejected(state: &GameState, call: Object
             edit(item.inline_effect.as_mut().unwrap());
         }
         assert!(
-            engine::validated_stack_item_target_spec(&state, &state.stack[item_index]).is_err()
+            engine::validated_stack_item_target_spec(&state.stack[item_index], &state).is_err()
         );
     };
     tamper(state.clone(), &|effect| {

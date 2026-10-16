@@ -5460,7 +5460,6 @@ fn triggers_from_events(
                         | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherNontokenCreatureDies
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
-                        | TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
                         | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
                         | TriggerCondition::OpponentLosesLifeBatchV49
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
