@@ -48,7 +48,7 @@ fn state(s: &FixturePrepared) -> &GameState {
 }
 fn expected(s: &FixturePrepared) -> FastActorDecisionV1 {
     let FastActorResponseV1::Decision(e) = s.current_response() else {
-        panic!("real model prompt absent")
+        panic!("real model prompt absent: {:?}", s.current_response())
     };
     e
 }
