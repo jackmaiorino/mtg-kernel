@@ -135,6 +135,8 @@ pub fn feature_identity() -> String {
             include_str!("goblin_negotiation_v1/owned.rs"),
             include_str!("effect/nonland_copy_v1.rs"),
             include_str!("effect/curator_v1.rs"),
+            include_str!("effect/loot_v1.rs"),
+            include_str!("effect/squad_rallier_resolution_v1.rs"),
             include_str!("effect/crystal_prevention_v1.rs"),
             include_str!("creature_death_capture_v1.rs"),
             include_str!("rl_session/next_five_v59.rs"),

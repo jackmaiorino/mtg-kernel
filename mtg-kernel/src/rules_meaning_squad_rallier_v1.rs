@@ -63,6 +63,7 @@ pub fn producer_sha256() -> String {
                 "effect/squad_rallier_resolution_v1.rs",
                 include_str!("effect/squad_rallier_resolution_v1.rs"),
             ),
+            ("effect/loot_v1.rs", include_str!("effect/loot_v1.rs")),
             ("effect.rs", include_str!("effect.rs")),
             ("engine.rs", include_str!("engine.rs")),
             (

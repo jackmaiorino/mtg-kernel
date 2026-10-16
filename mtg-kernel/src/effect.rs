@@ -16,6 +16,7 @@
 //! crate-level invariants in `lib.rs`).
 
 pub(crate) mod curator_v1;
+pub(crate) mod loot_v1;
 mod standard_ward;
 use standard_ward::WardPaymentChoice;
 mod standard_look;
@@ -2751,6 +2752,9 @@ pub enum LibraryPickFilterV1 {
     LegendaryCreature,
     /// Library cards use their front-face power, including accepted CDAs.
     CreaturePowerAtMost(i32),
+    /// Loot: the physical library owner is the captured resolving controller.
+    /// Choices admit no responses, so the effective land scene remains fixed.
+    CreatureManaValueAtMostControlledLands,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -4275,6 +4279,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if loot_v1::is_recipe(op)
+        || loot_v1::item_selected(state, &resolving_item)
+        || loot_v1::waiting(state, ctx)
+    {
+        return Err("Loot requires its genuine native paid-library owner".into());
+    }
     if blasphemous_edict_v1::contains(op) || blasphemous_edict_v1::selected(state, &resolving_item)
     {
         return Err("Edict requires its genuine native pre-removal owner".into());
@@ -4438,6 +4448,14 @@ fn begin_resumable_resolution_with_native_row_v1(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| loot_v1::pending_selected(state, p))
+    {
+        return Err("Loot has no public resumable authority".into());
+    }
     if state
         .engine
         .pending_effect
@@ -9957,6 +9975,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::krenko_v1::validate_state(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
+    if let Some(p) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .filter(|p| loot_v1::required(state, p))
+    {
+        loot_v1::validate_private_program(state, p)?;
+    }
+
     frenzied_goblin_resolution_v1::validate(state)?;
     validate_vampire_gourmand_state(state)?;
     crystal_prevention_v1::validate(state)?;
@@ -13285,6 +13312,14 @@ fn drive_resumable_inner_with_native_row_v1(
                     path,
                     canonical_path,
                 } => {
+                    if rule.selection.is_some_and(|r| {
+                        matches!(
+                            r.filter,
+                            LibraryPickFilterV1::CreatureManaValueAtMostControlledLands
+                        )
+                    }) {
+                        loot_v1::validate_private_program(state, &continuation)?;
+                    }
                     if resume_library_partition_frame(
                         state,
                         &mut continuation,
@@ -14947,6 +14982,9 @@ fn drive_resumable_inner_with_native_row_v1(
                 mut rule,
                 pick_x,
             } => {
+                if rule.selection.is_some_and(|r| matches!(r.filter, LibraryPickFilterV1::CreatureManaValueAtMostControlledLands)) {
+                    loot_v1::validate_private_program(state,&continuation)?;
+                }
                 let player = continuation.ctx.resolve_player(player, state);
                 let count = match count {
                     LibraryLookCount::Fixed(count) => count,
@@ -17874,6 +17912,11 @@ fn library_partition_matching_prefix(
                 None => true,
                 Some(selection) => match selection.filter {
                     LibraryPickFilterV1::Any => true,
+                    LibraryPickFilterV1::CreatureManaValueAtMostControlledLands => {
+                        definition.has_type(CardType::Creature)
+                            && usize::from(definition.mana_value)
+                                <= loot_v1::controlled_lands(state, object.owner)
+                    }
                     LibraryPickFilterV1::CreaturePowerAtMost(max) => {
                         if object.v4.face_index != 0 || object.v4.face_down_v1.is_some() {
                             return Err(
@@ -18774,6 +18817,15 @@ fn execute_with_native_row_v1(
     }
     if crystal_prevention_v1::mixed_environment(state)
         && !crystal_prevention_v1::ordinary_nondamage(op)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
+    if loot_v1::is_recipe(op)
+        || loot_v1::waiting(state, ctx) && native_proof.is_none_or(|p| p.ctx != ctx)
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -25596,7 +25648,7 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
-    if curator_v1::waiting(state, ctx) {
+    if loot_v1::waiting(state, ctx) || curator_v1::waiting(state, ctx) {
         return true;
     }
     state.stack.iter().any(|item| {
@@ -25624,7 +25676,8 @@ fn distinct_published_program_v1(state: &GameState, item: &StackItem) -> bool {
     {
         return false;
     }
-    event::lathril_item_selected_v1(state, item)
+    item.inline_effect.as_ref().is_some_and(loot_v1::is_recipe)
+        || event::lathril_item_selected_v1(state, item)
         || tutelage_item_v1(state, item)
         || (aberration_family_item_v1(item) && !authenticated_aberration_ward_v1(state, item))
 }

@@ -1162,6 +1162,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect/loot_v1.rs", "Loot, Exuberant Explorer", "closed effective-source land allowance and native private-library recipe; frozen V1 Opaque"),
     ("effect/curator_v1.rs", "Curator of Destinies", "closed native entry/private-pile printing selector; frozen V1 Opaque"),
     ("event.rs", "Lathril, Blade of the Elves", "positive final combat damage capture; token root remains opaque in frozen v1"),
     ("effect.rs", "Elf Warrior Token", "private exact captured Lathril token batch; frozen v1 root opaque"),
@@ -1435,6 +1436,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[
+    ("effect/loot_v1.rs", include_str!("../effect/loot_v1.rs")),
     (
         "effect/curator_v1.rs",
         include_str!("../effect/curator_v1.rs"),

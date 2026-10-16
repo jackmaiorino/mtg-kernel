@@ -18,7 +18,8 @@ pub struct SquadRallierResolutionReceiptV1 {
 }
 
 pub(crate) fn owned_root(op: &EffectOp) -> bool {
-    super::private_keep_one_v1::is_recipe(op)
+    super::loot_v1::is_recipe(op)
+        || super::private_keep_one_v1::is_recipe(op)
         || super::exile_top_choose_v1::is_recipe(op)
         || matches!(op, EffectOp::LookTopSelectV1 { player: PlayerRef::Controller,
         count: LibraryLookCount::Fixed(4), rule, pick_x: false }
@@ -35,13 +36,14 @@ fn source_owns_root(source: AbilitySourceContractV4, root: &EffectOp) -> bool {
     CARD_DEFS
         .get(usize::from(source.card_def))
         .is_some_and(|definition| {
-            (definition.name == "Squad Rallier"
-                && definition
-                    .activated_abilities
-                    .iter()
-                    .any(|ability| (ability.effect)() == *root)
-                && !super::private_keep_one_v1::is_recipe(root)
-                && owned_root(root))
+            (super::loot_v1::definition(source.card_def) && super::loot_v1::is_recipe(root))
+                || (definition.name == "Squad Rallier"
+                    && definition
+                        .activated_abilities
+                        .iter()
+                        .any(|ability| (ability.effect)() == *root)
+                    && !super::private_keep_one_v1::is_recipe(root)
+                    && owned_root(root))
                 || (definition.name == "Strongbox Raider"
                     && super::exile_top_choose_v1::is_recipe(root)
                     && crate::trigger::triggers_for(source.card_def)

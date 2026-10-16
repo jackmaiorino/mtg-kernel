@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 473);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 474);
         assert_eq!(
             partials,
             [
@@ -9036,6 +9036,7 @@ mod tests {
                 (470, "Secluded Courtyard"),
                 (471, "Electroduplicate"),
                 (472, "Curator of Destinies"),
+                (473, "Loot, Exuberant Explorer"),
             ]
         );
         let mut playable = Vec::new();

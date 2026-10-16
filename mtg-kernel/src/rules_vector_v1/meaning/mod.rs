@@ -84,6 +84,16 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::LookTopSelectV1 { rule, .. }
+            if rule.selection.is_some_and(|r| {
+                matches!(
+                    r.filter,
+                    crate::effect::LibraryPickFilterV1::CreatureManaValueAtMostControlledLands
+                )
+            }) =>
+        {
+            out.atoms.push(Atom::Opaque)
+        }
         EffectOp::BindCuratorDestiniesV1
         | EffectOp::CuratorDestiniesV1 { .. }
         | EffectOp::ElectroduplicateCopyV1

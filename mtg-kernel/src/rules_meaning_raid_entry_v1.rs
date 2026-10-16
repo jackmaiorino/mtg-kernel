@@ -65,6 +65,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("gorehorn_crystal_v1.rs"),
             include_str!("card_def.rs"),
             include_str!("trigger.rs"),
+            include_str!("effect/loot_v1.rs"),
             include_str!("effect.rs"),
             include_str!("effect/private_keep_one_v1.rs"),
             include_str!("effect/surveil_many.rs"),

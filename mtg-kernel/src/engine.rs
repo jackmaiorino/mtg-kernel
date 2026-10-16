@@ -9543,7 +9543,9 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
 
 fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     if player != state.active_player
-        || state.players[player.index()].lands_played_this_turn > 0
+        || (usize::from(state.players[player.index()].lands_played_this_turn)
+            >= effect::loot_v1::land_allowance(state, player)
+            || state.players[player.index()].lands_played_this_turn == u8::MAX)
         || !matches!(state.step, Step::Main1 | Step::Main2)
         || !state.stack.is_empty()
     {
@@ -9560,8 +9562,7 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     // Impulse-drawn lands (Clockwork Percussionist/Experimental
     // Synthesizer/Reckless Impulse can exile a land off the top of the
     // library same as any other card) are still subject to the ordinary
-    // one-land-per-turn limit -- already enforced by the guard above, since
-    // none of these cards grant an additional land play.
+    // current effective per-turn allowance, already enforced above.
     for &id in &state.exile {
         if let Some(perm) = active_permission_for(player, id, state) {
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
@@ -22561,6 +22562,10 @@ fn play_land(
     owned_resolution_parent: bool,
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
+    let next_land_count = state.players[player.index()]
+        .lands_played_this_turn
+        .checked_add(1)
+        .ok_or("native land-play count exceeds u8")?;
     let ctx = ExecCtx::no_targets(id, player);
     if crate::doubling_season_v48::requires_successor(state) {
         // Playing a land remains a special action even under a resolution-time
@@ -22586,7 +22591,7 @@ fn play_land(
         );
     }
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
-    state.players[player.index()].lands_played_this_turn += 1;
+    state.players[player.index()].lands_played_this_turn = next_land_count;
     if resolution_cast_v1::finish_child(state)? {
         return Ok(());
     }
