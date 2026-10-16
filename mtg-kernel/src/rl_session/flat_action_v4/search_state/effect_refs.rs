@@ -52,7 +52,8 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
-            BlasphemousEdictV1 | BindSphinxsTutelageMillV1
+            ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
+            | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
             | MaySacrificeNonlandOtherwiseV1 { .. }
             | BindAleshaRaidReturn

@@ -82,6 +82,15 @@ pub fn producer_sha256() -> String {
             ("engine.rs", include_str!("engine.rs")),
             ("effect.rs", include_str!("effect.rs")),
             ("event.rs", include_str!("event.rs")),
+            ("state.rs", include_str!("state.rs")),
+            (
+                "linked_aura_operation_v1.rs",
+                include_str!("linked_aura_operation_v1.rs"),
+            ),
+            (
+                "doubling_season_v48.rs",
+                include_str!("doubling_season_v48.rs"),
+            ),
             ("card_def.rs", include_str!("card_def.rs")),
             ("build.rs", include_str!("../build.rs")),
             (

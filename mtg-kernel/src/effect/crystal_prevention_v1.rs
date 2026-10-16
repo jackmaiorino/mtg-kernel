@@ -668,6 +668,9 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // private begin/resume authority remain Tutelage-owned.
         EffectOp::SphinxsTutelageMillV1 { .. } => true,
         EffectOp::BlasphemousEdictV1 => true,
+        // Authenticated native copying/sacrifice only; this classification
+        // supplies no public/owning admission for the printing or its tokens.
+        EffectOp::ElectroduplicateCopyV1 | EffectOp::CopiedTokenEndStepSacrificeV1 { .. } => true,
         // These leaves authenticate their original collected capture before
         // countering an exact source or moving a legal graveyard target. ETB
         // triggers from the returned card are separately published roots.

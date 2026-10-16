@@ -206,6 +206,10 @@ pub struct GoadStateV4 {
 /// than assigning zero a meaning that would change when mechanics arrive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectStateV4 {
+    /// Copiable Electroduplicate exceptions on this incarnation. Each instance
+    /// adds haste and its own beginning-of-each-end-step sacrifice ability.
+    #[serde(default, skip_serializing_if = "u32_is_zero")]
+    pub copied_end_step_sacrifices_v1: u32,
     /// Native Banner choice for this exact incarnation, committed before entry
     /// observers. Zone-change reset erases it; absent snapshots stay unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -429,6 +433,10 @@ impl Hash for ObjectStateV4 {
             "kinship-type/v1".hash(state);
             chosen.hash(state);
         }
+        if self.copied_end_step_sacrifices_v1 != 0 {
+            "copied-end-step-sacrifices/v1".hash(state);
+            self.copied_end_step_sacrifices_v1.hash(state);
+        }
     }
 }
 
@@ -450,6 +458,7 @@ impl ObjectStateV4 {
         subtype_ids.sort_unstable();
         subtype_ids.dedup();
         ObjectStateV4 {
+            copied_end_step_sacrifices_v1: 0,
             kinship_type_v1: None,
             is_token: def.is_token,
             face_index: 0,
@@ -5080,4 +5089,8 @@ mod soul_counter_storage_v1_tests {
         assert!(state.soul_count_for_ability_source_v1(next).is_err());
         assert_eq!(state, before);
     }
+}
+
+fn u32_is_zero(value: &u32) -> bool {
+    *value == 0
 }

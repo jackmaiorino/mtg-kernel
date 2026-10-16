@@ -1813,6 +1813,27 @@ pub enum CommittedEvent {
         capture_history_index: u64,
         marker_history_index: u64,
     },
+    CopiedTokenAbilitiesEnteredV1 {
+        source: crate::state::AbilitySourceContractV4,
+        creation_history_index: u64,
+        instances: u32,
+    },
+    CopiedTokenEndStepV1 {
+        end_step_history_index: u64,
+        sources: Vec<(crate::state::AbilitySourceContractV4, u32)>,
+    },
+    CopiedTokenEndStepCollectedV1 {
+        capture_history_index: u64,
+    },
+    CopiedTokenSacrificePublishedV1 {
+        capture_history_index: u64,
+        observer: u32,
+        ability: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    CopiedTokenSacrificeFinishedV1 {
+        stack_item_id: crate::ids::StackItemId,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4066,6 +4087,7 @@ fn commit_with_entry_batch_and_source_color(
     );
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
+    record_copied_token_entry_v1(state, entry_history_index);
     if !tutelage_observers.is_empty()
         && matches!(
             state.engine.event_history.get(entry_history_index),
@@ -4993,6 +5015,12 @@ fn materialize_event_v1(
                     // Creation itself makes this object a token, including
                     // copies whose printed definition is an ordinary card.
                     v4.is_token = true;
+                    // Copy exceptions are copiable characteristics and must be
+                    // present before any entry characteristic is consulted.
+                    v4.copied_end_step_sacrifices_v1 = t
+                        .initialization_v48
+                        .as_ref()
+                        .map_or(0, |init| init.copied_end_step_sacrifices_v1);
                     v4.entered_battlefield_turn = Some(state.turn_key_v1());
                     v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
                     v4
@@ -9238,6 +9266,347 @@ pub(crate) fn bind_lathril_combat_marker_v1(
                 marker_history_index,
             });
         lathril_damage_v1(state, capture_history_index)?;
+    }
+    Ok(())
+}
+
+// Persistent copiable token abilities. These receipts are native-only; no old
+// observer is allowed to discard their ability multiplicity or history.
+fn record_copied_token_entry_v1(state: &mut GameState, creation: usize) {
+    let Some(CommittedEvent::CreateToken { object, .. }) = state.engine.event_history.get(creation)
+    else {
+        return;
+    };
+    let object = *object;
+    let instances = state.objects.get(object).v4.copied_end_step_sacrifices_v1;
+    if instances == 0 {
+        return;
+    }
+    let source = crate::state::AbilitySourceContractV4::capture(state, object);
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
+            source,
+            creation_history_index: creation as u64,
+            instances,
+        });
+}
+fn copied_token_entry_v1(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+) -> Result<u32, String> {
+    let rows = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, e)| match e {
+            CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
+                source: actual,
+                creation_history_index,
+                instances,
+            } if actual.source == source.source
+                && actual.zone_change_count == source.zone_change_count =>
+            {
+                Some((at, *actual, *creation_history_index, *instances))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [(at, original, creation, count)] = rows.as_slice() else {
+        return Err("copied token abilities lost unique entry".into());
+    };
+    crate::engine::validate_historical_ability_source_contract(state, source)?;
+    if *count == 0
+        || source.zone != Zone::Battlefield
+        || source.zone_change_count != 0
+        || original.owner != source.owner
+        || original.card_def != source.card_def
+        || original.zone != Zone::Battlefield
+        || creation.checked_add(1) != Some(*at as u64)
+        || !matches!(state.engine.event_history.get(*creation as usize),Some(CommittedEvent::CreateToken {object,token_def,controller,..})
+            if *object == source.source && *token_def == source.card_def && *controller == original.controller)
+    {
+        return Err("copied token entry changed its actual creation/incarnation".into());
+    }
+    Ok(*count)
+}
+pub(crate) fn record_copied_token_end_step_v1(
+    state: &mut GameState,
+    end_step: usize,
+) -> Result<(), String> {
+    if !matches!(
+        state.engine.event_history.get(end_step),
+        Some(CommittedEvent::BeginningEndStep { .. })
+    ) {
+        return Err("copied ability requires actual beginning end step".into());
+    }
+    let mut sources = Vec::new();
+    for (id, o) in state.objects.iter() {
+        if o.zone != Zone::Battlefield
+            || o.v4.copied_end_step_sacrifices_v1 == 0
+            || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        {
+            continue;
+        }
+        let source = crate::state::AbilitySourceContractV4::capture(state, id);
+        let count = copied_token_entry_v1(state, source)?;
+        if !o.v4.is_token || count != o.v4.copied_end_step_sacrifices_v1 {
+            return Err("copied ability count differs from original entry".into());
+        }
+        sources.push((source, count));
+    }
+    if !sources.is_empty() {
+        let receipt = CommittedEvent::CopiedTokenEndStepV1 {
+            end_step_history_index: end_step as u64,
+            sources,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
+    }
+    Ok(())
+}
+fn copied_end_sources_v1(
+    state: &GameState,
+    capture: u64,
+) -> Result<&[(crate::state::AbilitySourceContractV4, u32)], String> {
+    let Some(CommittedEvent::CopiedTokenEndStepV1 {
+        end_step_history_index,
+        sources,
+    }) = state.engine.event_history.get(capture as usize)
+    else {
+        return Err("copied end-step capture absent".into());
+    };
+    if sources.is_empty() || end_step_history_index.checked_add(1) != Some(capture) || !matches!(state.engine.event_history.get(*end_step_history_index as usize),Some(CommittedEvent::BeginningEndStep{..}))
+        || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenEndStepV1{end_step_history_index:other,..} if other==end_step_history_index)).count()!=1
+    {return Err("copied end-step capture changed actual event".into());}
+    for (i, (source, count)) in sources.iter().enumerate() {
+        if *count == 0
+            || copied_token_entry_v1(state, *source)? != *count
+            || sources[..i].iter().any(|(s, _)| s.source == source.source)
+        {
+            return Err("copied end-step source roster changed".into());
+        }
+    }
+    Ok(sources)
+}
+pub(crate) fn collect_copied_token_end_step_v1(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<crate::trigger::PendingTrigger>, String> {
+    let mut consumed = Vec::new();
+    let mut pending = Vec::new();
+    for event in events {
+        if !matches!(event, CommittedEvent::CopiedTokenEndStepV1 { .. }) {
+            continue;
+        }
+        let positions = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| (e == event).then_some(i as u64))
+            .collect::<Vec<_>>();
+        let [capture] = positions.as_slice() else {
+            return Err("copied end-step receipt erased or duplicated".into());
+        };
+        if consumed.contains(capture) || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenEndStepCollectedV1{capture_history_index} if capture_history_index==capture)) {return Err("copied end-step receipt replayed".into());}
+        for (observer, (source, count)) in
+            copied_end_sources_v1(state, *capture)?.iter().enumerate()
+        {
+            let observer = u32::try_from(observer).map_err(|_| "copied ability observer width")?;
+            pending
+                .try_reserve(*count as usize)
+                .map_err(|_| "copied ability roster allocation")?;
+            for ability in 0..*count {
+                pending.push(crate::trigger::PendingTrigger {
+                    controller: source.controller,
+                    source: source.source,
+                    effect: crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1 {
+                        capture_history_index: *capture,
+                        observer,
+                        ability,
+                    },
+                    is_madness_offer: false,
+                    kicked: false,
+                    target_spec: crate::card_def::TargetSpec::None,
+                    targets: Vec::new(),
+                    target_contracts: Vec::new(),
+                    placement_ordered: false,
+                    source_contract: Some(*source),
+                    granted_by: None,
+                    optional_additional_cost_paid: None,
+                    paid_cost_refs: Vec::new(),
+                });
+            }
+        }
+        consumed.push(*capture);
+    }
+    for capture_history_index in consumed {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::CopiedTokenEndStepCollectedV1 {
+                capture_history_index,
+            });
+    }
+    Ok(pending)
+}
+pub(crate) fn copied_token_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(u64, u32, u32, crate::state::AbilitySourceContractV4), String> {
+    let Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1 {
+        capture_history_index,
+        observer,
+        ability,
+    }) = item.inline_effect.as_ref()
+    else {
+        return Err("copied token trigger root changed".into());
+    };
+    let (source, count) = *copied_end_sources_v1(state, *capture_history_index)?
+        .get(*observer as usize)
+        .ok_or("copied ability observer missing")?;
+    if *ability>=count || item.kind!=crate::state::StackItemKind::TriggeredAbility || item.source!=source.source || item.controller!=source.controller
+        || item.v4.ability_source_contract!=Some(source) || item.v4.source_contract.is_some() || item.v4.granted_by.is_some()
+        || item.v4.activated_ability_index.is_some() || item.v4.hidden_ability_source.is_some() || item.v4.madness_source_contract.is_some()
+        || item.v4.cauldron_grant.0.is_some() || item.v4.cast_method.is_some() || item.v4.target_spec.is_some() || item.v4.face_index!=0
+        || item.mode_chosen!=0 || item.is_copy || item.is_flashback || item.kicked || item.madness_offer || item.v4.x_value!=0
+        || !item.targets.is_empty() || !item.v4.target_contracts.is_empty() || !item.discarded.is_empty() || !item.v4.paid_cost_refs.is_empty() || item.v4.optional_additional_cost_paid.is_some()
+        || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenEndStepCollectedV1{capture_history_index:other} if other==capture_history_index)).count()!=1
+        || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificeFinishedV1{stack_item_id} if *stack_item_id==item.v4.stack_item_id && item.v4.stack_item_id!=crate::ids::StackItemId::default()))
+    {return Err("copied token trigger source/controller/instance changed or consumed".into());}
+    Ok((*capture_history_index, *observer, *ability, source))
+}
+pub(crate) fn publish_copied_token_trigger_v1(
+    state: &mut GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    if !matches!(
+        item.inline_effect,
+        Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1 { .. })
+    ) {
+        return Ok(());
+    }
+    let (capture_history_index, observer, ability, _) = copied_token_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{capture_history_index:c,observer:o,ability:a,item:row} if (*c,*o,*a)==(capture_history_index,observer,ability) || row.v4.stack_item_id==item.v4.stack_item_id)) {return Err("copied token trigger published twice".into());}
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CopiedTokenSacrificePublishedV1 {
+            capture_history_index,
+            observer,
+            ability,
+            item: Box::new(item.clone()),
+        });
+    Ok(())
+}
+pub(crate) fn copied_token_item_selected_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> bool {
+    matches!(item.inline_effect,Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1{..}))
+        || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{item:row,..} if row.v4.stack_item_id==item.v4.stack_item_id))
+}
+pub(crate) fn validate_published_copied_token_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    let (capture, observer, ability, _) = copied_token_trigger_v1(state, item)?;
+    let rows = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|e| match e {
+            CommittedEvent::CopiedTokenSacrificePublishedV1 {
+                capture_history_index: c,
+                observer: o,
+                ability: a,
+                item: row,
+            } if (*c, *o, *a) == (capture, observer, ability)
+                || row.v4.stack_item_id == item.v4.stack_item_id =>
+            {
+                Some(row.as_ref())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if rows.as_slice() != [item] {
+        return Err("copied token trigger changed original published row".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn copiable_token_abilities_v1(
+    state: &GameState,
+    object: ObjectId,
+) -> Result<u32, String> {
+    let live = state.objects.try_get(object).ok_or("copy source absent")?;
+    if live.v4.face_down_v1.is_some() {
+        return Ok(0);
+    }
+    if live.v4.copied_end_step_sacrifices_v1 == 0 {
+        if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenAbilitiesEnteredV1{source,..} if source.source==object && source.zone_change_count==live.zone_change_count)) {
+            return Err("copy source erased its copiable ability count".into());
+        }
+        return Ok(0);
+    }
+    let count = copied_token_entry_v1(
+        state,
+        crate::state::AbilitySourceContractV4::capture(state, object),
+    )?;
+    if live.zone != Zone::Battlefield
+        || !live.v4.is_token
+        || count != live.v4.copied_end_step_sacrifices_v1
+    {
+        return Err("copy source changed its copiable ability count".into());
+    }
+    Ok(count)
+}
+
+pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    if crate::linked_aura_operation_v1::locally_owned(state) {
+        return Ok(());
+    }
+    for (_, object) in state.objects.iter() {
+        if object.zone != Zone::Battlefield && object.v4.copied_end_step_sacrifices_v1 != 0 {
+            return Err("copied abilities survived an ordinary zone change".into());
+        }
+    }
+    for event in &state.engine.event_history {
+        let CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
+            source, instances, ..
+        } = event
+        else {
+            continue;
+        };
+        if copied_token_entry_v1(state, *source)? != *instances {
+            return Err("copied ability entry changed".into());
+        }
+        if let Some(live) = state.objects.try_get(source.source) {
+            if live.zone == Zone::Battlefield
+                && live.zone_change_count == source.zone_change_count
+                && (live.v4.copied_end_step_sacrifices_v1 != *instances || !live.v4.is_token)
+            {
+                return Err("live copied token lost its original ability multiplicity".into());
+            }
+        }
+        if matches!(state.engine.event_log.iter().find(|e| *e == event), Some(_)) {
+            return Err("private copied entry receipt exposed as an event".into());
+        }
+    }
+    for (id, live) in state.objects.iter() {
+        if live.v4.copied_end_step_sacrifices_v1 != 0 {
+            if copied_token_entry_v1(
+                state,
+                crate::state::AbilitySourceContractV4::capture(state, id),
+            )? != live.v4.copied_end_step_sacrifices_v1
+                || !live.v4.is_token
+            {
+                return Err("native copied token count lacks its actual entry".into());
+            }
+        }
     }
     Ok(())
 }

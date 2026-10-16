@@ -14215,6 +14215,19 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             .clone();
         crate::event::publish_lathril_v1(state, &lathril_item)?;
     }
+    if state.stack.last().is_some_and(|item| {
+        matches!(
+            item.inline_effect,
+            Some(EffectOp::CopiedTokenEndStepSacrificeV1 { .. })
+        )
+    }) {
+        let item = state
+            .stack
+            .last()
+            .expect("just published copied ability")
+            .clone();
+        event::publish_copied_token_trigger_v1(state, &item)?;
+    }
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
@@ -14594,6 +14607,17 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if event::copied_token_item_selected_v1(state, item) {
+        event::copied_token_trigger_v1(state, item)?;
+        if state
+            .stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            event::validate_published_copied_token_v1(state, item)?;
+        }
+        return Ok(None);
+    }
     if crate::event::is_lathril_v1(source_card_def)
         && item.v4.granted_by.is_none()
         && !matches!(inline_effect, EffectOp::CounterUnlessPaysGeneric { .. })
@@ -15667,6 +15691,12 @@ pub(crate) fn counter_stack_item_by_id(
         crate::fake_your_own_death_v50::death_custody::acquire_counter(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     let lathril_counter_capture = crate::event::lathril_counter_capture_v1(state, &item)?;
+    let copied_counter = if event::copied_token_item_selected_v1(state, &item) {
+        event::validate_published_copied_token_v1(state, &item)?;
+        Some(item.v4.stack_item_id)
+    } else {
+        None
+    };
     let fake_death_counter = crate::fake_your_own_death_v50::death_custody::begin_counter(
         state,
         fake_death_counter_owner,
@@ -15677,6 +15707,12 @@ pub(crate) fn counter_stack_item_by_id(
         }
     } else {
         state.stack.remove(position);
+    }
+    if let Some(stack_item_id) = copied_counter {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::CopiedTokenSacrificeFinishedV1 { stack_item_id });
     }
     if let Some(capture_history_index) = lathril_counter_capture {
         state
@@ -17656,6 +17692,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
                 let beginning_index = state.engine.event_history.len() - 1;
+                if event::record_copied_token_end_step_v1(state, beginning_index).is_err() {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    return;
+                }
                 crate::cerberus_capture_v1::record_begin(state, beginning_index);
                 crate::stromkirk_bloodthief_v1::record_begin(state, beginning_index);
             }
@@ -18620,6 +18661,9 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return false;
     }
     let printed_active = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
+    if printed_active && kw == Keywords::HASTE && obj.v4.copied_end_step_sacrifices_v1 != 0 {
+        return true;
+    }
     if (kw == Keywords::REACH || kw == Keywords::TRAMPLE)
         && obj.attachments.iter().copied().any(|aura| {
             valid_bestow_attachment_host(state, aura) == Some(id)

@@ -1429,6 +1429,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
         "Incubator Token",
         "token created by Incubate, reached via BindIncubateToTriggerSpell",
     ),
+    ("effect.rs", "Electroduplicate", "native closed copy-source guard; copiable token exceptions remain Opaque in frozen V1"),
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[

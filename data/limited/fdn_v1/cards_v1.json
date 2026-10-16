@@ -8324,6 +8324,36 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/s/SecludedCourtyard.java",
       "is_token": false
+    },
+    {
+      "name": "Electroduplicate",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "mechanics": [
+        "copy_target_controlled_creature",
+        "copiable_permanent_haste_and_each_end_step_sacrifice_ability",
+        "flashback_2rr"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/Electroduplicate.java",
+      "decks": [
+        "FDN_reference_electroduplicate_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

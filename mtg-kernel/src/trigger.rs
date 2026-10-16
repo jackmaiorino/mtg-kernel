@@ -5137,6 +5137,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::event::collect_copied_token_end_step_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
     match crate::event::collect_lathril_v1(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {

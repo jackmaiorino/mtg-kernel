@@ -1895,6 +1895,7 @@ pub fn observe_v1(
     step_index: u64,
 ) -> Result<ObservationV1> {
     refuse_chosen_type_mana_v60(state)?;
+    crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
@@ -2202,6 +2203,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         proof.require_state(state)?;
     }
     refuse_chosen_type_mana_v60(state)?;
+    crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
 
     if !matches!(
         text_mode,
@@ -2648,6 +2650,7 @@ fn public_restricted_mana_v1(
     state: &GameState,
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
     refuse_chosen_type_mana_v60(state)?;
+    crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     let mut pools = [Vec::new(), Vec::new()];
     for (index, pool) in pools.iter_mut().enumerate() {
         for unit in &state.players[index].restricted_mana_pool.0 {
@@ -4965,6 +4968,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
+    crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
 
     if !matches!(
         text_mode,
@@ -8853,6 +8857,14 @@ fn effect_target_ref_visible(
 /// before projecting any card carrying one through those older shapes. Keep this guard in `rl.rs`
 /// so the existing RL source-identity closure covers the behavior.
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
+    if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none() && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
+    }) {
+        return Err(RlContractError(
+            "Electroduplicate requires a distinct complete consumer".into(),
+        ));
+    }
+
     if state
         .objects
         .try_get(object)
@@ -9170,6 +9182,14 @@ fn private_card(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPrivateV1> {
+    if state.objects.try_get(id).is_some_and(|o| {
+        o.v4.face_down_v1.is_none() && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
+    }) {
+        return Err(RlContractError(
+            "Electroduplicate requires a distinct complete consumer".into(),
+        ));
+    }
+
     if state.objects.try_get(id).is_some_and(|live| {
         live.v4.kinship_type_v1.is_some()
             || CARD_DEFS

@@ -674,7 +674,7 @@ fn validate_bait_transfers(state: &GameState) -> Result<(), String> {
 
 /// Properties of the creation effect, installed on every expanded token
 /// before the first entry observer is captured. None leaves old proposals exact.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenEntryV48 {
     pub copied: bool,
@@ -684,6 +684,27 @@ pub struct TokenEntryV48 {
     pub plus_one_counters: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sacrifice_at_end_step: Option<AbilitySourceContractV4>,
+    #[serde(default, skip_serializing_if = "copied_abilities_zero_v1")]
+    pub copied_end_step_sacrifices_v1: u32,
+}
+
+fn copied_abilities_zero_v1(value: &u32) -> bool {
+    *value == 0
+}
+impl std::hash::Hash for TokenEntryV48 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        // Original derive's field order, with no extra bytes for absence.
+        std::hash::Hash::hash(&self.copied, h);
+        std::hash::Hash::hash(&self.haste_until_end_of_turn, h);
+        std::hash::Hash::hash(&self.attacking, h);
+        std::hash::Hash::hash(&self.attached_to, h);
+        std::hash::Hash::hash(&self.plus_one_counters, h);
+        std::hash::Hash::hash(&self.sacrifice_at_end_step, h);
+        if self.copied_end_step_sacrifices_v1 != 0 {
+            std::hash::Hash::hash("copied-end-step-sacrifices/v1", h);
+            std::hash::Hash::hash(&self.copied_end_step_sacrifices_v1, h);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -943,6 +964,9 @@ pub(crate) fn preflight_token_initialization(
         let Some(init) = &token.initialization_v48 else {
             continue;
         };
+        if init.copied_end_step_sacrifices_v1 != 0 && !init.copied {
+            return Err("copiable token ability exceptions require a copied template".into());
+        }
         let def = CARD_DEFS
             .get(usize::from(token.token_def))
             .ok_or("token blueprint absent")?;
