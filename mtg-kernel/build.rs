@@ -4196,6 +4196,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::HASTE");
         }
+        "Niv-Mizzet, Visionary" => keywords.push("Keywords::FLYING"),
         "Herald of Eternal Dawn"
             if cfg!(all(
                 feature = "limited-fdn-fixtures",
@@ -7104,6 +7105,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Nine-Lives Familiar" => "genuine_cast_entry_eight_revival_counters;dies_if_exact_departure_lki_revival_positive;death_trigger_resolution_schedules_one_future_any_end_step;return_exact_graveyard_incarnation_under_captured_ability_controller_with_one_fewer_revival_counter_and_entry_replacements_once",
         "Valkyrie's Call" => "controlled_nontoken_nonangel_effective_creature_dies:capture_source_controller_and_exact_departure:resolve_return_exact_graveyard_incarnation_under_physical_owner:plus_one_counter_replacements_once:additive_angel_and_flying_to_new_incarnation_until_zone_change",
         "Perforating Artist" => "beginning_captured_controller_end_step:intervening_raid_actual_declaration_turn_history:resolution_recheck:opponent_non_target_exact_incarnation_controlled_nonland_sacrifice_otherwise_private_discard_otherwise_lose_life:3:definition_owned_branch_and_closed_stage:actual_sacrifice_and_discard_replacements",
+        "Niv-Mizzet, Visionary" => "source_you_control_deals_final_positive_noncombat_damage_to_opponent:draw_original_trigger_controller_exact_committed_full_width_amount:receipt_bound_to_damage_and_stack_item:control_changes_after_trigger_do_not_retarget:you_have_no_maximum_hand_size_while_currently_controlled_and_abilities_active",
         "Midnight Snack" => "beginning_original_controller_end_step:intervening_raid_actual_declaration_turn_history:capture_and_resolution_recheck:create_food_token_for_original_controller:1",
         "Restless Prairie" => "attacks:other_controlled_creatures_plus_one_one_eot",
         "Restless Vinestalk" => "attacks:up_to_one_other_creature_base_three_three_eot",

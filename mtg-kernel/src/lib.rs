@@ -74,6 +74,12 @@ pub mod linked_aura_return_v1;
 pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod niv_mizzet_visionary_v1;
 pub mod panda_observation_v47;
 pub mod panda_public_v47;
 pub mod phoenix_public_v56;

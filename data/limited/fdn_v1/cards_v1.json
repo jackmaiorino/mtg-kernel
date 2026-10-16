@@ -8026,6 +8026,26 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/p/PerforatingArtist.java",
       "is_token": false
+    },
+    {
+      "name": "Niv-Mizzet, Visionary",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{U}{R}",
+      "mana_value": 6,
+      "colors": ["U", "R"],
+      "types": ["Creature"],
+      "subtypes": ["Dragon", "Wizard"],
+      "supertypes": ["Legendary"],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": ["FDN_reference_niv_mizzet_visionary_partial.dck"],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": ["flying", "opponent_noncombat_damage_draw_actual_amount", "no_maximum_hand_size_while_controlled"],
+      "java_file": "Mage.Sets/src/mage/cards/n/NivMizzetVisionary.java",
+      "is_token": false
     }
   ]
 }
