@@ -1047,9 +1047,7 @@ impl NativePolicyValueNetV1 {
                 digest.update((*dimension as u64).to_be_bytes());
             }
             digest.update((values.len() as u64).to_be_bytes());
-            for value in values {
-                digest.update(value.to_le_bytes());
-            }
+            sha256_update_f32_le_v1(&mut digest, values);
         });
         digest.finalize().into()
     }
@@ -1256,6 +1254,21 @@ impl NativePolicyValueNetV1 {
         visit_linear_mut_v1(&mut visitor, "scorer.2", &mut self.scorer_second);
         visit_linear_mut_v1(&mut visitor, "value_head.0", &mut self.value_first);
         visit_linear_mut_v1(&mut visitor, "value_head.2", &mut self.value_second);
+    }
+}
+
+/// Feeds each value's little-endian bit pattern to `hasher`: exactly the
+/// bytes of one `update(value.to_bits().to_le_bytes())` per element, so every
+/// digest is unchanged, but in a few large updates. Per-element updates spent
+/// more time in call overhead than in hashing on CPUs with SHA instructions.
+pub(crate) fn sha256_update_f32_le_v1(hasher: &mut Sha256, values: &[f32]) {
+    const CHUNK_VALUES: usize = 4096;
+    let mut bytes = [0u8; CHUNK_VALUES * 4];
+    for chunk in values.chunks(CHUNK_VALUES) {
+        for (slot, value) in bytes.chunks_exact_mut(4).zip(chunk) {
+            slot.copy_from_slice(&value.to_bits().to_le_bytes());
+        }
+        hasher.update(&bytes[..chunk.len() * 4]);
     }
 }
 
@@ -2054,9 +2067,7 @@ impl NativePolicyValueNetWideV1 {
                 digest.update((*dimension as u64).to_be_bytes());
             }
             digest.update((values.len() as u64).to_be_bytes());
-            for value in values {
-                digest.update(value.to_le_bytes());
-            }
+            sha256_update_f32_le_v1(&mut digest, values);
         });
         digest.finalize().into()
     }

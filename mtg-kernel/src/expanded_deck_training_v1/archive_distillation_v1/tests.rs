@@ -16,6 +16,7 @@ fn cell(label: &str) -> ArchiveDistillationOptionsV1 {
         min_edge_backups: None,
         count_control: None,
         checkpoint_steps: None,
+        keep_sets: None,
     }
 }
 
@@ -356,6 +357,10 @@ fn archive_distillation_commands_keep_their_wire_shape() {
         "checkpoint_steps":[8, 16, 32]});
     let command: ExpandedTrainingCommandV1 = serde_json::from_value(celled.clone()).unwrap();
     assert_eq!(serde_json::to_value(&command).unwrap(), celled);
+    let mut kept = celled.clone();
+    kept["options"] = json!({"cell":"BT1-T","keep_sets":file,"checkpoint_steps":[8, 16, 32]});
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(kept.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&command).unwrap(), kept);
     let mut wrong = celled;
     wrong["options"]["anchor"] = json!(4);
     assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(wrong).is_err());
@@ -659,6 +664,7 @@ fn cell_options_resolve_to_one_recorded_recipe_and_refuse_anything_else() {
             min_edge_backups: None,
             count_control: None,
             checkpoint_steps: vec![8, 16, 32, 189],
+            keep_sets: None,
         })
     );
     // A label alone keeps every frozen value and the epoch schedule.
@@ -672,7 +678,7 @@ fn cell_options_resolve_to_one_recorded_recipe_and_refuse_anything_else() {
         &'static str,
         fn(&mut ArchiveDistillationOptionsV1),
     );
-    let cases: [Case; 11] = [
+    let cases: [Case; 13] = [
         ("empty label", "cell label", |o| o.cell = String::new()),
         ("label with a space", "cell label", |o| {
             o.cell = "U a4".into()
@@ -693,6 +699,14 @@ fn cell_options_resolve_to_one_recorded_recipe_and_refuse_anything_else() {
         ("two row rules", "one rule", |o| {
             o.min_edge_backups = Some(32);
             o.count_control = Some(10)
+        }),
+        ("keep sets and a count control", "one rule", |o| {
+            o.keep_sets = Some(pin("keep.json", 'k'));
+            o.count_control = Some(10)
+        }),
+        ("keep sets and a support floor", "one rule", |o| {
+            o.keep_sets = Some(pin("keep.json", 'k'));
+            o.min_edge_backups = Some(32)
         }),
         ("empty count control", "at least one row", |o| {
             o.count_control = Some(0)
@@ -725,17 +739,30 @@ fn cell_rows_keep_a_support_floor_or_a_label_free_count() {
         row.edge_backups = Some(8 + (index as u64 * 37) % 400);
     }
     let all: Vec<usize> = (0..200).collect();
-    let none = select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", None).unwrap();
+    let none = select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", None, None).unwrap();
     assert_eq!(none, all);
     assert_eq!(
-        select_rows_v1(&rows, ArchiveDistillationArmV1::LineDecisions, "r1", None).unwrap(),
+        select_rows_v1(
+            &rows,
+            ArchiveDistillationArmV1::LineDecisions,
+            "r1",
+            None,
+            None
+        )
+        .unwrap(),
         vec![5, 40, 41]
     );
     // A support floor keeps exactly the rows at or above it, in bank order.
     let mut floor = cell("U-s32");
     floor.min_edge_backups = Some(32);
-    let kept =
-        select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", Some(&floor)).unwrap();
+    let kept = select_rows_v1(
+        &rows,
+        ArchiveDistillationArmV1::Uniform,
+        "r1",
+        Some(&floor),
+        None,
+    )
+    .unwrap();
     let expected: Vec<usize> = all
         .iter()
         .copied()
@@ -747,8 +774,14 @@ fn cell_rows_keep_a_support_floor_or_a_label_free_count() {
     // whatever the rows' labels and counts.
     let mut count = cell("U-c32");
     count.count_control = Some(kept.len());
-    let control =
-        select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", Some(&count)).unwrap();
+    let control = select_rows_v1(
+        &rows,
+        ArchiveDistillationArmV1::Uniform,
+        "r1",
+        Some(&count),
+        None,
+    )
+    .unwrap();
     assert_eq!(control.len(), kept.len());
     assert!(control.windows(2).all(|w| w[0] < w[1]));
     assert_ne!(control, kept);
@@ -763,21 +796,202 @@ fn cell_rows_keep_a_support_floor_or_a_label_free_count() {
             &relabeled,
             ArchiveDistillationArmV1::Uniform,
             "r1",
-            Some(&count)
+            Some(&count),
+            None
         )
         .unwrap(),
         control
     );
     assert_ne!(
-        select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r2", Some(&count)).unwrap(),
+        select_rows_v1(
+            &rows,
+            ArchiveDistillationArmV1::Uniform,
+            "r2",
+            Some(&count),
+            None
+        )
+        .unwrap(),
         control
     );
     count.count_control = Some(201);
-    assert!(
-        select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", Some(&count))
-            .unwrap_err()
-            .contains("more rows than the arm has")
+    assert!(select_rows_v1(
+        &rows,
+        ArchiveDistillationArmV1::Uniform,
+        "r1",
+        Some(&count),
+        None
+    )
+    .unwrap_err()
+    .contains("more rows than the arm has"));
+}
+
+fn logits_bits(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|v| v.to_bits()).collect()
+}
+
+fn keep_file(rows: &[(&str, u64, Vec<u32>)]) -> ArchiveDistillationKeepSetsV1 {
+    ArchiveDistillationKeepSetsV1 {
+        schema: KEEP_SETS_SCHEMA_V1.into(),
+        lineage: "r1".into(),
+        bank_rows_sha256: "b".repeat(64),
+        rows: rows
+            .iter()
+            .map(|(game, step, keep)| ArchiveDistillationKeepRowV1 {
+                game: (*game).into(),
+                step: *step,
+                keep: keep.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// A keep-set cell trains exactly its listed rows, each toward the parent's
+/// own binary64 softmax over the kept actions: one kept action is the
+/// one-hot target, every action the parent itself. The file binds to the
+/// lineage and the bank's rows, and every row and keep set is checked.
+#[test]
+fn keep_set_cells_train_listed_rows_toward_the_parents_kept_softmax() {
+    let root = temp_root("keep-sets");
+    let mut rows = bank_rows(60);
+    rows[5].0.parent_logits = logits_bits(&[1.0, -0.5, 2.0]);
+    rows[5].0.self_actions = vec![2];
+    rows[40].0.parent_logits = logits_bits(&[0.25, 3.0, -1.0]);
+    rows[40].0.giant_actions = vec![0, 1];
+    rows[41].0.parent_logits = logits_bits(&[-2.0, 0.5, 0.75]);
+    rows[41].0.self_actions = vec![0];
+    let listed = keep_file(&[
+        ("game-2", 1, vec![0, 1, 2]),
+        ("game-0", 5, vec![0, 2]),
+        ("game-2", 0, vec![1]),
+    ]);
+    let file = write_pinned(&root.join("keep.json"), &listed);
+    let bank_sha = "b".repeat(64);
+    let keep = keep_sets_v1(&file, "r1", &bank_sha, &rows).unwrap();
+    assert_eq!(keep.keys().copied().collect::<Vec<_>>(), vec![5, 40, 41]);
+    let mut options = cell("BT1-T");
+    options.keep_sets = Some(file.clone());
+    let uniform = ArchiveDistillationArmV1::Uniform;
+    assert_eq!(
+        select_rows_v1(&rows, uniform, "r1", Some(&options), Some(&keep)).unwrap(),
+        vec![5, 40, 41]
     );
+    for (options, keep) in [(Some(&options), None), (None, Some(&keep))] {
+        assert!(select_rows_v1(&rows, uniform, "r1", options, keep)
+            .unwrap_err()
+            .contains("loaded keep sets"));
+    }
+    // Targets: one kept action is the one-hot target bit for bit; every
+    // action is the parent's softmax; two of three keep the parent's ratio.
+    let parent = |i: usize| {
+        line_b_softmax_v1(&f64_logits(&recorded_logits(&rows[i].0.parent_logits))).unwrap()
+    };
+    assert_eq!(
+        kept_target_v1(&rows[40].0, &[1]).unwrap(),
+        one_hot_target_v1(3, 1).unwrap()
+    );
+    assert_eq!(kept_target_v1(&rows[41].0, &[0, 1, 2]).unwrap(), parent(41));
+    let pair = kept_target_v1(&rows[5].0, &[0, 2]).unwrap();
+    let full = parent(5);
+    assert_eq!(pair.probabilities[1], 0.0);
+    assert_eq!(pair.log_probabilities[1], f64::NEG_INFINITY);
+    let renormalized = full.probabilities[0] / (full.probabilities[0] + full.probabilities[2]);
+    assert!((pair.probabilities[0] - renormalized).abs() < 1e-15);
+    assert!((pair.probabilities[0] + pair.probabilities[2] - 1.0).abs() < 1e-15);
+    let sub = line_b_softmax_v1(&[1.0, 2.0]).unwrap();
+    assert_eq!(
+        (pair.probabilities[0], pair.probabilities[2]),
+        (sub.probabilities[0], sub.probabilities[1])
+    );
+    // The census reads each listed row's kept mass, line mass and KL.
+    let targets: Vec<LineBSoftmaxV1> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (row, _))| match keep.get(&i) {
+            Some(kept) => kept_target_v1(row, kept).unwrap(),
+            None => one_hot_target_v1(3, 1).unwrap(),
+        })
+        .collect();
+    let census = keep_census_v1(&rows, &keep, &targets).unwrap();
+    let census = census.as_array().unwrap();
+    assert_eq!(census.len(), 3);
+    assert_eq!(
+        (&census[0]["game"], &census[0]["step"]),
+        (&json!("game-0"), &json!(5))
+    );
+    assert_eq!(census[0]["target_self_mass"], json!(pair.probabilities[2]));
+    assert_eq!(census[0]["target_giant_mass"], Value::Null);
+    let kept_mass = full.probabilities[0] + full.probabilities[2];
+    assert_eq!(census[0]["kept_parent_probability"], json!(kept_mass));
+    let kl = census[0]["kl_target_from_parent"].as_f64().unwrap();
+    assert!((kl + kept_mass.ln()).abs() < 1e-12, "{kl}");
+    assert_eq!(census[1]["target_giant_mass"], json!(1.0));
+    let kl = census[1]["kl_target_from_parent"].as_f64().unwrap();
+    assert!(
+        (kl + parent(40).probabilities[1].ln()).abs() < 1e-12,
+        "{kl}"
+    );
+    assert_eq!(census[2]["kl_target_from_parent"], json!(0.0));
+    assert_eq!(
+        census[2]["target_self_mass"],
+        json!(parent(41).probabilities[0])
+    );
+    // Refusals.
+    type Case = (
+        &'static str,
+        &'static str,
+        fn(&mut ArchiveDistillationKeepSetsV1),
+    );
+    let cases: [Case; 9] = [
+        ("schema", "identity differs", |f| f.schema = "other".into()),
+        ("lineage", "identity differs", |f| f.lineage = "r2".into()),
+        ("bank", "identity differs", |f| {
+            f.bank_rows_sha256 = "c".repeat(64)
+        }),
+        ("no rows", "at least one row", |f| f.rows.clear()),
+        ("unknown row", "not a bank row", |f| f.rows[0].step = 99),
+        ("listed twice", "listed twice", |f| {
+            let again = f.rows[1].clone();
+            f.rows.push(again)
+        }),
+        ("empty keep", "inside its menu", |f| f.rows[0].keep.clear()),
+        ("unordered keep", "inside its menu", |f| {
+            f.rows[1].keep = vec![2, 0]
+        }),
+        ("outside the menu", "inside its menu", |f| {
+            f.rows[2].keep = vec![3]
+        }),
+    ];
+    for (name, expected, mutate) in cases {
+        let mut changed = listed.clone();
+        mutate(&mut changed);
+        let pin = write_pinned(&root.join(format!("keep-{name}.json")), &changed);
+        let error = keep_sets_v1(&pin, "r1", &bank_sha, &rows).unwrap_err();
+        assert!(error.contains(expected), "{name}: {error}");
+    }
+    let mut tampered = file.clone();
+    tampered.sha256 = "0".repeat(64);
+    assert!(keep_sets_v1(&tampered, "r1", &bank_sha, &rows)
+        .unwrap_err()
+        .contains("SHA differs"));
+    // A kept action with no parent probability (below the softmax floor).
+    let mut far = rows.clone();
+    far[40].0.parent_logits = logits_bits(&[0.0, -1.0e4, 0.0]);
+    let error = keep_sets_v1(&file, "r1", &bank_sha, &far).unwrap_err();
+    assert!(error.contains("no parent probability"), "{error}");
+    // A row the arm does not admit refuses (arm L admits only line rows).
+    let mut options_l = options.clone();
+    options_l.cell = "L-keep".into();
+    let line_keep: BTreeMap<usize, Vec<u32>> = [(5, vec![0]), (6, vec![1])].into();
+    assert!(select_rows_v1(
+        &rows,
+        ArchiveDistillationArmV1::LineDecisions,
+        "r1",
+        Some(&options_l),
+        Some(&line_keep)
+    )
+    .unwrap_err()
+    .contains("outside the arm"));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -882,6 +1096,7 @@ fn a_cell_checkpoint_loads_only_at_its_recorded_step_size_on_arm_u() {
         min_edge_backups: None,
         count_control: None,
         checkpoint_steps: vec![8, 16, 32],
+        keep_sets: Some(pin("keep.json", 'e')),
     });
     let saved = checkpoint_v1(&parent, &parameters, record.clone()).unwrap();
     assert_eq!(saved.learning_rate_bits, 2.5e-5_f32.to_bits());
@@ -1755,6 +1970,79 @@ fn phase1_runs_write_reloadable_checkpoints_and_reproduce_their_first_steps() {
             .clone()
     };
     assert_eq!(at(&rerun), at(&full));
+    // A keep-set cell listing every row with its executed action alone
+    // trains arm U's one-hot targets in U's order: the same bits at the
+    // reproduction step. Keeping every action makes every target the
+    // parent's own softmax: zero archive loss, and the parent's parameters
+    // unchanged to the last checkpoint, which carries the file's pin.
+    let bank_record: ArchiveBankV1 = read_pinned(&bank_pin).unwrap();
+    let keep_pin = |name: &str, keep: fn(&ArchiveRowV1) -> Vec<u32>| {
+        write_pinned(
+            &world.root.join(name),
+            &ArchiveDistillationKeepSetsV1 {
+                schema: KEEP_SETS_SCHEMA_V1.into(),
+                lineage: "r1".into(),
+                bank_rows_sha256: bank_record.rows_sha256.clone(),
+                rows: bank_record
+                    .rows
+                    .iter()
+                    .map(|row| ArchiveDistillationKeepRowV1 {
+                        game: row.game.clone(),
+                        step: row.step,
+                        keep: keep(row),
+                    })
+                    .collect(),
+            },
+        )
+    };
+    let kept_run = |label: &str, keep_sets: &PinnedFileV1, name: &str| {
+        let mut options = cell(label);
+        options.keep_sets = Some(keep_sets.clone());
+        options.checkpoint_steps = Some(vec![8, 16, REPRODUCTION_STEP]);
+        // Built from its wire form, which every full-network run shares.
+        let command: ExpandedTrainingCommandV1 = serde_json::from_value(json!({
+            "mode": "archive_distillation_phase1",
+            "parent": world.parent,
+            "lineage": "r1",
+            "arm": ArchiveDistillationArmV1::Uniform,
+            "games": world.games,
+            "bank": bank_pin,
+            "anchor": world.anchor,
+            "options": options,
+            "output_directory": world.root.join(name),
+        }))
+        .unwrap();
+        execute_v1(command).unwrap()
+    };
+    let executed = keep_pin("keep-executed.json", |row| vec![row.target]);
+    let one_hot = kept_run("K-executed", &executed, "phase1-k-executed");
+    assert_eq!(at(&one_hot), at(&full));
+    let census = one_hot["census"]["keep_rows"].as_array().unwrap();
+    assert_eq!(census.len(), bank_record.rows.len());
+    let everything = keep_pin("keep-all.json", |row| (0..row.k).collect());
+    let parent_target = kept_run("K-all", &everything, "phase1-k-all");
+    assert_ne!(at(&parent_target), at(&full));
+    assert!(parent_target["census"]["keep_rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["kl_target_from_parent"] == json!(0.0)));
+    let telemetry: Vec<Value> =
+        read_pinned(&serde_json::from_value(parent_target["telemetry"].clone()).unwrap()).unwrap();
+    assert!(telemetry
+        .iter()
+        .all(|step| step["archive_loss"] == json!(0.0)));
+    let last = parent_target["checkpoints"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    let source: ExpandedModelSourceV1 =
+        read_pinned(&serde_json::from_value(last["source"].clone()).unwrap()).unwrap();
+    let saved: ExpandedCheckpointV1 = read_pinned(source.checkpoint.as_ref().unwrap()).unwrap();
+    assert_eq!(saved.parameters, parent_checkpoint.parameters);
+    let recorded = saved.archive_distillation.unwrap().cell.unwrap();
+    assert_eq!(recorded.keep_sets, Some(everything));
     let probe = execute_v1(ExpandedTrainingCommandV1::ArchiveDistillationProbe {
         parent: world.parent.clone(),
         lineage: "r1".into(),
