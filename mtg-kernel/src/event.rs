@@ -2998,12 +2998,9 @@ fn commit_with_entry_batch_and_source_color(
                 .spell_cast_origin
                 .is_some_and(|origin| origin.finalized_method.is_some());
         if cast_nine_lives {
-            let cast_counter_input = frozen_counter_input
-                .cloned()
-                .or_else(|| crate::doubling_season_v48::entry_input(state, &event));
             if crate::doubling_season_v48::entry_amount(
                 state,
-                cast_counter_input.as_ref(),
+                counter_input.as_ref(),
                 change.battlefield_controller.unwrap_or(source.controller),
                 8,
             )
