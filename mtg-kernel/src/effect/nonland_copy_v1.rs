@@ -9,6 +9,11 @@ pub struct CopyTemplateV1 {
     pub face_index: u8,
     #[serde(default, skip_serializing_if = "copy_abilities_zero_v1")]
     pub copied_end_step_sacrifices_v1: u32,
+    #[serde(default, skip_serializing_if = "copy_nightmare_false_v1")]
+    pub copied_nightmare_v1: bool,
+}
+fn copy_nightmare_false_v1(value: &bool) -> bool {
+    !*value
 }
 fn copy_abilities_zero_v1(value: &u32) -> bool {
     *value == 0
@@ -20,6 +25,10 @@ impl std::hash::Hash for CopyTemplateV1 {
         if self.copied_end_step_sacrifices_v1 != 0 {
             std::hash::Hash::hash("copied-end-step-sacrifices/v1", h);
             std::hash::Hash::hash(&self.copied_end_step_sacrifices_v1, h);
+        }
+        if self.copied_nightmare_v1 {
+            std::hash::Hash::hash("copied-nightmare/v1", h);
+            std::hash::Hash::hash(&self.copied_nightmare_v1, h);
         }
     }
 }
@@ -123,6 +132,7 @@ fn template(state: &GameState, p: &EffectContinuation) -> Result<Option<CopyTemp
             card_def: anonymous,
             face_index: 0,
             copied_end_step_sacrifices_v1: 0,
+            copied_nightmare_v1: false,
         }));
     }
     let d = &crate::card_def::CARD_DEFS[live.card_def as usize];
@@ -133,6 +143,7 @@ fn template(state: &GameState, p: &EffectContinuation) -> Result<Option<CopyTemp
         card_def: live.card_def,
         face_index: live.v4.face_index,
         copied_end_step_sacrifices_v1: event::copiable_token_abilities_v1(state, *id)?,
+        copied_nightmare_v1: crate::effect::harvester_v1::copiable_nightmare(state, *id)?,
     }))
 }
 fn hosts(state: &GameState, t: &CopyTemplateV1) -> Result<Vec<EffectObjectBinding>, String> {
@@ -302,6 +313,7 @@ fn proposal(t: &CopyTemplateV1, controller: PlayerId) -> event::ProposedEvent {
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
             copied_end_step_sacrifices_v1: t.copied_end_step_sacrifices_v1,
+            copied_nightmare_v1: t.copied_nightmare_v1,
             ..Default::default()
         });
     }

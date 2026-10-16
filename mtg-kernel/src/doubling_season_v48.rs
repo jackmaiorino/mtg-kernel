@@ -686,8 +686,13 @@ pub struct TokenEntryV48 {
     pub sacrifice_at_end_step: Option<AbilitySourceContractV4>,
     #[serde(default, skip_serializing_if = "copied_abilities_zero_v1")]
     pub copied_end_step_sacrifices_v1: u32,
+    #[serde(default, skip_serializing_if = "copied_nightmare_false_v1")]
+    pub copied_nightmare_v1: bool,
 }
 
+fn copied_nightmare_false_v1(value: &bool) -> bool {
+    !*value
+}
 fn copied_abilities_zero_v1(value: &u32) -> bool {
     *value == 0
 }
@@ -703,6 +708,10 @@ impl std::hash::Hash for TokenEntryV48 {
         if self.copied_end_step_sacrifices_v1 != 0 {
             std::hash::Hash::hash("copied-end-step-sacrifices/v1", h);
             std::hash::Hash::hash(&self.copied_end_step_sacrifices_v1, h);
+        }
+        if self.copied_nightmare_v1 {
+            std::hash::Hash::hash("copied-nightmare/v1", h);
+            std::hash::Hash::hash(&self.copied_nightmare_v1, h);
         }
     }
 }
@@ -964,7 +973,7 @@ pub(crate) fn preflight_token_initialization(
         let Some(init) = &token.initialization_v48 else {
             continue;
         };
-        if init.copied_end_step_sacrifices_v1 != 0 && !init.copied {
+        if (init.copied_end_step_sacrifices_v1 != 0 || init.copied_nightmare_v1) && !init.copied {
             return Err("copiable token ability exceptions require a copied template".into());
         }
         let def = CARD_DEFS

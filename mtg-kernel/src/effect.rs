@@ -17,6 +17,7 @@
 
 pub(crate) mod curator_v1;
 pub(crate) mod greatwurm_v1;
+pub(crate) mod harvester_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
 pub(crate) mod source_token_copy_v1;
@@ -2736,6 +2737,8 @@ pub enum EffectOp {
     SphinxLoreV1 {
         attack_history_index: u64,
     },
+    /// Native FDN54 activation: exile/copy and other-Nightmare token cleanup.
+    HarvesterExileAndCopyV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4301,6 +4304,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if harvester_v1::recipe(op)
+        || harvester_v1::selected(state, &resolving_item)
+        || harvester_v1::waiting(state, ctx)
+    {
+        return Err("Harvester requires its actual native activation row".into());
+    }
     if source_token_copy_v1::recipe(op)
         || source_token_copy_v1::selected(state, &resolving_item)
         || source_token_copy_v1::waiting(state, ctx)
@@ -4548,6 +4557,12 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        harvester_v1::selected(state, &p.resolving_item) || harvester_v1::waiting(state, &p.ctx)
+    }) {
+        return Err("Harvester has no public continuation".into());
+    }
+
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         source_token_copy_v1::selected(state, &p.resolving_item)
             || source_token_copy_v1::waiting(state, &p.ctx)
@@ -10006,6 +10021,15 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| harvester_v1::selected(state, &p.resolving_item))
+    {
+        return Err("atomic Harvester activation retained a continuation".into());
+    }
+
     if state
         .engine
         .pending_effect
@@ -18927,6 +18951,15 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
+    if (harvester_v1::recipe(op) || harvester_v1::waiting(state, ctx))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if (source_token_copy_v1::recipe(op) || source_token_copy_v1::waiting(state, ctx))
         && native_proof.is_none_or(|p| p.ctx != ctx)
     {
@@ -18968,6 +19001,16 @@ fn execute_with_native_row_v1(
         return;
     }
     match op {
+        EffectOp::HarvesterExileAndCopyV1 => {
+            if harvester_v1::execute(state, ctx, native_proof.expect("Harvester native owner"))
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::CreateTokenCopyOfSourceV1 => {
             if source_token_copy_v1::execute(
                 state,
@@ -25836,6 +25879,10 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if harvester_v1::waiting(state, ctx) {
+        return true;
+    }
+
     if source_token_copy_v1::waiting(state, ctx) || sphinx_lore_v1::waiting(state, ctx) {
         return true;
     }
@@ -26963,6 +27010,7 @@ fn electroduplicate_proposal_v1(
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
             copied_end_step_sacrifices_v1: count,
+            copied_nightmare_v1: harvester_v1::copiable_nightmare(state, target)?,
             ..Default::default()
         });
     }
@@ -27031,6 +27079,7 @@ fn execute_copied_token_sacrifice_v1(
 /// Public copy creation and its added abilities have no predecessor schema.
 /// This does not inspect any hidden hand/library identity.
 pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    harvester_v1::require_legacy_absence(state)?;
     if state
         .objects
         .iter()
@@ -27188,6 +27237,7 @@ fn spirit_copy_proposal_v1(
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
             copied_end_step_sacrifices_v1: count,
+            copied_nightmare_v1: harvester_v1::copiable_nightmare(state, *object)?,
             ..Default::default()
         });
     }

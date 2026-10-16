@@ -144,6 +144,8 @@ pub fn feature_identity() -> String {
             include_str!("effect/source_token_copy_v1.rs"),
             include_str!("engine/greatwurm_cast_v1.rs"),
             include_str!("effect/sphinx_lore_v1.rs"),
+            include_str!("effect/harvester_v1.rs"),
+            include_str!("soul_shackled_zombie_v1.rs"),
             include_str!("engine/sphinx_lore_cast_v1.rs"),
             include_str!("effect/squad_rallier_resolution_v1.rs"),
             include_str!("effect/crystal_prevention_v1.rs"),

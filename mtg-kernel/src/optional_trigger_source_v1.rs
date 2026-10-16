@@ -106,6 +106,9 @@ pub(crate) fn producer(schema: &str) -> String {
         include_str!("zimone_paradox_sculptor_v1.rs"),
         include_str!("engine/omniscience_cast_v1.rs"),
         include_str!("resolution_cast_v1.rs"),
+        include_str!("effect/harvester_v1.rs"),
+        include_str!("life_loss_turn_v1.rs"),
+        include_str!("soul_shackled_zombie_v1.rs"),
     ] {
         h.update((s.len() as u64).to_le_bytes());
         h.update(s.as_bytes());

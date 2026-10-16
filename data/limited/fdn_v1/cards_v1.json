@@ -8577,6 +8577,38 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Abyssal Harvester",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Demon",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "mechanics": [
+        "tap_exile_target_creature_card_put_in_any_graveyard_this_turn",
+        "create_nightmare_token_copy_then_exile_other_controlled_nightmare_tokens"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AbyssalHarvester.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_abyssal_harvester_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

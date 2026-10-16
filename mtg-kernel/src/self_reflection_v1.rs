@@ -218,11 +218,23 @@ pub(crate) fn execute(state: &mut GameState, ctx: &ExecCtx) {
             };
             let mut proposal =
                 crate::event::ProposedEvent::create_transformed_copy(card_def, ctx.controller);
-            if copied_abilities != 0 {
+            let copied_nightmare =
+                match crate::effect::harvester_v1::copiable_nightmare(state, *object) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                };
+            if copied_abilities != 0 || copied_nightmare {
                 if let crate::event::ProposedEvent::CreateToken(token) = &mut proposal {
                     token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
                         copied: true,
                         copied_end_step_sacrifices_v1: copied_abilities,
+                        copied_nightmare_v1: copied_nightmare,
                         ..Default::default()
                     });
                 }

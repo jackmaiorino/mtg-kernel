@@ -9088,7 +9088,8 @@ fn effect_target_ref_visible(
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
     if state.objects.try_get(object).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && (crate::engine::omniscience_cast_v1::definition(o.card_def)
+            && (crate::effect::harvester_v1::definition(o.card_def)
+                || crate::engine::omniscience_cast_v1::definition(o.card_def)
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
                 || crate::effect::greatwurm_v1::definition(o.card_def)
                 || crate::effect::kykar_v1::definition(o.card_def)
@@ -9477,7 +9478,8 @@ fn private_card(
 ) -> Result<CardPrivateV1> {
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && (crate::engine::omniscience_cast_v1::definition(o.card_def)
+            && (crate::effect::harvester_v1::definition(o.card_def)
+                || crate::engine::omniscience_cast_v1::definition(o.card_def)
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
                 || crate::effect::greatwurm_v1::definition(o.card_def)
                 || crate::effect::kykar_v1::definition(o.card_def)

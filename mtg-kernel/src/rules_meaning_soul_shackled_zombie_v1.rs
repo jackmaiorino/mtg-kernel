@@ -70,6 +70,8 @@ pub fn source_sha256() -> String {
         include_str!("planeswalker_v1.rs"),
         include_str!("engine/omniscience_cast_v1.rs"),
         include_str!("resolution_cast_v1.rs"),
+        include_str!("effect/harvester_v1.rs"),
+        include_str!("life_loss_turn_v1.rs"),
     ] {
         digest.update([0]);
         digest.update(source.as_bytes());
