@@ -52,8 +52,8 @@ pub struct GraveyardReturnCandidatesV61 {
     /// native counters. Narrow special annotations never replace this context.
     pub observation: GraveyardReturnObservationV61,
     pub candidates: Vec<CandidateMeaningV61>,
-    /// The existing native Alesha root currently forces its legal return. This
-    /// source projection does not invent the missing printed resolution-time may.
+    /// The native Alesha root offers its printed resolution-time may. This
+    /// factual support flag does not grant action or owning-session authority.
     pub alesha_optional_resolution_supported: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -72,6 +72,7 @@ pub fn producer_sha256() -> String {
             include_str!("lib.rs"),
             include_str!("rl.rs"),
             include_str!("rl_session.rs"),
+            include_str!("rl_session/graveyard_return_v61.rs"),
             include_str!("divine_actions_v44.rs"),
             include_str!("rl_variable_cast_v1.rs"),
             include_str!("next_five_observation_v59.rs"),
@@ -496,10 +497,10 @@ pub(crate) fn project_parts_v61(
 ) -> Result<(GraveyardReturnCandidatesV61, NativeCandidateProjectionV61), RlContractError> {
     observation::validate_state(state).map_err(error)?;
     // Exact-bound source surfaces authenticate their own private scan. Owned
-    // revision surfaces fail here until a separately assigned owner exists.
+    // revision surfaces do not gain authority through this source-only API.
     // Nonscan re-entry must also be genuinely idempotent. A native Drake
-    // Enclosing receipt is a real world change, even if its menu is unchanged;
-    // this guard refuses it until an actual read-only issued-origin API exists.
+    // Enclosing receipt is a real world change, even if its menu is unchanged.
+    // Only the separate private issued-origin borrow below avoids re-entry.
     let mut probe = state.clone();
     let mut probe_surface = surface.clone();
     let actual = probe_surface.next_decision(&mut probe).map_err(error)?;
@@ -511,6 +512,30 @@ pub(crate) fn project_parts_v61(
             "V61 candidates require the actual already-current exact-bound surface",
         ));
     }
+    project_authenticated_parts_v61(state, surface, actor_and_origin, step, physical, substep)
+}
+
+pub(crate) fn project_issued_parts_v61(
+    proof: &crate::rl_session::graveyard_return_v61::IssuedOriginV61<'_>,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<(GraveyardReturnCandidatesV61, NativeCandidateProjectionV61), RlContractError> {
+    proof.validate(state, surface, actor_and_origin, step, physical, substep)?;
+    project_authenticated_parts_v61(state, surface, actor_and_origin, step, physical, substep)
+}
+
+fn project_authenticated_parts_v61(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<(GraveyardReturnCandidatesV61, NativeCandidateProjectionV61), RlContractError> {
     let observation =
         observation::observe_v61(state, surface, actor_and_origin, step, physical, substep)?;
     let authorized = authorized_references(&observation)?;
@@ -586,7 +611,7 @@ pub(crate) fn project_parts_v61(
         producer_sha256: producer_sha256(),
         observation,
         candidates,
-        alesha_optional_resolution_supported: false,
+        alesha_optional_resolution_supported: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
     };
@@ -608,7 +633,7 @@ pub fn validate_artifact(value: &GraveyardReturnCandidatesV61) -> Result<(), RlC
     if value.schema != SCHEMA
         || value.producer_sha256 != producer_sha256()
         || value.owning_consumer_admitted
-        || value.alesha_optional_resolution_supported
+        || !value.alesha_optional_resolution_supported
         || value.candidates.is_empty()
         || value.projection_sha256 != commitment(value)?
     {

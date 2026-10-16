@@ -48,6 +48,7 @@ pub fn producer_sha256() -> String {
             include_str!("ravenous_observation_v51.rs"),
             include_str!("ravenous_public_v51.rs"),
             include_str!("rl.rs"),
+            include_str!("rl_session/graveyard_return_v61.rs"),
             include_str!("akroma_family_public_v40.rs"),
             include_str!("optional_trigger_public_v1.rs"),
             include_str!("drake_public_v53.rs"),
