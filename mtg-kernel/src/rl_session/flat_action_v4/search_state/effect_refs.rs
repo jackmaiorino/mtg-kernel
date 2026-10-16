@@ -49,6 +49,21 @@ impl Scan<'_> {
                     .is_some_and(|item| self.raw(item.source)),
             })
     }
+    // Full native Storm snapshots retain cast choices, including physical cost
+    // references. Do not resample a currently hidden object named by that history.
+    fn storm_snapshot(&self, spell: &crate::state::StackItem) -> bool {
+        self.copy(spell)
+            || spell.discarded.iter().any(|id| self.raw(*id))
+            || spell.v4.paid_cost_refs.iter().any(|r| self.raw(r.object))
+            || spell.v4.ability_source_contract.is_some_and(|a| self.a(&a))
+            || spell.v4.granted_by.is_some_and(|a| self.a(&a))
+            || spell
+                .v4
+                .source_contract
+                .and_then(|s| s.finalized_cast_binding)
+                .and_then(|b| b.chosen_creature_cost)
+                .is_some_and(|r| self.raw(r.object))
+    }
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
@@ -242,6 +257,7 @@ impl Scan<'_> {
             | RevealUntilCardTypeAndMill { .. }
             | RevealUntilCardTypeToHandRandomBottomV1 { .. }
             | DealDamageDynamic { .. }
+            | BindThousandYearStormV1 | ThousandYearStormCaptureV1 { .. }
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
             | BindDoublePlusOneCountersToTriggerSource
@@ -1472,6 +1488,11 @@ pub(super) fn conflicts(
             // This receipt is history-only. Active snapshot references are
             // already visited through the owning pending continuation above.
             | InspirationResolutionBoundaryV1 { .. } => false,
+            ThousandYearStormV1 { journal } => match journal {
+                crate::effect::thousand_year_storm_v1::JournalV1::Cast { spell, observers, .. } => s.storm_snapshot(spell) || observers.iter().any(|source| s.a(source)),
+                crate::effect::thousand_year_storm_v1::JournalV1::Collected { .. } => false,
+                crate::effect::thousand_year_storm_v1::JournalV1::Published { item, .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { item, .. } => s.storm_snapshot(item),
+            },
             AleshaPowerLkiV1 { .. }
             | NivMizzetVisionaryDamageV1 { .. }
             | NivMizzetVisionaryTriggerStackedV1 { .. }

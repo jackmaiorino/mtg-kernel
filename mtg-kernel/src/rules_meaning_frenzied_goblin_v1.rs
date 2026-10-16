@@ -99,6 +99,18 @@ pub fn producer_sha256() -> String {
             ("fiendish_panda_v1.rs", include_str!("fiendish_panda_v1.rs")),
             ("life_gain_turn_v1.rs", include_str!("life_gain_turn_v1.rs")),
             ("midnight_snack_v1.rs", include_str!("midnight_snack_v1.rs")),
+            (
+                "effect/thousand_year_storm_v1.rs",
+                include_str!("effect/thousand_year_storm_v1.rs"),
+            ),
+            (
+                "effect/standard_copy.rs",
+                include_str!("effect/standard_copy.rs"),
+            ),
+            (
+                "standard_spell_copy.rs",
+                include_str!("standard_spell_copy.rs"),
+            ),
         ] {
             h.update([0]);
             h.update(path.as_bytes());

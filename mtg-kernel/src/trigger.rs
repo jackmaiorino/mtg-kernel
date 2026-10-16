@@ -1026,6 +1026,14 @@ static LATHRIL_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     ..etb_trigger(lathril_template_v1)
 }];
 
+fn thousand_year_storm_template_v1() -> EffectOp {
+    EffectOp::BindThousandYearStormV1
+}
+const THOUSAND_YEAR_STORM_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(thousand_year_storm_template_v1)
+}];
+
 fn sphinxs_tutelage_template_v1() -> EffectOp {
     EffectOp::BindSphinxsTutelageMillV1
 }
@@ -3670,6 +3678,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Thousand-Year Storm" if crate::effect::thousand_year_storm_v1::definition(card_def) => {
+            &THOUSAND_YEAR_STORM_TRIGGERS_V1
+        }
         #[cfg(all(
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
@@ -3984,6 +3995,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Thousand-Year Storm" => TargetSpec::None,
         "Sphinx's Tutelage" => TargetSpec::TargetOpponent,
         "Zimone, Paradox Sculptor" => TargetSpec::StandardV1(
             crate::standard_cards_v1::StandardTargetV1::UpToTwoControlledCreatures,
@@ -4383,6 +4395,11 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    if crate::effect::thousand_year_storm_v1::definition(card_def)
+        && crate::effect::thousand_year_storm_v1::capture(effect).is_some()
+    {
+        return true;
+    }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
@@ -4401,6 +4418,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::effect::thousand_year_storm_v1::definition(card_def) {
+        return crate::effect::thousand_year_storm_v1::recipe(effect).then_some(TargetSpec::None);
+    }
     if crate::effect::sphinx_lore_v1::definition(card_def) {
         return crate::effect::sphinx_lore_v1::recipe(effect)
             .then_some(crate::effect::sphinx_lore_v1::target_spec());
@@ -5244,6 +5264,16 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::effect::thousand_year_storm_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return vec![];
+        }
+    }
     match crate::event::collect_tutelage_v1(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {
@@ -5718,7 +5748,8 @@ fn triggers_from_events(
                     continue;
                 }
                 // Tutelage observes each successful draw at event commit, not this later scene.
-                if crate::event::is_sphinxs_tutelage_v1(definition)
+                if crate::effect::thousand_year_storm_v1::definition(definition)
+                    || crate::event::is_sphinxs_tutelage_v1(definition)
                     || crate::event::is_lathril_v1(definition)
                 {
                     continue;

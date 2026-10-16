@@ -275,6 +275,7 @@ pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
     validate_state_with_pt(state, true)
 }
 fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String> {
+    crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
     crate::effect::curator_v1::refuse_legacy(state)?;
     crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
     crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
