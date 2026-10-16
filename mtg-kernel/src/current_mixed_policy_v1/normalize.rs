@@ -252,6 +252,7 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
 }
 
 pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> Result<Packet> {
+    super::public_projection_operands::prepare(&mut state)?;
     super::kellan_public_operands::prepare(&mut state)?;
     super::fiery_public_operands::prepare(&mut state)?;
     if source == Source::PreparedV57 {

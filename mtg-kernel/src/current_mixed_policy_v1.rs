@@ -8,6 +8,7 @@ mod network;
 mod normalize;
 mod numeric;
 mod prepared;
+mod public_projection_operands;
 mod roots;
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionSnapshotV1, FastActorSessionV1,
@@ -76,6 +77,7 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1.rs"),
             include_str!("current_mixed_policy_v1/numeric.rs"),
             include_str!("current_mixed_policy_v1/normalize.rs"),
+            include_str!("current_mixed_policy_v1/public_projection_operands.rs"),
             include_str!("current_mixed_policy_v1/canonical_semantic_booleans.rs"),
             include_str!("current_mixed_policy_v1/divine_printing.rs"),
             include_str!("current_mixed_policy_v1/roots.rs"),
