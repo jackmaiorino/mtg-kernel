@@ -168,7 +168,7 @@ thread_local! {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-pub(super) fn reset_replay_key_frame_stats_for_test() {
+pub(crate) fn reset_replay_key_frame_stats_for_test() {
     REPLAY_KEY_FRAME_STATS.with(|stats| stats.set((0, 0)));
 }
 #[cfg(all(
@@ -176,7 +176,7 @@ pub(super) fn reset_replay_key_frame_stats_for_test() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-pub(super) fn replay_key_frame_stats_for_test() -> (u64, u64) {
+pub(crate) fn replay_key_frame_stats_for_test() -> (u64, u64) {
     REPLAY_KEY_FRAME_STATS.with(Cell::get)
 }
 

@@ -320,6 +320,16 @@ fn normalized_origin_parts(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<NormalizedOriginPartsV57, FlatActionDecisionSliceErrorV1> {
+    // The full request holds this world immutably. Reuse only its pure typed
+    // history keys; every validation below still executes in its original order.
+    crate::drake_hatcher_v1::custody::with_observation_replay_keys(&session.state, |_| {
+        normalized_origin_parts_in_frame(session, current)
+    })
+}
+fn normalized_origin_parts_in_frame(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<NormalizedOriginPartsV57, FlatActionDecisionSliceErrorV1> {
     crate::prepared_observation_v57::validate_state(&session.state)
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
     // A mandatory cast menu is engine-owned, not an interpreter option menu.
@@ -400,7 +410,7 @@ fn normalized_origin_parts(
             diagnose_origin_error("prepared_v57.normalized.candidate_operands", error)
         })?;
     }
-    let public_parts = crate::prepared_observation_v57::observe_parts_v57(
+    let public_parts = crate::prepared_observation_v57::observe_parts_v57_in_request(
         &session.state,
         &session.surface,
         (current.actor, &current.origin_decision),
