@@ -1192,3 +1192,8 @@ fn faebloom_paid_instant_reflexive_season_restore_privacy_elendasession_both_sea
 fn kellan_paid_upgrades_combat_impulse_restore_privacy_elendasession_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_kellan::<ElendaSession>();
 }
+
+#[test]
+fn fiery_paid_optional_equipment_death_replacement_restore_privacy_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_fiery::<ElendaSession>();
+}
