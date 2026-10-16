@@ -84,7 +84,14 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
-        EffectOp::DrakeIncubationFromCaptureV1 { .. }
+        EffectOp::BindAleshaRaidReturn
+        | EffectOp::AleshaRaidReturn { .. }
+        | EffectOp::BindNineLivesFamiliarReturnV1
+        | EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
+        | EffectOp::ReturnNineLivesFamiliarV1 { .. }
+        | EffectOp::BindValkyriesCallDeathV1
+        | EffectOp::ReturnValkyriesCallCreatureV1 { .. }
+        | EffectOp::DrakeIncubationFromCaptureV1 { .. }
         | EffectOp::DrakeCreateTokenFromPaidV1
         | EffectOp::LoseLifeEqualControllerTurnGainsV1
         | EffectOp::CreateAnotherControlledNonlandTargetCopyV1

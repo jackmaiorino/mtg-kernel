@@ -18,7 +18,8 @@ use super::*;
 pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
     match spec {
         TargetSpec::AnotherControlledNonlandPermanent
-        | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => {
+        | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => {
             // Frozen vocabulary cannot preserve the signed captured-power
             // bound, Bear/changeling exclusion and historical physical source.
             out.atoms.push(Atom::Opaque);
@@ -442,7 +443,8 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
 pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
     match spec {
         TargetSpec::AnotherControlledNonlandPermanent => ObjF::Permanent,
-        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => creature(),
+        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => creature(),
         TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => ObjF::AnyCard,
         TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => ObjF::Permanent,
         TargetSpec::StackObject
