@@ -84,7 +84,9 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
-        EffectOp::BindSphinxsTutelageMillV1
+        EffectOp::BindLathrilCombatTokensV1
+        | EffectOp::LathrilCombatTokensV1 { .. }
+        | EffectOp::BindSphinxsTutelageMillV1
         | EffectOp::SphinxsTutelageMillV1 { .. }
         | EffectOp::BindAleshaRaidReturn
         | EffectOp::AleshaRaidReturn { .. }

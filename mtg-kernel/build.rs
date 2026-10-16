@@ -3240,6 +3240,7 @@ enum PermanentFilterRecipe {
     ArtifactOrCreature,
     AnotherArtifact,
     Creature,
+    AnotherElf,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3493,6 +3494,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Lathril, Blade of the Elves" => program("None", "MoveObject(ThisSource,Battlefield);positive_final_combat_damage_to_player:captured_original_source_controller:that_many_elf_warrior_tokens;tap_source_and_ten_other_untapped_controlled_elves:opponent_loses10_controller_gains10", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Consuming Aberration" => program("None", "MoveObject(ThisSource,Battlefield);cda_all_zones:power_and_toughness_equal_all_opponents_graveyard_physical_cards;controller_cast_spell:each_opponent_reveal_through_first_land_then_owner_ordered_graveyard", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Sphinx's Tutelage" => program("None", "MoveObject(ThisSource,Battlefield);own_successful_draw:captured_original_source_controller:target_opponent:mill2_repeat_iff_two_nonland_cards_share_color;5U:draw1_then_discard1", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Drakuseth, Maw of Flames" => program("None", "MoveObject(ThisSource,Battlefield);attacks:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_contracts:one_damage_batch", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -4202,6 +4204,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::HASTE");
         }
         "Niv-Mizzet, Visionary" => keywords.push("Keywords::FLYING"),
+        "Lathril, Blade of the Elves" => keywords.push("Keywords::MENACE"),
         "Herald of Eternal Dawn"
             if cfg!(all(
                 feature = "limited-fdn-fixtures",
@@ -5817,6 +5820,15 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "TargetOpponent",
             activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
         }],
+        "Lathril, Blade of the Elves" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::TapControlled { count: 10, filter: PermanentFilterRecipe::AnotherElf }],
+            effect: AbilityEffectRecipe::Program {
+                name: "lathril_tap_ten_other_elves_drain_v1",
+                effect: "EffectOp::Sequence(vec![EffectOp::LoseLife { player: PlayerRef::Opponent, amount: 10 }, EffectOp::GainLife { player: PlayerRef::Controller, amount: 10 }])",
+            },
+            activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "None",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Sphinx's Tutelage" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana { colored: Some("U"), generic: 5 }],
             effect: AbilityEffectRecipe::Program {
@@ -6316,6 +6328,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
 fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
     match filter {
         PermanentFilterRecipe::Artifact => "PermanentFilter::Artifact",
+        PermanentFilterRecipe::AnotherElf => "PermanentFilter::AnotherWithSubtype(Subtype::Elf)",
         PermanentFilterRecipe::Token => "PermanentFilter::Token",
         PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
         PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
@@ -6326,6 +6339,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
 fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
     match filter {
         PermanentFilterRecipe::Artifact => "artifact",
+        PermanentFilterRecipe::AnotherElf => "another_with_subtype:Elf",
         PermanentFilterRecipe::Token => "token",
         PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
         PermanentFilterRecipe::AnotherArtifact => "another_artifact",
@@ -7128,6 +7142,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Lathril, Blade of the Elves" => "actual_positive_final_combat_damage_to_player:original_source_incarnation_controller:mandatory_untargeted:that_many_elf_warrior_tokens:single_original_batch_with_placement_replacements",
         "Consuming Aberration" => "controller_cast_spell:mandatory:untargeted_each_opponent:reveal_library_through_first_land_or_entire_remaining_library:owner_orders_revealed_cards_into_graveyard:original_source_controller_incarnation:copies_are_not_casts",
         "Sphinx's Tutelage" => "successful_controller_draw:one_event_time_observer_roster_per_actual_card:original_source_incarnation_controller:target_opponent_at_announcement:response_window:mill2_as_one_original_pair:owner_ordered_graveyard:repeat_iff_exactly_two_nonland_cards_share_at_least_one_color:zero_one_colorless_land_disjoint_stop:source_departure_or_later_control_does_not_change_captured_trigger",
         "Zimone, Paradox Sculptor" => "beginning_captured_controller_combat:captured_source_incarnation_controller:zero_to_two_distinct_controlled_effective_creature_targets:original_target_slots_and_current_exact_incarnation_legality:put_one_plus_one_counter_on_each_legal_target:normal_counter_placement_replacements:checked_widths",
