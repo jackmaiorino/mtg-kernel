@@ -94,7 +94,11 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         {
             out.atoms.push(Atom::Opaque)
         }
-        EffectOp::BindCuratorDestiniesV1
+        EffectOp::KykarChooseModeV1
+        | EffectOp::KykarExileV1
+        | EffectOp::KykarSpiritV1
+        | EffectOp::KykarReturnV1 { .. }
+        | EffectOp::BindCuratorDestiniesV1
         | EffectOp::CuratorDestiniesV1 { .. }
         | EffectOp::ElectroduplicateCopyV1
         | EffectOp::CopiedTokenEndStepSacrificeV1 { .. }

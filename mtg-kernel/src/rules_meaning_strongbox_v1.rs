@@ -55,6 +55,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("../build.rs"),
             include_str!("trigger.rs"),
             include_str!("effect/loot_v1.rs"),
+            include_str!("effect/kykar_v1.rs"),
             include_str!("effect.rs"),
             include_str!("effect/exile_top_choose_v1.rs"),
             include_str!("effect/strongbox_permission_v1.rs"),

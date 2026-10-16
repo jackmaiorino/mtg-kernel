@@ -1982,7 +1982,24 @@ fn main() {
         if c.decks.is_empty() && !c.is_token {
             panic!("cards_v1.json: card {:?} has empty deck coverage", c.name);
         }
-        if c.is_token && c.engine_capability != EngineCapabilityJson::Full {
+        if c.is_token
+            && c.engine_capability != EngineCapabilityJson::Full
+            && !(env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some()
+                && !standard_magezero_fixtures()
+                && c.name == "Kykar Spirit Token"
+                && c.engine_capability == EngineCapabilityJson::Partial
+                && c.mana_cost.is_empty()
+                && c.mana_value == 0
+                && c.colors == ["W"]
+                && c.types == ["Creature"]
+                && c.subtypes == ["Spirit"]
+                && c.supertypes.is_empty()
+                && c.power == Some(1)
+                && c.toughness == Some(1)
+                && c.mechanics == ["flying"]
+                && !c.is_land
+                && c.produces_mana.is_empty())
+        {
             panic!(
                 "cards_v1.json: token {:?} must be explicitly full so CreateToken cannot materialize unsupported behavior",
                 c.name
@@ -3496,6 +3513,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
     Some(match name {
         "Lathril, Blade of the Elves" => program("None", "MoveObject(ThisSource,Battlefield);positive_final_combat_damage_to_player:captured_original_source_controller:that_many_elf_warrior_tokens;tap_source_and_ten_other_untapped_controlled_elves:opponent_loses10_controller_gains10", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Blasphemous Edict" => program("None", "BlasphemousEdictV1(active_nonactive_choose_thirteen_or_all_controlled_effective_creatures;physical_owners_order_actual_graveyard_destinations;one_simultaneous_sacrifice_batch)", "EffectOp::BlasphemousEdictV1"),
+        "Kykar, Zephyr Awakener" => program("None", "MoveObject(ThisSource,Battlefield);castNoncreature:modeBeforeTargets:exileAnotherControlledCreature:exactExileIncarnation:nextAnyEndStep:ownerControl:oneShot|createWhiteFlyingSpirit1/1:replacementBatch", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Loot, Exuberant Explorer" => program("None", "MoveObject(ThisSource,Battlefield);effectiveActivePrintedSource:oneAdditionalLandOwnTurn:currentController:stackingAllowanceNoCountRefund;activated4GGT:privateTop6:optionalRevealCreatureMvAtMostResolutionControlledLandsToBattlefield:randomBottomRest", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Curator of Destinies" => program("None", "MoveObject(ThisSource,Battlefield);etb:event_time_original_source_controller:lookTop5Private:controllerSeparatesFaceDownAndFaceUp:revealOnlyFaceUp:opponentChoosesHandPile:ownerOrdersOtherGraveyardPile:originalTopIncarnations:checkedNativeMoves;cannotBeCountered;flying", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Electroduplicate" => program("ControlledCreature", "copyTargetControlledCreature:currentCopiableFace:permanentCopiableHaste:appendOneRecurringAnyEndStepSelfSacrificeAbility:checkedMultiplicity:beforeEntryObservers:replacementBatch;flashback:2RR", "EffectOp::ElectroduplicateCopyV1"),
@@ -4456,7 +4474,7 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Bat Token" => &["Keywords::FLYING"],
         "Ruin-Lurker Bat" => &["Keywords::FLYING", "Keywords::LIFELINK"],
         "White Insect Token" => &["Keywords::FLYING"],
-        "Spirit Token" => &["Keywords::FLYING"],
+        "Spirit Token" | "Kykar Spirit Token" | "Kykar, Zephyr Awakener" => &["Keywords::FLYING"],
         "Enduring Curiosity" => &["Keywords::FLASH"],
         "Enduring Innocence" => &["Keywords::LIFELINK"],
         "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => &["Keywords::TRAMPLE"],
@@ -4600,6 +4618,7 @@ fn object_name_for(name: &str) -> &str {
     match name {
         "Nameless Creature Copy Token" => "",
         "Ajani Cat Token" => "Cat Token",
+        "Kykar Spirit Token" => "Spirit Token",
         "Monster Role Token" => "Monster",
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
@@ -7339,6 +7358,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
         "Banishing Light" => "self_etb:target_opponent_nonland_permanent:exile_until_exact_source_incarnation_leaves:no_exile_if_source_already_left:immediate_return_exact_exile_incarnation_under_owner:independent_of_removed_source_abilities",
         "Dauntless Veteran" => "source_declared_attacker:boost_controlled_creatures:1:1:none:end_of_turn",
+        "Kykar, Zephyr Awakener" => "cast_noncreature:captured_original_controller_source:mode_at_announcement:mandatory_target_another_controlled_creature_exile:one_shot_next_any_end_step_return_exact_exiled_card_under_physical_owner|create_one_white_1/1_flying_spirit:normal_token_replacements",
         "Crackling Cyclops" => "cast_noncreature:pump_bound_source:3:0:end_of_turn",
         "Reclamation Sage" => "etb:target_artifact_or_enchantment:may_destroy",
         "Moon-Circuit Hacker" => {

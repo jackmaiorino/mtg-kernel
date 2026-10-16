@@ -1852,6 +1852,16 @@ pub enum CommittedEvent {
         entry_history_index: u64,
         choice: Box<crate::effect::curator_v1::ChoiceV1>,
     },
+    KykarExiledV1 {
+        source: crate::state::AbilitySourceContractV4,
+        exiled: crate::state::ObjectLinkV4,
+        owner: PlayerId,
+        departure_history_index: u64,
+    },
+    KykarDelayedCollectedV1 {
+        schedule_history_index: u64,
+        end_step_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3133,6 +3143,13 @@ pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u
 /// is evaluated from the final damage amount and source immediately before
 /// that damage is committed.
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
+    if unsupported_partial_token_v1(&event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -3145,6 +3162,13 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if unsupported_partial_token_v1(&event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if crate::effect::crystal_prevention_v1::validate(state).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -3626,6 +3650,13 @@ pub(crate) fn propose_and_commit_gorehorn_owned(
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
+    if unsupported_partial_token_v1(&event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -3638,6 +3669,13 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn commit_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if unsupported_partial_token_v1(&event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     commit_with_ability_lki(state, event, None, None);
 }
 
@@ -5250,6 +5288,13 @@ struct MaterializedEventV1 {
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    if events.iter().any(unsupported_partial_token_v1) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -5275,7 +5320,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    batch_with_aura_token_hosts_v1(state, events, attachments, None, None);
+    batch_with_aura_token_hosts_v1(state, events, attachments, None, None, None);
 }
 
 /// The bound copy continuation supplies one untargeted host per actual expanded
@@ -5286,7 +5331,7 @@ pub(crate) fn batch_with_copied_aura_hosts_v1(
     event: ProposedEvent,
     hosts: Vec<crate::state::ObjectLinkV4>,
 ) {
-    batch_with_aura_token_hosts_v1(state, vec![event], Vec::new(), Some(hosts), None);
+    batch_with_aura_token_hosts_v1(state, vec![event], Vec::new(), Some(hosts), None, None);
 }
 /// Consumes one private genuine finishing permit. It cannot be reconstructed
 /// from serialized frames or reused for a second batch.
@@ -5298,7 +5343,7 @@ pub(crate) fn commit_goblin_excess_tokens_owned(
     if !permit.allows(state, &events) {
         return Err("excess token batch lost exact continuation owner".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, Some(&permit));
+    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, Some(&permit), None);
     if state.engine.halted.is_some() {
         return Err("excess token batch halted".into());
     }
@@ -5313,7 +5358,17 @@ fn batch_with_aura_token_hosts_v1(
     )>,
     aura_hosts: Option<Vec<crate::state::ObjectLinkV4>>,
     excess_permit: Option<&crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>>,
+    kykar_permit: Option<&crate::effect::kykar_v1::TokenPermitV1<'_, '_>>,
 ) {
+    if events.iter().any(unsupported_partial_token_v1)
+        && kykar_permit.is_none_or(|p| !p.allows(state, &events))
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     if excess_permit.is_some_and(|permit| !permit.allows(state, &events)) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -9626,6 +9681,24 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
                 return Err("native copied token count lacks its actual entry".into());
             }
         }
+    }
+    Ok(())
+}
+
+fn unsupported_partial_token_v1(event: &ProposedEvent) -> bool {
+    matches!(event,ProposedEvent::CreateToken(t) if crate::card_def::CARD_DEFS.get(usize::from(t.token_def)).is_none_or(|d| d.is_token && !d.has_full_support()))
+}
+pub(crate) fn commit_kykar_spirit_owned_v1(
+    state: &mut GameState,
+    permit: crate::effect::kykar_v1::TokenPermitV1<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Kykar Spirit lost genuine mode owner".into());
+    }
+    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, None, Some(&permit));
+    if state.engine.halted.is_some() {
+        return Err("Kykar Spirit batch halted".into());
     }
     Ok(())
 }

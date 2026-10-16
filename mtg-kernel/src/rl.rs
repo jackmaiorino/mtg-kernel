@@ -8951,6 +8951,15 @@ fn effect_target_ref_visible(
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
     if state.objects.try_get(object).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
+            && (crate::effect::kykar_v1::definition(o.card_def)
+                || crate::effect::kykar_v1::token_definition(o.card_def))
+    }) {
+        return Err(RlContractError(
+            "Kykar requires a distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
             && CARD_DEFS[usize::from(o.card_def)].name == "Loot, Exuberant Explorer"
     }) {
         return Err(RlContractError(
@@ -9290,6 +9299,15 @@ fn private_card(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPrivateV1> {
+    if state.objects.try_get(id).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && (crate::effect::kykar_v1::definition(o.card_def)
+                || crate::effect::kykar_v1::token_definition(o.card_def))
+    }) {
+        return Err(RlContractError(
+            "Kykar requires a distinct complete consumer".into(),
+        ));
+    }
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && CARD_DEFS[usize::from(o.card_def)].name == "Loot, Exuberant Explorer"

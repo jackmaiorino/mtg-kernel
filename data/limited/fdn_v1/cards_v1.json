@@ -8420,6 +8420,71 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Kykar, Zephyr Awakener",
+      "mana_cost": "{2}{W}{U}",
+      "mana_value": 4,
+      "colors": [
+        "W",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 4,
+      "mechanics": [
+        "flying",
+        "cast_noncreature_mode_at_announcement",
+        "exile_another_controlled_creature_next_end_step_owner_return",
+        "white_spirit_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KykarZephyrAwakener.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_kykar_zephyr_awakener_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Kykar Spirit Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritWhiteToken.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "is_token": true
     }
   ]
 }

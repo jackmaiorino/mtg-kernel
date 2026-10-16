@@ -1261,6 +1261,10 @@ pub fn unselected_trigger_modes(
     if let Some(modes) = crate::standard_creature_choices_v1::trigger_modes(card_def, effect) {
         return Some(modes);
     }
+    if crate::effect::kykar_v1::definition(card_def) && *effect == crate::effect::kykar_v1::marker()
+    {
+        return Some(crate::effect::kykar_v1::modes());
+    }
     if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
         return Some(apothecary_stomper_modes());
     }
@@ -3356,6 +3360,11 @@ fn crackling_cyclops_effect() -> EffectOp {
     }
 }
 
+const KYKAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(crate::effect::kykar_v1::marker)
+}];
+
 const CRACKLING_CYCLOPS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::CastNoncreatureSpell,
     ..etb_trigger(crackling_cyclops_effect)
@@ -3811,6 +3820,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
         "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
         "Crackling Cyclops" => &CRACKLING_CYCLOPS_TRIGGERS,
+        "Kykar, Zephyr Awakener" => &KYKAR_TRIGGERS,
         "Reclamation Sage" => &RECLAMATION_SAGE_TRIGGERS,
         "Moon-Circuit Hacker" => &MOON_CIRCUIT_HACKER_TRIGGERS,
         "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,
@@ -4218,6 +4228,9 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
 }
 
 pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
+    if crate::effect::kykar_v1::definition(card_def) && crate::effect::kykar_v1::recipe(effect) {
+        return true;
+    }
     if crate::standard_creature_choices_v1::trigger_target_spec(card_def, effect).is_some() {
         return true;
     }
@@ -4364,6 +4377,15 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::effect::kykar_v1::definition(card_def) {
+        return match effect {
+            EffectOp::KykarChooseModeV1
+            | EffectOp::KykarSpiritV1
+            | EffectOp::KykarReturnV1 { .. } => Some(TargetSpec::None),
+            EffectOp::KykarExileV1 => Some(TargetSpec::AnotherControlledCreature),
+            _ => None,
+        };
+    }
     if crate::event::is_lathril_v1(card_def) {
         return matches!(
             effect,
@@ -5385,6 +5407,27 @@ fn triggers_from_events(
                 ));
                 return Vec::new();
             }
+        }
+    }
+    match crate::effect::kykar_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Kykar delayed collection rejected: {_error}");
+            let source = state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|e| match e {
+                    CommittedEvent::KykarExiledV1 { source, .. } => Some(source.source),
+                    _ => None,
+                })
+                .unwrap_or(ObjectId(0));
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
         }
     }
     // A resolved Nine-Lives death trigger creates exactly one future

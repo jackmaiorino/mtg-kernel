@@ -3129,11 +3129,11 @@ mod tests {
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
-        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, Curator of Destinies, and Loot Partial registrations at 457-473.
+        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, Curator of Destinies, Loot, Kykar and its distinct Spirit Partial registrations at 457-475.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                474
+                476
             } else {
                 192
             }
@@ -3607,6 +3607,8 @@ mod tests {
                 (471, "Electroduplicate"),
                 (472, "Curator of Destinies"),
                 (473, "Loot, Exuberant Explorer"),
+                (474, "Kykar, Zephyr Awakener"),
+                (475, "Kykar Spirit Token"),
             ]
         } else {
             &[]
@@ -3631,11 +3633,16 @@ mod tests {
             assert_eq!(card_id_by_name(name), Some(id));
             assert!(CARD_DEFS[usize::from(id)].is_executable());
             assert!(!CARD_DEFS[usize::from(id)].has_full_support());
-            assert!(matches!(preflight_fully_supported_deck(&[
-                card_id_by_name("Forest").unwrap(), id]),
-                Err(DeckPreflightError::NotFullySupported {
-                    index: 1, card_def, name: actual, capability: CardCapability::Partial
-                }) if card_def == id && actual == name));
+            let result = preflight_fully_supported_deck(&[card_id_by_name("Forest").unwrap(), id]);
+            if CARD_DEFS[usize::from(id)].is_token {
+                assert!(
+                    matches!(result,Err(DeckPreflightError::TokenInDeck{index:1,card_def,name:actual})if card_def==id && actual==name)
+                );
+            } else {
+                assert!(
+                    matches!(result,Err(DeckPreflightError::NotFullySupported {index:1,card_def,name:actual,capability:CardCapability::Partial})if card_def==id && actual==name)
+                );
+            }
         }
         #[cfg(feature = "limited-fdn-fixtures")]
         {

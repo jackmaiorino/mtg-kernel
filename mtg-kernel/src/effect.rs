@@ -16,6 +16,7 @@
 //! crate-level invariants in `lib.rs`).
 
 pub(crate) mod curator_v1;
+pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
 mod standard_ward;
 use standard_ward::WardPaymentChoice;
@@ -2714,6 +2715,12 @@ pub enum EffectOp {
     CuratorDestiniesV1 {
         entry_history_index: u64,
     },
+    KykarChooseModeV1,
+    KykarExileV1,
+    KykarSpiritV1,
+    KykarReturnV1 {
+        schedule_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4279,6 +4286,9 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if kykar_v1::recipe(op) || kykar_v1::item_selected(state, &resolving_item) {
+        return Err("Kykar requires its authentic native row".into());
+    }
     if loot_v1::is_recipe(op)
         || loot_v1::item_selected(state, &resolving_item)
         || loot_v1::waiting(state, ctx)
@@ -4508,6 +4518,14 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| kykar_v1::pending_selected(state, p))
+    {
+        return Err("Kykar atomic program has no public continuation".into());
+    }
     if state
         .engine
         .pending_effect
@@ -9944,6 +9962,14 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| kykar_v1::pending_selected(state, p))
+    {
+        return Err("Kykar atomic program cannot retain a continuation".into());
+    }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         lathril_context_v1(state, p.ctx.stack_item_id)
             || event::lathril_item_selected_v1(state, &p.resolving_item)
@@ -18834,6 +18860,13 @@ fn execute_with_native_row_v1(
         return;
     }
     let native_row = native_proof.map(|proof| proof.owner);
+    if kykar_v1::recipe(op) && native_proof.is_none_or(|p| p.ctx != ctx || *p.owner.root != *op) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if matches!(
         op,
         EffectOp::ElectroduplicateCopyV1 | EffectOp::CopiedTokenEndStepSacrificeV1 { .. }
@@ -18846,6 +18879,21 @@ fn execute_with_native_row_v1(
         return;
     }
     match op {
+        EffectOp::KykarChooseModeV1
+        | EffectOp::KykarExileV1
+        | EffectOp::KykarSpiritV1
+        | EffectOp::KykarReturnV1 { .. } => {
+            if let Err(_error) =
+                kykar_v1::execute(op, ctx, state, native_proof.expect("Kykar proof checked"))
+            {
+                #[cfg(test)]
+                eprintln!("Kykar native execution rejected: {_error}");
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::BindCuratorDestiniesV1 | EffectOp::CuratorDestiniesV1 { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -25648,6 +25696,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if kykar_v1::waiting(state, ctx) {
+        return true;
+    }
     if loot_v1::waiting(state, ctx) || curator_v1::waiting(state, ctx) {
         return true;
     }

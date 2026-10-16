@@ -269,6 +269,7 @@ pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
 }
 fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String> {
     crate::effect::curator_v1::refuse_legacy(state)?;
+    crate::effect::kykar_v1::refuse_legacy(state)?;
     crate::effect::loot_v1::refuse_legacy(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state)?;
     if state.objects.iter().any(|(_, o)| {
