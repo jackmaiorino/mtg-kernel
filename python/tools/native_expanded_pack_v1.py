@@ -584,22 +584,35 @@ def post_linux(cpu, timeout, command):
     group (or a host_slots kill or suspension of it) reaches the command too. The
     wrapper is the subreaper of every process the command starts, so none leaves
     its reach, not even one in a session of its own: all are stopped at the
-    timeout, once the command exits, and when the wrapper is interrupted or
-    terminated. Returns the command's exit code, None when stopped."""
+    timeout, once the command exits, and when the wrapper gets SIGHUP, SIGINT or
+    SIGTERM, however many arrive. Returns the command's exit code, None when
+    stopped; exits 128 plus the number of the signal it stopped for."""
     dispatch.set_affinity([cpu])  # read back; every process of the command inherits it
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "cannot become the post command's subreaper")
-    for number in (signal.SIGINT, signal.SIGTERM):  # unwind through the finally below
-        signal.signal(number, lambda received, _frame: sys.exit(128 + received))
+    stopping = []
+
+    def stop(number, _frame):
+        # One exit, unwinding through the finally below. Once the stop there is due,
+        # a signal only waits for it: its exit would cut the stop short.
+        if not stopping:
+            stopping.append(number)
+            sys.exit(128 + number)
+
+    for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(number, stop)
     child = None
     try:
         child = subprocess.Popen(command, preexec_fn=lambda: os.nice(10))
-        return child.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return None
+        try:
+            code = child.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            code = None
+        stopping.append(None)  # the command ended or timed out: the stop is due
+        return code
     finally:
-        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})  # finish stopping first
+        stopping.append(None)
         stop_tree(child)
 
 
