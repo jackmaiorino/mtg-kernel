@@ -711,8 +711,12 @@ impl FastActorSessionV1 {
         Ok((observation, actions, binding))
     }
 
-    /// Revalidation is read-only. The projector calls this immediately
-    /// before applying its privately mapped index through session.step.
+    /// Independent read-only revalidation for Limited predecessor fixtures.
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn elenda_validate_bound_decision_v52(
         &self,
         expected: FastActorDecisionV1,

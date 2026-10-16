@@ -714,25 +714,6 @@ impl FastActorSessionV1 {
         };
         Ok((observation, actions, binding))
     }
-
-    /// Revalidation is read-only. The projector calls this immediately
-    /// before applying its privately mapped index through session.step.
-    pub(crate) fn prepared_validate_bound_decision_v57(
-        &self,
-        expected: FastActorDecisionV1,
-        human_seat: PlayerSeatV1,
-        binding: &PreparedDecisionBindingV57,
-    ) -> Result<(), FlatActionDecisionSliceErrorV1> {
-        let (_, _, current) = self.prepared_current_decision_input_v57(expected, human_seat)?;
-        if current.expected != binding.expected
-            || current.candidates != binding.candidates
-            || current.observation != binding.observation
-            || current.families != binding.families
-        {
-            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
-        }
-        Ok(())
-    }
 }
 
 /// Sole owner of a V57 decision stream. Private bindings never cross serde.
