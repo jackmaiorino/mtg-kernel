@@ -495,7 +495,8 @@ jobs:
           MTG_LIMITED_PREPARED_TIMING_V5=1 python python/tools/check_limited_prepared_client_v5.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_prepared_env_v5$binary_suffix"
 
       # Enumerate the compiled subtree in each job and partition exact names.
-      # Preserve the 30-minute bound while retaining immediate panic details.
+      # Give each exact case its own 30-minute bound with at most four children,
+      # retaining immediate panic details and the complete original inventories.
       - name: Validate complete current mixed model subtree
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-model') }}
         run: |
@@ -504,7 +505,7 @@ jobs:
             shard='${{ matrix.group }}'
             shard="${shard##*-}"
           fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --nocapture current_mixed_policy_v1::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --isolated-cases --nocapture current_mixed_policy_v1::
 
       - name: Validate complete Human subtree in the same compiled shards
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-model') }}
@@ -514,7 +515,7 @@ jobs:
             shard='${{ matrix.group }}'
             shard="${shard##*-}"
           fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --skip-ignored --nocapture human_bo3_v1::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --isolated-cases --skip-ignored --nocapture human_bo3_v1::
 
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'
