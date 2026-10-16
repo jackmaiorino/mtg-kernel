@@ -664,6 +664,9 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // Their genuine capture/publication is authenticated by Hunter custody.
         EffectOp::HighSocietyHunterFromCaptureV45 { .. } => true,
         EffectOp::NivMizzetVisionaryDrawV1 { .. } => true,
+        // This exact owned root only mills. Draw capture, source, target and
+        // private begin/resume authority remain Tutelage-owned.
+        EffectOp::SphinxsTutelageMillV1 { .. } => true,
         // These leaves authenticate their original collected capture before
         // countering an exact source or moving a legal graveyard target. ETB
         // triggers from the returned card are separately published roots.

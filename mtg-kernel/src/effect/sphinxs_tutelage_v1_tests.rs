@@ -119,6 +119,15 @@ fn paid_tutelage(state: &mut GameState, actor: PlayerId) -> ObjectId {
     let source = put(state, actor, "Sphinx's Tutelage", Zone::Hand);
     let before = taps(state, actor);
     engine::step(state, Action::CastSpell(source)).unwrap();
+    assert!(
+        matches!(engine::advance_until_decision(state), Decision::CastSpellOrPass { player, .. } if player == actor)
+    );
+    assert!(state.engine.pending_cast.is_none());
+    assert_eq!(state.stack.last().unwrap().source, source);
+    assert_eq!(
+        state.stack.last().unwrap().kind,
+        crate::state::StackItemKind::Spell
+    );
     assert_eq!(state.objects.get(source).zone, Zone::Stack);
     assert_eq!(taps(state, actor) - before, 3);
     finish(state, false);
@@ -138,6 +147,22 @@ fn activate_to_discard(state: &mut GameState, actor: PlayerId, source: ObjectId)
     let before = taps(state, actor);
     let hand = state.players[actor.index()].hand.len();
     engine::step(state, Action::ActivateAbility(source, 0)).unwrap();
+    assert!(
+        matches!(engine::advance_until_decision(state), Decision::CastSpellOrPass { player, .. } if player == actor)
+    );
+    assert!(state.engine.pending_activation.is_none());
+    let ability = state
+        .stack
+        .last()
+        .expect("genuine paid activation was published");
+    assert_eq!(ability.source, source);
+    assert_eq!(ability.controller, actor);
+    assert_eq!(ability.kind, crate::state::StackItemKind::ActivatedAbility);
+    assert_eq!(ability.v4.activated_ability_index, Some(0));
+    assert_eq!(
+        ability.v4.ability_source_contract.unwrap().controller,
+        actor
+    );
     assert_eq!(taps(state, actor) - before, 6);
     assert!(!state.objects.get(source).tapped);
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
@@ -204,6 +229,7 @@ fn exact_partial_printing_and_paid_activation_pair_stops_both_seats() {
             (vec!["Forest", "Elvish Mystic", "Island"], 2),
             (vec!["Elvish Mystic", "Think Twice", "Island"], 2),
             (vec!["Soulstone Sanctuary", "Ravenous Amulet", "Forest"], 2),
+            (vec!["Ravenous Amulet", "Viridian Longbow", "Forest"], 2),
             (
                 vec![
                     "Zimone, Paradox Sculptor",
@@ -225,6 +251,11 @@ fn exact_partial_printing_and_paid_activation_pair_stops_both_seats() {
             ),
         ] {
             let mut state = ready(actor, &cards);
+            if milled == 4 {
+                // Authentic existing permanent setup exercises the native
+                // damage-modifier router. Only Tutelage is claimed paid here.
+                put(&mut state, actor, "Twinflame Tyrant", Zone::Battlefield);
+            }
             let source = paid_tutelage(&mut state, actor);
             assert!(crate::drake_public_v53::capture(&state).is_err());
             activate_to_discard(&mut state, actor, source);
@@ -496,6 +527,28 @@ fn paid_repeat_receipt_pair_and_full_library_corruption_refuse_readonly_both_sea
             let decision = engine::advance_until_decision(&mut state);
             respond(&mut state, decision, true);
         }
+        let answered = restore(&state);
+        validate_pending_effect_choice(&answered).unwrap();
+        let mut changed_order = answered.clone();
+        if let EffectFrame::SphinxsTutelageMillV1 {
+            ordered: Some(ordered),
+            ..
+        } = changed_order
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .last_mut()
+            .unwrap()
+        {
+            ordered.reverse();
+        } else {
+            panic!("real selected mill pair has no answered frame");
+        }
+        let unchanged = changed_order.clone();
+        assert!(validate_pending_effect_choice(&changed_order).is_err());
+        assert_eq!(changed_order, unchanged);
         to_mill_order(&mut state);
         let original = restore(&state);
         assert_eq!(state.players[actor.opponent().index()].graveyard.len(), 2);
@@ -572,10 +625,12 @@ fn genuine_paid_counterspell_keeps_cast_costs_and_grants_no_ability_both_seats()
             matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
         );
         engine::step(&mut state, Action::CastSpell(source)).unwrap();
-        assert_eq!(taps(&state, actor) - before, 3);
         assert!(
             matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
         );
+        assert!(state.engine.pending_cast.is_none());
+        assert_eq!(state.stack.last().unwrap().source, source);
+        assert_eq!(taps(&state, actor) - before, 3);
         engine::step(&mut state, Action::Pass).unwrap();
         assert!(
             matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor.opponent())

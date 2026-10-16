@@ -19,6 +19,8 @@ then discards one. Putting a card into hand without drawing does not trigger it.
 
 Production semantics live in already explicitly hashed `event.rs`, `effect.rs`,
 `engine.rs`, `trigger.rs`, and the existing public refusal/visitor sources.
+The existing explicitly framed Crystal child classifies only the exact bound
+Tutelage root as nondamage, retaining Tutelage's own native authority checks.
 There is no new production child file or inferred transitive identity input.
 For example, `current_mixed_policy_v1.rs::feature_identity` already explicitly
 frames each changed core input once; the V53 and V61 rules-meaning identities
@@ -54,14 +56,20 @@ training permission. Existing public projections refuse visible Tutelage and
 its private native history instead of dropping it into old semantics. Full-only
 deck resolution refuses the new genuine forty-card reference deck.
 
-Eight source fixture groups cover genuine paid2U casting and5U activation for both
+Eight native source fixture groups plus one frozen-meaning audit cover genuine paid2U casting and5U activation for both
 seats, actual discard and mill-order restore/replay, empty and one-card libraries,
 land/colorless/disjoint stops, multicolor and repeated pairs, original graveyard
-order, a paid Broken Wings response, and readonly context/root/pair/history/
+order and its exact consumed answered-frame guard, a paid Broken Wings response, and readonly context/root/pair/history/
 progress/full-library corruptions. Paid Deep Analysis exercises each draw and the
 real two-trigger order; paid Counterspell preserves the original cast costs
-and prevents a countered enchantment from granting its activation. Event-time control and zone scenes use
+and prevents a countered enchantment from granting its activation. Existing Twinflame Tyrant setup exercises the native nondamage routing without
+claiming a paid Tyrant producer. Event-time control and zone scenes use
 explicit native primitives and are labelled as such, not claimed paid spells.
+
+The keyed engine-name inventory explicitly classifies the native draw trigger
+and event capture. Frozen V1 retains its ControllerDraws/TargetOpponent facets
+and opaque repeat-mill body. The NativeStore inventory keeps the original Full
+IDs/refusals and explicitly appends Partial466.
 
 All Rust is uncompiled and unrun in this source checkpoint. Pinned formatting,
 Python registry/refusal checks (181 passed) and static prefix/diff audits are source checks,

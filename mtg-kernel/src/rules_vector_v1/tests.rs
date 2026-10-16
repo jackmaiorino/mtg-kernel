@@ -906,6 +906,9 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    // Native per-successful-controller-draw template and captured target
+    // are walked; the repeat-mill body remains opaque in frozen v1.
+    "Sphinx's Tutelage",
     // Native combat trigger is walked through triggers_for and its exact
     // target extractor. New target refinement stays opaque in frozen v1.
     "Zimone, Paradox Sculptor",
@@ -1155,6 +1158,8 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("event.rs", "Sphinx's Tutelage",
+     "event-time draw source validation; ControllerDraws/TargetOpponent are extracted, exact captured repeat-mill remains opaque"),
     (
         "engine.rs",
         "Treasure Token",
@@ -1569,4 +1574,48 @@ fn registered_partial_season_still_refuses_frozen_v1_extraction() {
 )]
 fn replication_partial_still_refuses_frozen_rules_vector_v1() {
     card_rules(card_id("Extravagant Replication"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn tutelage_native_draw_trigger_and_captured_target_keep_repeat_opaque_in_frozen_v1() {
+    let id = card_id("Sphinx's Tutelage");
+    let [trigger] = crate::trigger::triggers_for(id) else {
+        panic!("Tutelage has one genuine draw trigger");
+    };
+    assert_eq!(
+        trigger.condition,
+        crate::trigger::TriggerCondition::ControllerDraws
+    );
+    assert_eq!((trigger.effect)(), EffectOp::BindSphinxsTutelageMillV1);
+    assert_eq!(
+        crate::trigger::trigger_target_spec(id),
+        TargetSpec::TargetOpponent
+    );
+    assert_eq!(
+        crate::trigger::target_spec_for_trigger(id, &EffectOp::BindSphinxsTutelageMillV1),
+        Some(TargetSpec::TargetOpponent)
+    );
+    let bound = EffectOp::SphinxsTutelageMillV1 {
+        capture_history_index: 0,
+    };
+    assert_eq!(
+        crate::trigger::target_spec_for_trigger(id, &bound),
+        Some(TargetSpec::TargetOpponent)
+    );
+    let actual = rules("Sphinx's Tutelage");
+    let triggered = actual
+        .abilities
+        .iter()
+        .filter(|ability| ability.ctx == CtxF::Trigger)
+        .collect::<Vec<_>>();
+    assert_eq!(triggered.len(), 1);
+    assert!(triggered[0].atoms.contains(&Atom::Trigger(TrigF::Draw {
+        by: RelF::You,
+        nth: 0
+    })));
+    assert!(triggered[0].atoms.contains(&Atom::Opaque));
 }

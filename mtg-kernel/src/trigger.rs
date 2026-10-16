@@ -4328,8 +4328,11 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
     if crate::event::is_sphinxs_tutelage_v1(card_def) {
-        return matches!(effect, EffectOp::SphinxsTutelageMillV1 { .. })
-            .then_some(TargetSpec::TargetOpponent);
+        return matches!(
+            effect,
+            EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. }
+        )
+        .then_some(TargetSpec::TargetOpponent);
     }
     if crate::card_def::CARD_DEFS
         .get(usize::from(card_def))

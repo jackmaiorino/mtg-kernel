@@ -5776,13 +5776,16 @@ fn complete_resumable_target_selection(
             start_history_index,
             previous_batch,
         } => {
-            continuation
-                .frames
-                .push(EffectFrame::SphinxsTutelageMillV1 {
-                    start_history_index,
-                    previous_batch,
-                    ordered: Some(objects),
+            let frame = EffectFrame::SphinxsTutelageMillV1 {
+                start_history_index,
+                previous_batch,
+                ordered: Some(objects),
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
                 });
+            continuation.frames.push(frame);
         }
 
         EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
@@ -8756,6 +8759,10 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
+                        | EffectFrame::SphinxsTutelageMillV1 {
+                            ordered: Some(_),
+                            ..
+                        }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterUnlessPaysLife { .. }
@@ -8801,6 +8808,10 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
+                        | EffectFrame::SphinxsTutelageMillV1 {
+                            ordered: Some(_),
+                            ..
+                        }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -11701,6 +11712,10 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 | EffectFrame::DiscardPaymentV1 { .. }
                 | EffectFrame::NonlandSacrificePaymentV1 { .. }
                 | EffectFrame::AleshaRaidAnswerV1 { .. }
+                | EffectFrame::SphinxsTutelageMillV1 {
+                    ordered: Some(_),
+                    ..
+                }
         ) && continuation.answered_choice_guard.take()
             != Some(EffectAnsweredChoiceGuard::StandardSelection {
                 frame: Box::new(frame.clone()),
@@ -24541,10 +24556,21 @@ fn validate_tutelage_continuation_v1(
         return Ok(());
     }
     event::validate_published_tutelage_v1(state, &pending.resolving_item)?;
+    let expected_guard = match (pending.choice.as_ref(), pending.frames.as_slice()) {
+        (
+            None,
+            [frame @ EffectFrame::SphinxsTutelageMillV1 {
+                ordered: Some(_), ..
+            }],
+        ) => Some(EffectAnsweredChoiceGuard::StandardSelection {
+            frame: Box::new(frame.clone()),
+        }),
+        _ => None,
+    };
     if pending.ctx.x_value != pending.resolving_item.v4.x_value
-        || pending.answered_choice_guard.is_some()
+        || pending.answered_choice_guard != expected_guard
     {
-        return Err("Tutelage has unrelated answer guard".into());
+        return Err("Tutelage lost its exact chosen mill-order answer".into());
     }
     match (pending.choice.as_ref(), pending.frames.as_slice()) {
         (
