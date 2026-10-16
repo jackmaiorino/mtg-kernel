@@ -61,6 +61,10 @@ pub fn producer_sha256() -> String {
             include_str!("life_loss_turn_v1.rs"),
             include_str!("soul_shackled_zombie_v1.rs"),
             include_str!("progenitus_v1.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("effect/nonland_copy_v1.rs"),
+            include_str!("effect/inspiration_resolution_v1.rs"),
         ] {
             h.update([0]);
             h.update(text.as_bytes());

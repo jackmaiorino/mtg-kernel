@@ -76,7 +76,9 @@ pub(crate) fn plan(
     {
         return Err(change.object);
     }
-    o.zone_change_count.checked_add(1).ok_or(change.object)?;
+    if o.zone != Zone::Library {
+        o.zone_change_count.checked_add(1).ok_or(change.object)?;
+    }
     let shuffle = state
         .preflight_library_shuffle(o.owner)
         .map_err(|_| change.object)?;
@@ -150,6 +152,35 @@ impl PlanV1 {
             .map_err(|_| source.source)
     }
 }
+/// Private lexical completion held only by the original batch dispatcher.
+pub(crate) struct CompletionV1 {
+    plan: PlanV1,
+    input: u64,
+    moved: Option<usize>,
+}
+impl CompletionV1 {
+    pub(crate) fn new(plan: PlanV1, input: u64, moved: Option<usize>) -> Self {
+        Self { plan, input, moved }
+    }
+}
+/// Keep every selected move fixed, then perform one checked shuffle per actual
+/// replacement in original batch order. No trigger collection or priority occurs
+/// between these phases. Repeated owner shuffles are not collapsed.
+pub(crate) fn finish_batch(
+    state: &mut GameState,
+    completions: Vec<CompletionV1>,
+) -> Result<(), ObjectId> {
+    for mut completion in completions {
+        let source = completion.plan.input.source;
+        completion.plan.shuffle = state
+            .preflight_library_shuffle(source.owner)
+            .map_err(|_| source.source)?;
+        completion
+            .plan
+            .finish(state, completion.input, completion.moved)?;
+    }
+    Ok(())
+}
 /// Final-PT previews preserve original batch ordering and original ability state.
 /// Previewed RNG successors only check that every actual shuffle can commit.
 pub(crate) fn preview(
@@ -162,12 +193,7 @@ pub(crate) fn preview(
         let Some(plan) = plan(state, event, None)? else {
             continue;
         };
-        if events.iter().enumerate().any(|(other_index,other)| other_index!=index && matches!(other,ProposedEvent::ZoneChange(z) if state.objects.get(z.object).zone==Zone::Library && state.objects.get(z.object).owner==plan.input.source.owner)) {
-            // A simultaneous mill needs a deferred owner-library shuffle after
-            // every actual member move and a distinct actual-milled selection.
-            // Never silently serialize this real mixed-printing interaction.
-            return Err(plan.input.source.source);
-        }
+        if events[..index].iter().any(|earlier| matches!(earlier,ProposedEvent::ZoneChange(z)if z.object==plan.input.source.source)) { return Err(plan.input.source.source); }
         let scene = rng_scene.get_or_insert_with(|| state.clone());
         let token = scene
             .preflight_library_shuffle(plan.input.source.owner)
@@ -180,7 +206,93 @@ pub(crate) fn preview(
     Ok(out)
 }
 
+/// Only the bounded new family changes an existing order domain. Ordinary
+/// batches keep their original path and bytes. Other replacement semantics
+/// remain delegated to the actual native replacement interpreter on a clone.
+/// The replacement's reveal precedes a suspended actual-entrant order
+/// choice. Reveal only each replaced source, never unrelated hidden identities.
+pub(crate) fn reveal_order_sources(
+    state: &mut GameState,
+    original: &[crate::effect::EffectObjectBinding],
+) -> Result<(), String> {
+    for binding in original {
+        if plan(
+            state,
+            &ProposedEvent::zone_change(binding.object, Zone::Graveyard),
+            None,
+        )
+        .map_err(|_| "Progenitus reveal quote")?
+        .is_none()
+        {
+            continue;
+        }
+        let object = state.objects.get(binding.object);
+        let owner = object.owner;
+        match object.zone {
+            Zone::Library => {
+                let position = state.players[owner.index()]
+                    .library
+                    .iter()
+                    .position(|id| *id == binding.object)
+                    .ok_or("Progenitus revealed library source missing")?;
+                for viewer in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
+                    state.reveal_library_position(viewer, owner, position);
+                }
+            }
+            Zone::Hand => {
+                for viewer in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
+                    state.reveal_hand_card(viewer, owner, binding.object)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+pub(crate) fn graveyard_members(
+    state: &GameState,
+    original: &[crate::effect::EffectObjectBinding],
+) -> Result<Option<Vec<crate::effect::EffectObjectBinding>>, String> {
+    let mut selected = false;
+    for binding in original {
+        if plan(
+            state,
+            &ProposedEvent::zone_change(binding.object, Zone::Graveyard),
+            None,
+        )
+        .map_err(|_| "Progenitus replacement quote")?
+        .is_some()
+        {
+            selected = true;
+        }
+    }
+    if !selected {
+        return Ok(None);
+    }
+    let mut scene = state.clone();
+    let mut members = Vec::new();
+    for binding in original {
+        let event = ProposedEvent::zone_change(binding.object, Zone::Graveyard);
+        if plan(state, &event, None)
+            .map_err(|_| "Progenitus replacement quote")?
+            .is_some()
+        {
+            continue;
+        }
+        if matches!(event::apply_replacements(&mut scene,event),Some(ProposedEvent::ZoneChange(z))if z.to_zone==Zone::Graveyard)
+        {
+            members.push(*binding);
+        }
+        if scene.engine.halted.is_some() {
+            return Err("native graveyard replacement quote halted".into());
+        }
+    }
+    Ok(Some(members))
+}
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        if matches!(event,CommittedEvent::ProgenitusInputV1{..}) && state.engine.event_history.iter().filter(|entry|matches!(entry,CommittedEvent::ProgenitusShuffledV1{input_history_index,..}if *input_history_index==at as u64)).count()!=1 { return Err("Progenitus input has no unique actual shuffle".into()); }
+    }
     for (at, event) in state.engine.event_history.iter().enumerate() {
         let CommittedEvent::ProgenitusShuffledV1 {
             input_history_index,

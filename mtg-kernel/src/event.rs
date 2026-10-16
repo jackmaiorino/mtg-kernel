@@ -3611,6 +3611,7 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             None,
             (None, None),
             ((None, false), None, input, None, Some(&plan)),
+            None,
         );
         if state.engine.halted.is_none() {
             if let Some((player, amount)) = lifelink_gain {
@@ -3798,6 +3799,7 @@ fn commit_with_ability_lki_and_entry_batch(
         authority_batch,
         entry_batches,
         (entry_context, None, None, None, None),
+        None,
     );
 }
 
@@ -3881,6 +3883,7 @@ fn commit_with_entry_batch_and_source_color(
         Option<&mut crate::arahbo_v1::EntryBatchV1>,
     ),
     entry_context: EntryContextWithSourceColorV1<'_>,
+    mut progenitus_completions: Option<&mut Vec<crate::progenitus_v1::CompletionV1>>,
 ) {
     let (
         mut entry_context,
@@ -4022,7 +4025,9 @@ fn commit_with_entry_batch_and_source_color(
     {
         let plan = progenitus_plan.expect("private same-library plan");
         let input = plan.record_input(state);
-        if let Err(source) = plan.finish(state, input, None) {
+        if let Some(queue) = progenitus_completions.as_mut() {
+            queue.push(crate::progenitus_v1::CompletionV1::new(plan, input, None));
+        } else if let Err(source) = plan.finish(state, input, None) {
             halt_zone_pt_v1(state, source);
         }
         return;
@@ -4536,11 +4541,14 @@ fn commit_with_entry_batch_and_source_color(
         }
     }
     if let Some(plan) = progenitus_plan {
-        if let Err(source) = plan.finish(
-            state,
-            progenitus_input.expect("private Progenitus input"),
-            Some(entry_history_index),
-        ) {
+        let input = progenitus_input.expect("private Progenitus input");
+        if let Some(queue) = progenitus_completions.as_mut() {
+            queue.push(crate::progenitus_v1::CompletionV1::new(
+                plan,
+                input,
+                Some(entry_history_index),
+            ));
+        } else if let Err(source) = plan.finish(state, input, Some(entry_history_index)) {
             halt_zone_pt_v1(state, source);
         }
     }
@@ -5949,6 +5957,7 @@ fn commit_batch_survivors(
         }
     };
     let greatwurm_history_start = state.engine.event_history.len();
+    let mut progenitus_completions = Vec::new();
     let mut counter_inputs = planned_counter_inputs.into_iter();
     crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
@@ -5987,6 +5996,7 @@ fn commit_batch_survivors(
                     token_input_index,
                     zone_plan.as_ref(),
                 ),
+                Some(&mut progenitus_completions),
             );
         }
     } else {
@@ -6013,10 +6023,17 @@ fn commit_batch_survivors(
                     token_input_index,
                     zone_plan.as_ref(),
                 ),
+                Some(&mut progenitus_completions),
             );
         }
     }
 
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    }
     if greatwurm_wave
         .finish(state, greatwurm_history_start)
         .is_err()
@@ -6101,6 +6118,18 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             return;
         }
     };
+    let mut progenitus_completions = Vec::new();
+    let progenitus_removed = chosen
+        .iter()
+        .filter_map(|id| {
+            crate::progenitus_v1::definition(state.objects.get(*id).card_def).then(|| {
+                (
+                    *id,
+                    !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
+                )
+            })
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
         state,
         &chosen
@@ -6153,15 +6182,25 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         if let Some(event) =
             apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
         {
+            let progenitus_ability_removed = match &event {
+                ProposedEvent::ZoneChange(z) => progenitus_removed.get(&z.object).copied(),
+                _ => None,
+            };
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
-                None,
+                progenitus_ability_removed,
                 Some(captures),
                 None,
                 (None, None),
                 ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+                Some(&mut progenitus_completions),
             );
+        }
+    }
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
         }
     }
 }
@@ -6181,6 +6220,18 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         }
     };
     crate::linked_aura_operation_v1::begin_batch(state);
+    let mut progenitus_completions = Vec::new();
+    let progenitus_removed = dying
+        .iter()
+        .filter_map(|id| {
+            crate::progenitus_v1::definition(state.objects.get(*id).card_def).then(|| {
+                (
+                    *id,
+                    !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
+                )
+            })
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
         state,
         &dying
@@ -6212,17 +6263,24 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         for id in dying {
             let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
             if frozen_color.is_some() || zone_plan.is_some() {
+                let progenitus_ability_removed = progenitus_removed.get(&id).copied();
                 commit_with_entry_batch_and_source_color(
                     state,
                     ProposedEvent::zone_change(id, Zone::Graveyard),
-                    None,
+                    progenitus_ability_removed,
                     None,
                     None,
                     (None, None),
                     ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+                    Some(&mut progenitus_completions),
                 );
             } else {
                 commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+            }
+        }
+        if state.engine.halted.is_none() {
+            if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+                halt_zone_pt_v1(state, source);
             }
         }
         crate::linked_aura_operation_v1::end_batch(state);
@@ -6248,15 +6306,25 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     };
     for (event, captures) in events.into_iter().zip(captures) {
         let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+        let progenitus_ability_removed = match &event {
+            ProposedEvent::ZoneChange(z) => progenitus_removed.get(&z.object).copied(),
+            _ => None,
+        };
         commit_with_entry_batch_and_source_color(
             state,
             event,
-            None,
+            progenitus_ability_removed,
             Some(captures),
             None,
             (None, None),
             ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+            Some(&mut progenitus_completions),
         );
+    }
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
+        }
     }
     crate::linked_aura_operation_v1::end_batch(state);
 }
@@ -9872,10 +9940,10 @@ pub(crate) fn copiable_token_abilities_v1(
 }
 
 pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
-    crate::progenitus_v1::validate(state)?;
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Ok(());
     }
+    crate::progenitus_v1::validate(state)?;
     crate::effect::harvester_v1::validate_state(state)?;
     for (_, object) in state.objects.iter() {
         if object.zone != Zone::Battlefield && object.v4.copied_end_step_sacrifices_v1 != 0 {

@@ -307,6 +307,9 @@ pub fn feature_identity() -> String {
             include_str!("engine/omniscience_cast_v1.rs"),
             include_str!("resolution_cast_v1.rs"),
             include_str!("progenitus_v1.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+            include_str!("effect/inspiration_resolution_v1.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

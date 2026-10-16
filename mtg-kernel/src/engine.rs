@@ -31198,3 +31198,11 @@ mod crystal_native95_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod checked_pt_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/progenitus_v1_tests.rs"]
+mod progenitus_v1_tests;
