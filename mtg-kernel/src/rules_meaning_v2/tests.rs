@@ -230,14 +230,35 @@ mod fdn {
                     || def.as_enters_color_choice_v1.is_some()
                     || def.chosen_color_creature_boost_v1.is_some()
                     || def.keywords.has(crate::card_def::Keywords::SHROUD)
+                    || def.activated_abilities.iter().any(|ability| {
+                        ability.cost.iter().any(|cost| {
+                            matches!(
+                                cost,
+                                crate::card_def::CostComponent::RemoveSourceCountersV1 { .. }
+                            )
+                        })
+                    })
             })
             .map(|(id, _)| id as u16)
             .collect::<Vec<_>>();
         // These exact native fields have typed successors and no V1 record.
         // In particular Elenda and Spinner must never enter the supported
         // snapshot below; both record/vector calls still have to refuse them.
-        for name in ["Elenda, Saint of Dusk", "Spinner of Souls"] {
+        for name in ["Elenda, Saint of Dusk", "Spinner of Souls", "Drake Hatcher"] {
             assert!(precise_successors.contains(&card_id_by_name(name).unwrap()));
+        }
+        // Drake's actual typed costs and combat-counter program belong to V53,
+        // while both frozen predecessor entrypoints must continue to refuse it.
+        let drake = card_id_by_name("Drake Hatcher").unwrap();
+        use crate::rules_meaning_drake_hatcher_v53::{self as drake_meaning, RootV53};
+        for root in [
+            RootV53::Prowess,
+            RootV53::CombatIncubation,
+            RootV53::RemoveIncubationForDrake,
+        ] {
+            let meaning = drake_meaning::printed_meaning(drake, root).unwrap();
+            assert_eq!((meaning.card_id, meaning.root), (drake, root));
+            drake_meaning::validate(&meaning).unwrap();
         }
         // Keep V1's explicit refusal, while comparing every remaining
         // supported record and vector byte-for-byte below.

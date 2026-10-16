@@ -120,16 +120,38 @@ fn attack_choice(a: &ActionSemanticV1, wanted: ObjectId) -> bool {
 fn finish_attack_declaration<O: Owner>(s: &mut O, wanted: ObjectId) {
     // The chosen source may occur before other candidates. Answer those actual
     // rows negatively before asserting that native declaration really committed.
+    let original = s.world().objects.get(wanted);
+    let generation = original.zone_change_count;
+    let actor = original.controller;
+    let turn = s.world().turn_key_v1();
+    assert_eq!(original.zone, Zone::Battlefield);
+    assert_eq!(actor, s.world().active_player);
     for _ in 0..=s.world().objects.len() {
         if !s
             .actions()
             .iter()
             .any(|a| matches!(a, ActionSemanticV1::ChooseAttackerInclusion { .. }))
         {
-            let original = s.world().objects.get(wanted);
-            assert!(s.world().engine.event_history.iter().any(|event| matches!(event,
-                crate::event::CommittedEvent::DeclaredAttacker { source, source_zone_change_count, controller }
-                if *source == wanted && *source_zone_change_count == original.zone_change_count && *controller == original.controller)));
+            let world = s.world();
+            let original = world.objects.get(wanted);
+            assert_eq!(world.turn_key_v1(), turn);
+            assert_eq!(world.active_player, actor);
+            assert_eq!(original.zone, Zone::Battlefield);
+            assert_eq!(
+                (original.zone_change_count, original.controller),
+                (generation, actor)
+            );
+            assert!(world.engine.combat.attackers_declared);
+            assert_eq!(world.engine.combat.attackers.as_slice(), &[wanted]);
+            // Native Limited Raid history records every nonempty declaration.
+            // DeclaredAttacker is emitted only when a printed observer needs it.
+            assert_eq!(
+                world.attack_declaration_turn_v1,
+                Some(crate::state::AttackDeclarationTurnV1 {
+                    turn,
+                    active_player: actor
+                })
+            );
             return;
         }
         step(s, |a| {

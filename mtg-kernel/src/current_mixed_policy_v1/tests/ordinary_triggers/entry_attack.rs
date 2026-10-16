@@ -122,8 +122,13 @@ fn raid<O: Owner>(actor: PlayerId) {
         quiet(&mut s);
     }
     assert!(attacked && s.world().step == Step::Main2 && s.world().active_player == actor);
-    assert!(s.world().engine.event_history.iter().any(|event| matches!(event,
-        crate::event::CommittedEvent::DeclaredAttacker { source, controller, .. } if *source == elf && *controller == actor)));
+    assert_eq!(
+        s.world().attack_declaration_turn_v1,
+        Some(crate::state::AttackDeclarationTurnV1 {
+            turn: s.world().turn_key_v1(),
+            active_player: actor
+        })
+    );
     let library_before = s.world().players[actor.index()].library.len();
     pay_cast(&mut s, actor, source, &mountains);
     let paid = s.snapshot();
@@ -246,6 +251,11 @@ fn sacrifice<O: Owner>(actor: PlayerId) {
             assert!(!s.world().objects.get(source).summoning_sick);
             step(&mut s, |a| a == &attack);
             finish_attack_declaration(&mut s, source);
+            // Gourmand, unlike the vanilla Raid Elf, has a genuine self-attack
+            // trigger and therefore an exact native declaration event.
+            assert!(s.world().engine.event_history.iter().any(|event| matches!(event,
+                crate::event::CommittedEvent::DeclaredAttacker { source: host, source_zone_change_count, controller }
+                if *host == source && *source_zone_change_count == generation && *controller == actor)));
             attacked = true;
         } else {
             quiet(&mut s);
