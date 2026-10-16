@@ -53,6 +53,7 @@ mod root_allocation;
 mod seeds;
 mod sharing;
 mod tree;
+mod utility_root;
 #[cfg(feature = "viewer-recording-v1")]
 pub(super) mod viewer_replay;
 #[cfg(feature = "viewer-recording-v1")]
@@ -92,6 +93,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-budget"
             | "s4a-budget-replay"
             | "s4a-search-profile"
+            | "s4a-utility-root"
     )
 }
 
@@ -983,9 +985,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
     let path = std::env::var("BANK_SPEC").map_err(|_| "BANK_SPEC is required")?;
+    let spec_bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
     let spec: bank::BankSpec =
-        serde_json::from_slice(&std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?)
-            .map_err(|e| format!("{path}: {e}"))?;
+        serde_json::from_slice(&spec_bytes).map_err(|e| format!("{path}: {e}"))?;
     if cfg.decks != (0..RUNTIME_DECKS.len()).collect::<Vec<_>>()
         || spec.decks.len() != cfg.decks.len()
     {
@@ -1011,6 +1013,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         prior: world::DeckPrior::new(&cfg.decks),
         limits: parse_limits()?,
     };
+    if cfg.mode == "s4a-utility-root" {
+        return utility_root::run(cfg, policy, &sh, &spec_bytes);
+    }
     if cfg.mode == "s4a-branch" {
         // Roots: BRANCH_ROOTS (JSONL of branch::RootSpec); this process plays
         // roots [first_game, first_game + games) for arm BRANCH_ARM (B1 or D8).
@@ -1463,7 +1468,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
     match cfg.mode.as_str() {
         "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
-        | "s4a-budget" | "s4a-budget-replay" | "s4a-search-profile" => {
+        | "s4a-budget" | "s4a-budget-replay" | "s4a-search-profile" | "s4a-utility-root" => {
             return run_bank_mode(cfg, policy)
         }
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),

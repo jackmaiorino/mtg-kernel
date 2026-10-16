@@ -476,6 +476,23 @@ fn actions_bytes(actions: &[u32]) -> Vec<u8> {
 /// Bind every future row to the actual installed policies and all inputs.
 /// Historical rows stay untouched and cannot be resumed under this binding.
 pub(super) fn bank_binding(policy: &FrozenPlayPolicyV1, sh: &BankShared) -> Result<String, String> {
+    bank_binding_with_build(
+        policy,
+        sh,
+        env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+        env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
+    )
+}
+
+/// Diagnostic authentication of historical records against the policies and
+/// bank actually loaded now. Only the build metadata is supplied by the
+/// authenticated request; card database and every runtime input remain live.
+pub(super) fn bank_binding_with_build(
+    policy: &FrozenPlayPolicyV1,
+    sh: &BankShared,
+    git_head: &str,
+    tracked_tree_sha256: &str,
+) -> Result<String, String> {
     let identity = |p: &FrozenPlayPolicyV1| {
         json!({"origin":p.identity_v1(),"actual":p.actual_model_identity_v1(),
             "sampler":p.runtime_sampler_identity_v1(),
@@ -492,8 +509,8 @@ pub(super) fn bank_binding(policy: &FrozenPlayPolicyV1, sh: &BankShared) -> Resu
             .map(|(label, p)| json!({"label":label,"policy":identity(p)})).collect::<Vec<_>>(),
         "limits":sh.limits.json(),"prior":sh.prior,"urgency":URGENCY,
         "sampler":super::world::SAMPLER_VERSION,"seed_namespace":super::seeds::NAMESPACE,
-        "git_head":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
-        "tracked_tree_sha256":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
+        "git_head":git_head,
+        "tracked_tree_sha256":tracked_tree_sha256,
         "carddb_hash":format!("{:016x}",crate::card_def::KERNEL_CARDDB_HASH)});
     Ok(sha(
         &serde_json::to_vec(&binding).map_err(|e| e.to_string())?
