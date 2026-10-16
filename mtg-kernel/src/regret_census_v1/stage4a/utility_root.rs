@@ -42,6 +42,24 @@ use std::io::Write;
 const REQUEST_SCHEMA: &str = "shared-root-utility-v1/request";
 const MAX_TRANSITIONS: u64 = 2048;
 
+#[cfg(feature = "gameplay-decision-trace-v1")]
+mod inspect;
+
+pub(super) fn run_inspect(
+    cfg: &CensusConfigV1,
+    policy: &FrozenPlayPolicyV1,
+    sh: &BankShared,
+    bank_spec_bytes: &[u8],
+) -> Result<(), String> {
+    #[cfg(feature = "gameplay-decision-trace-v1")]
+    return inspect::run(cfg, policy, sh, bank_spec_bytes);
+    #[cfg(not(feature = "gameplay-decision-trace-v1"))]
+    {
+        let _ = (cfg, policy, sh, bank_spec_bytes);
+        Err("s4a-utility-root-inspect requires gameplay-decision-trace-v1".into())
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RecordPin {
@@ -129,7 +147,11 @@ fn validate_request(req: &Request, sh: &BankShared) -> Result<(), String> {
     hex_pin(&req.recorded_build.tracked_tree_sha256, 64)?;
     hex_pin(&req.search.sha256, 64)?;
     hex_pin(&req.plain.sha256, 64)?;
-    let src = &req.case;
+    validate_case(&req.case, sh)?;
+    validate_cap(req.max_transitions)
+}
+
+fn validate_case(src: &SourceSpec, sh: &BankShared) -> Result<(), String> {
     if src.id.is_empty()
         || src.search_root.is_empty()
         || src.own >= sh.spec.decks.len()
@@ -140,7 +162,7 @@ fn validate_request(req: &Request, sh: &BankShared) -> Result<(), String> {
     {
         return Err("invalid utility case coordinates or opponent".into());
     }
-    validate_cap(req.max_transitions)
+    Ok(())
 }
 
 fn validate_cap(cap: u64) -> Result<(), String> {
@@ -376,30 +398,41 @@ fn score_range(result: Option<i8>) -> (i64, i64) {
     result.map_or((-1, 1), |x| (i64::from(x), i64::from(x)))
 }
 
-fn diagnose(
-    req: &Request,
-    sh: &BankShared,
-    policy: &FrozenPlayPolicyV1,
+struct AuthenticatedRoot {
+    session: FastActorSessionV1,
+    identity: Value,
+    prefix_len: usize,
+    prefix_sha256: String,
+    search_action: u32,
+    plain_action: u32,
+    search_chooser: Value,
+}
+
+/// Shared authentication ends before policy forks, stream resets or root actions.
+fn reconstruct(
+    src: &SourceSpec,
+    requested_root: Root,
+    spec: &bank::BankSpec,
     search: &Value,
     plain: &Value,
     historical_binding: &str,
-) -> Result<Value, String> {
-    let src = &req.case;
-    let search_actions = row_actions(search, src, &sh.spec.lineage, historical_binding, false)?;
-    let plain_actions = row_actions(plain, src, &sh.spec.lineage, historical_binding, true)?;
-    let index = first_divergence(&search_actions, &plain_actions, req.root)?;
+    prefix_transitions: &mut u64,
+) -> Result<AuthenticatedRoot, String> {
+    let search_actions = row_actions(search, src, &spec.lineage, historical_binding, false)?;
+    let plain_actions = row_actions(plain, src, &spec.lineage, historical_binding, true)?;
+    let index = first_divergence(&search_actions, &plain_actions, requested_root)?;
     // Both full action arrays share this exact prefix, including opponent
     // decisions and forced actions. Replay once, without policy inference.
-    let root = bank::walk(
-        bank::source_session(&sh.spec, src)?,
-        &search_actions[..index],
-        |_, d, action| {
-            if action >= d.legal_action_count {
-                return Err("shared-prefix action outside the live menu".into());
-            }
-            Ok(())
-        },
-    )?;
+    let mut root = bank::source_session(spec, src)?;
+    for &action in &search_actions[..index] {
+        let d = decision(&root).ok_or("replay reached a terminal early")?;
+        if action >= d.legal_action_count {
+            return Err("shared-prefix action outside the live menu".into());
+        }
+        root.step(d.episode_id, d.step, action)
+            .map_err(|e| format!("{e:?}"))?;
+        *prefix_transitions += 1;
+    }
     let d = decision(&root).ok_or("first divergence is terminal")?;
     if d.step != index as u64 || acting(&d) != PlayerId(src.seat) {
         return Err("first divergence is not the requested focal decision".into());
@@ -412,6 +445,43 @@ fn diagnose(
     // Candidates are fixed before privileged state hashes/clones or outcomes.
     let root_identity = bank::decision_identity(&root)?;
     validate_historical_root(search, search_decision, &root_identity)?;
+    Ok(AuthenticatedRoot {
+        session: root,
+        identity: root_identity,
+        prefix_len: index,
+        prefix_sha256: sha(&search_actions[..index]
+            .iter()
+            .flat_map(|a| a.to_le_bytes())
+            .collect::<Vec<_>>()),
+        search_action,
+        plain_action,
+        search_chooser: search_decision["chooser"].clone(),
+    })
+}
+
+fn diagnose(
+    req: &Request,
+    sh: &BankShared,
+    policy: &FrozenPlayPolicyV1,
+    search: &Value,
+    plain: &Value,
+    historical_binding: &str,
+) -> Result<Value, String> {
+    let src = &req.case;
+    let authenticated = reconstruct(
+        src,
+        req.root,
+        &sh.spec,
+        search,
+        plain,
+        historical_binding,
+        &mut 0,
+    )?;
+    let root = authenticated.session;
+    let root_identity = authenticated.identity;
+    let index = authenticated.prefix_len;
+    let search_action = authenticated.search_action;
+    let plain_action = authenticated.plain_action;
     let root_core_hash = format!("{:016x}", root.privileged_core_environment_hash());
     let opp = sh
         .labels
@@ -446,10 +516,9 @@ fn diagnose(
         "root_policy_steps":root.policy_step_count(),
         "root_physical_decisions":root.physical_decision_count(),
         "shared_prefix_transitions":index,
-        "shared_prefix_actions_sha256":sha(&search_actions[..index].iter()
-            .flat_map(|a| a.to_le_bytes()).collect::<Vec<_>>()),
+        "shared_prefix_actions_sha256":authenticated.prefix_sha256,
         "saved_search_action":search_action,"saved_plain_action":plain_action,
-        "saved_search_chooser":search_decision["chooser"],
+        "saved_search_chooser":authenticated.search_chooser,
         "search":a,"comparison":b,
         "same_action_parity":(req.mode == Mode::SameAction).then_some(true),
         "paired_resolved":a.result.is_some() && b.result.is_some(),
