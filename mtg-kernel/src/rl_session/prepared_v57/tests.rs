@@ -525,7 +525,7 @@ fn borrowed_common_complete_paid_faebloom_and_restored_binding_parity_both_seats
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut raw = ready(actor);
         let spell = put(&mut raw, actor, "Faebloom Trick", Zone::Hand);
-        put(
+        let target = put(
             &mut raw,
             actor.opponent(),
             "Llanowar Elves",
@@ -578,7 +578,9 @@ fn borrowed_common_complete_paid_faebloom_and_restored_binding_parity_both_seats
         let saved = session.snapshot_v57();
         let stale = session.decision_v57().unwrap();
         act(&mut session, |a| {
-            matches!(a, ActionSemanticV1::FinishTargetSelection { .. })
+            matches!(a, ActionSemanticV1::ChooseTarget {
+                target: TargetRefV1::Object { object }, ..
+            } if object.arena_id == target.0)
         });
         drain(&mut session);
         session.restore_v57(&saved).unwrap();
