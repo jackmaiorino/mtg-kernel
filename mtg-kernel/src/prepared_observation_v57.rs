@@ -129,6 +129,19 @@ pub fn commitment(value: &PreparedObservationV57) -> Result<String, RlContractEr
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::drake_hatcher_v1::custody::with_validation_replay_keys(state, validate_state_in_frame)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn validate_state_unframed_for_test(state: &GameState) -> Result<(), String> {
+    validate_state_in_frame(state)
+}
+
+fn validate_state_in_frame(state: &GameState) -> Result<(), String> {
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     crate::ravenous_observation_v51::validate_state_complete_prepared_v57(state)?;
