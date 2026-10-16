@@ -245,6 +245,36 @@ fn paid_foreign_physical_owner_season_return_and_explicit_stale_zone_primitive_b
         let before = serde_json::to_vec(&bad).unwrap();
         assert!(capture(&bad, actor).is_err());
         assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        // Preserve the genuine marker and all independent history while an
+        // extra current-log row attempts to invent another source or death.
+        let marker = uncollected.engine.event_log.iter().find(|row|
+            matches!(row, E::ControlledCreatureDeathCaptureV1 { source, .. } if source.card_def == 459)
+        ).unwrap().clone();
+        for mutation in 0..3 {
+            let mut bad = uncollected.clone();
+            let mut extra = marker.clone();
+            let E::ControlledCreatureDeathCaptureV1 { source, died, .. } = &mut extra else {
+                unreachable!()
+            };
+            match mutation {
+                0 => source.controller = source.controller.opponent(),
+                1 => died.zone_change_count += 1,
+                _ => {}
+            }
+            bad.engine.event_log.push(extra);
+            assert_eq!(bad.engine.event_history, uncollected.engine.event_history);
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(crate::creature_death_capture_v1::pending(
+                &bad,
+                &bad.engine.event_log,
+                bad.engine.event_log.len() - 1
+            )
+            .is_err());
+            for viewer in [actor, owner] {
+                assert!(capture(&bad, viewer).is_err());
+            }
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        }
         let triggers = crate::trigger::collect_and_process(&mut uncollected);
         uncollected.engine.pending_triggers.extend(triggers);
         let facts = capture(&uncollected, actor).unwrap();

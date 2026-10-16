@@ -364,6 +364,17 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV62, String> 
         crate::engine::validate_pending_activation(state, pending)?;
     }
     crate::doubling_season_v48::validate_token_journals(state)?;
+    // The collector visits the complete current log, including a marker that
+    // has no matching independent history row. Checking only markers already
+    // found in history would silently ignore an appended altered/orphan row.
+    for (position, entry) in state.engine.event_log.iter().enumerate() {
+        if matches!(entry, E::ControlledCreatureDeathCaptureV1 { source, .. } if source.card_def == selected)
+        {
+            crate::creature_death_capture_v1::pending(state, &state.engine.event_log, position)
+                .map_err(|_| "V62 current Call log lost its native death authority")?
+                .ok_or("V62 current Call log lost its native collection program")?;
+        }
+    }
     let mut visible_printings = vec![];
     for (id, live) in state.objects.iter() {
         if (live.v4.is_token && live.zone != Zone::Battlefield)
