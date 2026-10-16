@@ -1165,6 +1165,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect/harvester_v1.rs", "Abyssal Harvester", "unregistered native prerequisites; put-into-graveyard turn evidence and copiable Nightmare remain unsupported by old consumers"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde", "native current or last-known copiable source, not a fixed token"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde Token", "source-copy ability inherited by the ordinary token printing"),
     ("effect/sphinx_lore_v1.rs", "Sphinx of Forgotten Lore", "captured attack/target and installed flashback with separate native cost route remain Opaque"),
@@ -1446,6 +1447,10 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[
+    (
+        "effect/harvester_v1.rs",
+        include_str!("../effect/harvester_v1.rs"),
+    ),
     (
         "effect/source_token_copy_v1.rs",
         include_str!("../effect/source_token_copy_v1.rs"),

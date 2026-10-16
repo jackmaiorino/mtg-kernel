@@ -122,6 +122,10 @@ pub fn producer_sha256_v1() -> String {
                 include_str!("effect/sphinx_lore_v1.rs"),
             ),
             (
+                "effect/harvester_v1.rs",
+                include_str!("effect/harvester_v1.rs"),
+            ),
+            (
                 "engine/sphinx_lore_cast_v1.rs",
                 include_str!("engine/sphinx_lore_cast_v1.rs"),
             ),

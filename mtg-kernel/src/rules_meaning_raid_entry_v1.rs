@@ -71,6 +71,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("effect/source_token_copy_v1.rs"),
             include_str!("engine/greatwurm_cast_v1.rs"),
             include_str!("effect/sphinx_lore_v1.rs"),
+            include_str!("effect/harvester_v1.rs"),
             include_str!("engine/sphinx_lore_cast_v1.rs"),
             include_str!("spell_costs_v1.rs"),
             include_str!("effect.rs"),

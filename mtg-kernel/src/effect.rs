@@ -17,6 +17,7 @@
 
 pub(crate) mod curator_v1;
 pub(crate) mod greatwurm_v1;
+pub(crate) mod harvester_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
 pub(crate) mod source_token_copy_v1;
@@ -26963,6 +26964,7 @@ fn electroduplicate_proposal_v1(
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
             copied_end_step_sacrifices_v1: count,
+            copied_nightmare_v1: harvester_v1::copiable_nightmare(state, target)?,
             ..Default::default()
         });
     }
@@ -27031,6 +27033,7 @@ fn execute_copied_token_sacrifice_v1(
 /// Public copy creation and its added abilities have no predecessor schema.
 /// This does not inspect any hidden hand/library identity.
 pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    harvester_v1::require_legacy_absence(state)?;
     if state
         .objects
         .iter()
@@ -27188,6 +27191,7 @@ fn spirit_copy_proposal_v1(
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
             copied_end_step_sacrifices_v1: count,
+            copied_nightmare_v1: harvester_v1::copiable_nightmare(state, *object)?,
             ..Default::default()
         });
     }

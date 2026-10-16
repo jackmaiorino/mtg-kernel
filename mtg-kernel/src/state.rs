@@ -210,6 +210,9 @@ pub struct ObjectStateV4 {
     /// adds haste and its own beginning-of-each-end-step sacrifice ability.
     #[serde(default, skip_serializing_if = "u32_is_zero")]
     pub copied_end_step_sacrifices_v1: u32,
+    /// Copiable layer-1 Nightmare addition. Not a continuous subtype grant.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub copied_nightmare_v1: bool,
     /// Native Banner choice for this exact incarnation, committed before entry
     /// observers. Zone-change reset erases it; absent snapshots stay unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -437,6 +440,10 @@ impl Hash for ObjectStateV4 {
             "copied-end-step-sacrifices/v1".hash(state);
             self.copied_end_step_sacrifices_v1.hash(state);
         }
+        if self.copied_nightmare_v1 {
+            "copied-nightmare/v1".hash(state);
+            self.copied_nightmare_v1.hash(state);
+        }
     }
 }
 
@@ -459,6 +466,7 @@ impl ObjectStateV4 {
         subtype_ids.dedup();
         ObjectStateV4 {
             copied_end_step_sacrifices_v1: 0,
+            copied_nightmare_v1: false,
             kinship_type_v1: None,
             is_token: def.is_token,
             face_index: 0,

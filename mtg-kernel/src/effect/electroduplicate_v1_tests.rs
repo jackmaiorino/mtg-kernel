@@ -972,3 +972,133 @@ fn genuine_paid_horde_season_copies_ignore_response_boost_and_restore_both_seats
         }
     }
 }
+
+/// Native entry-initialization primitive, not a registered or paid Harvester.
+fn nightmare_copy_primitive(s: &mut GameState, p: PlayerId, name: &str) -> ObjectId {
+    let before = s.objects.len();
+    let mut proposal = event::ProposedEvent::create_token(id(name), p);
+    if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+        token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+            copied: true,
+            copied_nightmare_v1: true,
+            ..Default::default()
+        });
+    }
+    event::propose_and_commit_batch(s, vec![proposal]);
+    assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
+    let result = s
+        .objects
+        .iter()
+        .find_map(|(o, live)| {
+            (o.0 as usize >= before
+                && live.zone == Zone::Battlefield
+                && live.controller == p
+                && live.v4.copied_nightmare_v1)
+                .then_some(o)
+        })
+        .unwrap();
+    harvester_v1::validate_state(s).unwrap();
+    result
+}
+
+#[test]
+fn native_nightmare_entry_primitive_paid_copy_of_copy_and_season_keep_copiable_type_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let original = nightmare_copy_primitive(&mut s, actor, "Homunculus Horde");
+        paid(&mut s, actor, "Doubling Season", 5);
+        let reflection = cast(
+            &mut s,
+            actor,
+            "Self-Reflection",
+            &[Target::Object(original)],
+            6,
+        );
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        assert_eq!(s.objects.get(reflection).zone, Zone::Graveyard);
+        assert_eq!(hordes(&s).len(), 3);
+        let before = hordes(&s);
+        cast(&mut s, actor, NAME, &[Target::Object(original)], 3);
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        let electro_copy = hordes(&s)
+            .into_iter()
+            .find(|o| !before.contains(o))
+            .unwrap();
+        assert_eq!(hordes(&s).len(), 5);
+        let mut replay = restore(&s);
+        second_draw_horde(&mut s, actor, 5);
+        second_draw_horde(&mut replay, actor, 5);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        assert_eq!(hordes(&s).len(), 15);
+        for object in hordes(&s) {
+            assert!(harvester_v1::copiable_nightmare(&s, object).unwrap());
+            assert!(engine::has_effective_subtype(
+                &s,
+                object,
+                card_def::Subtype::Nightmare
+            ));
+            assert!(engine::has_effective_subtype(
+                &s,
+                object,
+                card_def::Subtype::Homunculus
+            ));
+        }
+        assert_eq!(
+            s.objects.get(electro_copy).v4.copied_end_step_sacrifices_v1,
+            1
+        );
+        assert!(crate::optional_trigger_public_v1::validate_state(&s).is_err());
+    }
+}
+
+#[test]
+fn native_nightmare_entry_primitive_departed_horde_lki_and_component_tamper_refuse_readonly_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let original = nightmare_copy_primitive(&mut s, actor, "Homunculus Horde");
+        second_draw_horde(&mut s, actor, 1);
+        let row = horde_rows(&s).pop().unwrap();
+        let mut bad = restore(&s);
+        bad.objects.get_mut(original).v4.copied_nightmare_v1 = false;
+        let before = bad.clone();
+        assert!(harvester_v1::validate_state(&bad).is_err());
+        assert_eq!(bad, before);
+        assert!(engine::validated_stack_item_target_spec(&row, &bad).is_err());
+        let response = cast(
+            &mut s,
+            actor.opponent(),
+            "Unsummon",
+            &[Target::Object(original)],
+            1,
+        );
+        response_resolved_with_horde(&mut s, response);
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        let descendant = hordes(&s).pop().unwrap();
+        assert!(harvester_v1::copiable_nightmare(&s, descendant).unwrap());
+        assert_ne!(descendant, original);
+        assert!(!s.objects.get(original).v4.copied_nightmare_v1);
+        let receipt = s
+            .engine
+            .event_history
+            .iter()
+            .position(|e| matches!(e, CommittedEvent::NightmareCopyEnteredV1 { .. }))
+            .unwrap();
+        let mut bad = restore(&s);
+        bad.engine.event_history.remove(receipt);
+        let before = bad.clone();
+        assert!(harvester_v1::validate_state(&bad).is_err());
+        assert_eq!(bad, before);
+    }
+}

@@ -5,7 +5,7 @@ use super::*;
 use crate::state::{AbilitySourceContractV4, StackItemKind};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ValuesV1 {
     FaceDown,
@@ -13,7 +13,33 @@ pub enum ValuesV1 {
         card_def: u16,
         face_index: u8,
         copied_sacrifices: u32,
+        #[serde(default, skip_serializing_if = "nightmare_false")]
+        nightmare: bool,
     },
+}
+
+fn nightmare_false(value: &bool) -> bool {
+    !*value
+}
+impl std::hash::Hash for ValuesV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        std::hash::Hash::hash(&std::mem::discriminant(self), h);
+        if let Self::FaceUp {
+            card_def,
+            face_index,
+            copied_sacrifices,
+            nightmare,
+        } = self
+        {
+            std::hash::Hash::hash(card_def, h);
+            std::hash::Hash::hash(face_index, h);
+            std::hash::Hash::hash(copied_sacrifices, h);
+            if *nightmare {
+                std::hash::Hash::hash("copied-nightmare/v1", h);
+                std::hash::Hash::hash(nightmare, h);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -85,6 +111,7 @@ fn values(state: &GameState, source: ObjectId) -> Result<ValuesV1, String> {
         card_def: o.card_def,
         face_index: o.v4.face_index,
         copied_sacrifices: event::copiable_token_abilities_v1(state, source)?,
+        nightmare: super::harvester_v1::copiable_nightmare(state, source)?,
     };
     validate_values(&value)?;
     Ok(value)
@@ -238,12 +265,14 @@ fn original_values(state: &GameState, source: AbilitySourceContractV4) -> Result
     if let ValuesV1::FaceUp {
         card_def,
         copied_sacrifices,
+        nightmare,
         ..
     } = row.values
     {
         if card_def != row.source.card_def
             || event::historical_copiable_token_abilities_v1(state, row.source)?
                 != copied_sacrifices
+            || super::harvester_v1::historical_nightmare(state, row.source, i)? != nightmare
         {
             return Err("source-copy LKI changed copiable values or original abilities".into());
         }
@@ -277,19 +306,21 @@ pub(super) fn execute(
     let source = ctx
         .ability_source_contract
         .ok_or("copy source contract missing")?;
-    let (definition, face, copied_sacrifices) = match original_values(state, source)? {
+    let (definition, face, copied_sacrifices, nightmare) = match original_values(state, source)? {
         ValuesV1::FaceDown => (
             card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)
                 .filter(|id| crate::self_reflection_v1::anonymous_blueprint_is_exact(*id))
                 .ok_or("neutral source-copy blueprint missing")?,
             0,
             0,
+            false,
         ),
         ValuesV1::FaceUp {
             card_def,
             face_index,
             copied_sacrifices,
-        } => (card_def, face_index, copied_sacrifices),
+            nightmare,
+        } => (card_def, face_index, copied_sacrifices, nightmare),
     };
     let mut proposal = event::ProposedEvent::create_token(definition, ctx.controller);
     if let event::ProposedEvent::CreateToken(token) = &mut proposal {
@@ -297,6 +328,7 @@ pub(super) fn execute(
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
             copied_end_step_sacrifices_v1: copied_sacrifices,
+            copied_nightmare_v1: nightmare,
             ..Default::default()
         });
     }

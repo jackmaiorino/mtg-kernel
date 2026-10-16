@@ -1902,6 +1902,15 @@ pub enum CommittedEvent {
         source: crate::state::StackSourceContractV4,
         stack_item_id: crate::ids::StackItemId,
     },
+    NightmareCopyEnteredV1 {
+        entry: crate::effect::harvester_v1::NightmareV1,
+    },
+    NightmareCopyLayerV1 {
+        layer: crate::effect::harvester_v1::NightmareLayerV1,
+    },
+    HarvesterGraveyardEntryV1 {
+        entry: crate::effect::harvester_v1::GraveyardEntryV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4379,6 +4388,8 @@ fn commit_with_entry_batch_and_source_color(
             state.engine.event_history.push(capture);
         }
     }
+    crate::effect::harvester_v1::record_entry(state, entry_history_index);
+    crate::effect::harvester_v1::record_graveyard_entry(state, entry_history_index);
     if let Some(source) = single_graveyard_entry {
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
@@ -5166,6 +5177,16 @@ fn materialize_event_v1(
                         .initialization_v48
                         .as_ref()
                         .map_or(0, |init| init.copied_end_step_sacrifices_v1);
+                    v4.copied_nightmare_v1 = t
+                        .initialization_v48
+                        .as_ref()
+                        .is_some_and(|init| init.copied_nightmare_v1);
+                    if v4.copied_nightmare_v1 {
+                        v4.effective_subtype_ids
+                            .push(crate::card_def::Subtype::Nightmare.stable_id());
+                        v4.effective_subtype_ids.sort_unstable();
+                        v4.effective_subtype_ids.dedup();
+                    }
                     v4.entered_battlefield_turn = Some(state.turn_key_v1());
                     v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
                     v4
@@ -5188,6 +5209,13 @@ fn materialize_event_v1(
                     face.subtypes.iter().map(|s| s.stable_id()).collect();
                 live.v4.effective_subtype_ids.sort_unstable();
                 live.v4.effective_subtype_ids.dedup();
+                if live.v4.copied_nightmare_v1 {
+                    live.v4
+                        .effective_subtype_ids
+                        .push(crate::card_def::Subtype::Nightmare.stable_id());
+                    live.v4.effective_subtype_ids.sort_unstable();
+                    live.v4.effective_subtype_ids.dedup();
+                }
                 live.name = face.name.to_string();
             }
             if cfg!(feature = "limited-fdn-fixtures") {
@@ -9769,6 +9797,7 @@ pub(crate) fn copiable_token_abilities_v1(
 }
 
 pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    crate::effect::harvester_v1::validate_state(state)?;
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Ok(());
     }
