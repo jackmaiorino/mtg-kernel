@@ -1083,6 +1083,29 @@ impl FrozenPlayPolicyV1 {
         })
     }
 
+    /// An exact duplicate of a policy in the state its loader returned it:
+    /// no sampling started and no collection sampler, search forward,
+    /// prediction cache, probe or trace attached. Anything else is refused.
+    /// For such a policy every field `fork_for_collection_v3` resets already
+    /// holds its constructed value, so the fork equals the original.
+    pub(crate) fn duplicate_loaded_v1(&self) -> Result<Self, String> {
+        require(
+            !self.sampling_initialized
+                && self.collection_sampler.is_none()
+                && !self.fast_search_forward
+                && self.inference_cache.is_none()
+                && self.inference_key.is_empty()
+                && self.inference_probe.is_none(),
+            "only a policy in its loaded state can be duplicated",
+        )?;
+        #[cfg(feature = "gameplay-decision-trace-v1")]
+        require(
+            self.trace.is_none() && self.trace_draw.is_none() && self.trace_draw_count == [0; 2],
+            "only a policy in its loaded state can be duplicated",
+        )?;
+        self.fork_for_collection_v3()
+    }
+
     /// Private continuation with unchanged physical-seat RNG positions.
     /// The caller must bind this fork to a confirmed engine step; this does
     /// not reconstruct an engine state or authorize a continuation workload.
