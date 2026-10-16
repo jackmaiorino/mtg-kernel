@@ -255,6 +255,7 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     super::public_projection_operands::prepare(&mut state)?;
     super::kellan_public_operands::prepare(&mut state)?;
     super::fiery_public_operands::prepare(&mut state)?;
+    super::fishing_public_operands::prepare(&mut state)?;
     if source == Source::PreparedV57 {
         super::prepared::references(&mut state)?;
     }

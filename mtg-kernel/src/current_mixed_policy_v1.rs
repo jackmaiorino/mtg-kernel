@@ -3,6 +3,7 @@
 mod canonical_semantic_booleans;
 mod elenda;
 mod fiery_public_operands;
+mod fishing_public_operands;
 mod kellan_public_operands;
 mod network;
 mod normalize;
@@ -86,6 +87,13 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/faebloom_printing.rs"),
             include_str!("current_mixed_policy_v1/fiery_printing.rs"),
             include_str!("current_mixed_policy_v1/fiery_public_operands.rs"),
+            include_str!("current_mixed_policy_v1/fishing_public_operands.rs"),
+            include_str!("fishing_pole_public_v39.rs"),
+            include_str!("fishing_pole_observation_v39.rs"),
+            include_str!("rules_meaning_fishing_pole_v39.rs"),
+            include_str!("fishing_pole_v39.rs"),
+            include_str!("fishing_pole_v39/lifecycle.rs"),
+            include_str!("rl_session/fishing_pole_v39.rs"),
             include_str!("fiery_public_v1.rs"),
             include_str!("fiery_observation_v1.rs"),
             include_str!("fiery_annihilation_v1.rs"),
