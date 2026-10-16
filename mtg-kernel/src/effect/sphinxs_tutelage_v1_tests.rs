@@ -801,6 +801,53 @@ fn paid_published_mill_changed_root_and_erased_stages_refuse_public_apis_both_se
             assert_eq!(forged, before_begin);
             assert!(acquire_tutelage_begin_v1(&forged, &changed_item).is_err());
             assert_eq!(forged, before_begin);
+            for erase_contract in [false, true] {
+                let mut unknown_ctx = ctx.clone();
+                unknown_ctx.stack_item_id = Some(crate::ids::StackItemId(u64::MAX));
+                let mut unknown_item = changed_item.clone();
+                unknown_item.v4.stack_item_id = unknown_ctx.stack_item_id.unwrap();
+                unknown_item.kind = crate::state::StackItemKind::Spell;
+                if erase_contract {
+                    unknown_ctx.ability_source_contract = None;
+                    unknown_item.v4.ability_source_contract = None;
+                }
+                let mut unknown = restore(&original);
+                let pending = unknown.engine.pending_effect.as_mut().unwrap();
+                pending.ctx = unknown_ctx.clone();
+                pending.resolving_item = unknown_item.clone();
+                pending.choice = None;
+                pending.frames = vec![EffectFrame::Program {
+                    op: foreign.clone(),
+                    path: vec![],
+                }];
+                pending.answered_choice_guard = None;
+                let before = unknown.clone();
+                assert!(validate_pending_effect_choice(&unknown).is_err());
+                assert!(resume_resumable_resolution(&mut unknown).is_err());
+                assert_eq!(unknown, before);
+                execute(&foreign, &unknown_ctx, &mut unknown);
+                assert_eq!(
+                    unknown.engine.halted,
+                    Some((
+                        engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        source
+                    ))
+                );
+                unknown.engine.halted = None;
+                assert_eq!(unknown, before);
+                unknown.engine.pending_effect = None;
+                let before = unknown.clone();
+                assert!(begin_resumable_resolution(
+                    &foreign,
+                    &unknown_ctx,
+                    unknown_item.clone(),
+                    &mut unknown
+                )
+                .is_err());
+                assert_eq!(unknown, before);
+                assert!(acquire_native_execution_owner_v1(&unknown, &unknown_item).is_err());
+                assert_eq!(unknown, before);
+            }
             let mut genuine = original.clone();
             let mut replay = restore(&original);
             finish(&mut genuine, false);
@@ -808,5 +855,68 @@ fn paid_published_mill_changed_root_and_erased_stages_refuse_public_apis_both_se
             assert_eq!(genuine, replay);
             assert_eq!(genuine.players[actor.opponent().index()].graveyard.len(), 3);
         }
+    }
+}
+
+#[test]
+fn paid_draw_discard_above_published_mill_keeps_lexical_native_owner_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Forest", "Island", "Forest", "Island", "Forest"]);
+        let source = paid_tutelage(&mut state, actor);
+        activate_to_discard(&mut state, actor, source);
+        let discard = engine::advance_until_decision(&mut state);
+        respond(&mut state, discard, false);
+        let mut waiting = None;
+        for _ in 0..24 {
+            let decision = engine::advance_until_decision(&mut state);
+            if matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor) {
+                waiting = state
+                    .stack
+                    .iter()
+                    .find(|row| tutelage_item_v1(&state, row))
+                    .cloned();
+                if waiting.is_some() {
+                    break;
+                }
+            }
+            respond(&mut state, decision, false);
+        }
+        let waiting = waiting.expect("genuine first mill is published before its response window");
+        event::validate_published_tutelage_v1(&state, &waiting).unwrap();
+        let before = taps(&state, actor);
+        activate_to_discard(&mut state, actor, source);
+        assert_eq!(taps(&state, actor) - before, 6);
+        assert!(state.stack.iter().any(|row| row == &waiting));
+        assert!(state.engine.pending_effect.is_none());
+        let discard = state.engine.pending_discard.as_ref().unwrap();
+        assert_eq!((discard.player, discard.count), (actor, 1));
+        let engine::DiscardResume::FinishAbilityResolution { stack_item_id } = &discard.resume
+        else {
+            panic!("actual terminal discard retains its resolving activation row")
+        };
+        let ability = state
+            .stack
+            .iter()
+            .find(|row| row.v4.stack_item_id == *stack_item_id)
+            .unwrap();
+        assert_eq!(ability.kind, crate::state::StackItemKind::ActivatedAbility);
+        assert_ne!(ability.v4.stack_item_id, waiting.v4.stack_item_id);
+        assert_eq!(ability.source, source);
+        let mut replay = restore(&state);
+        for branch in [&mut state, &mut replay] {
+            let decision = engine::advance_until_decision(branch);
+            assert!(
+                matches!(decision, Decision::Discard { player, count: 1, .. } if player == actor)
+            );
+            respond(branch, decision, false);
+        }
+        assert_eq!(state, replay);
+        finish(&mut state, false);
+        finish(&mut replay, false);
+        assert_eq!(state, replay);
+        assert_eq!(state.players[actor.opponent().index()].graveyard.len(), 4);
+        assert_eq!(taps(&state, actor), 15);
+        assert!(!state.objects.get(source).tapped);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
     }
 }
