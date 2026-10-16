@@ -29,11 +29,11 @@ u64 counts, wide counters, current controllers and incarnation relations.
 All 112 inherited test names remain. The genuine nine-trigger regression was
 expanded after CI exposed a physical-decision versus policy-prefix validation
 bug; it now checks every authenticated prefix, both owners, restore and refusal.
-The complete composed model subtree has 148 source cases: the original 112,
+The complete composed model subtree has 151 source cases: the original 112,
 five Fiery cases, eleven NextFive cases below, fourteen fifth-owner
-inherited-family wrappers, and six canonical repair cases (four ordinary Divine
+inherited-family wrappers, and nine canonical repair cases (four ordinary Divine
 owner wrappers, the complete Divine printing case, and the canonical semantic
-boolean case). All 141 earlier test names and bodies remain unchanged. The
+boolean case, and three typed public projection cases). All 141 earlier test names and bodies remain unchanged. The
 legendary shared harness also exercises the fifth owner. The new fifth-owner
 Divine wrapper uses the same genuine W and W+2W paid paths, ordinary one-target
 and kicked zero-/two-target paths, original action bindings, countered stack
@@ -63,19 +63,33 @@ The root composition includes the owning Human session, Python V6 client,
 Fiery repair and the canonical seven-card runtime repairs. This source-only
 integration starts at `4fcc8bc1d0fececccb20306e4c43ed32a79de80b` and normally
 merges canonical seven head `3da0941536f3cf9593649461ff0cd686b8dc0914`.
+It subsequently composes canonical `3b6641cf27b82a80b1713867a15096435d1e5c69`,
+including the typed dungeon-kind projection, physical Drake history-position
+binding and exact replay memoization. The latter retains the original replay
+predicate on misses and every other validation check on hits; its two new
+genuine paid tamper/restore cases remain unexecuted. No speedup is measured.
 Both the complete Divine printing and semantic-boolean conversion are in the
 feature source identity; `rl_variable_cast_v1.rs` occurs exactly once alongside
 the public variable-cast observation and owning session implementation.
 Its distinct limited-v6 CI group
 selects 100 source cases across eleven native/public/owner/Human/transport
 filters, then builds V6 and invokes the original two-worker seed-123 plumbing
-checker. The separate model group selects the complete 148-case subtree.
+checker. The separate model group selects the complete 151-case subtree.
 
-Observed checks include 71 affected Python deck cases and 17 V6 mock protocol
-cases from the preceding source composition. This integration passed pinned
+The separate V60 source prerequisite `0a8b58d181278e0085849fd9c244249237135be3`
+is also composed. It pins 324 legal creature types and fixes exhaustive native
+creature-type replacement without changing native IDs or the frozen historical
+list. Eleven source cases and the offline domain audit cover that bounded
+primitive. Animations refuse pending exact all-types provenance. This adds no
+Courtyard/Banner registration or current consumer permission.
+
+Compatible evidence includes 165 affected Python cases at preceding source
+`4fcc8bc1d0fececccb20306e4c43ed32a79de80b`, including 17 V6 mock protocol
+cases. Later changes do not alter Python or deck inputs; this is not reported
+as an exact-head Python rerun. This integration passed pinned
 1.94.1 formatting, diff checks, and lightweight static checks of source-case
 preservation, complete unique identity inputs, and unchanged catalog sources.
-All 148 Rust source cases at this composed head, binary and checker remain
+All 151 Rust source cases at this composed head, binary and checker remain
 uncompiled/unrun; source counts are not runtime passes. Actual
 export/catalog/profile and runtime qualification remain root-owned after
 Native176 releases. No hash guess, profile waiver, Full promotion, trained
