@@ -15,6 +15,8 @@ pub(super) mod eaten_printing;
 pub(super) mod enchantment_hunter_printing;
 #[path = "faebloom_printing.rs"]
 pub(super) mod faebloom_printing;
+#[path = "fiery_printing.rs"]
+pub(super) mod fiery_printing;
 #[path = "kellan_printing.rs"]
 pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
@@ -312,6 +314,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if d.name == "Fiery Annihilation" {
+        return fiery_printing::baseline(id, d);
+    }
     if d.name == "Faebloom Trick" {
         return faebloom_printing::baseline(id, d);
     }
@@ -667,6 +672,7 @@ pub(super) fn registered_spell_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     match d.name {
+        "Fiery Annihilation" => fiery_printing::printing(id, d).map(Some),
         "Faebloom Trick" => faebloom_printing::printing(id, d).map(Some),
         "Eaten Alive" => eaten_printing::printing(id, d).map(Some),
         _ => Ok(None),
@@ -1758,6 +1764,10 @@ pub(super) fn expand_thin(record: &serde_json::Map<String, Value>) -> Result<Val
         .ok_or(Error::UnsupportedPrintedRoot(id))?
         .name
     {
+        "Fiery Annihilation" => indexed!(
+            crate::fiery_observation_v1::RootV1,
+            rules_meaning_fiery_v1, live_selector, meaning, row, row.spell_mode
+        ),
         "Sower of Chaos" => typed!(
             rules_meaning_sower_v1,
             live_selector_v1,

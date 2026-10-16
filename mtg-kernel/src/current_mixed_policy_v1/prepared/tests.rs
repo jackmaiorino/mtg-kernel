@@ -740,3 +740,8 @@ fn faebloom_paid_instant_reflexive_season_restore_privacy_preparedsession_both_s
 fn kellan_paid_upgrades_combat_impulse_restore_privacy_preparedsession_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_kellan::<PreparedSession>();
 }
+
+#[test]
+fn fiery_paid_optional_equipment_death_replacement_restore_privacy_prepared_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_fiery::<PreparedSession>();
+}
