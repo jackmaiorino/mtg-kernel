@@ -312,7 +312,7 @@ fn free_x_is_zero_paid_x_and_kicker_and_real_additional_discard_keep_native_cost
         for free in [false, true] {
             let mut s = ready(p, "Forest");
             paid(&mut s, p);
-            let target = put(&mut s, p.opponent(), "Bear Cub", Zone::Battlefield);
+            let target = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Battlefield);
             let x = if free { 0 } else { 1 };
             let card = cast(
                 &mut s,
@@ -387,7 +387,7 @@ fn free_x_is_zero_paid_x_and_kicker_and_real_additional_discard_keep_native_cost
         assert_eq!(s.objects.get(card).zone, Zone::Graveyard);
         let mut s = ready(p, "Forest");
         paid(&mut s, p);
-        let target = put(&mut s, p.opponent(), "Bear Cub", Zone::Battlefield);
+        let target = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Battlefield);
         cast(
             &mut s,
             p,
@@ -496,7 +496,7 @@ fn source_removal_after_payment_preserves_spell_but_future_hand_graveyard_exile_
         finish(&mut s);
         paid(&mut s, p);
         let sorcery = put(&mut s, p, "Eaten Alive", Zone::Hand);
-        let target = put(&mut s, p.opponent(), "Bear Cub", Zone::Battlefield);
+        let target = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Battlefield);
         cast(
             &mut s,
             p,
@@ -685,7 +685,7 @@ fn paid_source_control_suppression_face_and_independent_hidden_world_operands_bo
         assert!(active_source(&s, p).is_none());
         assert_eq!(active_source(&s, p.opponent()).unwrap().source, omni);
         // This is a native suppression operand, not a legal paid Tidebinder claim.
-        let source = put(&mut s, p.opponent(), "Bear Cub", Zone::Battlefield);
+        let source = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Battlefield);
         let link = crate::state::ObjectLinkV4 {
             object: source,
             zone_change_count: s.objects.get(source).zone_change_count,

@@ -3026,6 +3026,9 @@ impl GameState {
         {
             return Err(source);
         }
+        if crate::progenitus_v1::attachment_forbidden(self, source, target) {
+            return Err(source);
+        }
         let host_link = ObjectLinkV4 {
             object: target,
             zone_change_count: target_zone_change_count,

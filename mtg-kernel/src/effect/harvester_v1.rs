@@ -364,7 +364,7 @@ fn reversal_at(
     { return Err("Harvester native cast reversal changed".into()); }
     Ok((*announcement, cast, *restored))
 }
-fn graveyard_entry(state: &GameState, at: usize) -> Result<GraveyardEntryV1, String> {
+pub(super) fn graveyard_entry(state: &GameState, at: usize) -> Result<GraveyardEntryV1, String> {
     let Some(event::CommittedEvent::HarvesterGraveyardEntryV1 { entry }) =
         state.engine.event_history.get(at)
     else {

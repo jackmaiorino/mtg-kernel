@@ -3513,6 +3513,8 @@ fn fdn_program_for(name: &str) -> Option<Special> {
     Some(match name {
         "Lathril, Blade of the Elves" => program("None", "MoveObject(ThisSource,Battlefield);positive_final_combat_damage_to_player:captured_original_source_controller:that_many_elf_warrior_tokens;tap_source_and_ten_other_untapped_controlled_elves:opponent_loses10_controller_gains10", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Blasphemous Edict" => program("None", "BlasphemousEdictV1(active_nonactive_choose_thirteen_or_all_controlled_effective_creatures;physical_owners_order_actual_graveyard_destinations;one_simultaneous_sacrifice_batch)", "EffectOp::BlasphemousEdictV1"),
+        // Genuine FDN194 native Partial481.
+        "Etali, Primal Storm" => program("None", "MoveObject(ThisSource,Battlefield);attacks:original_source_controller:each_player_simultaneous_top_library_to_public_exile:optional_nonland_free_casts_any_order_during_resolution:original_exile_incarnations:normal_targets_and_additional_costs:XZero:lands_stay_exiled", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Omniscience" => program("None", "MoveObject(ThisSource,Battlefield);static:originalControllerMayCastNonlandFromOwnHandWithoutManaCost:optionalDistinctPaidRoute:exactActiveSourceAndHandIncarnation:XZero:ordinaryTimingTargetsAndAllAdditionalCosts:noGraveyardOrExilePermission", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Sphinx of Forgotten Lore" => program("None", "MoveObject(ThisSource,Battlefield);attacks:targetOwnGraveyardInstantOrSorcery:flashbackAtCardManaCost:exactIncarnation:untilActualCleanup:printedAndGrantedRoutesDistinct", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Quilled Greatwurm" => program("None", "MoveObject(ThisSource,Battlefield);controlledCreature:ownTurn:finalCombatWaveSumByOriginalSource:plusOneCountersOnSameIncarnation;graveyardCast:distinctPermission:4GG:additionalSixCounterUnits:all17Kinds:atomicPayment", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -4333,6 +4335,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sun-Blessed Healer"
         | "Elenda, Saint of Dusk" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
+        "Progenitus" => keywords.push("Keywords::PROTECTION_FROM_EVERYTHING"),
+        "Progenitus" => keywords.push("Keywords::PROTECTION_FROM_EVERYTHING"),
         "Brazen Scourge" | "Fanatical Firebrand" | "Ruby, Daring Tracker" => {
             keywords.push("Keywords::HASTE")
         }
@@ -7191,6 +7195,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Etali, Primal Storm" => "actual_source_attacks:captured_source_incarnation_controller:non_target:simultaneous_top_card_of_each_player_library_to_exile:empty_library_no_move:lands_remain_exiled:optional_nonland_casts_in_any_order_during_same_resolution:exact_exile_incarnations:free_base_cost_XZero_all_additional_costs_and_targets:decline_leaves_rest_exiled",
         "Sphinx of Forgotten Lore" => "attacks:original_source_controller_and_incarnation:target_instant_or_sorcery_card_in_own_graveyard:until_actual_cleanup_flashback_equal_card_mana_cost:distinct_native_granted_cost_selection:normal_additional_costs_and_flashback_departure",
         "Quilled Greatwurm" => "controlled_creature_combat_damage_during_own_turn:actual_native_wave_completion:sum_final_positive_damage_by_original_creature:each_effective_observer:untargeted_same_incarnation_counters:current_recipient_controller_placement_replacements",
         "Lathril, Blade of the Elves" => "actual_positive_final_combat_damage_to_player:original_source_incarnation_controller:mandatory_untargeted:that_many_elf_warrior_tokens:single_original_batch_with_placement_replacements",

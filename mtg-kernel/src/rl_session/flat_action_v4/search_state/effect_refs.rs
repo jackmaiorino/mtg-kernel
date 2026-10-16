@@ -126,6 +126,7 @@ impl Scan<'_> {
             DiscardUpToThenDraw { .. }
             | ExileRandomGraveyardCardPlayableThisTurn { .. }
             | ExileUntilThenCastV1 { .. }
+            | ExileTopEachPlayerThenCastV1
             | Discover { .. }
             | Hideaway { .. }
             | PlayHideawayIfThreeDistinctPowers
@@ -607,6 +608,7 @@ impl Scan<'_> {
             ConvokeLook { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
             WardCards { choice } => self.bs(&choice.candidates) || self.fs(&choice.remaining),
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
+            OrderProgenitusGraveyardV1 { original, .. } => self.bs(original),
             StandardBreachChoiceV1 {
                 chosen,
                 original_candidates,

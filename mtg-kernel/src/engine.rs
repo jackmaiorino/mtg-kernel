@@ -4321,7 +4321,8 @@ fn legal_targets_for_controller_from_source(
         };
         let live = state.objects.get(object);
         live.zone != Zone::Battlefield
-            || (!has_effective_keyword(state, object, Keywords::SHROUD)
+            || (!has_effective_keyword(state, object, Keywords::PROTECTION_FROM_EVERYTHING)
+                && !has_effective_keyword(state, object, Keywords::SHROUD)
                 && (live.controller == controller
                     || !has_effective_keyword(state, object, Keywords::HEXPROOF)))
     });
@@ -9828,8 +9829,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if crate::standard_legends_v1::katilda_protected_from(state, attacker, id) {
                 return false;
             }
-            if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
-                && object_is_monocolored(state, id)
+            if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_EVERYTHING)
+                || (has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
+                    && object_is_monocolored(state, id))
             {
                 return false;
             }
@@ -11220,6 +11222,14 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let top_batch_owner = match effect::acquire_top_batch_resume_v1(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let tutelage_owner = match effect::acquire_tutelage_resume_v1(state, &item) {
         Ok(owner) => owner,
         Err(_) => {
@@ -11315,7 +11325,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     // Acquire last while the exact public row is live. All preceding owner
     // acquisitions are read-only; only this frame's exact row removal may
     // intervene before consuming the private optional owner below.
-    let printed_optional_owner = if tutelage_owner.is_none()
+    let printed_optional_owner = if top_batch_owner.is_none()
+        && tutelage_owner.is_none()
         && spinner_owner.is_none()
         && hunter_owner.is_none()
         && inspiration_owner.is_none()
@@ -11356,6 +11367,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
 
     let progress = if let Some(owner) = edict_owner {
         effect::blasphemous_edict_v1::resume(state, owner)
+    } else if let Some(owner) = top_batch_owner {
+        effect::resume_owned_top_batch_v1(state, owner)
     } else if let Some(owner) = tutelage_owner {
         effect::resume_owned_tutelage_v1(state, owner)
     } else if let Some(owner) = hunter_owner.as_ref() {
@@ -18469,8 +18482,9 @@ pub fn damage_is_prevented_by_protection(
     };
     state.objects.try_get(target).is_some_and(|object| {
         object.zone == Zone::Battlefield
-            && ((has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
-                && object_is_monocolored(state, source))
+            && (has_effective_keyword(state, target, Keywords::PROTECTION_FROM_EVERYTHING)
+                || (has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
+                    && object_is_monocolored(state, source))
                 || crate::controlled_creature_grants_v1::protects_from_colors(
                     state,
                     target,
@@ -31218,3 +31232,11 @@ mod crystal_native95_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod checked_pt_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/progenitus_v1_tests.rs"]
+mod progenitus_v1_tests;

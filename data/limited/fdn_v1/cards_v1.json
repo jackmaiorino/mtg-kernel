@@ -7960,18 +7960,29 @@
       "engine_capability": "partial",
       "mana_cost": "{1}{B}{B}",
       "mana_value": 3,
-      "colors": ["B"],
-      "types": ["Creature"],
-      "subtypes": ["Cat"],
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat"
+      ],
       "supertypes": [],
       "power": 1,
       "toughness": 1,
       "is_land": false,
       "produces_mana": [],
-      "decks": ["FDN_reference_nine_lives_familiar_partial.dck"],
+      "decks": [
+        "FDN_reference_nine_lives_familiar_partial.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
-      "mechanics": ["eight_revival_counters_if_cast", "death_returns_next_end_step_with_one_fewer"],
+      "mechanics": [
+        "eight_revival_counters_if_cast",
+        "death_returns_next_end_step_with_one_fewer"
+      ],
       "java_file": "Mage.Sets/src/mage/cards/n/NineLivesFamiliar.java",
       "is_token": false
     },
@@ -7980,18 +7991,26 @@
       "engine_capability": "partial",
       "mana_cost": "{3}{W}{W}",
       "mana_value": 5,
-      "colors": ["W"],
-      "types": ["Enchantment"],
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
       "subtypes": [],
       "supertypes": [],
       "power": null,
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": ["FDN_reference_valkyries_call_partial.dck"],
+      "decks": [
+        "FDN_reference_valkyries_call_partial.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
-      "mechanics": ["controlled_nontoken_nonangel_creature_death_returns_to_owner_with_counter_angel_and_flying"],
+      "mechanics": [
+        "controlled_nontoken_nonangel_creature_death_returns_to_owner_with_counter_angel_and_flying"
+      ],
       "java_file": "Mage.Sets/src/mage/cards/v/ValkyriesCall.java",
       "is_token": false
     },
@@ -8032,18 +8051,34 @@
       "engine_capability": "partial",
       "mana_cost": "{4}{U}{R}",
       "mana_value": 6,
-      "colors": ["U", "R"],
-      "types": ["Creature"],
-      "subtypes": ["Dragon", "Wizard"],
-      "supertypes": ["Legendary"],
+      "colors": [
+        "U",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
       "power": 5,
       "toughness": 5,
       "is_land": false,
       "produces_mana": [],
-      "decks": ["FDN_reference_niv_mizzet_visionary_partial.dck"],
+      "decks": [
+        "FDN_reference_niv_mizzet_visionary_partial.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
-      "mechanics": ["flying", "opponent_noncombat_damage_draw_actual_amount", "no_maximum_hand_size_while_controlled"],
+      "mechanics": [
+        "flying",
+        "opponent_noncombat_damage_draw_actual_amount",
+        "no_maximum_hand_size_while_controlled"
+      ],
       "java_file": "Mage.Sets/src/mage/cards/n/NivMizzetVisionary.java",
       "is_token": false
     },
@@ -8052,18 +8087,34 @@
       "engine_capability": "partial",
       "mana_cost": "{4}{R}{R}",
       "mana_value": 6,
-      "colors": ["R"],
-      "types": ["Artifact"],
-      "subtypes": ["Equipment"],
-      "supertypes": ["Legendary"],
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
       "power": null,
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": ["FDN_reference_embercleave_partial.dck"],
+      "decks": [
+        "FDN_reference_embercleave_partial.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
-      "mechanics": ["flash", "generic_reduction_current_controlled_attacking_creatures", "etb_attach_exact_source_to_controlled_creature", "equipped_plus_one_double_strike_trample", "equip_three"],
+      "mechanics": [
+        "flash",
+        "generic_reduction_current_controlled_attacking_creatures",
+        "etb_attach_exact_source_to_controlled_creature",
+        "equipped_plus_one_double_strike_trample",
+        "equip_three"
+      ],
       "java_file": "Mage.Sets/src/mage/cards/e/Embercleave.java",
       "is_token": false
     },
@@ -8605,6 +8656,78 @@
       "produces_mana": [],
       "decks": [
         "FDN_reference_abyssal_harvester_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Progenitus",
+      "mana_cost": "{W}{W}{U}{U}{B}{B}{R}{R}{G}{G}",
+      "mana_value": 10,
+      "colors": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hydra",
+        "Avatar"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 10,
+      "toughness": 10,
+      "mechanics": [
+        "protection_from_everything",
+        "mandatory_reveal_shuffle_instead_of_graveyard_from_anywhere"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/Progenitus.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_progenitus_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Etali, Primal Storm",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elder",
+        "Dinosaur"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 6,
+      "toughness": 6,
+      "mechanics": [
+        "attack_exile_each_player_top_simultaneous",
+        "may_cast_any_number_nonlands_free_during_resolution"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EtaliPrimalStorm.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_etali_primal_storm_partial.dck"
       ],
       "sideboard_only": false,
       "complexity": "complex",
