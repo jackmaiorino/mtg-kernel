@@ -649,6 +649,9 @@ fn v54_paid_control_copy_and_suppression_use_actual_effective_source_both_seats(
             let spinner = source(&mut state, actor);
             let other = actor.opponent();
             put(&mut state, other, "High Fae Trickster", Zone::Battlefield);
+            if mode == 0 {
+                put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
+            }
             let (name, caster, color, pips, generic) = match mode {
                 0 => ("Involuntary Employment", other, ManaColor::R, 1, 3),
                 1 => ("Witness Protection", other, ManaColor::U, 1, 0),
@@ -700,7 +703,6 @@ fn v54_paid_control_copy_and_suppression_use_actual_effective_source_both_seats(
                 }
                 assert!(on_stack);
                 // Change actual control again while the original trigger is on the stack.
-                put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
                 cast(
                     &mut state,
                     actor,
