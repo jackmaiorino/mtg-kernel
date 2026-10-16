@@ -236,7 +236,11 @@ fn mature(s: &mut GameState, p: PlayerId, source: ObjectId) {
         if matches!(d,Decision::CastSpellOrPass{player,..}if player==p)
             && s.active_player == p
             && s.step == Step::Main1
-            && !creature_summoning_sick(s, source)
+            && !creature_summoning_sick(
+                s,
+                source,
+                &card_def::CARD_DEFS[s.objects.get(source).card_def as usize],
+            )
         {
             return;
         }
@@ -344,7 +348,11 @@ fn paid_hybrid_printing_sorcery_mana_x_tap_sacrifice_search_and_restore_both_sea
         // A genuine new Elf may be sacrificed immediately; its cost has no T.
         let young = cast(&mut s, p, "Llanowar Elves", (false, 0, false), &[], None, 1);
         finish(&mut s);
-        assert!(creature_summoning_sick(&s, young));
+        assert!(creature_summoning_sick(
+            &s,
+            young,
+            &card_def::CARD_DEFS[s.objects.get(young).card_def as usize]
+        ));
         let found = put(&mut s, p, "Axgard Cavalry", Zone::Library);
         let too_large = put(&mut s, p, "Meteor Golem", Zone::Library);
         let noncreature = put(&mut s, p, "Lightning Bolt", Zone::Library);
@@ -633,7 +641,7 @@ fn paid_battlefield_only_graveyard_cards_count_control_suppression_and_checked_b
         let original = cast(&mut s, p, NAME, (false, 0, false), &[], None, 2);
         let (copy, row) = copy_spell_for(&mut s, original, p).unwrap();
         assert!(s.objects.get(copy).spell_copy_origin.is_some());
-        counter_stack_item_by_id(&mut s, row.v4.stack_item_id).unwrap();
+        counter_stack_item_by_id(&mut s, row).unwrap();
         assert_eq!(checked_effective_pt(&s, source).unwrap(), (3, 3));
         let original_row = s
             .stack
