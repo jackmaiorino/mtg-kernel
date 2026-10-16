@@ -118,6 +118,11 @@ pub fn producer_sha256_v2() -> String {
         ("fiendish_panda_v1.rs", include_str!("fiendish_panda_v1.rs")),
         ("life_gain_turn_v1.rs", include_str!("life_gain_turn_v1.rs")),
         ("midnight_snack_v1.rs", include_str!("midnight_snack_v1.rs")),
+        ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
+        ("mana.rs", include_str!("mana.rs")),
+        ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
+        ("event.rs", include_str!("event.rs")),
+        ("rl.rs", include_str!("rl.rs")),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

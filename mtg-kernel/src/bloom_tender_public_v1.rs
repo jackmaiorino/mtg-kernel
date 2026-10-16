@@ -62,6 +62,9 @@ pub fn producer_sha256_v1() -> String {
             include_str!("source_power_activation_v1.rs"),
             include_str!("effect/nonland_copy_v1.rs"),
             include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+            include_str!("mana.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("doubling_season_v48.rs"),
         ] {
             h.update(source.as_bytes());
             h.update([0]);

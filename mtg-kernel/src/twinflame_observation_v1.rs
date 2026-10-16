@@ -193,6 +193,8 @@ pub fn producer_sha256_v1() -> String {
             include_str!("fiendish_panda_v1/custody.rs"),
             include_str!("life_gain_turn_v1.rs"),
             include_str!("midnight_snack_v1.rs"),
+            include_str!("mana.rs"),
+            include_str!("doubling_season_v48.rs"),
         ] {
             h.update([0]);
             h.update(source.as_bytes());

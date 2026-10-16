@@ -260,6 +260,7 @@ pub fn producer_sha256() -> String {
             include_str!("fiendish_panda_v1.rs"),
             include_str!("fiendish_panda_v1/custody.rs"),
             include_str!("life_gain_turn_v1.rs"),
+            include_str!("legend_rule_v1.rs"),
         ] {
             h.update((part.len() as u64).to_le_bytes());
             h.update(part.as_bytes());

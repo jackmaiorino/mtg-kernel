@@ -1004,11 +1004,13 @@ pub(crate) fn preflight_token_initialization(
                 .ok_or("token Aura host absent")?;
             let attachment = def
                 .attachment
-                .filter(|a| a.is_creature_aura())
+                .filter(|a| {
+                    a.is_creature_aura() || *a == crate::card_def::AttachmentDef::AuraLandOverride
+                })
                 .ok_or("attached token is not Aura")?;
             if live.zone != Zone::Battlefield
                 || live.zone_change_count != host.zone_change_count
-                || !crate::engine::object_has_type(state, host.object, attachment.enchanted_type())
+                || !attachment.host_matches(state, host.object)
                 || crate::engine::has_effective_keyword(
                     state,
                     host.object,

@@ -126,6 +126,9 @@ pub(crate) fn producer(schema: &str) -> String {
         include_str!("fiendish_panda_v1/custody.rs"),
         include_str!("life_gain_turn_v1.rs"),
         include_str!("midnight_snack_v1.rs"),
+        include_str!("mana.rs"),
+        include_str!("legend_rule_v1.rs"),
+        include_str!("doubling_season_v48.rs"),
     ] {
         h.update((s.len() as u64).to_le_bytes());
         h.update(s.as_bytes());

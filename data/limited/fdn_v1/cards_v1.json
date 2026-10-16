@@ -8794,6 +8794,37 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Imprisoned in the Moon",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "enchant_creature_land_or_planeswalker",
+        "layer4_land_only_retain_land_subtypes_layer5_colorless_layer6_lose_other_abilities_tap_colorless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/ImprisonedInTheMoon.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_imprisoned_moon_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

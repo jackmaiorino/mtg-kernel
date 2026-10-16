@@ -2019,7 +2019,8 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         gain_history_index: u64,
         amount: u32,
-    },}
+    },
+}
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
 
@@ -4741,11 +4742,15 @@ fn aberration_definition_v1(id: u16) -> bool {
 /// Select only actual battlefield characteristics, including suppressed forms
 /// and reversible native copies. This is a cost guard, not an execution permit.
 pub(crate) fn has_potential_aberration_battlefield_v1(state: &GameState) -> bool {
-    state
-        .objects
-        .iter()
-        .any(|(_, o)| o.zone == Zone::Battlefield && aberration_definition_v1(o.card_def))
-        || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, aberration_definition_v1)
+    state.objects.iter().any(|(_, o)| {
+        o.zone == Zone::Battlefield
+            && (aberration_definition_v1(o.card_def)
+                || crate::card_def::CARD_DEFS
+                    .get(usize::from(o.card_def))
+                    .is_some_and(|def| {
+                        def.attachment == Some(crate::card_def::AttachmentDef::AuraLandOverride)
+                    }))
+    }) || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, aberration_definition_v1)
 }
 fn needs_final_zone_pt_plan_v1(state: &GameState, events: &[ProposedEvent]) -> bool {
     if !events.iter().any(|event| {

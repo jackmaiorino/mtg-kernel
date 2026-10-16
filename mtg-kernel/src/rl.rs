@@ -1894,6 +1894,8 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
+        .map_err(RlContractError)?;
     crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
         .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
@@ -2213,6 +2215,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
+    crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
+        .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;

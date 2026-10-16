@@ -141,6 +141,9 @@ pub fn producer_sha256_v1() -> String {
             ("fiendish_panda_v1.rs", include_str!("fiendish_panda_v1.rs")),
             ("life_gain_turn_v1.rs", include_str!("life_gain_turn_v1.rs")),
             ("midnight_snack_v1.rs", include_str!("midnight_snack_v1.rs")),
+            ("mana.rs", include_str!("mana.rs")),
+            ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
+            ("rl.rs", include_str!("rl.rs")),
         ] {
             hash.update(path.as_bytes());
             hash.update([0]);
