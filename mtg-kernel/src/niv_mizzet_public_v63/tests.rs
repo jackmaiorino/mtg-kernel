@@ -660,22 +660,63 @@ fn genuine_paid_current_width_copy_suppression_and_facedown_appendix_both_seats(
 #[test]
 fn independent_unknown_hand_library_and_facedown_underlying_worlds_keep_public_facts_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let (mut a, _, _, _) = cast_niv(actor);
-        let secret = put(&mut a, actor.opponent(), meaning::NAME, Zone::Hand);
-        let hidden = put(&mut a, actor.opponent(), meaning::NAME, Zone::Battlefield);
-        a.objects.get_mut(hidden).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-            disguised: false,
-            lookers: 0,
-            hidden_by: None,
-            hidden_by_source: None,
-        });
-        let mut b = restore(&a);
-        let island = crate::card_def::card_id_by_name("Island").unwrap();
-        b.objects.get_mut(secret).card_def = island;
-        b.objects.get_mut(hidden).card_def = island;
-        let top = *b.players[actor.opponent().index()].library.last().unwrap();
-        b.objects.get_mut(top).card_def = crate::card_def::card_id_by_name("Forest").unwrap();
+        let build = |unknown: &str, opponent_library: &str| {
+            let mut state = ready_state_for(actor);
+            for player in [actor, actor.opponent()] {
+                for _ in 0..20 {
+                    put(
+                        &mut state,
+                        player,
+                        if player == actor {
+                            "Island"
+                        } else {
+                            opponent_library
+                        },
+                        Zone::Library,
+                    );
+                }
+            }
+            for _ in 0..8 {
+                put(&mut state, actor, "Island", Zone::Hand);
+            }
+            put(&mut state, actor, "Firebrand Archer", Zone::Battlefield);
+            put(
+                &mut state,
+                actor.opponent(),
+                "High Fae Trickster",
+                Zone::Battlefield,
+            );
+            let niv = put(&mut state, actor, meaning::NAME, Zone::Hand);
+            let secret = put(&mut state, actor.opponent(), unknown, Zone::Hand);
+            let hidden = put(&mut state, actor.opponent(), unknown, Zone::Battlefield);
+            // Explicit initial face-down native primitive. Both worlds are
+            // initialized independently before the genuine paid cast history.
+            state.objects.get_mut(hidden).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: false,
+                lookers: 0,
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(niv)).unwrap();
+            finish(&mut state);
+            assert_eq!(state.objects.get(niv).zone, Zone::Battlefield);
+            assert!(state.players[actor.index()]
+                .mana_pool
+                .iter()
+                .all(|n| *n == 0));
+            (state, secret, hidden)
+        };
+        let (a, secret, hidden) = build(meaning::NAME, "Island");
+        let (b, other_secret, other_hidden) = build("Island", "Forest");
+        assert_eq!((secret, hidden), (other_secret, other_hidden));
         assert_eq!(capture(&a, actor).unwrap(), capture(&b, actor).unwrap());
+        assert_eq!(
+            capture(&restore(&a), actor).unwrap(),
+            capture(&restore(&b), actor).unwrap()
+        );
         let own = capture(&a, actor.opponent()).unwrap();
         assert!(own.authorized.iter().any(|r| r.object == secret.0));
         assert!(!own.authorized.iter().any(|r| r.object == hidden.0));
@@ -699,6 +740,42 @@ fn paid_niv_native_damage_primitive_keeps_full_width_and_real_collection_before_
         let row = uncollected.damage_draws.last().unwrap();
         assert_eq!((row.committed_damage, row.draw_count), (i32::MAX, i32::MAX));
         assert_eq!(row.stage, StageV63::Uncollected);
+        let receipt = state
+            .engine
+            .event_log
+            .iter()
+            .find(|event| matches!(event, CommittedEvent::NivMizzetVisionaryDamageV1 { .. }))
+            .unwrap()
+            .clone();
+        for edit in 0..3 {
+            let mut forged = restore(&state);
+            let mut extra = receipt.clone();
+            let CommittedEvent::NivMizzetVisionaryDamageV1 {
+                damage_source,
+                damage_history_index,
+                ..
+            } = &mut extra
+            else {
+                unreachable!()
+            };
+            match edit {
+                0 => damage_source.controller = damage_source.controller.opponent(),
+                1 => *damage_history_index = u64::MAX,
+                2 => {}
+                _ => unreachable!(),
+            }
+            forged.engine.event_log.push(extra);
+            assert_eq!(forged.engine.event_history, state.engine.event_history);
+            let before = bytes(&forged);
+            assert!(crate::event::niv_mizzet_visionary_triggers_v1(
+                &forged,
+                &forged.engine.event_log,
+            )
+            .is_err());
+            assert!(capture(&forged, actor).is_err());
+            assert!(capture(&forged, actor.opponent()).is_err());
+            assert_eq!(bytes(&forged), before);
+        }
         let actual = crate::trigger::collect_and_process(&mut state);
         assert_eq!(actual.len(), 1);
         state.engine.pending_triggers.extend(actual);

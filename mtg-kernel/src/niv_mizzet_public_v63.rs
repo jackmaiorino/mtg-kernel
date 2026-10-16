@@ -293,6 +293,10 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV63, String> 
         crate::engine::validate_pending_activation(state, p)?;
     }
     crate::doubling_season_v48::validate_token_journals(state)?;
+    // Validate every current native log receipt, including receipts without an
+    // equal authoritative history row, before deriving individual stages.
+    crate::event::niv_mizzet_visionary_triggers_v1(state, &state.engine.event_log)
+        .map_err(|_| "V63 current native Niv collection log refused")?;
     let mut authorized = vec![];
     let mut current = vec![];
     let mut battlefield_counters: [Vec<BattlefieldV63>; 2] = [vec![], vec![]];
