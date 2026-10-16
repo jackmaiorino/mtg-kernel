@@ -4620,6 +4620,7 @@ fn object_name_for(name: &str) -> &str {
         "Nameless Creature Copy Token" => "",
         "Ajani Cat Token" => "Cat Token",
         "Kykar Spirit Token" => "Spirit Token",
+        "Dragon 5/5 Token" => "Dragon Token",
         "Monster Role Token" => "Monster",
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",

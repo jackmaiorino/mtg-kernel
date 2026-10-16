@@ -700,3 +700,44 @@ fn genuine_paid_native_source_frame_and_public_resume_forgery_refusals_both_seat
         }
     }
 }
+
+#[test]
+fn genuine_paid_dragon_tokens_share_native_name_without_losing_distinct_printings_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let trainer = paid(&mut s, actor, "Dragon Trainer", 5);
+        let four = s
+            .objects
+            .iter()
+            .find_map(|(object, o)| {
+                (o.zone == Zone::Battlefield && o.v4.is_token && o.card_def == id("Dragon Token"))
+                    .then_some(object)
+            })
+            .unwrap();
+        paid(&mut s, actor, "Rite of the Dragoncaller", 6);
+        cast(&mut s, actor, "Think Twice", &[], 2);
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        let five = s
+            .objects
+            .iter()
+            .find_map(|(object, o)| {
+                (o.zone == Zone::Battlefield
+                    && o.v4.is_token
+                    && o.card_def == id("Dragon 5/5 Token"))
+                .then_some(object)
+            })
+            .unwrap();
+        assert_ne!(s.objects.get(four).card_def, s.objects.get(five).card_def);
+        assert_eq!(engine::checked_effective_pt(&s, four).unwrap(), (4, 4));
+        assert_eq!(engine::checked_effective_pt(&s, five).unwrap(), (5, 5));
+        for token in [four, five] {
+            assert_eq!(engine::effective_name(&s, token), "Dragon Token");
+            assert!(engine::has_effective_keyword(&s, token, Keywords::FLYING));
+        }
+        assert!(engine::objects_share_name(&s, four, five));
+        assert!(!engine::objects_share_name(&s, trainer, five));
+    }
+}
