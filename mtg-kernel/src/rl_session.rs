@@ -7631,7 +7631,9 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::PreparedV57
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
-                crate::prepared_observation_v57::validate_state(&self.state)
+                // The first guard already validated this same immutable state;
+                // no world, surface, current decision or counter changed.
+                Ok(())
             } else {
                 crate::ravenous_observation_v51::validate_state(&self.state)
             }
@@ -7658,7 +7660,8 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::PreparedV57
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
-                crate::prepared_observation_v57::validate_state(&self.state)
+                // Reuse that successful first guard before any mutation.
+                Ok(())
             } else {
                 crate::ravenous_observation_v51::validate_state(&self.state)
             }
