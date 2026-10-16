@@ -92,6 +92,11 @@ pub fn source_sha256() -> String {
             "effect/harvester_v1.rs",
             include_str!("effect/harvester_v1.rs"),
         ),
+        ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
+        (
+            "london_mulligan_v1.rs",
+            include_str!("london_mulligan_v1.rs"),
+        ),
         ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
         (
             "soul_shackled_zombie_v1.rs",
@@ -113,6 +118,10 @@ pub fn source_sha256() -> String {
         (
             "effect/inspiration_resolution_v1.rs",
             include_str!("effect/inspiration_resolution_v1.rs"),
+        ),
+        (
+            "effect/standard_exile.rs",
+            include_str!("effect/standard_exile.rs"),
         ),
     ] {
         hash.update(path.as_bytes());

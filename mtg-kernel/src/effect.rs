@@ -2743,6 +2743,9 @@ pub enum EffectOp {
     },
     /// Native FDN54 activation: exile/copy and other-Nightmare token cleanup.
     HarvesterExileAndCopyV1,
+    /// Simultaneously exile each player's top card, then optionally cast the
+    /// nonlands in any order during this resolution.
+    ExileTopEachPlayerThenCastV1,
     /// Definition-owned Fiend Artisan search using its genuinely paid X.
     FiendArtisanSearchV1,
 }
@@ -4254,6 +4257,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
+        | EffectOp::ExileTopEachPlayerThenCastV1
         | EffectOp::DiscardUpToThenDraw { .. }
         | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::MaySacrificeNonlandOtherwiseV1 { .. }
@@ -4329,6 +4333,12 @@ pub fn begin_resumable_resolution(
         || harvester_v1::waiting(state, ctx)
     {
         return Err("Harvester requires its actual native activation row".into());
+    }
+    if *op == EffectOp::ExileTopEachPlayerThenCastV1
+        || standard_exile::top_batch_item(&resolving_item)
+        || standard_exile::top_batch_waiting(state, ctx)
+    {
+        return Err("top-card free casting requires its genuine native row".into());
     }
     if source_token_copy_v1::recipe(op)
         || source_token_copy_v1::selected(state, &resolving_item)
@@ -4577,6 +4587,14 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(standard_exile::top_batch_pending)
+    {
+        return Err("top-card free casting has no public resume authority".into());
+    }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         fiend_artisan_v1::selected(state, &p.resolving_item)
             || fiend_artisan_v1::waiting(state, &p.ctx)
@@ -12444,7 +12462,7 @@ fn drive_resumable_inner_with_native_row_v1(
 ) -> Result<ResumableProgress, String> {
     let resumed_owner;
     let native_row = if let Some(owner) = supplied_owner {
-        owner.validate_initial_pending(state)?;
+        owner.validate_supplied_pending(state)?;
         Some(owner)
     } else if state.engine.pending_effect.as_ref().is_some_and(|p| {
         native_waiting_source_v1(state, &p.ctx)
@@ -14721,6 +14739,19 @@ fn drive_resumable_inner_with_native_row_v1(
             } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 standard_discard::random_exile(state, player, minimum_cards)?;
+            }
+            EffectOp::ExileTopEachPlayerThenCastV1 => {
+                if standard_exile::start_batch(
+                    state,
+                    &mut continuation,
+                    vec![PlayerRef::Controller, PlayerRef::Opponent],
+                    ExileCastPredicateV1::Nonland,
+                    false,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::ExileUntilThenCastV1 {
                 players,
@@ -20110,6 +20141,7 @@ fn execute_with_native_row_v1(
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
+        | EffectOp::ExileTopEachPlayerThenCastV1
         | EffectOp::DiscardUpToThenDraw { .. }
         | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::MaySacrificeNonlandOtherwiseV1 { .. }
@@ -26115,6 +26147,9 @@ pub(crate) fn acquire_tutelage_resume_v1(
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(None);
     };
+    if standard_exile::top_batch_pending(pending) {
+        return Ok(None);
+    }
     if !tutelage_item_v1(state, &pending.resolving_item)
         && !curator_v1::pending_selected(state, pending)
         && !pending
@@ -26310,6 +26345,9 @@ fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
         return true;
     }
 
+    if standard_exile::top_batch_waiting(state, ctx) {
+        return true;
+    }
     if source_token_copy_v1::waiting(state, ctx) || sphinx_lore_v1::waiting(state, ctx) {
         return true;
     }
@@ -26360,7 +26398,9 @@ pub(crate) struct NativeExecutionOwnerV1 {
     ctx: ExecCtx,
     root: Box<EffectOp>,
     remaining_stack: Vec<StackItem>,
-    resumed_pending: Option<EffectContinuation>,
+    // A consumed resume frame retains its complete original ready input.
+    // Initial execution uses None and keeps the original initial-frame checks.
+    saved_pending: Option<Box<EffectContinuation>>,
 }
 
 // Borrowed only within the native dispatch. A recursive instruction can bind
@@ -26406,19 +26446,20 @@ impl NativeExecutionOwnerV1 {
         Ok(())
     }
 
-    fn validate_initial_pending(&self, state: &GameState) -> Result<(), String> {
+    fn validate_supplied_pending(&self, state: &GameState) -> Result<(), String> {
+        if let Some(expected) = self.saved_pending.as_deref() {
+            if state.engine.pending_effect.as_ref() != Some(expected)
+                || state.stack != self.remaining_stack
+            {
+                return Err("native consumed resume input changed".into());
+            }
+            return Ok(());
+        }
         let pending = state
             .engine
             .pending_effect
             .as_ref()
             .ok_or("native execution input lost")?;
-        if let Some(original) = &self.resumed_pending {
-            return if pending == original && state.stack == self.remaining_stack {
-                Ok(())
-            } else {
-                Err("native resumed pending/remaining stack changed".into())
-            };
-        }
         if pending.resolving_item != self.item
             || pending.ctx != self.ctx
             || state.stack != self.remaining_stack
@@ -26463,7 +26504,7 @@ impl NativeExecutionOwnerV1 {
             ctx: pending.ctx.clone(),
             root,
             remaining_stack: state.stack.clone(),
-            resumed_pending: None,
+            saved_pending: None,
         })
     }
 }
@@ -26507,8 +26548,52 @@ pub(crate) fn acquire_native_execution_owner_v1(
         ctx,
         root,
         remaining_stack,
-        resumed_pending: None,
+        saved_pending: None,
     }))
+}
+
+// The exact native ready row is authenticated while still published, then
+// consumed immediately after engine removal. No public row is invented or
+// loaned, so resolution_cast may legitimately create its child spell.
+pub(crate) struct TopBatchResumeOwnerV1 {
+    native: NativeExecutionOwnerV1,
+}
+
+pub(crate) fn acquire_top_batch_resume_v1(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<TopBatchResumeOwnerV1>, String> {
+    let Some(pending) = state.engine.pending_effect.as_ref() else {
+        return Ok(None);
+    };
+    if !standard_exile::top_batch_pending(pending) {
+        return Ok(None);
+    }
+    validate_pending_effect_choice(state)?;
+    if pending.resolving_item != *item || pending.choice.is_some() {
+        return Err("top-card cast resume lost its exact ready row".into());
+    }
+    let position = crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
+        .ok_or("top-card cast resume row absent")?;
+    let mut native = NativeExecutionOwnerV1::from_validated_pending(state)?;
+    native.saved_pending = Some(Box::new(pending.clone()));
+    if native.remaining_stack.remove(position) != *item
+        || native
+            .remaining_stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("top-card cast resume row changed or duplicated".into());
+    }
+    Ok(Some(TopBatchResumeOwnerV1 { native }))
+}
+
+pub(crate) fn resume_owned_top_batch_v1(
+    state: &mut GameState,
+    owner: TopBatchResumeOwnerV1,
+) -> Result<ResumableProgress, String> {
+    owner.native.validate_supplied_pending(state)?;
+    drive_with_native_row_v1(state, &owner.native)
 }
 
 pub(crate) fn execute_owned_native_row_v1(
@@ -27516,6 +27601,8 @@ fn execute_copied_token_sacrifice_v1(
 /// Public copy creation and its added abilities have no predecessor schema.
 /// This does not inspect any hidden hand/library identity.
 pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    standard_exile::refuse_top_batch_legacy(state)?;
+    crate::leyline_axe_v1::require_legacy_absence(state)?;
     harvester_v1::require_legacy_absence(state)?;
     if state
         .objects
@@ -28305,7 +28392,7 @@ pub(crate) mod fiend_artisan_v1 {
             return Err("Fiend original public row duplicated".into());
         }
         owner.remaining_stack.remove(at);
-        owner.resumed_pending = Some(p.clone());
+        owner.saved_pending = Some(Box::new(p.clone()));
         Ok(Some(ResumeOwnerV1 {
             owner,
             pending: p.clone(),

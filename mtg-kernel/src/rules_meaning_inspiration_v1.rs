@@ -125,6 +125,11 @@ pub fn producer_sha256_v1() -> String {
                 "effect/harvester_v1.rs",
                 include_str!("effect/harvester_v1.rs"),
             ),
+            ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
+            (
+                "london_mulligan_v1.rs",
+                include_str!("london_mulligan_v1.rs"),
+            ),
             ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
             (
                 "soul_shackled_zombie_v1.rs",
@@ -180,6 +185,10 @@ pub fn producer_sha256_v1() -> String {
             (
                 "rl_session/flat_action_v4/search_state/effect_refs.rs",
                 include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+            ),
+            (
+                "effect/standard_exile.rs",
+                include_str!("effect/standard_exile.rs"),
             ),
         ] {
             hash.update(path.as_bytes());

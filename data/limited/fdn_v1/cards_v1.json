@@ -8698,6 +8698,70 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Etali, Primal Storm",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elder",
+        "Dinosaur"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 6,
+      "toughness": 6,
+      "mechanics": [
+        "attack_exile_each_player_top_simultaneous",
+        "may_cast_any_number_nonlands_free_during_resolution"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EtaliPrimalStorm.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_etali_primal_storm_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Leyline Axe",
+      "mana_cost": "{4}",
+      "mana_value": 4,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "may_begin_battlefield_from_kept_opening_hand",
+        "equipped_plus_one_plus_one_double_strike_trample",
+        "equip_3"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LeylineAxe.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_leyline_axe_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

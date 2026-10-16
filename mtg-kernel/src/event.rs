@@ -1937,6 +1937,10 @@ pub enum CommittedEvent {
         move_history_index: Option<u64>,
         source: crate::state::AbilitySourceContractV4,
     },
+    /// Private native pregame custody, never a public committed event.
+    LeylineOpeningV1 {
+        record: crate::leyline_axe_v1::RecordV1,
+    },
     /// Native selected activation, captured before any payment mutation.
     FiendArtisanInputV1 {
         input: Box<crate::effect::fiend_artisan_v1::InputV1>,

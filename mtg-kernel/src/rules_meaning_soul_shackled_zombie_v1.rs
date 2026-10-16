@@ -71,6 +71,8 @@ pub fn source_sha256() -> String {
         include_str!("engine/omniscience_cast_v1.rs"),
         include_str!("resolution_cast_v1.rs"),
         include_str!("effect/harvester_v1.rs"),
+        include_str!("leyline_axe_v1.rs"),
+        include_str!("london_mulligan_v1.rs"),
         include_str!("life_loss_turn_v1.rs"),
         include_str!("progenitus_v1.rs"),
         include_str!("controlled_creature_grants_v1.rs"),
@@ -78,6 +80,7 @@ pub fn source_sha256() -> String {
         include_str!("effect/nonland_copy_v1.rs"),
         include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
         include_str!("effect/inspiration_resolution_v1.rs"),
+        include_str!("effect/standard_exile.rs"),
     ] {
         digest.update([0]);
         digest.update(source.as_bytes());

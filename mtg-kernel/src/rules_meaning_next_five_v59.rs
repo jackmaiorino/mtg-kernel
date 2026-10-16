@@ -218,6 +218,8 @@ pub fn producer_sha256() -> String {
             include_str!("engine/greatwurm_cast_v1.rs"),
             include_str!("effect/sphinx_lore_v1.rs"),
             include_str!("effect/harvester_v1.rs"),
+            include_str!("leyline_axe_v1.rs"),
+            include_str!("london_mulligan_v1.rs"),
             include_str!("soul_shackled_zombie_v1.rs"),
             include_str!("engine/sphinx_lore_cast_v1.rs"),
             include_str!("spell_costs_v1.rs"),
@@ -248,6 +250,7 @@ pub fn producer_sha256() -> String {
             include_str!("source_power_activation_v1.rs"),
             include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
             include_str!("effect/inspiration_resolution_v1.rs"),
+            include_str!("effect/standard_exile.rs"),
         ] {
             h.update((part.len() as u64).to_le_bytes());
             h.update(part.as_bytes());
