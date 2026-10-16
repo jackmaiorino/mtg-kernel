@@ -11,8 +11,10 @@ use crate::{
     trigger::PendingTrigger,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, VecDeque},
     hash::{Hash, Hasher},
 };
 
@@ -103,6 +105,128 @@ pub enum JournalV1 {
     },
 }
 thread_local! { static VERIFYING: Cell<bool> = const { Cell::new(false) }; }
+
+// Process-local memoization of one pure enclosing replay predicate, never of
+// validate(). Keys retain neither a world nor executable authority. No caller
+// can restore or serialize this cache; misses run the original predicate.
+const REPLAY_MEMO_LIMIT: usize = 1024;
+type ReplayKey = [u8; 32];
+thread_local! {
+    static REPLAY_MEMO: RefCell<VecDeque<ReplayKey>> = const { RefCell::new(VecDeque::new()) };
+}
+
+/// Every byte of the actual history before the physical row, including the
+/// operation's actual emitted segment, and the complete current enclosing row
+/// are committed. Round-trip equality makes serde injective on eligible typed
+/// inputs, including every nested serde-skipped runtime field. Ineligibility
+/// affects performance only and must never become a validation rejection.
+fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
+    let mut keys = BTreeMap::new();
+    let mut prefix = Sha256::new();
+    prefix.update(b"drake-enclosing-actual-history/v1");
+    for (position, event) in history.iter().enumerate() {
+        let Ok(position) = u64::try_from(position) else {
+            break;
+        };
+        let Ok(bytes) = serde_json::to_vec(event) else {
+            break;
+        };
+        let Ok(length) = u64::try_from(bytes.len()) else {
+            break;
+        };
+        if !serde_json::from_slice::<CommittedEvent>(&bytes).is_ok_and(|typed| typed == *event) {
+            break;
+        }
+        if journal(event).is_some_and(|row| matches!(row.value, JournalV1::Enclosing { .. })) {
+            let mut key = Sha256::new();
+            key.update(b"drake-enclosing-replay-predicate/v1");
+            key.update(prefix.clone().finalize());
+            key.update(position.to_le_bytes());
+            key.update(length.to_le_bytes());
+            key.update(&bytes);
+            keys.insert(position, key.finalize().into());
+        }
+        prefix.update(position.to_le_bytes());
+        prefix.update(length.to_le_bytes());
+        prefix.update(&bytes);
+    }
+    keys
+}
+
+fn replay_cached(key: &ReplayKey) -> bool {
+    // Release the borrow before any replay, including reentrant validation.
+    REPLAY_MEMO.with(|cache| cache.borrow().contains(key))
+}
+fn remember_replay(key: ReplayKey) {
+    REPLAY_MEMO.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if !cache.contains(&key) {
+            if cache.len() == REPLAY_MEMO_LIMIT {
+                cache.pop_front();
+            }
+            cache.push_back(key);
+        }
+    });
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct ReplayMemoStats {
+    pub executions: u64,
+    pub hits: u64,
+    pub ineligible: u64,
+}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+thread_local! {
+    static REPLAY_MEMO_STATS: Cell<ReplayMemoStats> = const {
+        Cell::new(ReplayMemoStats { executions: 0, hits: 0, ineligible: 0 })
+    };
+}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) fn reset_replay_memo_for_test() {
+    REPLAY_MEMO.with(|cache| cache.borrow_mut().clear());
+    REPLAY_MEMO_STATS.with(|stats| stats.set(ReplayMemoStats::default()));
+}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) fn replay_memo_stats_for_test() -> ReplayMemoStats {
+    REPLAY_MEMO_STATS.with(Cell::get)
+}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn count_replay(hit: bool, eligible: bool) {
+    REPLAY_MEMO_STATS.with(|stats| {
+        let mut value = stats.get();
+        if hit {
+            value.hits = value.hits.saturating_add(1);
+        } else {
+            value.executions = value.executions.saturating_add(1);
+            if !eligible {
+                value.ineligible = value.ineligible.saturating_add(1);
+            }
+        }
+        stats.set(value);
+    });
+}
+
 struct VerifyGuard(bool);
 impl Drop for VerifyGuard {
     fn drop(&mut self) {
@@ -974,6 +1098,16 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }
     let local = crate::linked_aura_operation_v1::locally_owned(state);
     let verifying = VERIFYING.with(Cell::get);
+    let keys = if verifying
+        || !rows
+            .iter()
+            .any(|row| matches!(row.value, JournalV1::Enclosing { .. }))
+    {
+        BTreeMap::new()
+    } else {
+        replay_keys(&state.engine.event_history)
+    };
+    let mut verified_keys = Vec::new();
     let last_closed = rows
         .iter()
         .filter(|r| matches!(r.value, JournalV1::Enclosing { .. }))
@@ -1213,25 +1347,39 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     return Err("Drake operation original ledger changed".into());
                 }
                 if !verifying {
-                    verification(|| {
-                        let input = restore_world(original, prefix)?;
-                        let replay = crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
-                            &input,
-                            operation,
-                            answers,
-                            *used_banner,
-                        )?;
-                        if replay.engine.event_history.get(*start as usize..)
-                            != state
-                                .engine
-                                .event_history
-                                .get(*start as usize..row.index as usize)
-                            || world(&replay)? != **output
-                        {
-                            return Err("Drake complete enclosing original operation/history replay differs".into());
+                    let key = keys.get(&row.index);
+                    let hit = key.is_some_and(replay_cached);
+                    #[cfg(all(
+                        test,
+                        feature = "limited-fdn-fixtures",
+                        not(feature = "standard-magezero-fixtures")
+                    ))]
+                    count_replay(hit, key.is_some());
+                    if !hit {
+                        verification(|| {
+                            let input = restore_world(original, prefix)?;
+                            let replay =
+                                crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
+                                    &input,
+                                    operation,
+                                    answers,
+                                    *used_banner,
+                                )?;
+                            if replay.engine.event_history.get(*start as usize..)
+                                != state
+                                    .engine
+                                    .event_history
+                                    .get(*start as usize..row.index as usize)
+                                || world(&replay)? != **output
+                            {
+                                return Err("Drake complete enclosing original operation/history replay differs".into());
+                            }
+                            Ok(())
+                        })?;
+                        if let Some(key) = key {
+                            verified_keys.push(*key);
                         }
-                        Ok(())
-                    })?;
+                    }
                 }
             }
         }
@@ -1265,6 +1413,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }
     for item in &state.stack {
         validate_item(state, item)?;
+    }
+    // Even successful pure predicates are not remembered after a later error.
+    for key in verified_keys {
+        remember_replay(key);
     }
     Ok(())
 }

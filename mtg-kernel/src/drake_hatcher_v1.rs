@@ -976,6 +976,171 @@ mod tests {
             assert_eq!(state, own_restore);
         }
     }
+    fn paid_replay_memo_state(actor: PlayerId) -> (GameState, ObjectId) {
+        let (mut state, drake) = cast(actor);
+        damage_three(&mut state, drake, actor);
+        finish(&mut state);
+        assert_eq!(state.objects.get(drake).counters.incubation, 3);
+        state.priority_player = actor;
+        engine::step(&mut state, Action::ActivateAbility(drake, 0)).unwrap();
+        let _ = engine::advance_until_decision(&mut state);
+        assert_eq!(state.objects.get(drake).counters.incubation, 0);
+        assert_eq!(
+            state.stack.last().unwrap().kind,
+            crate::state::StackItemKind::ActivatedAbility
+        );
+        custody::validate(&state).unwrap();
+        (state, drake)
+    }
+
+    #[test]
+    fn genuine_paid_enclosing_replay_memo_warm_restore_and_ordinary_segment_tamper_both_seats() {
+        use custody::{journal, JournalV1 as J};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, drake) = paid_replay_memo_state(actor);
+            let original = state.clone();
+            custody::reset_replay_memo_for_test();
+            custody::validate(&state).unwrap();
+            let cold = custody::replay_memo_stats_for_test();
+            assert!(cold.executions > 0);
+            assert_eq!(cold.hits, 0);
+            assert_eq!(cold.ineligible, 0);
+            custody::validate(&state).unwrap();
+            let warm = custody::replay_memo_stats_for_test();
+            assert_eq!(warm.executions, cold.executions);
+            assert!(warm.hits > cold.hits);
+            assert_eq!(state, original);
+            let restored_state = restored(&state);
+            custody::validate(&restored_state).unwrap();
+            let after_restore = custody::replay_memo_stats_for_test();
+            assert_eq!(after_restore.executions, warm.executions);
+            assert!(after_restore.hits > warm.hits);
+            assert_eq!(restored_state, state);
+
+            let ordinary = state.engine.event_history.iter().position(|event| {
+                matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == drake)
+            }).unwrap();
+            let (start, end) = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(journal)
+                .find_map(|row| {
+                    if let J::Enclosing { start, .. } = row.value {
+                        let end = usize::try_from(row.index).unwrap();
+                        let start = usize::try_from(start).unwrap();
+                        (start <= ordinary && ordinary < end).then_some((start, end))
+                    } else {
+                        None
+                    }
+                })
+                .expect("genuine cast event lies inside an actual enclosing segment");
+            let mut bad = state.clone();
+            let event::CommittedEvent::SpellCast { controller, .. } =
+                &mut bad.engine.event_history[ordinary]
+            else {
+                unreachable!()
+            };
+            *controller = actor.opponent();
+            // The saved row and input prefix stay identical. Only its actual
+            // ordinary-event segment changes, which the memo key must bind.
+            assert_eq!(
+                bad.engine.event_history[..start],
+                state.engine.event_history[..start]
+            );
+            assert_eq!(
+                bad.engine.event_history[end],
+                state.engine.event_history[end]
+            );
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            for _ in 0..2 {
+                let before = custody::replay_memo_stats_for_test();
+                assert_eq!(
+                    custody::validate(&bad).unwrap_err(),
+                    "Drake complete enclosing original operation/history replay differs"
+                );
+                let after = custody::replay_memo_stats_for_test();
+                assert!(after.executions > before.executions);
+                assert_eq!(after.ineligible, before.ineligible);
+                assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            }
+            let before = custody::replay_memo_stats_for_test();
+            custody::validate(&state).unwrap();
+            assert_eq!(
+                custody::replay_memo_stats_for_test().executions,
+                before.executions
+            );
+            assert_eq!(state, original);
+        }
+    }
+
+    fn last_replay_output(state: &mut GameState) -> &mut GameState {
+        state
+            .engine
+            .event_history
+            .iter_mut()
+            .rev()
+            .find_map(|event| {
+                if let event::CommittedEvent::DrakeJournalV1 { record } = event {
+                    if let custody::JournalV1::Enclosing { output, .. } = &mut record.value {
+                        return Some(output.as_mut());
+                    }
+                }
+                None
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn genuine_paid_enclosing_replay_memo_changed_output_and_private_runtime_fallback_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, _) = paid_replay_memo_state(actor);
+            custody::reset_replay_memo_for_test();
+            custody::validate(&state).unwrap();
+            custody::validate(&state).unwrap();
+            let warm = custody::replay_memo_stats_for_test();
+            assert!(warm.hits > 0);
+            let mut changed = state.clone();
+            last_replay_output(&mut changed).players[actor.index()].life += 1;
+            assert_eq!(
+                custody::validate(&changed).unwrap_err(),
+                "Drake complete enclosing original operation/history replay differs"
+            );
+            let after_changed = custody::replay_memo_stats_for_test();
+            assert!(after_changed.executions > warm.executions);
+            assert_eq!(after_changed.ineligible, warm.ineligible);
+
+            let mut private = state.clone();
+            crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(
+                last_replay_output(&mut private),
+            );
+            // Serialized commitments alone cannot distinguish these typed
+            // states. Round-trip eligibility must force the existing replay.
+            assert_eq!(
+                serde_json::to_vec(&private).unwrap(),
+                serde_json::to_vec(&state).unwrap()
+            );
+            assert_ne!(private, state);
+            assert_eq!(restored(&private), state);
+            let before_private = custody::replay_memo_stats_for_test();
+            let before_typed = private.clone();
+            assert_eq!(
+                custody::validate(&private).unwrap_err(),
+                "Drake complete enclosing original operation/history replay differs"
+            );
+            let after_private = custody::replay_memo_stats_for_test();
+            assert!(after_private.executions > before_private.executions);
+            assert!(after_private.ineligible > before_private.ineligible);
+            assert_eq!(private, before_typed);
+            let before_good = custody::replay_memo_stats_for_test();
+            custody::validate(&restored(&private)).unwrap();
+            assert_eq!(
+                custody::replay_memo_stats_for_test().executions,
+                before_good.executions
+            );
+        }
+    }
+
     #[test]
     fn fresh_concealed_printing_never_selects_drake_owner_or_refusal_both_seats() {
         use crate::state::FaceDownV1;

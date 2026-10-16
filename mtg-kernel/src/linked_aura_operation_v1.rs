@@ -1909,3 +1909,34 @@ pub(crate) fn replay_drake_enclosing_v1(
 ) -> Result<GameState, String> {
     replay_general(original, operation, answers, used_banner).map(|(world, _)| world)
 }
+
+/// Deliberately invalid saved-output mutation for the Drake memoization test.
+/// This is not an operation owner or a production constructor. The runtime is
+/// absent from serde but present in typed equality, so eligibility must fail.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) {
+    assert!(!locally_owned(state));
+    let runner = RunnerV1 {
+        original_stack: state.stack.clone(),
+        original_history_len: state.engine.event_history.len(),
+        batch_depth: 0,
+        deferred_departures: Vec::new(),
+        answers: Vec::new(),
+        cursor: 0,
+        checkpoint: None,
+        operation: OperationV1::Advance,
+        original_sha256: original_sha256(state),
+        banner_start: None,
+        color_plans: Vec::new(),
+        used_banner: false,
+        original_world_v48: None,
+        attachment_input_v48: None,
+        original_world_v50: None,
+        active_fake_aura_entry_v50: None,
+    };
+    state.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
+}
