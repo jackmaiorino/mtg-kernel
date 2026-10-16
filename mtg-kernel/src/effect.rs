@@ -2693,6 +2693,8 @@ pub enum EffectOp {
     SphinxsTutelageMillV1 {
         capture_history_index: u64,
     },
+    /// Definition-owned APNAP choices, then one simultaneous sacrifice group.
+    BlasphemousEdictV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -3159,6 +3161,10 @@ pub enum EffectFrame {
         previous_batch: Option<u64>,
         ordered: Option<Vec<EffectObjectBinding>>,
     },
+    BlasphemousEdictV1 {
+        choice: blasphemous_edict_v1::ChoiceV1,
+        selected: Vec<EffectObjectBinding>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -3524,6 +3530,9 @@ pub enum EffectTargetSelectionPurpose {
     SphinxsTutelageMillOrderV1 {
         start_history_index: u64,
         previous_batch: Option<u64>,
+    },
+    BlasphemousEdictV1 {
+        choice: blasphemous_edict_v1::ChoiceV1,
     },
 }
 
@@ -4191,6 +4200,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
         | EffectOp::SacrificeCreature { .. }
+        | EffectOp::BlasphemousEdictV1
         | EffectOp::MayPayManaThen { .. }
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
@@ -4234,6 +4244,10 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if blasphemous_edict_v1::contains(op) || blasphemous_edict_v1::selected(state, &resolving_item)
+    {
+        return Err("Edict requires its genuine native pre-removal owner".into());
+    }
     if matches!(
         op,
         EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. }
@@ -4360,6 +4374,14 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| blasphemous_edict_v1::selected(state, &p.resolving_item))
+    {
+        return Err("Edict requires its genuine native pre-removal owner".into());
+    }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         (aberration_resolving_family_v1(state, p)
             && validate_aberration_ward_continuation_v1(state, p).is_err())
@@ -5682,6 +5704,9 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::BlasphemousEdictV1 { choice } => {
+            blasphemous_edict_v1::answer(continuation, choice, objects, path)?;
         }
         EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { choice } => {
             let frame = EffectFrame::NonlandSacrificePaymentV1 {
@@ -8788,6 +8813,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                        | EffectFrame::BlasphemousEdictV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
                             ordered: Some(_),
@@ -8837,6 +8863,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                        | EffectFrame::BlasphemousEdictV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
                             ordered: Some(_),
@@ -9825,6 +9852,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     }
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
+    blasphemous_edict_v1::validate(state, pending)?;
     if matches!(
         pending.resolving_item.inline_effect.as_ref(),
         Some(EffectOp::CounterUnlessPaysLifeWithChoice { .. })
@@ -10078,6 +10106,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
                     crystal_prevention_v1::validate_discard_choice(state, pending)?
+                }
+                EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => {
+                    blasphemous_edict_v1::validate(state, pending)?;
                 }
                 EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { choice } => {
                     nonland_sacrifice_payment_v1::validate_choice(state, pending, choice)?;
@@ -11958,6 +11989,7 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 | EffectFrame::DiscardDraw { .. }
                 | EffectFrame::DiscardPaymentV1 { .. }
                 | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                | EffectFrame::BlasphemousEdictV1 { .. }
                 | EffectFrame::AleshaRaidAnswerV1 { .. }
                 | EffectFrame::SphinxsTutelageMillV1 {
                     ordered: Some(_),
@@ -11982,6 +12014,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::BlasphemousEdictV1 { choice, selected } => {
+                    if blasphemous_edict_v1::advance(state, &mut continuation, choice, selected)? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
                 EffectFrame::SphinxsTutelageMillV1 {
                     start_history_index,
                     previous_batch,
@@ -14911,6 +14949,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                             canonical_path: path,
                         },
                     });
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::BlasphemousEdictV1 => {
+                if blasphemous_edict_v1::start(state, &mut continuation, path)? {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
@@ -18452,6 +18496,13 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         return;
     }
 
+    if blasphemous_edict_v1::contains(op) || blasphemous_edict_v1::context_selected(state, ctx) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if crystal_prevention_v1::mixed_environment(state)
         && !crystal_prevention_v1::ordinary_nondamage(op)
     {
@@ -22453,6 +22504,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
         | EffectOp::SacrificeCreature { .. }
+        | EffectOp::BlasphemousEdictV1
         | EffectOp::MayPayManaThen { .. }
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
@@ -25192,3 +25244,538 @@ mod sphinxs_tutelage_v1_tests;
 ))]
 #[path = "effect/consuming_aberration_v1_tests.rs"]
 mod consuming_aberration_v1_tests;
+
+/// Native FDN57 resolution. This module is inline so existing effect-source
+/// identities bind the complete source, custody and answer reducer together.
+pub(crate) mod blasphemous_edict_v1 {
+    use super::*;
+
+    fn definition(id: u16) -> bool {
+        card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+            d.is_executable()
+                && d.name == "Blasphemous Edict"
+                && (d.spell_effect)() == Some(EffectOp::BlasphemousEdictV1)
+        })
+    }
+    fn item_family(state: &GameState, item: &StackItem) -> bool {
+        matches!(item.inline_effect, Some(EffectOp::BlasphemousEdictV1))
+            || item
+                .v4
+                .source_contract
+                .is_some_and(|c| c.zone == Zone::Stack && definition(c.card_def))
+            || state.objects.try_get(item.source).is_some_and(|o| {
+                o.zone == Zone::Stack && o.v4.face_down_v1.is_none() && definition(o.card_def)
+            })
+    }
+    pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
+        item_family(state, item)
+            || state
+                .stack
+                .iter()
+                .any(|row| row.v4.stack_item_id == item.v4.stack_item_id && item_family(state, row))
+    }
+    pub(crate) fn context_selected(state: &GameState, ctx: &ExecCtx) -> bool {
+        state.stack.iter().any(|row| {
+            item_family(state, row)
+                && (Some(row.v4.stack_item_id) == ctx.stack_item_id || row.source == ctx.source)
+        }) || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| selected(state, &p.resolving_item) && p.ctx.source == ctx.source)
+    }
+    pub(super) fn contains(op: &EffectOp) -> bool {
+        match op {
+            EffectOp::BlasphemousEdictV1 => true,
+            EffectOp::Sequence(ops) | EffectOp::Choice { options: ops, .. } => {
+                ops.iter().any(contains)
+            }
+            EffectOp::Conditional { then, else_, .. } => contains(then) || contains(else_),
+            EffectOp::MayPayManaThen { then, .. }
+            | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. }
+            | EffectOp::LookAtTopMayRevealThen { then, .. } => contains(then),
+            EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. }
+            | EffectOp::MaySacrificeNonlandOtherwiseV1 { unpaid, .. } => contains(unpaid),
+            _ => false,
+        }
+    }
+
+    /// All choices refer to the same original public scene. No sacrifice or
+    /// observer runs between the active player's and nonactive player's choices.
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    pub struct ChoiceV1 {
+        active: PlayerId,
+        phase: u8,
+        candidates: [Vec<EffectObjectBinding>; 2],
+        chosen: [Vec<EffectObjectBinding>; 2],
+        graveyard: [Vec<EffectObjectBinding>; 2],
+        graveyard_order: [Vec<EffectObjectBinding>; 2],
+    }
+    fn candidates(state: &GameState, player: PlayerId) -> Result<Vec<EffectObjectBinding>, String> {
+        let mut found = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for &object in &state.players[player.index()].battlefield {
+            let o = state
+                .objects
+                .try_get(object)
+                .ok_or("Edict battlefield object absent")?;
+            if o.zone != Zone::Battlefield || o.controller != player || !seen.insert(object) {
+                return Err("Edict battlefield membership changed".into());
+            }
+            if crate::engine::object_has_type(state, object, CardType::Creature) {
+                found.push(EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: o.zone_change_count,
+                });
+            }
+        }
+        Ok(found)
+    }
+    fn validate_root(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
+        let item = &pending.resolving_item;
+        if !item
+            .v4
+            .source_contract
+            .is_some_and(|c| definition(c.card_def))
+            || item.kind != crate::state::StackItemKind::Spell
+            || !selected(state, item)
+            || *validated_definition_owned_root_effect(state, pending)?
+                != EffectOp::BlasphemousEdictV1
+        {
+            return Err("Edict lost its exact definition-owned root".into());
+        }
+        Ok(())
+    }
+    fn graveyard_candidates(
+        state: &GameState,
+        choice: &ChoiceV1,
+    ) -> Result<[Vec<EffectObjectBinding>; 2], String> {
+        let mut scene = state.clone();
+        let mut found = [Vec::new(), Vec::new()];
+        for b in choice.chosen[choice.active.index()]
+            .iter()
+            .chain(&choice.chosen[choice.active.opponent().index()])
+        {
+            let Some(event::ProposedEvent::ZoneChange(mut change)) = event::apply_replacements(
+                &mut scene,
+                event::ProposedEvent::zone_change(b.object, Zone::Graveyard),
+            ) else {
+                return Err("Edict sacrifice changed its native replacement route".into());
+            };
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::unearth_exile_instead(&scene, &mut change);
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let _ = &mut change;
+            if change.to_zone == Zone::Graveyard {
+                found[state.objects.get(b.object).owner.index()].push(*b);
+            }
+        }
+        if scene.engine.halted.is_some() {
+            return Err("Edict replacement roster invalid".into());
+        }
+        Ok(found)
+    }
+    fn validate_choice(state: &GameState, choice: &ChoiceV1) -> Result<(), String> {
+        if choice.active != state.active_player || choice.phase > 3 {
+            return Err("Edict changed original APNAP stage".into());
+        }
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let original = &choice.candidates[player.index()];
+            if candidates(state, player)? != *original {
+                return Err("Edict changed original creature scene".into());
+            }
+            let before = choice.phase >= 2 || choice.phase == 1 && player == choice.active;
+            let chosen = &choice.chosen[player.index()];
+            if before {
+                validate_selection(original, chosen, original.len().min(13))?;
+                if original.len() <= 13 && chosen != original {
+                    return Err("Edict forced all-creature roster reordered".into());
+                }
+            } else if !chosen.is_empty() {
+                return Err("Edict future player already selected".into());
+            }
+        }
+        if choice.phase >= 2 {
+            if graveyard_candidates(state, choice)? != choice.graveyard {
+                return Err("Edict changed original owner graveyard routes".into());
+            }
+        } else if choice.graveyard.iter().any(|v| !v.is_empty()) {
+            return Err("Edict graveyard order preceded sacrifice choices".into());
+        }
+        for player in [choice.active, choice.active.opponent()] {
+            let ordered = &choice.graveyard_order[player.index()];
+            if choice.phase == 3 && player == choice.active {
+                let original = &choice.graveyard[player.index()];
+                validate_selection(original, ordered, original.len())?;
+            } else if !ordered.is_empty() {
+                return Err("Edict future graveyard owner already answered".into());
+            }
+        }
+        Ok(())
+    }
+    fn validate_selection(
+        original: &[EffectObjectBinding],
+        selected: &[EffectObjectBinding],
+        count: usize,
+    ) -> Result<(), String> {
+        if selected.len() != count
+            || selected.iter().any(|b| !original.contains(b))
+            || selected
+                .iter()
+                .map(|b| b.object)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != selected.len()
+        {
+            return Err("Edict selection changed cardinality, creature or incarnation".into());
+        }
+        Ok(())
+    }
+    fn chooser(choice: &ChoiceV1) -> PlayerId {
+        if choice.phase % 2 == 0 {
+            choice.active
+        } else {
+            choice.active.opponent()
+        }
+    }
+    fn original(choice: &ChoiceV1) -> &[EffectObjectBinding] {
+        if choice.phase < 2 {
+            &choice.candidates[chooser(choice).index()]
+        } else {
+            &choice.graveyard[chooser(choice).index()]
+        }
+    }
+    fn required(choice: &ChoiceV1) -> usize {
+        if choice.phase < 2 {
+            13
+        } else {
+            original(choice).len()
+        }
+    }
+    fn validate_answer(choice: &ChoiceV1, selected: &[EffectObjectBinding]) -> Result<(), String> {
+        validate_selection(original(choice), selected, required(choice))
+    }
+    fn target(b: EffectObjectBinding) -> EffectTargetCandidate {
+        EffectTargetCandidate {
+            target: Target::Object(b.object),
+            expected_object: Some(b),
+        }
+    }
+    pub(super) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
+        let carries = matches!(
+            pending.choice,
+            Some(PendingEffectChoice::SelectTargets {
+                purpose: EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. },
+                ..
+            })
+        ) || pending
+            .frames
+            .iter()
+            .any(|f| matches!(f, EffectFrame::BlasphemousEdictV1 { .. }));
+        if !selected(state, &pending.resolving_item) && !carries {
+            return Ok(());
+        }
+        validate_root(state, pending)?;
+        match (
+            &pending.choice,
+            pending.frames.as_slice(),
+            &pending.answered_choice_guard,
+        ) {
+            (
+                Some(PendingEffectChoice::SelectTargets {
+                    player,
+                    path,
+                    selected,
+                    legal,
+                    min_targets,
+                    max_targets,
+                    ordered,
+                    purpose: EffectTargetSelectionPurpose::BlasphemousEdictV1 { choice },
+                }),
+                [],
+                None,
+            ) => {
+                validate_choice(state, choice)?;
+                let original = original(choice);
+                if *player != chooser(choice)
+                    || !path.is_empty()
+                    || *ordered != (choice.phase >= 2)
+                    || usize::from(*min_targets) != required(choice)
+                    || usize::from(*max_targets) != required(choice)
+                    || original.len() <= if choice.phase < 2 { 13 } else { 1 }
+                    || selected.len() > required(choice)
+                {
+                    return Err("Edict prompt changed its native chooser, path or bounds".into());
+                }
+                let mut remaining = original.iter().copied().map(target).collect::<Vec<_>>();
+                for candidate in selected {
+                    let index = remaining
+                        .iter()
+                        .position(|c| c == candidate)
+                        .ok_or("Edict selected candidate changed")?;
+                    remaining.remove(index);
+                }
+                if remaining != *legal {
+                    return Err("Edict remaining native candidate order changed".into());
+                }
+                Ok(())
+            }
+            (
+                None,
+                [frame @ EffectFrame::BlasphemousEdictV1 { choice, selected }],
+                Some(EffectAnsweredChoiceGuard::StandardSelection { frame: guard }),
+            ) if **guard == *frame => {
+                validate_choice(state, choice)?;
+                validate_answer(choice, selected)
+            }
+            _ => Err("Edict lost its required original sacrifice choice stage".into()),
+        }
+    }
+    pub(super) fn answer(
+        pending: &mut EffectContinuation,
+        choice: ChoiceV1,
+        selected: Vec<EffectObjectBinding>,
+        path: Vec<u16>,
+    ) -> Result<(), String> {
+        if !path.is_empty() || !pending.frames.is_empty() {
+            return Err("Edict answer changed root path".into());
+        }
+        validate_answer(&choice, &selected)?;
+        let frame = EffectFrame::BlasphemousEdictV1 { choice, selected };
+        pending.answered_choice_guard = Some(EffectAnsweredChoiceGuard::StandardSelection {
+            frame: Box::new(frame.clone()),
+        });
+        pending.frames.push(frame);
+        Ok(())
+    }
+    // Deterministic all-or-none rosters need no fictitious decision. When more
+    // than thirteen exist, the original player must choose the exact thirteen.
+    fn stage(
+        state: &mut GameState,
+        pending: &mut EffectContinuation,
+        mut choice: ChoiceV1,
+    ) -> Result<bool, String> {
+        while choice.phase < 4 {
+            if choice.phase == 2 {
+                choice.graveyard = graveyard_candidates(state, &choice)?;
+            }
+            let player = chooser(&choice);
+            let original = original(&choice).to_vec();
+            if original.len() <= if choice.phase < 2 { 13 } else { 1 } {
+                if choice.phase < 2 {
+                    choice.chosen[player.index()] = original;
+                } else {
+                    choice.graveyard_order[player.index()] = original;
+                }
+                choice.phase += 1;
+                continue;
+            }
+            let count = u16::try_from(required(&choice))
+                .map_err(|_| "Edict owner order exceeds native width")?;
+            pending.choice = Some(PendingEffectChoice::SelectTargets {
+                player,
+                path: Vec::new(),
+                selected: Vec::new(),
+                legal: original.into_iter().map(target).collect(),
+                min_targets: count,
+                max_targets: count,
+                ordered: choice.phase >= 2,
+                purpose: EffectTargetSelectionPurpose::BlasphemousEdictV1 { choice },
+            });
+            return Ok(true);
+        }
+        let sacrificed = choice.chosen[choice.active.index()]
+            .iter()
+            .chain(&choice.chosen[choice.active.opponent().index()])
+            .copied()
+            .collect::<Vec<_>>();
+        let ordered = choice.graveyard_order[choice.active.index()]
+            .iter()
+            .chain(&choice.graveyard_order[choice.active.opponent().index()])
+            .copied()
+            .collect::<Vec<_>>();
+        let destinations = sacrificed
+            .iter()
+            .filter(|b| !ordered.contains(b))
+            .copied()
+            .chain(ordered)
+            .collect::<Vec<_>>();
+        // Both controllers choose before any sacrifice. The physical owners
+        // then order their actual graveyard destinations, including stolen cards.
+        // Replacements and all departure observers remain one native batch.
+        for b in &sacrificed {
+            event::log_sacrifice(state, b.object);
+        }
+        event::propose_and_commit_batch(
+            state,
+            destinations
+                .into_iter()
+                .map(|b| event::ProposedEvent::zone_change(b.object, Zone::Graveyard))
+                .collect(),
+        );
+        if state.engine.halted.is_some() {
+            return Err("Edict native sacrifice batch halted".into());
+        }
+        Ok(false)
+    }
+    pub(super) fn start(
+        state: &mut GameState,
+        pending: &mut EffectContinuation,
+        path: Vec<u16>,
+    ) -> Result<bool, String> {
+        if !path.is_empty() || !pending.frames.is_empty() {
+            return Err("Edict is a closed root operation".into());
+        }
+        validate_root(state, pending)?;
+        let choice = ChoiceV1 {
+            active: state.active_player,
+            phase: 0,
+            candidates: [
+                candidates(state, PlayerId::P0)?,
+                candidates(state, PlayerId::P1)?,
+            ],
+            chosen: [Vec::new(), Vec::new()],
+            graveyard: [Vec::new(), Vec::new()],
+            graveyard_order: [Vec::new(), Vec::new()],
+        };
+        stage(state, pending, choice)
+    }
+    pub(super) fn advance(
+        state: &mut GameState,
+        pending: &mut EffectContinuation,
+        mut choice: ChoiceV1,
+        selected: Vec<EffectObjectBinding>,
+    ) -> Result<bool, String> {
+        validate_choice(state, &choice)?;
+        validate_answer(&choice, &selected)?;
+        let player = chooser(&choice);
+        if choice.phase < 2 {
+            choice.chosen[player.index()] = selected;
+        } else {
+            choice.graveyard_order[player.index()] = selected;
+        }
+        choice.phase += 1;
+        stage(state, pending, choice)
+    }
+
+    // Move-only, nonserializable custody of the actual native row. A cloned
+    // caller item/context cannot manufacture either begin or resume authority.
+    pub(crate) struct OwnerV1 {
+        item: StackItem,
+        pending: Option<EffectContinuation>,
+        position: usize,
+        remaining: Vec<StackItem>,
+    }
+    pub(crate) fn acquire(
+        state: &GameState,
+        item: &StackItem,
+        beginning: bool,
+    ) -> Result<Option<OwnerV1>, String> {
+        if !selected(state, item) {
+            return Ok(None);
+        }
+        crate::engine::validated_stack_item_target_spec(item, state)?;
+        let position = state
+            .stack
+            .iter()
+            .position(|r| r == item)
+            .ok_or("Edict original native row absent")?;
+        let mut remaining = state.stack.clone();
+        remaining.remove(position);
+        if remaining
+            .iter()
+            .any(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            return Err("Edict duplicated native row".into());
+        }
+        if beginning {
+            if position + 1 != state.stack.len() || state.engine.pending_effect.is_some() {
+                return Err("Edict begin changed native stack top".into());
+            }
+        } else {
+            validate_pending_effect_choice(state)?;
+            if state
+                .engine
+                .pending_effect
+                .as_ref()
+                .is_none_or(|p| p.resolving_item != *item || p.choice.is_some())
+            {
+                return Err("Edict resume changed original ready continuation".into());
+            }
+        }
+        Ok(Some(OwnerV1 {
+            item: item.clone(),
+            pending: state.engine.pending_effect.clone(),
+            position,
+            remaining,
+        }))
+    }
+    pub(crate) fn begin(
+        state: &mut GameState,
+        owner: OwnerV1,
+        ctx: &ExecCtx,
+    ) -> Result<ResumableProgress, String> {
+        if state.stack != owner.remaining
+            || state.engine.pending_effect.is_some()
+            || owner.pending.is_some()
+        {
+            return Err("Edict initial removed-row owner changed".into());
+        }
+        let i = &owner.item;
+        let expected = ExecCtx {
+            stack_item_id: Some(i.v4.stack_item_id),
+            source: i.source,
+            controller: i.controller,
+            targets: i.targets.clone(),
+            target_contracts: i.v4.target_contracts.clone(),
+            discarded: i.discarded.clone(),
+            paid_cost_refs: i.v4.paid_cost_refs.clone(),
+            hidden_ability_source: i.v4.hidden_ability_source,
+            ability_source_contract: i.v4.ability_source_contract,
+            cauldron_grant: i.v4.cauldron_grant,
+            kicked: i.kicked,
+            optional_additional_cost_paid: i.v4.optional_additional_cost_paid,
+            x_value: i.v4.x_value,
+            niv_damage_origin_v1: event::niv_damage_origin_for_saved_item_v1(state, i),
+        };
+        if *ctx != expected {
+            return Err("Edict original execution context changed".into());
+        }
+        state.engine.pending_effect = Some(EffectContinuation {
+            resolving_item: owner.item,
+            ctx: ctx.clone(),
+            frames: vec![EffectFrame::Program {
+                op: EffectOp::BlasphemousEdictV1,
+                path: Vec::new(),
+            }],
+            choice: None,
+            answered_choice_guard: None,
+        });
+        drive_resumable(state)
+    }
+    pub(crate) fn resume(
+        state: &mut GameState,
+        owner: OwnerV1,
+    ) -> Result<ResumableProgress, String> {
+        if state.stack != owner.remaining || state.engine.pending_effect != owner.pending {
+            return Err("Edict private continuation owner changed".into());
+        }
+        state.stack.insert(owner.position, owner.item);
+        let loaned = state.stack.clone();
+        let result = validate_pending_effect_choice(state).and_then(|()| drive_resumable(state));
+        let returned = std::mem::replace(&mut state.stack, owner.remaining);
+        if returned != loaned {
+            return Err("Edict private row loan changed stack".into());
+        }
+        result
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "effect/blasphemous_edict_v1_tests.rs"]
+mod blasphemous_edict_v1_tests;

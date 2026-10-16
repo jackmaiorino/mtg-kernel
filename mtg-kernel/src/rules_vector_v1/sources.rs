@@ -741,6 +741,18 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             Value::String(format!("{:?}", alt.condition)),
         );
         walk.costs(CtxF::AltForm, "alt_cost", alt.components, None);
+        if let crate::card_def::AltCostCondition::BattlefieldCreatureCountAtLeast(minimum) =
+            alt.condition
+        {
+            walk.ability(CtxF::AltForm, |out| {
+                out.read(
+                    RelF::EachPlayer,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Creature),
+                    AggF::AtLeast(u8::try_from(minimum).unwrap_or(u8::MAX)),
+                )
+            });
+        }
         if let crate::card_def::AltCostCondition::ControlsPermanentWithSubtype(_) = alt.condition {
             walk.ability(CtxF::AltForm, |out| {
                 out.read(

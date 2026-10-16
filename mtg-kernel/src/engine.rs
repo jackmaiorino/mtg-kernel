@@ -6814,6 +6814,18 @@ fn alt_cost_condition_met(
 ) -> bool {
     match condition {
         card_def::AltCostCondition::Always => true,
+        card_def::AltCostCondition::BattlefieldCreatureCountAtLeast(minimum) => {
+            state
+                .objects
+                .iter()
+                .filter(|(id, live)| {
+                    live.zone == Zone::Battlefield
+                        && object_has_type(state, *id, CardType::Creature)
+                })
+                .take(usize::from(minimum))
+                .count()
+                >= usize::from(minimum)
+        }
         card_def::AltCostCondition::WarpFromHand
         | card_def::AltCostCondition::ImpendingFromHand { .. }
         | card_def::AltCostCondition::DisguiseFromHand => origin_zone == Zone::Hand,
@@ -10999,6 +11011,14 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
+    let edict_owner = match effect::blasphemous_edict_v1::acquire(state, &item, false) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let tutelage_owner = match effect::acquire_tutelage_resume_v1(state, &item) {
         Ok(owner) => owner,
         Err(_) => {
@@ -11133,7 +11153,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    let progress = if let Some(owner) = tutelage_owner {
+    let progress = if let Some(owner) = edict_owner {
+        effect::blasphemous_edict_v1::resume(state, owner)
+    } else if let Some(owner) = tutelage_owner {
         effect::resume_owned_tutelage_v1(state, owner)
     } else if let Some(owner) = hunter_owner.as_ref() {
         crate::high_society_hunter_custody_v45::resume_owned(state, owner)
@@ -16284,6 +16306,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let edict_owner = match effect::blasphemous_edict_v1::acquire(state, &current, true) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let tutelage_owner = match if targets_legal {
         effect::acquire_tutelage_begin_v1(state, &current)
     } else {
@@ -16395,6 +16427,23 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = edict_owner {
+        return match effect::blasphemous_edict_v1::begin(state, owner, &ctx) {
+            Ok(effect::ResumableProgress::Complete(completed)) if *completed == item => {
+                ResolutionProgress::Complete
+            }
+            Ok(effect::ResumableProgress::Suspended) => {
+                resolution_cast_v1::restore_parent(state, item);
+                ResolutionProgress::Suspended
+            }
+            Ok(effect::ResumableProgress::Complete(_)) | Err(_) => {
+                state.stack.push(item.clone());
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                ResolutionProgress::Suspended
+            }
+        };
+    }
     if let Some(owner) = tutelage_owner {
         return match effect::begin_owned_tutelage_v1(state, owner, &ctx) {
             Ok(effect::ResumableProgress::Complete(completed)) if *completed == item => {

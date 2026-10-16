@@ -3493,6 +3493,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Blasphemous Edict" => program("None", "BlasphemousEdictV1(active_nonactive_choose_thirteen_or_all_controlled_effective_creatures_then_one_simultaneous_sacrifice_batch)", "EffectOp::BlasphemousEdictV1"),
         "Consuming Aberration" => program("None", "MoveObject(ThisSource,Battlefield);cda_all_zones:power_and_toughness_equal_all_opponents_graveyard_physical_cards;controller_cast_spell:each_opponent_reveal_through_first_land_then_owner_ordered_graveyard", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Sphinx's Tutelage" => program("None", "MoveObject(ThisSource,Battlefield);own_successful_draw:captured_original_source_controller:target_opponent:mill2_repeat_iff_two_nonland_cards_share_color;5U:draw1_then_discard1", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Drakuseth, Maw of Flames" => program("None", "MoveObject(ThisSource,Battlefield);attacks:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_contracts:one_damage_batch", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -4772,6 +4773,7 @@ fn game_outcome_protection_for(name: &str) -> &'static str {
 /// Out's mana cost.").
 fn alt_cost_for(name: &str) -> &'static str {
     match name {
+        "Blasphemous Edict" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 0, x_count: 0 })], condition: AltCostCondition::BattlefieldCreatureCountAtLeast(13) })",
         "Flourishing Bloom-Kin" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips:&[], generic:3, x_count:0 })], condition:AltCostCondition::DisguiseFromHand })",
         "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeLands(2)], condition: AltCostCondition::Always })",
         "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",

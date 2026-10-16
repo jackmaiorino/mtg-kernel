@@ -1160,6 +1160,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect.rs", "Blasphemous Edict", "definition-owned APNAP simultaneous sacrifice root remains opaque in frozen V1; conditional mana cost is extracted"),
     ("effect.rs", "Consuming Aberration", "exact native revealed-mill answer-stage validation; reveal-until effect remains opaque"),
     ("engine.rs", "Consuming Aberration", "native all-zone layer7a CDA; exact opponent-graveyard cardinality remains opaque in frozen V1"),
     ("event.rs", "Sphinx's Tutelage",
@@ -1655,4 +1656,24 @@ fn aberration_own_cast_untargeted_mill_and_all_zone_cda_remain_truthfully_opaque
         .abilities
         .iter()
         .any(|a| a.ctx == CtxF::Trigger && a.atoms.contains(&Atom::Opaque)));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn edict_native_conditional_cost_and_simultaneous_choices_remain_opaque_in_frozen_v1() {
+    let actual = rules("Blasphemous Edict");
+    assert!(atoms(&actual).contains(&Atom::Opaque));
+    assert!(atoms(&actual).contains(&Atom::Read(ReadAtom {
+        player: RelF::EachPlayer,
+        zone: Some(ZoneF::Battlefield),
+        obj: Some(ObjF::Creature),
+        agg: AggF::AtLeast(13)
+    })));
+    assert_eq!(
+        crate::card_def::CARD_DEFS[usize::from(card_id("Blasphemous Edict"))].target_spec,
+        TargetSpec::None
+    );
 }

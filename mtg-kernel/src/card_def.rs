@@ -1879,6 +1879,8 @@ pub enum AltCostCondition {
         time_counters: u8,
     },
     DisguiseFromHand,
+    /// All effective battlefield creatures, under either controller.
+    BattlefieldCreatureCountAtLeast(u16),
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
