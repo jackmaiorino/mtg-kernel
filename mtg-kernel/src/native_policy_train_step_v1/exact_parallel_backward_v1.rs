@@ -89,20 +89,7 @@ impl<'t> ReverseGradientSinkV1<'t> for RecordTermsV1<'_, 't> {
             return Err(NativePolicyTrainErrorV1::ParameterManifest);
         }
         resize_zeroed_v1(d_input, rows * input_dim);
-        for row in 0..rows {
-            let input_begin = row * input_dim;
-            let output_begin = row * output_dim;
-            for output_index in 0..output_dim {
-                let d_value = d_output[output_begin + output_index];
-                let weight_begin = output_index * input_dim;
-                for (d_input, weight) in d_input[input_begin..input_begin + input_dim]
-                    .iter_mut()
-                    .zip(&weight[weight_begin..weight_begin + input_dim])
-                {
-                    *d_input += d_value * *weight;
-                }
-            }
-        }
+        input_gradient_rows_v1(weight, input_dim, output_dim, d_output, d_input);
         let terms = &mut *self.terms;
         let start = terms.d_outputs.len();
         terms.d_outputs.extend_from_slice(d_output);
@@ -389,10 +376,82 @@ fn gradient_blocks_v1<'v>(
     blocks
 }
 
+/// `linear_backward_into`'s input gradient: for each row, the outputs' terms
+/// in output order. Elements are independent, so the vector width changes
+/// no bit (AVX2 does not enable FMA).
+fn input_gradient_rows_v1(
+    weight: &[f32],
+    input_dim: usize,
+    output_dim: usize,
+    d_output: &[f32],
+    d_input: &mut [f32],
+) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was detected at run time just above.
+        unsafe { input_gradient_rows_avx2_v1(weight, input_dim, output_dim, d_output, d_input) };
+        return;
+    }
+    input_gradient_rows_body_v1(weight, input_dim, output_dim, d_output, d_input);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn input_gradient_rows_avx2_v1(
+    weight: &[f32],
+    input_dim: usize,
+    output_dim: usize,
+    d_output: &[f32],
+    d_input: &mut [f32],
+) {
+    input_gradient_rows_body_v1(weight, input_dim, output_dim, d_output, d_input);
+}
+
+#[inline(always)]
+fn input_gradient_rows_body_v1(
+    weight: &[f32],
+    input_dim: usize,
+    output_dim: usize,
+    d_output: &[f32],
+    d_input: &mut [f32],
+) {
+    if input_dim == 0 || output_dim == 0 {
+        return;
+    }
+    for (d_input_row, d_output_row) in d_input
+        .chunks_exact_mut(input_dim)
+        .zip(d_output.chunks_exact(output_dim))
+    {
+        for (d_value, weight_row) in d_output_row.iter().zip(weight.chunks_exact(input_dim)) {
+            for (d_input, weight) in d_input_row.iter_mut().zip(weight_row) {
+                *d_input += *d_value * *weight;
+            }
+        }
+    }
+}
+
 /// Phase B: the block's elements receive the sequential pass's additions in
 /// its order: substeps in visiting order, then rows in order, except the
-/// scorer bias's reverse rows.
+/// scorer bias's reverse rows. Elements are independent, so the vector width
+/// changes no bit (AVX2 does not enable FMA).
 fn replay_block_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was detected at run time just above.
+        unsafe { replay_block_avx2_v1(block, terms) };
+        return;
+    }
+    replay_block_body_v1(block, terms);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn replay_block_avx2_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
+    replay_block_body_v1(block, terms);
+}
+
+#[inline(always)]
+fn replay_block_body_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
     let GradientBlockV1 {
         tensor,
         rows: block_rows,

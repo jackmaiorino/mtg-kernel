@@ -1125,7 +1125,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::planeswalker_v1::validate_heartfire_recipients_v12(state)?;
     crate::twinflame_observation_v1::validate_projection_authority(state).map_err(|e| e.0)?;
     crate::effect::validate_pending_effect_choice(state)?;
-    crate::sower_restriction_capture_v1::active(state).map_err(|e| e.0)?;
+    crate::sower_restriction_capture_v1::complete_family(state).map_err(|e| e.0)?;
     crate::effect::frenzied_goblin_resolution_v1::validate(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     crate::authority_public_capture_v1::validate_state(state)?;
@@ -1164,7 +1164,7 @@ fn validate_state_full_scope(state: &GameState, divine: bool) -> Result<(), Stri
     crate::planeswalker_v1::validate_full_ajani_recipients_v42(state)?;
     crate::twinflame_observation_v1::validate_projection_authority(state).map_err(|e| e.0)?;
     crate::effect::validate_pending_effect_choice(state)?;
-    crate::sower_restriction_capture_v1::active(state).map_err(|e| e.0)?;
+    crate::sower_restriction_capture_v1::complete_family(state).map_err(|e| e.0)?;
     crate::effect::frenzied_goblin_resolution_v1::validate(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     crate::authority_public_capture_v1::validate_state(state)?;

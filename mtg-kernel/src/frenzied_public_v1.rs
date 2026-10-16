@@ -74,6 +74,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("effect.rs"),
         include_str!("sower_of_chaos_v1.rs"),
         include_str!("sower_restriction_capture_v1.rs"),
+        include_str!("rules_meaning_sower_v1.rs"),
         include_str!("trigger.rs"),
         include_str!("rules_meaning_frenzied_goblin_v1.rs"),
         include_str!("rl.rs"),
@@ -213,9 +214,7 @@ pub(crate) fn parts_for_common_scope(
 ) -> Result<FrenziedObservationV1, RlContractError> {
     let (substep_index, substep_count) = substep;
 
-    validate_projection_authority(state)?;
-    let captures =
-        crate::effect::frenzied_goblin_resolution_v1::active(state).map_err(RlContractError)?;
+    let captures = crate::sower_restriction_capture_v1::complete_family(state)?.frenzied;
     let mut restrictions: Vec<_> = captures
         .into_iter()
         .map(|capture| {

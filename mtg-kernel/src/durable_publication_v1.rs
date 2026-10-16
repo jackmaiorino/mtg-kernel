@@ -1063,7 +1063,7 @@ pub fn publish_new_file_v1(
         final_name.as_ref(),
         bytes,
         expectation,
-        |_, _, _| Ok(()),
+        crash_point_hook_v1,
     )
 }
 
@@ -1083,8 +1083,121 @@ pub fn publish_new_bytes_v1(
         final_name.as_ref(),
         bytes,
         expectation,
-        |_, _, _| Ok(()),
+        crash_point_hook_v1,
     )
+}
+
+/// The public publications' boundary hook: nothing outside tests, which can
+/// stop a publication at a planned crash point (`crash_points_for_test_v1`).
+#[cfg_attr(not(test), inline(always))]
+fn crash_point_hook_v1(
+    _boundary: PublicationBoundaryV1,
+    _stage_path: &Path,
+    _final_path: &Path,
+) -> Result<(), DurablePublicationErrorV1> {
+    #[cfg(test)]
+    crash_points_for_test_v1::visit_v1(_boundary, _final_path)?;
+    Ok(())
+}
+
+/// Test-only crash points for whole runs. While a plan is armed, every
+/// publication whose final path lies under its root is numbered in the order
+/// it starts; the planned one fails before or after its final name appears,
+/// and from then on every publication under the root fails at its next
+/// boundary, as if the process had died there. The error path runs no
+/// cleanup, so the files left are the ones a crash at that point leaves.
+#[cfg(test)]
+pub(crate) mod crash_points_for_test_v1 {
+    use super::{DurablePublicationErrorKindV1, DurablePublicationErrorV1, PublicationBoundaryV1};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, PoisonError};
+
+    /// Where the planned publication stops.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum CrashPointV1 {
+        /// The staging file is written and verified; the final name is absent.
+        BeforeFinal,
+        /// The final name is published and verified; its staging link remains.
+        AfterFinal,
+    }
+
+    struct PlanV1 {
+        root: PathBuf,
+        crash: Option<(usize, CrashPointV1)>,
+        started: usize,
+        target: Option<PathBuf>,
+        crashed: bool,
+    }
+
+    static PLAN: Mutex<Option<PlanV1>> = Mutex::new(None);
+    /// One armed plan at a time, across test threads.
+    static ARMED: Mutex<()> = Mutex::new(());
+
+    /// Runs `body` with publications under `root` numbered and, with
+    /// `crash`, the planned one stopped. Returns `body`'s result, the number
+    /// of publications started under `root`, and whether the crash happened.
+    pub(crate) fn with_crash_point_v1<R>(
+        root: &Path,
+        crash: Option<(usize, CrashPointV1)>,
+        body: impl FnOnce() -> R,
+    ) -> (R, usize, bool) {
+        let _armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
+        *PLAN.lock().unwrap_or_else(PoisonError::into_inner) = Some(PlanV1 {
+            root: root.to_path_buf(),
+            crash,
+            started: 0,
+            target: None,
+            crashed: false,
+        });
+        let result = body();
+        let plan = PLAN
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .expect("armed plan");
+        (result, plan.started, plan.crashed)
+    }
+
+    fn crash_v1(detail: &str) -> DurablePublicationErrorV1 {
+        DurablePublicationErrorV1::new(DurablePublicationErrorKindV1::InjectedFault, detail)
+    }
+
+    pub(super) fn visit_v1(
+        boundary: PublicationBoundaryV1,
+        final_path: &Path,
+    ) -> Result<(), DurablePublicationErrorV1> {
+        let mut plan = PLAN.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(plan) = plan
+            .as_mut()
+            .filter(|plan| final_path.starts_with(&plan.root))
+        else {
+            return Ok(());
+        };
+        if plan.crashed {
+            // Publications in flight on other threads stop at their next
+            // boundary, and none starts.
+            return Err(crash_v1("injected crash: the process is gone"));
+        }
+        if boundary == PublicationBoundaryV1::ParentValidated {
+            if plan.crash.is_some_and(|(index, _)| index == plan.started) {
+                plan.target = Some(final_path.to_path_buf());
+            }
+            plan.started += 1;
+            return Ok(());
+        }
+        let Some((_, point)) = plan.crash else {
+            return Ok(());
+        };
+        let stops_here = match point {
+            CrashPointV1::BeforeFinal => boundary == PublicationBoundaryV1::StageVerified,
+            CrashPointV1::AfterFinal => boundary == PublicationBoundaryV1::FinalVerified,
+        };
+        if stops_here && plan.target.as_deref() == Some(final_path) {
+            plan.crashed = true;
+            return Err(crash_v1("injected crash at the planned publication"));
+        }
+        Ok(())
+    }
 }
 
 fn publish_new_file_with_hook_v1(

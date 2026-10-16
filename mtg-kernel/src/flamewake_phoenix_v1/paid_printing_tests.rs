@@ -1488,3 +1488,87 @@ fn v56_native_width_public_power_and_overflow_refusal_preserve_primitive_input_b
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
 }
+
+#[test]
+fn v57_genuine_paid_phoenix_and_juggernaut_keep_distinct_combat_facts_and_legacy_refusal_both_seats(
+) {
+    use crate::akroma_family_public_v40::FamilyFactsV40;
+    use crate::rl_session::{FastActorSessionV1, PreparedSessionV57};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, phoenix) = paid(actor);
+        // Genuine existing printing as initial support. Only Phoenix's cast and
+        // mana payment above are claimed paid actions in this fixture.
+        let juggernaut = put(&mut state, actor, "Juggernaut", Zone::Battlefield);
+        let generation = state.objects.get(phoenix).zone_change_count;
+        let original = serde_json::to_vec(&state).unwrap();
+        let legacy = crate::juggernaut_public_v1::observe_v1(
+            &state,
+            &crate::policy_surface_v5::PolicySurfaceV5::new(),
+            actor,
+            0,
+            0,
+            0,
+            1,
+        );
+        assert_eq!(legacy.unwrap_err().0, "unsupported combat descriptor");
+        assert_eq!(serde_json::to_vec(&state).unwrap(), original);
+        let restored = restore(&state);
+        let mut previous = None;
+        for native in [state, restored] {
+            let mut session = PreparedSessionV57::from_session(
+                FastActorSessionV1::from_prepared_v57_fixture_state(native),
+            )
+            .unwrap();
+            let decision = session.decision_v57().unwrap();
+            let public = decision.observation();
+            crate::prepared_observation_v57::validate_artifact(public).unwrap();
+            let current = public
+                .phoenix
+                .current
+                .iter()
+                .find(|row| row.source.object == phoenix.0)
+                .unwrap();
+            assert_eq!(current.source.generation, generation);
+            assert_eq!(current.source.controller, actor.into());
+            assert!(current.attacks_each_combat_if_able);
+            assert!(public
+                .phoenix
+                .meaning
+                .ordered_rules
+                .contains(&crate::rules_meaning_phoenix_v56::RuleV56::AttacksEachCombatIfAble,));
+            let rules = public
+                .common
+                .common
+                .families
+                .iter()
+                .find_map(|family| {
+                    if let FamilyFactsV40::Juggernaut(facts) = family {
+                        Some(&facts.combat_rules)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            assert_eq!(rules.len(), 1);
+            assert_eq!(rules[0].source.arena_id, juggernaut.0);
+            assert!(rules[0].front_face_printed_must_attack_each_combat);
+            assert_eq!(rules[0].front_face_printed_blocked_subtype, Subtype::Wall);
+            let snapshot = session.snapshot_v57();
+            let before = serde_json::to_vec(session.fixture_state_v57()).unwrap();
+            let counts = session.fixture_counts_v57();
+            session.restore_v57(&snapshot).unwrap();
+            let replayed = session.decision_v57().unwrap();
+            assert_eq!(replayed.observation(), public);
+            assert_eq!(replayed.actions(), decision.actions());
+            assert_eq!(
+                serde_json::to_vec(session.fixture_state_v57()).unwrap(),
+                before
+            );
+            assert_eq!(session.fixture_counts_v57(), counts);
+            if let Some(prior) = &previous {
+                assert_eq!(public, prior);
+            }
+            previous = Some(public.clone());
+        }
+    }
+}

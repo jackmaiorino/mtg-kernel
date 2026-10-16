@@ -8,10 +8,11 @@ use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
 };
 use crate::expanded_deck_training_v1::{
     execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_v1,
-    load_expanded_update_inference_v1, CollectionSamplerV1, ExpandedEpisodeV1,
-    ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
-    ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    load_expanded_update_inference_v1, take_collection_fields_v1, CollectionSamplerV1,
+    CollectionTrajectoryFieldsV1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
+    ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
+    ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PinnedFileV1, UpdateBackwardExecutionV1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -421,6 +422,11 @@ fn read_pin(pin: &PinnedFileV1) -> Result<Value, String> {
     read_pin_bounded(pin, SMALL_CAP)
 }
 fn read_pin_bounded(pin: &PinnedFileV1, cap: u64) -> Result<Value, String> {
+    let bytes = read_pin_bounded_bytes(pin, cap)?;
+    serde_json::from_slice(&bytes).map_err(err)
+}
+/// `read_pin_bounded`'s checks, returning the verified bytes.
+fn read_pin_bounded_bytes(pin: &PinnedFileV1, cap: u64) -> Result<Vec<u8>, String> {
     let file = File::open(&pin.path).map_err(err)?;
     let meta = file.metadata().map_err(err)?;
     check(
@@ -431,7 +437,7 @@ fn read_pin_bounded(pin: &PinnedFileV1, cap: u64) -> Result<Value, String> {
     file.take(cap + 1).read_to_end(&mut bytes).map_err(err)?;
     check(bytes.len() as u64 <= cap, "artifact grew beyond bound")?;
     check(digest(&bytes) == pin.sha256, "pinned artifact hash differs")?;
-    serde_json::from_slice(&bytes).map_err(err)
+    Ok(bytes)
 }
 fn publish(
     directory: &Path,
@@ -622,12 +628,26 @@ fn validate_collection_episodes_with_sampler_v1(
     // Hash and parse the trajectory files concurrently (one short-lived thread
     // per file, ten to sixty per update); the checks below still run in order
     // and report the first failing trajectory exactly as the serial loop did.
-    let saved: Vec<Result<Value, String>> = std::thread::scope(|scope| {
+    // A file parsed ahead by an idle collection worker yields that parse of
+    // exactly these bytes instead of a second one.
+    let parsed_ahead = std::sync::atomic::AtomicUsize::new(0);
+    let saved: Vec<Result<CollectionTrajectoryFieldsV1, String>> = std::thread::scope(|scope| {
+        let parsed_ahead = &parsed_ahead;
         let handles: Vec<_> = trajectories
             .iter()
             .map(|trajectory| {
-                scope.spawn(move || -> Result<Value, String> {
-                    read_pin_bounded(trajectory, ARTIFACT_CAP)
+                scope.spawn(move || -> Result<CollectionTrajectoryFieldsV1, String> {
+                    let bytes = read_pin_bounded_bytes(trajectory, ARTIFACT_CAP)?;
+                    match take_collection_fields_v1(&trajectory.sha256, &bytes) {
+                        Some(fields) => {
+                            parsed_ahead.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            Ok(fields)
+                        }
+                        None => {
+                            let document: Value = serde_json::from_slice(&bytes).map_err(err)?;
+                            Ok(CollectionTrajectoryFieldsV1::of_document_v1(&document))
+                        }
+                    }
                 })
             })
             .collect();
@@ -647,14 +667,19 @@ fn validate_collection_episodes_with_sampler_v1(
             expected.seed = *seed;
         }
         check(
-            saved["episode"] == value(&expected)?,
+            saved.episode == value(&expected)?,
             "collection episode assignment differs",
         )?;
         check(
-            saved.get("learner_sampler").and_then(Value::as_str) == learner_sampler,
+            saved.learner_sampler.as_deref() == learner_sampler,
             "collection learner sampler differs from the run config",
         )?;
     }
+    eprintln!(
+        "collection validation: {} of {} trajectories parsed ahead",
+        parsed_ahead.into_inner(),
+        trajectories.len()
+    );
     Ok(trajectories)
 }
 
@@ -2252,6 +2277,130 @@ mod tests {
         let mut ordinary = base;
         ordinary.e_supported = None;
         assert!(value(&ordinary).unwrap().get("e_supported").is_none());
+    }
+
+    /// `real_two_iteration_config_v1` with two games per iteration, collected
+    /// and prepared on two workers, so the parallel collection, its idle-worker
+    /// parse-ahead and the parallel update preparation all run.
+    fn parallel_two_iteration_config_v1(label: &str) -> NativeExpandedTrainingRunV1 {
+        let mut config = real_two_iteration_config_v1(
+            label,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+            },
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        for (iteration, scheduled) in config.iterations.iter_mut().enumerate() {
+            let mut second = scheduled.episodes[0].clone();
+            second.episode.id = format!("{label}-iter-{iteration}-second");
+            second.episode.seed += 1_000;
+            second.episode.starting_player = 1;
+            scheduled.episodes.push(second);
+        }
+        config.collection_workers = 2;
+        config.preparation_workers = 2;
+        config
+    }
+
+    /// Every regular file under `directory`, by its path relative to it.
+    fn files_under_v1(directory: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        let mut files = std::collections::BTreeMap::new();
+        let mut pending = vec![directory.to_path_buf()];
+        while let Some(next) = pending.pop() {
+            for entry in fs::read_dir(&next).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    pending.push(entry.path());
+                } else {
+                    let relative = entry.path().strip_prefix(directory).unwrap().to_path_buf();
+                    files.insert(relative, fs::read(entry.path()).unwrap());
+                }
+            }
+        }
+        files
+    }
+
+    /// Stage 1's crash-state check (collab actor-learner design v1, section
+    /// 2.6): a crash just before or just after any publication of a
+    /// two-iteration run with parallel collection and preparation leaves only
+    /// files the uninterrupted run publishes, with the same bytes apart from
+    /// timing telemetry, plus staging debris; and resuming the crashed run
+    /// reaches the uninterrupted run's final train state. Every case runs in
+    /// the same output directory, so documents that name it compare equal.
+    #[test]
+    #[ignore = "slow: one crashed run and its resume per crash point; run before shipping a stage 1 change"]
+    fn a_crash_at_any_publication_resumes_to_the_uninterrupted_result() {
+        use crate::durable_publication_v1::crash_points_for_test_v1::{
+            with_crash_point_v1, CrashPointV1,
+        };
+        let config = parallel_two_iteration_config_v1("crash-points");
+        config.validate_v1().unwrap();
+        let directory = config.output_directory.clone();
+        let reference_directory = directory.with_file_name("uninterrupted");
+        let _ = fs::remove_dir_all(&directory);
+        let _ = fs::remove_dir_all(&reference_directory);
+        let (reference, publications, crashed) = with_crash_point_v1(&directory, None, || {
+            run_native_expanded_training_v1(&config, None)
+        });
+        let reference = reference.unwrap();
+        assert!(!crashed);
+        assert_eq!(reference["complete"], true);
+        assert_eq!(reference["actual_identity"]["adam_step"], 2);
+        fs::rename(&directory, &reference_directory).unwrap();
+        let reference_files = files_under_v1(&reference_directory);
+        // Each iteration publishes its two commands, two trajectories, the
+        // collection, the update input, the checkpoint, the update and its
+        // receipt; the run adds its plan and completion.
+        assert!(publications >= 20, "{publications} publications");
+        // Documents that carry timing telemetry, or the digest of one.
+        let timed = [
+            "collection.json",
+            "update.json",
+            "update-input.json",
+            "complete.json",
+            "completion.json",
+        ];
+        for index in 0..publications {
+            for point in [CrashPointV1::BeforeFinal, CrashPointV1::AfterFinal] {
+                let case = format!("publication {index} {point:?}");
+                let (crashed_run, _, crashed) =
+                    with_crash_point_v1(&directory, Some((index, point)), || {
+                        run_native_expanded_training_v1(&config, None)
+                    });
+                assert!(crashed, "{case}: never reached");
+                let error = crashed_run.unwrap_err();
+                assert!(error.contains("injected crash"), "{case}: {error}");
+                for (path, bytes) in files_under_v1(&directory) {
+                    let name = path.file_name().unwrap().to_str().unwrap();
+                    if name.starts_with('.') && name.contains(".stage") {
+                        continue;
+                    }
+                    let expected = reference_files
+                        .get(&path)
+                        .unwrap_or_else(|| panic!("{case}: unexpected file {}", path.display()));
+                    if name != "run.lock" && !timed.contains(&name) {
+                        assert!(
+                            bytes == *expected,
+                            "{case}: {} differs from the uninterrupted run",
+                            path.display()
+                        );
+                    }
+                }
+                let resumed = run_native_expanded_training_v1(&config, None)
+                    .unwrap_or_else(|error| panic!("{case}: resume failed: {error}"));
+                assert_eq!(resumed["complete"], true, "{case}");
+                for field in ["state_sha256", "adam_step"] {
+                    assert_eq!(
+                        resumed["actual_identity"][field], reference["actual_identity"][field],
+                        "{case}: {field}"
+                    );
+                }
+                fs::remove_dir_all(&directory).unwrap();
+            }
+        }
+        fs::remove_dir_all(&reference_directory).unwrap();
     }
 
     #[test]

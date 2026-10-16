@@ -1443,6 +1443,55 @@ fn accumulate_fixed_width_v1<const N: usize>(
     accumulator.copy_from_slice(&sums);
 }
 
+/// `accumulate_linear_row_v1` for an input-major weight held outside a
+/// `LinearV1`: adds `input_row[k] * weight_t[k * accumulator.len() + o]` to
+/// `accumulator[o]` for every k in ascending order, so each output is the
+/// same sequential f32 sum as the [output, input] loop.
+pub(crate) fn accumulate_input_major_row_v1(
+    weight_t: &[f32],
+    input_row: &[f32],
+    accumulator: &mut [f32],
+) {
+    assert_eq!(weight_t.len(), input_row.len() * accumulator.len());
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was detected at run time just above.
+        unsafe { accumulate_input_major_row_avx2_v1(weight_t, input_row, accumulator) };
+        return;
+    }
+    accumulate_input_major_row_body_v1(weight_t, input_row, accumulator);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn accumulate_input_major_row_avx2_v1(
+    weight_t: &[f32],
+    input_row: &[f32],
+    accumulator: &mut [f32],
+) {
+    accumulate_input_major_row_body_v1(weight_t, input_row, accumulator);
+}
+
+#[inline(always)]
+fn accumulate_input_major_row_body_v1(
+    weight_t: &[f32],
+    input_row: &[f32],
+    accumulator: &mut [f32],
+) {
+    match accumulator.len() {
+        HIDDEN_DIM_V1 => {
+            accumulate_fixed_width_v1::<HIDDEN_DIM_V1>(weight_t, input_row, accumulator)
+        }
+        output_dim => {
+            for (&value, weight_row) in input_row.iter().zip(weight_t.chunks_exact(output_dim)) {
+                for (sum, &weight) in accumulator.iter_mut().zip(weight_row) {
+                    *sum += value * weight;
+                }
+            }
+        }
+    }
+}
+
 /// `scorer_first` over `[state_hidden, action_row]` for every action row.
 /// The state half of every row is the same, so its partial sums (bias, then
 /// the state inputs in order) are computed once and each row continues from

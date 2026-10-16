@@ -806,6 +806,25 @@ fn rows(state: &GameState) -> impl Iterator<Item = (u64, &JournalV39)> {
             _ => None,
         })
 }
+/// Every object incarnation named by a bait transfer input or a Fishing bait
+/// change.
+fn bait_history_v1(state: &GameState) -> Vec<(ObjectId, u32)> {
+    state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|event| match event {
+            CommittedEvent::BaitTransferInputV48 { input } => {
+                Some((input.recipient.object, input.recipient.zone_change_count))
+            }
+            CommittedEvent::FishingPoleJournalV39 { journal } => match journal.as_ref() {
+                JournalV39::BaitChanged { pole, .. } => Some((pole.source, pole.zone_change_count)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for event in &state.engine.event_log {
         if let CommittedEvent::FishingPoleJournalV39 { journal } = event {
@@ -1154,13 +1173,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
+    // Read from the history once, when first needed, not once per object.
+    let mut bait_history = None;
     for (object, live) in state.objects.iter() {
         if live.counters.bait < 0 {
             return Err("Fishing bait count negative".into());
         }
-        let transferred = state.engine.event_history.iter().any(|event|matches!(event,CommittedEvent::BaitTransferInputV48 {input} if input.recipient.object==object && input.recipient.zone_change_count==live.zone_change_count));
-        if live.zone != Zone::Battlefield || (live.counters.bait==0 && !selected_definition(live.card_def) && !transferred && !rows(state).any(|(_,row)|matches!(row,JournalV39::BaitChanged {pole,..} if pole.source==object && pole.zone_change_count==live.zone_change_count))) {
+        if live.zone != Zone::Battlefield {
             continue;
+        }
+        if live.counters.bait == 0 && !selected_definition(live.card_def) {
+            let history = bait_history.get_or_insert_with(|| bait_history_v1(state));
+            if !history.contains(&(object, live.zone_change_count)) {
+                continue;
+            }
         }
         let mut balance = 0;
         for (at, event) in state.engine.event_history.iter().enumerate() {

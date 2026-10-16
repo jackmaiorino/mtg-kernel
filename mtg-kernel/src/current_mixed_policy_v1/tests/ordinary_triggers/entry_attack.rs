@@ -329,8 +329,37 @@ fn sacrifice<O: Owner>(actor: PlayerId) {
                 if s.world().step == Step::Main2 {
                     break;
                 }
-                let offered = s.actions().iter().any(|a| matches!(a, ActionSemanticV1::DeclareBlockersForAttacker { attacker, blockers, .. }
-                    if attacker.arena_id == source.0 && blockers.iter().any(|b| b.arena_id == blocker.0)));
+                // The native V5 surface offers one binary inclusion choice
+                // per legal blocker before committing the defender's list.
+                let actions = s.actions();
+                let offered = actions.iter().find(|a| {
+                    matches!(a,
+                    ActionSemanticV1::ChooseBlockerInclusion {
+                        attacker, blocker: candidate, include: true, ..
+                    } if attacker.arena_id == source.0 && candidate.arena_id == blocker.0)
+                });
+                if let Some(ActionSemanticV1::ChooseBlockerInclusion {
+                    actor: chooser,
+                    attacker,
+                    blocker: candidate,
+                    ..
+                }) = offered
+                {
+                    assert_eq!(*chooser, actor.opponent().into());
+                    assert_eq!(attacker.zone_change_count, generation);
+                    assert_eq!(attacker.controller, actor.into());
+                    assert_eq!(attacker.zone, Zone::Battlefield);
+                    let original_blocker = s.world().objects.get(blocker);
+                    assert_eq!(original_blocker.zone, Zone::Battlefield);
+                    assert_eq!(original_blocker.controller, actor.opponent());
+                    assert_eq!(
+                        candidate.zone_change_count,
+                        original_blocker.zone_change_count
+                    );
+                    assert_eq!(candidate.controller, actor.opponent().into());
+                    assert_eq!(candidate.zone, Zone::Battlefield);
+                }
+                let offered = offered.is_some();
                 if pay {
                     assert!(!offered);
                 }

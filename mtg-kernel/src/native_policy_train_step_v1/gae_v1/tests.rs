@@ -1147,3 +1147,44 @@ fn e_supported_ce_is_policy_only_combines_once_and_replays() {
         .is_err());
     assert_eq!(state_bits(&invalid), state_bits(&base));
 }
+
+#[test]
+fn input_major_forward_preserves_every_tape_bit() {
+    let base = model();
+    let config = base.feature_transfer_config_v3();
+    // Weights unlike the fixture's: every value moved by its own small offset.
+    let mut parameters = base.parameter_snapshot_v1();
+    let mut seed = 0x2545_f491_u32;
+    for parameter in &mut parameters {
+        for value in &mut parameter.values {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *value += ((seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.25;
+        }
+    }
+    let input_major = InputMajorWeightsV1::of_v1(&parameters);
+    // Every [hidden, input] weight but the card embedding: both layers of the
+    // six encoders, and the first layers of the scorer and the value head.
+    assert_eq!(input_major.weights.iter().flatten().count(), 14);
+    let first = real_map_training_tensor_v3();
+    let mut second = first.clone();
+    second.common.state[0] += 0.125;
+    let mut third = first.clone();
+    for value in third.common.action_features.iter_mut().step_by(7) {
+        *value = -*value - 0.5;
+    }
+    let bits = |tape: &DecisionTapeV1| {
+        tape.f32_arena
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>()
+    };
+    for tensor in [&first, &second, &third] {
+        let encoded = encoded_decision_view_v3(tensor);
+        let expected = forward_with_tape(&parameters, config, encoded).unwrap();
+        let actual =
+            forward_with_tape_input_major_v1(&parameters, Some(&input_major), config, encoded)
+                .unwrap();
+        assert_eq!(bits(&actual), bits(&expected));
+        assert_eq!(actual.usize_arena, expected.usize_arena);
+    }
+}

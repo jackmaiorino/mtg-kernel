@@ -99,7 +99,11 @@ mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
+mod trajectory_parse_ahead_v1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
+pub(crate) use trajectory_parse_ahead_v1::{
+    take_collection_fields_v1, CollectionTrajectoryFieldsV1,
+};
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
@@ -4098,13 +4102,22 @@ fn publish_json<T: Serialize>(
     value: &T,
 ) -> Result<PinnedFileV1, String> {
     let bytes = serde_json::to_vec(value).map_err(err)?;
+    publish_json_bytes_v1(directory, name, &bytes)
+}
+
+/// `publish_json` for a document already serialized to `bytes`.
+fn publish_json_bytes_v1(
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<PinnedFileV1, String> {
     ensure(
         bytes.len() as u64 <= MAX_FILE_BYTES,
         "output exceeds file size limit",
     )?;
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
     let receipt =
-        publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, &bytes).map_err(err)?;
+        publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, bytes).map_err(err)?;
     Ok(PinnedFileV1 {
         path: directory.join(name),
         sha256: hex(&receipt.sha256()),

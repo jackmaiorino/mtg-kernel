@@ -829,7 +829,7 @@ pub(crate) fn install(
         });
     Ok(())
 }
-fn marker_matches(
+pub(crate) fn marker_matches(
     effect: &crate::engine::UntilEndOfTurnEffect,
     capture: &FrenziedGoblinRestrictionV1,
 ) -> bool {
