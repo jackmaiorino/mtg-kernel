@@ -1,6 +1,5 @@
-//! The active source case covers only the reusable current-attacker count.
-//! Paid Embercleave helpers deliberately have no test entrypoint until the
-//! actual frozen printing can be registered after the real Niv prerequisite.
+//! Genuine Partial Embercleave source fixtures. Lands and vanilla creatures
+//! are setup operands; casts, attacker declarations and equip are paid actions.
 use super::*;
 use crate::{
     card_def::{card_id_by_name, DynamicCountDef},
@@ -91,11 +90,8 @@ fn current_attacker_cost_count_tracks_native_declaration_departure_control_and_c
     }
 }
 
-/// Source fixture for later registration. This never manufactures a CardDef,
-/// reserves a catalog ID, silently skips an absent card, or runs as a test in
-/// this unregistered checkpoint.
-#[allow(dead_code)]
-pub(super) fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
+#[test]
+fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for attackers in [0_usize, 1, 4, 6] {
             let mut state = crate::extra_turn_v1::tests::ready(actor);
@@ -116,6 +112,8 @@ pub(super) fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
             step(&mut state, Action::DeclareAttackers(attacking)).unwrap();
             assert_eq!(count(&state, actor), attackers as u32);
             let def = &card_def::CARD_DEFS[usize::from(card_id_by_name("Embercleave").unwrap())];
+            assert_eq!(card_id_by_name("Embercleave"), Some(462));
+            assert_eq!(def.capability, card_def::CardCapability::Partial);
             assert_eq!(def.types, &[CardType::Artifact]);
             assert!(def.keywords.has(Keywords::FLASH));
             let cost = effective_normal_cast_cost(def, actor, &state);
@@ -173,6 +171,7 @@ pub(super) fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
                     next(&mut replay),
                     Decision::CastSpellOrPass { .. }
                 ));
+                let published = replay.clone();
                 settle(&mut replay);
                 let link = replay.objects.get(source).v4.attached_to.unwrap();
                 assert_eq!(link.object, host);
@@ -184,6 +183,10 @@ pub(super) fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
                 for keyword in [Keywords::DOUBLE_STRIKE, Keywords::TRAMPLE] {
                     assert!(has_effective_keyword(&replay, host, keyword));
                 }
+                let mut published_restore: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&published).unwrap()).unwrap();
+                settle(&mut published_restore);
+                assert_eq!(published_restore, replay);
                 if let Some(previous) = &expected {
                     assert_eq!(&replay, previous);
                 } else {
@@ -206,6 +209,37 @@ pub(super) fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
             settle(&mut replaced);
             assert!(replaced.objects.get(source).v4.attached_to.is_none());
             assert_eq!(replaced.objects.get(source).zone, Zone::Hand);
+            // Returning that same physical Equipment creates a new source
+            // incarnation; the published old trigger cannot attach it.
+            let mut reentered = waiting.clone();
+            step(&mut reentered, Action::ChooseTarget(Target::Object(host))).unwrap();
+            assert!(matches!(
+                next(&mut reentered),
+                Decision::CastSpellOrPass { .. }
+            ));
+            event::propose_and_commit(
+                &mut reentered,
+                ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            event::propose_and_commit(
+                &mut reentered,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            // The reentry's own mandatory ETB must be answered independently.
+            assert!(
+                matches!(next(&mut reentered), Decision::ChooseTargets { spell, .. } if spell == source)
+            );
+            step(
+                &mut reentered,
+                Action::ChooseTarget(Target::Object(alternate)),
+            )
+            .unwrap();
+            next(&mut reentered);
+            settle(&mut reentered);
+            assert_eq!(
+                reentered.objects.get(source).v4.attached_to.unwrap().object,
+                alternate
+            );
             for mode in 0..2 {
                 let mut changed = waiting.clone();
                 step(&mut changed, Action::ChooseTarget(Target::Object(host))).unwrap();
@@ -271,8 +305,8 @@ pub(super) fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
     }
 }
 
-#[allow(dead_code)]
-pub(super) fn genuine_paid_flash_on_opponents_turn_and_targetless_entry_both_seats() {
+#[test]
+fn genuine_paid_flash_on_opponents_turn_and_targetless_entry_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = crate::extra_turn_v1::tests::ready(actor.opponent());
         let source = put(&mut state, actor, "Embercleave", Zone::Hand);
@@ -284,6 +318,28 @@ pub(super) fn genuine_paid_flash_on_opponents_turn_and_targetless_entry_both_sea
             if player == actor.opponent())
         );
         step(&mut state, Action::Pass).unwrap();
+        // Six total mana with only one red cannot pay the printed RR. These
+        // additional basic lands are setup in an independent negative world.
+        let mut wrong_colors = state.clone();
+        let forests = (0..5)
+            .map(|_| put(&mut wrong_colors, actor, "Forest", Zone::Battlefield))
+            .collect::<Vec<_>>();
+        for land in forests {
+            step(&mut wrong_colors, Action::ActivateManaAbility(land)).unwrap();
+        }
+        step(&mut wrong_colors, Action::ActivateManaAbility(lands[0])).unwrap();
+        assert_eq!(
+            wrong_colors.players[actor.index()]
+                .mana_pool
+                .iter()
+                .map(|&v| u32::from(v))
+                .sum::<u32>(),
+            6
+        );
+        assert!(
+            matches!(next(&mut wrong_colors), Decision::CastSpellOrPass { player, castable_spells, .. }
+            if player == actor && !castable_spells.contains(&source))
+        );
         for land in lands {
             step(&mut state, Action::ActivateManaAbility(land)).unwrap();
         }

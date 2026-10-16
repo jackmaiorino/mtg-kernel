@@ -1160,8 +1160,8 @@ fn embercleave_effect() -> EffectOp {
     }
 }
 
-// No definition is registered by this source appendix. Dispatch can only
-// select this recipe after a real catalog definition has been appended.
+// Selected only by the genuine Embercleave catalog printing. The trigger
+// retains the original Equipment incarnation through target choice/resolution.
 const EMBERCLEAVE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
