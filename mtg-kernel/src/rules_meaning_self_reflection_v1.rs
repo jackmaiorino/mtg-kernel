@@ -84,6 +84,14 @@ pub fn producer_sha256() -> String {
             ("event.rs", include_str!("event.rs")),
             ("card_def.rs", include_str!("card_def.rs")),
             ("build.rs", include_str!("../build.rs")),
+            (
+                "bloodthirsty_conqueror_v49/custody.rs",
+                include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            ),
+            (
+                "linked_aura_operation_v1.rs",
+                include_str!("linked_aura_operation_v1.rs"),
+            ),
         ] {
             h.update(path.as_bytes());
             h.update([0]);

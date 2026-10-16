@@ -139,6 +139,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("policy_observation_v7.rs"),
         include_str!("rl_session/flat_action_v3.rs"),
         include_str!("rl_session/flat_action_v4.rs"),
+        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());

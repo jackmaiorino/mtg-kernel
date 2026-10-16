@@ -229,6 +229,16 @@ pub(crate) fn capture_panda_replay_borrow_v1(state: &GameState) -> PandaReplayBo
         runner: state.engine.linked_aura_operation_v1.runtime.clone(),
     }
 }
+/// Ordinary V49 keeps its frozen world payload and old non-Drake bytes.
+/// Only an actual synchronous Drake-owning operation needs this sidecar data.
+/// The opaque value can be borrowed only by the existing local replay helper.
+pub(crate) fn capture_conqueror_drake_replay_borrow_v49(
+    state: &GameState,
+) -> Option<PandaReplayBorrowV1> {
+    (crate::drake_hatcher_v1::custody::relevant(state) && locally_owned(state))
+        .then(|| capture_panda_replay_borrow_v1(state))
+}
+
 pub(crate) fn with_panda_replay_borrow_v1(
     replay: &mut GameState,
     original_item: &crate::state::StackItem,

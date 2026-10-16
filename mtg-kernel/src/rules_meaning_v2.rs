@@ -109,6 +109,8 @@ pub fn producer_sha256_v2() -> String {
         ("effect.rs", include_str!("effect.rs")),
         ("build.rs", include_str!("../build.rs")),
         ("facets.rs", include_str!("rules_vector_v1/facets.rs")),
+        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+        include_str!("linked_aura_operation_v1.rs"),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

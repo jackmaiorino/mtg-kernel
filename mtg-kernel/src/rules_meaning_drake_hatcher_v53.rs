@@ -160,6 +160,7 @@ pub fn producer_sha256() -> String {
             include_str!("doubling_season_v48.rs"),
             include_str!("../build.rs"),
             include_str!("../../data/limited/fdn_v1/cards_v1.json"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
         ] {
             h.update((source.len() as u64).to_le_bytes());
             h.update(source.as_bytes());

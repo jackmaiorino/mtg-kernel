@@ -1483,6 +1483,12 @@ pub enum CommittedEvent {
     DrakeHistoryRefV1 {
         index: u64,
     },
+    /// Conditional history-only replay context for the original V49 gain.
+    /// Frozen V49/Panda journal and world payloads are unchanged.
+    ConquerorGainReplayBorrowV49 {
+        input_history_index: u64,
+        borrow: crate::linked_aura_operation_v1::PandaReplayBorrowV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

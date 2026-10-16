@@ -51,6 +51,7 @@ pub fn producer_sha256() -> String {
             include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
             include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
             include_str!("../build.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
         ] {
             h.update([0]);
             h.update(text.as_bytes());

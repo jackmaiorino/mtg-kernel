@@ -71,6 +71,7 @@ pub fn producer_sha256() -> String {
             include_str!("continuous_characteristics_v1.rs"),
             include_str!("standard_cards_v1.rs"),
             include_str!("../build.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
         ] {
             h.update((source.len() as u64).to_le_bytes());
             h.update(source.as_bytes());

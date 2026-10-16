@@ -126,6 +126,14 @@ pub fn producer_sha256_v1() -> String {
                 "standard_statics_v1.rs",
                 include_str!("standard_statics_v1.rs"),
             ),
+            (
+                "bloodthirsty_conqueror_v49/custody.rs",
+                include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            ),
+            (
+                "linked_aura_operation_v1.rs",
+                include_str!("linked_aura_operation_v1.rs"),
+            ),
         ] {
             hash.update(path.as_bytes());
             hash.update([0]);

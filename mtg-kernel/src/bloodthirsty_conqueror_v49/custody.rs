@@ -315,6 +315,17 @@ pub(crate) fn resolve_owned(
             world,
         },
     );
+    if let Some(borrow) =
+        crate::linked_aura_operation_v1::capture_conqueror_drake_replay_borrow_v49(state)
+    {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::ConquerorGainReplayBorrowV49 {
+                input_history_index: input,
+                borrow,
+            });
+    }
     let start = state.engine.event_history.len();
     crate::event::propose_and_commit(
         state,
@@ -408,11 +419,62 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
     // compare its entire produced event sequence, including gain observers.
     let marker = state.engine.event_history[*input as usize].clone();
     replay.engine.event_history.push(marker);
-    let start = replay.engine.event_history.len();
-    crate::event::propose_and_commit(
-        &mut replay,
-        crate::event::ProposedEvent::life_gain(source.controller, amount),
-    );
+    let sidecars = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(position, event)| {
+            if let CommittedEvent::ConquerorGainReplayBorrowV49 {
+                input_history_index,
+                borrow,
+            } = event
+            {
+                (*input_history_index == *input).then_some((position, borrow, event))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let needs_borrow = crate::drake_hatcher_v1::custody::relevant(&replay);
+    let start = match sidecars.as_slice() {
+        [(position, borrow, event)]
+            if needs_borrow && u64::try_from(*position).ok() == input.checked_add(1) =>
+        {
+            // This history-only sidecar precedes the genuine operation. It can
+            // reinstall a Runner only in this disposable verification world,
+            // after the unchanged original Advance/full-row/unique-ID checks.
+            replay.engine.event_history.push((*event).clone());
+            let start = replay.engine.event_history.len();
+            crate::linked_aura_operation_v1::with_panda_replay_borrow_v1(
+                &mut replay,
+                item,
+                borrow,
+                |replay| {
+                    crate::event::propose_and_commit(
+                        replay,
+                        crate::event::ProposedEvent::life_gain(source.controller, amount),
+                    );
+                    Ok(())
+                },
+            )?;
+            start
+        }
+        [] if !needs_borrow => {
+            // The original non-Drake path emits and replays exactly the old bytes.
+            let start = replay.engine.event_history.len();
+            crate::event::propose_and_commit(
+                &mut replay,
+                crate::event::ProposedEvent::life_gain(source.controller, amount),
+            );
+            start
+        }
+        _ => {
+            return Err(
+                "Conqueror genuine Drake gain replay sidecar erased/duplicated/shifted".into(),
+            )
+        }
+    };
     if replay.engine.event_history[start..] != state.engine.event_history[start..at as usize] {
         return Err("Conqueror gain and its actual downstream captures changed".into());
     }
@@ -424,6 +486,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             event,
             CommittedEvent::ConquerorJournalV49 { .. }
                 | CommittedEvent::ConquerorCollectedV49 { .. }
+                | CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
         )
     }) {
         return Err("Conqueror private custody entered trigger log".into());
@@ -461,6 +524,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 event,
                 CommittedEvent::ConquerorJournalV49 { .. }
                     | CommittedEvent::ConquerorCollectedV49 { .. }
+                    | CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
             )
         })
         && !waiting
@@ -569,6 +633,33 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         {
             if !captures.contains(capture_history_index) {
                 return Err("Conqueror collection points to foreign root".into());
+            }
+        }
+        if let CommittedEvent::ConquerorGainReplayBorrowV49 {
+            input_history_index,
+            ..
+        } = event
+        {
+            if input_history_index.checked_add(1) != Some(at as u64)
+                || !matches!(
+                    journal(state, *input_history_index)?,
+                    JournalV49::GainInput { .. }
+                )
+                || state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|event| {
+                        matches!(event,
+                    CommittedEvent::ConquerorJournalV49 { journal } if matches!(journal.as_ref(),
+                        JournalV49::Gain { input, .. } if input == input_history_index))
+                    })
+                    .count()
+                    != 1
+            {
+                return Err(
+                    "Conqueror replay sidecar lacks its unique adjacent gain input/output".into(),
+                );
             }
         }
         let CommittedEvent::ConquerorJournalV49 { journal: entry } = event else {
