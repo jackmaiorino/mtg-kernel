@@ -1937,6 +1937,22 @@ pub enum CommittedEvent {
         move_history_index: Option<u64>,
         source: crate::state::AbilitySourceContractV4,
     },
+    /// Native selected activation, captured before any payment mutation.
+    FiendArtisanInputV1 {
+        input: Box<crate::effect::fiend_artisan_v1::InputV1>,
+    },
+    /// Exact paid publication; independent of the editable public row X.
+    FiendArtisanPaidV1 {
+        input_index: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    FiendArtisanSearchStartedV1 {
+        stack_item_id: StackItemId,
+        library: Vec<crate::effect::EffectObjectBinding>,
+    },
+    FiendArtisanSearchFinishedV1 {
+        stack_item_id: StackItemId,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4606,7 +4622,9 @@ fn aberration_definition_v1(id: u16) -> bool {
     crate::card_def::CARD_DEFS
         .get(usize::from(id))
         .is_some_and(|d| {
-            d.is_executable() && crate::engine::consuming_aberration_cda_for_v1(d.name)
+            d.is_executable()
+                && (crate::engine::consuming_aberration_cda_for_v1(d.name)
+                    || crate::effect::fiend_artisan_v1::definition(id))
         })
 }
 /// Select only actual battlefield characteristics, including suppressed forms
@@ -9988,7 +10006,7 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
 }
 
 fn unsupported_partial_token_v1(event: &ProposedEvent) -> bool {
-    matches!(event,ProposedEvent::CreateToken(t) if crate::card_def::CARD_DEFS.get(usize::from(t.token_def)).is_none_or(|d| d.is_token && !d.has_full_support()))
+    matches!(event,ProposedEvent::CreateToken(t) if crate::card_def::CARD_DEFS.get(usize::from(t.token_def)).is_none_or(|d| d.is_token && !d.has_full_support() || crate::effect::fiend_artisan_v1::definition(t.token_def)))
 }
 pub(crate) fn commit_kykar_spirit_owned_v1(
     state: &mut GameState,
