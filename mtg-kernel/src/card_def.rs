@@ -3102,11 +3102,11 @@ mod tests {
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
-        // followed by source-only Alesha, Nine-Lives Familiar, and Valkyrie's Call Partial registrations at 457-459.
+        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, and Perforating Artist Partial registrations at 457-460.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                460
+                461
             } else {
                 192
             }
@@ -3566,6 +3566,7 @@ mod tests {
                 (457, "Alesha, Who Laughs at Fate"),
                 (458, "Nine-Lives Familiar"),
                 (459, "Valkyrie's Call"),
+                (460, "Perforating Artist"),
             ]
         } else {
             &[]

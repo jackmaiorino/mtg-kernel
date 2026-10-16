@@ -291,7 +291,8 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
             effect_g::effect_op(op, env, out)
         }
-        EffectOp::MayDiscardCardOtherwiseV1 { .. } => out.atoms.push(Atom::Opaque),
+        EffectOp::MayDiscardCardOtherwiseV1 { .. }
+        | EffectOp::MaySacrificeNonlandOtherwiseV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::CastExiledWithoutMana { .. }
         | EffectOp::PlayExiledLand { .. }
         | EffectOp::DiscardUpToThenDraw { .. }
