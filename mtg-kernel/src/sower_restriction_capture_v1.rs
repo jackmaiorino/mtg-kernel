@@ -254,7 +254,7 @@ fn authenticate(capture: &CaptureV1) -> Result<(), RlContractError> {
 
 /// Active records are complete, including stale recipients. Expiry is tied to
 /// the exact committed installation, so deletion or resurrection refuses.
-pub(crate) fn active(state: &GameState) -> Result<Vec<&CaptureV1>, RlContractError> {
+fn authenticated_active(state: &GameState) -> Result<Vec<&CaptureV1>, RlContractError> {
     let invalid = || RlContractError("incomplete Sower restriction lifecycle".into());
     if state.engine.event_log.iter().any(|event| {
         matches!(
@@ -369,6 +369,12 @@ pub(crate) fn active(state: &GameState) -> Result<Vec<&CaptureV1>, RlContractErr
             active.push(capture);
         }
     }
+    Ok(active)
+}
+
+pub(crate) fn active(state: &GameState) -> Result<Vec<&CaptureV1>, RlContractError> {
+    let invalid = || RlContractError("incomplete Sower restriction lifecycle".into());
+    let active = authenticated_active(state)?;
     for effect in &state.engine.until_end_of_turn {
         if matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. })
             && active
@@ -381,6 +387,62 @@ pub(crate) fn active(state: &GameState) -> Result<Vec<&CaptureV1>, RlContractErr
         }
     }
     Ok(active)
+}
+
+// Fresh immutable complete-family result. These capture references are never
+// transport data, persistent permits or replacements for either lifecycle.
+pub(crate) struct CompleteRestrictionsV40<'a> {
+    pub(crate) sower: Vec<&'a CaptureV1>,
+    pub(crate) frenzied: Vec<&'a crate::effect::FrenziedGoblinRestrictionV1>,
+}
+
+/// Both families publish their own complete facts. Every actual cannot-block
+/// marker must belong to exactly one authenticated owner, and each active
+/// capture has already required exactly one matching marker in its lifecycle.
+/// Standalone Sower/Frenzied entrypoints keep their single-family refusals.
+pub(crate) fn complete_family(
+    state: &GameState,
+) -> Result<CompleteRestrictionsV40<'_>, RlContractError> {
+    let sower = authenticated_active(state)?;
+    crate::effect::frenzied_goblin_resolution_v1::validate(state).map_err(RlContractError)?;
+    let frenzied =
+        crate::effect::frenzied_goblin_resolution_v1::active(state).map_err(RlContractError)?;
+    // Native timestamps identify installations globally, including expired
+    // ones. Two otherwise valid owner journals cannot reuse that identity.
+    let mut installed_timestamps = std::collections::BTreeSet::new();
+    for event in &state.engine.event_history {
+        let timestamp = match event {
+            CommittedEvent::SowerRestrictionInstalledV1 { capture } => capture.timestamp,
+            CommittedEvent::FrenziedGoblinInstalledV1 { capture } => capture.timestamp,
+            _ => continue,
+        };
+        if !installed_timestamps.insert(timestamp) {
+            return Err(RlContractError(
+                "complete restriction owners reuse an installation timestamp".into(),
+            ));
+        }
+    }
+    for effect in &state.engine.until_end_of_turn {
+        if !matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }) {
+            continue;
+        }
+        let sower_count = sower
+            .iter()
+            .filter(|capture| marker_matches(effect, capture))
+            .count();
+        let frenzied_count = frenzied
+            .iter()
+            .filter(|capture| {
+                crate::effect::frenzied_goblin_resolution_v1::marker_matches(effect, capture)
+            })
+            .count();
+        if !matches!((sower_count, frenzied_count), (1, 0) | (0, 1)) {
+            return Err(RlContractError(
+                "complete restriction marker has no unique Sower or Frenzied owner".into(),
+            ));
+        }
+    }
+    Ok(CompleteRestrictionsV40 { sower, frenzied })
 }
 
 #[cfg(all(test, feature = "standard-magezero-fixtures"))]
