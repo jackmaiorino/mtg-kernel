@@ -2386,6 +2386,16 @@ pub enum EffectOp {
         graveyard: crate::state::ObjectLinkV4,
         revival_counters: i32,
     },
+    /// Unmaterialized template for the exact captured Valkyrie's Call death.
+    BindValkyriesCallDeathV1,
+    /// Return the exact creature incarnation selected by Valkyrie's Call.
+    /// Entry applies its +1/+1 counter, Angel subtype, and flying together.
+    ReturnValkyriesCallCreatureV1 {
+        source: AbilitySourceContractV4,
+        capture_history_index: u64,
+        graveyard: crate::state::ObjectLinkV4,
+        owner: crate::ids::PlayerId,
+    },
     /// Optional exact-one non-target nonland sacrifice by this payer.
     /// The unpaid subtree stays definition-owned at every suspended stage.
     MaySacrificeNonlandOtherwiseV1 {
@@ -18235,6 +18245,51 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::BindNineLivesFamiliarReturnV1 => {
             panic!("unmaterialized Nine-Lives death return");
+        }
+        EffectOp::BindValkyriesCallDeathV1 => {
+            panic!("unmaterialized Valkyrie's Call death return");
+        }
+        EffectOp::ReturnValkyriesCallCreatureV1 {
+            source: captured_source,
+            capture_history_index: _,
+            graveyard,
+            owner,
+        } => {
+            let Some(source) = ctx.ability_source_contract else {
+                return;
+            };
+            if source != *captured_source
+                || source.source != ctx.source
+                || ctx.controller != source.controller
+                || source.zone != Zone::Battlefield
+                || crate::card_def::CARD_DEFS[usize::from(source.card_def)].name
+                    != "Valkyrie's Call"
+            {
+                return;
+            }
+            let Some(card) = state.objects.try_get(graveyard.object) else {
+                return;
+            };
+            if card.zone != Zone::Graveyard
+                || card.owner != *owner
+                || card.zone_change_count != graveyard.zone_change_count
+            {
+                return;
+            }
+            let mut proposed = event::ProposedEvent::zone_change_to_battlefield_under_controller(
+                graveyard.object,
+                *owner,
+            );
+            let event::ProposedEvent::ZoneChange(change) = &mut proposed else {
+                unreachable!("zone-change constructor")
+            };
+            change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {
+                original: 1,
+                host: None,
+            });
+            change.battlefield_added_subtype_v1 = Some(crate::card_def::Subtype::Angel);
+            change.battlefield_grant_flying_v1 = true;
+            event::propose_and_commit(state, proposed);
         }
         EffectOp::BindIncubateToTriggerSpell => {
             panic!("unmaterialized incubate");

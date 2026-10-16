@@ -142,6 +142,8 @@ pub(crate) struct EntryCharacteristicsV1 {
     pub bestowed: bool,
     /// Resolving nontoken-entry characteristic, present from the entry boundary.
     pub added_subtype_v1: Option<crate::card_def::Subtype>,
+    /// Continuous keyword grant attached to the entering incarnation.
+    pub grant_flying_v1: bool,
 }
 pub(crate) struct PermanentEntryOwnerV1 {
     item: StackItem,
@@ -273,6 +275,7 @@ pub(crate) fn acquire_permanent_entry(
             attached_to,
             bestowed: bestowed && targets_legal,
             added_subtype_v1: None,
+            grant_flying_v1: false,
         },
     }))
 }
