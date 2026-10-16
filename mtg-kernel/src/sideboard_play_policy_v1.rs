@@ -54,6 +54,7 @@ use crate::rl_session::{
     FastActorResponseV1, FastActorSessionV1, RlSessionError, RlSessionErrorCode,
 };
 use crate::state::SplitMix64;
+use crate::training_math_v1::TrainingMathV1;
 use crate::unclamped_softmax_sampler_v1::{
     UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_MAX_ACTIONS_V1,
     UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
@@ -219,6 +220,11 @@ pub struct FrozenPlayPolicyV1 {
     /// Off for every constructed policy; only a search driver that asks for
     /// it turns it on, and collection forks keep it.
     fast_search_forward: bool,
+    /// The run's training math (`training_math_v1`): which tanh every
+    /// ordinary forward of this policy uses. Platform libm for every
+    /// constructed policy; a checkpoint that records the portable math, or
+    /// a command that runs under it, sets it, and collection forks keep it.
+    training_math: TrainingMathV1,
     /// Exact prediction cache (`inference_cache_v1.rs`). None unless a
     /// search driver attaches one; collection forks share it.
     inference_cache: Option<crate::inference_cache_v1::PolicyCacheV1>,
@@ -475,6 +481,7 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
@@ -522,6 +529,7 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
@@ -604,6 +612,7 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
@@ -668,6 +677,7 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
@@ -732,6 +742,7 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
@@ -808,6 +819,7 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
@@ -989,6 +1001,7 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,
@@ -1061,6 +1074,7 @@ impl FrozenPlayPolicyV1 {
                 .as_ref()
                 .map(|_| UnclampedSoftmaxScratchV1::default()),
             fast_search_forward: self.fast_search_forward,
+            training_math: self.training_math,
             inference_cache: self.inference_cache.clone(),
             inference_key: Vec::new(),
             inference_probe: None,
@@ -1153,6 +1167,27 @@ impl FrozenPlayPolicyV1 {
     /// restores its explicitly declared activation mode.
     pub(crate) fn set_fast_search_forward_v1(&mut self, enabled: bool) {
         self.fast_search_forward = enabled;
+    }
+
+    /// The activation every ordinary forward of this policy uses: the
+    /// search-only fast forward when a search driver turned it on, else the
+    /// training math's tanh.
+    fn forward_mode_v1(&self) -> ForwardActivationModeV1 {
+        if self.fast_search_forward {
+            ForwardActivationModeV1::FastSearchTanh
+        } else {
+            self.training_math.forward_activation_v1()
+        }
+    }
+
+    pub(crate) fn training_math_v1(&self) -> TrainingMathV1 {
+        self.training_math
+    }
+
+    /// Score with `math`'s tanh from now on (and in forks): the policy
+    /// forwards of collection and the update's replay checks.
+    pub(crate) fn set_training_math_v1(&mut self, math: TrainingMathV1) {
+        self.training_math = math;
     }
 
     /// A fork that plays another seat as a frozen policy: its declared
@@ -1264,7 +1299,10 @@ impl FrozenPlayPolicyV1 {
         )?;
         let output = self
             .model
-            .forward_feature_transfer_v3(encoded_decision_view_v3(tensor))
+            .forward_feature_transfer_v3_mode(
+                encoded_decision_view_v3(tensor),
+                self.training_math.forward_activation_v1(),
+            )
             .map_err(|e| e.to_string())?;
         Ok(FrozenPlayDecisionScoresV1 {
             logits: output.logits,
@@ -1283,7 +1321,10 @@ impl FrozenPlayPolicyV1 {
         )?;
         let output = self
             .model
-            .forward_feature_transfer_v4(encoded_decision_view_v4(tensor))
+            .forward_feature_transfer_v4_mode(
+                encoded_decision_view_v4(tensor),
+                self.training_math.forward_activation_v1(),
+            )
             .map_err(|e| e.to_string())?;
         Ok(FrozenPlayDecisionScoresV1 {
             logits: output.logits,
@@ -1477,11 +1518,7 @@ impl FrozenPlayPolicyV1 {
         let FastActorResponseV1::Decision(decision) = session.current_response() else {
             panic!("terminal");
         };
-        let mode = if self.fast_search_forward {
-            ForwardActivationModeV1::FastSearchTanh
-        } else {
-            ForwardActivationModeV1::LibmTanh
-        };
+        let mode = self.forward_mode_v1();
         let successor = self.successor.as_mut().expect("V3 policy");
         let t0 = Instant::now();
         let encoded = session
@@ -1555,7 +1592,10 @@ impl FrozenPlayPolicyV1 {
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
         let output = self
             .model
-            .forward_feature_transfer_v4(encoded_decision_view_v4(tensor))
+            .forward_feature_transfer_v4_mode(
+                encoded_decision_view_v4(tensor),
+                self.training_math.forward_activation_v1(),
+            )
             .map_err(|e| format!("diagnostic V4 forward: {e:?}"))?;
         Ok(FrozenPlayDecisionScoresV1 {
             logits: output.logits,
@@ -1614,11 +1654,7 @@ impl FrozenPlayPolicyV1 {
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
         use crate::inference_cache_v1::ForwardPathV1;
-        let mode = if self.fast_search_forward {
-            ForwardActivationModeV1::FastSearchTanh
-        } else {
-            ForwardActivationModeV1::LibmTanh
-        };
+        let mode = self.forward_mode_v1();
         let (path, view) = if let Some(successor) = &mut self.successor {
             successor
                 .tensorizer

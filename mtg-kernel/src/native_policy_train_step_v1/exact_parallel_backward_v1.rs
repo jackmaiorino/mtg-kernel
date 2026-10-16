@@ -161,6 +161,7 @@ pub(super) fn exact_parallel_backward_v1(
     group_count: f32,
     value_coefficient: f32,
     workers: usize,
+    math: TrainingMathV1,
 ) -> Option<BackwardResultV1> {
     let substeps = groups.iter().map(|group| group.tapes.len()).sum::<usize>();
     let workers = workers.min(substeps / EXACT_BACKWARD_MIN_SUBSTEPS_PER_WORKER_V1);
@@ -175,6 +176,7 @@ pub(super) fn exact_parallel_backward_v1(
         group_count,
         value_coefficient,
         workers,
+        math,
     ))
 }
 
@@ -184,6 +186,7 @@ fn backward_v1(
     group_count: f32,
     value_coefficient: f32,
     workers: usize,
+    math: TrainingMathV1,
 ) -> BackwardResultV1 {
     let controls = ControlsV1::current_v1();
     // The sequential arm's coefficients and visiting order.
@@ -200,7 +203,7 @@ fn backward_v1(
             });
         }
     }
-    let mut gauge = ScorerBiasGaugeAccumulatorV1::default();
+    let mut gauge = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
     let mut gauge_failure = None;
     for visit in &visits {
         let observed = controls.gauge_v1(visit.index).and_then(|()| {
@@ -228,7 +231,7 @@ fn backward_v1(
     let mut terms = Vec::new();
     for block in visits[..backward_end].chunks(controls.block_substeps_v1()) {
         terms.resize_with(block.len(), SubstepTermsV1::default);
-        let outcomes = record_block_v1(parameters, block, &mut terms, workers, controls);
+        let outcomes = record_block_v1(parameters, block, &mut terms, workers, controls, math);
         for outcome in outcomes {
             match outcome {
                 PhaseAOutcomeV1::Completed(result) => result?,
@@ -259,6 +262,7 @@ fn record_block_v1<'g>(
     terms: &mut [SubstepTermsV1<'g>],
     workers: usize,
     controls: ControlsV1,
+    math: TrainingMathV1,
 ) -> Vec<PhaseAOutcomeV1> {
     let mut outcomes = Vec::with_capacity(visits.len());
     outcomes.resize_with(visits.len(), || PhaseAOutcomeV1::Completed(Ok(())));
@@ -279,7 +283,7 @@ fn record_block_v1<'g>(
             for ((visit, terms), outcome) in visits.iter().zip(terms).zip(outcomes) {
                 *outcome = match catch_unwind(AssertUnwindSafe(|| {
                     controls.backward_v1(visit.index)?;
-                    record_substep_v1(parameters, visit, terms, workspace)
+                    record_substep_v1(parameters, visit, terms, workspace, math)
                 })) {
                     Ok(result) => PhaseAOutcomeV1::Completed(result),
                     Err(payload) => PhaseAOutcomeV1::Panicked(payload),
@@ -295,12 +299,18 @@ fn record_substep_v1<'g>(
     visit: &VisitV1<'g, '_>,
     terms: &mut SubstepTermsV1<'g>,
     workspace: &mut ReverseWorkspaceV1,
+    math: TrainingMathV1,
 ) -> Result<(), NativePolicyTrainErrorV1> {
     terms.d_outputs.clear();
     terms.linears.clear();
     terms.card_tokens.clear();
     terms.d_card_embeddings.clear();
-    prepare_reverse_logits_v1(visit.selected, visit.d_joint_log_probability, workspace);
+    prepare_reverse_logits_v1(
+        visit.selected,
+        visit.d_joint_log_probability,
+        workspace,
+        math,
+    );
     let tape: &'g DecisionTapeV1 = &visit.selected.tape;
     reverse_decision_into_v1(
         parameters,

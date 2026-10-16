@@ -51,6 +51,7 @@ use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayModelIdentityV1, PlayPolicyOriginV1,
 };
 use crate::state::SplitMix64;
+use crate::training_math_v1::TrainingMathV1;
 use crate::unclamped_softmax_sampler_v1::{
     UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
 };
@@ -407,7 +408,42 @@ fn ordinary_checkpoint_schema_v1(origin: &PlayPolicyOriginV1) -> &'static str {
 /// Reuses the bounded, pinned continuation reader and its exact feature,
 /// ancestry, parameter, optimizer and state checks. No artifacts are written,
 /// no training runs, and predecessor feature identities are not migrated.
+/// Refuses a checkpoint trained under the portable math: see
+/// [`refuse_portable_math_v1`].
 pub fn load_expanded_inference_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
+    refuse_portable_math_v1(&policy)?;
+    Ok((policy, identity))
+}
+
+/// A reader that does not bind a training math refuses a checkpoint trained
+/// under the portable math (`training_math_v1`): it would run that
+/// checkpoint's forwards, priors or statistics under other math. Training
+/// commands bind the math instead ([`bind_training_math_v1`],
+/// [`bind_opponent_math_v1`]).
+fn refuse_portable_math_v1(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
+    ensure(
+        policy.training_math_v1().is_platform_libm(),
+        "this reader does not run checkpoints trained under portable-math-v1",
+    )
+}
+
+/// [`load_expanded_inference_v1`] under `math`: a checkpoint must have been
+/// trained under it, and a source without one plays under it. For readers
+/// that run every forward of the model under that math.
+pub(crate) fn load_expanded_inference_bound_v1(
+    source: &ExpandedModelSourceV1,
+    math: TrainingMathV1,
+) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    let (mut policy, identity) = load_expanded_inference_any_math_v1(source)?;
+    bind_opponent_math_v1(source, &mut policy, math)?;
+    Ok((policy, identity))
+}
+
+/// The loader behind both: the policy plays under its checkpoint's math.
+fn load_expanded_inference_any_math_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
     // Inference alone admits the explicit BO3 objective. Legacy initialization
@@ -572,6 +608,10 @@ pub(crate) fn load_ordinary_bo3_parent_v1(
         .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
         .map_err(err)?;
     let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    ensure(
+        saved.training_math.is_platform_libm(),
+        "BO3 transition does not support portable training math",
+    )?;
     for bits in [saved.learning_rate_bits, saved.value_coefficient_bits] {
         let value = f32::from_bits(bits);
         ensure(
@@ -613,6 +653,9 @@ const OPPONENT_CACHE_CAPACITY_V1: usize = 8;
 struct OpponentCacheV1 {
     entries: Vec<LoadedOpponentV1>,
     verified_sources: Vec<ExpandedModelSourceV1>,
+    /// The command's training math, which every loaded opponent plays
+    /// under ([`bind_opponent_math_v1`]).
+    training_math: TrainingMathV1,
 }
 
 impl OpponentCacheV1 {
@@ -620,7 +663,13 @@ impl OpponentCacheV1 {
         Self {
             entries: Vec::new(),
             verified_sources,
+            training_math: TrainingMathV1::PlatformLibm,
         }
+    }
+
+    fn with_training_math_v1(mut self, math: TrainingMathV1) -> Self {
+        self.training_math = math;
+        self
     }
 
     fn contains(&self, source: &ExpandedModelSourceV1) -> bool {
@@ -657,12 +706,12 @@ impl OpponentCacheV1 {
             if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
                 self.entries.remove(0);
             }
-            let opponent = if self.verified_sources.contains(source) {
+            let mut opponent = if self.verified_sources.contains(source) {
                 ordered_update_preparation::load_opponent_cached_v1(source)?.0
             } else {
                 // Unrecognized import schemas retain their original complete
                 // loader validation rather than trusting a process cache hit.
-                let (policy, identity) = load_expanded_inference_v1(source)?;
+                let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
                 LoadedOpponentV1 {
                     policy,
                     behavior: ExpandedSeatBehaviorV1 {
@@ -671,6 +720,7 @@ impl OpponentCacheV1 {
                     },
                 }
             };
+            bind_opponent_math_v1(source, &mut opponent.policy, self.training_math)?;
             self.insert(opponent);
         }
         self.entries
@@ -1169,6 +1219,10 @@ struct ExpandedTrajectoryV1 {
     /// absent for the legacy samplers, preserving archived bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     learner_sampler: Option<String>,
+    /// The math every forward of the episode used (`training_math_v1`);
+    /// absent for the platform's libm, preserving archived bytes.
+    #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
+    training_math: TrainingMathV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1257,6 +1311,12 @@ pub(crate) struct ExpandedCheckpointV1 {
     /// bit for bit before these parameters resume under any loss.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     archive_distillation: Option<archive_distillation_v1::ArchiveDistillationProvenanceV1>,
+    /// The math these parameters and moments were trained with
+    /// (`training_math_v1`); absent for the platform's libm, so every
+    /// existing checkpoint keeps its bytes. Loaders restore it, and a
+    /// training command refuses a checkpoint recorded under other math.
+    #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
+    training_math: TrainingMathV1,
 }
 
 /// Whole-pair V3-or-V4 admission: a stored trajectory/checkpoint's
@@ -1292,7 +1352,18 @@ fn present_value_v1<'de, D: serde::Deserializer<'de>>(
     Value::deserialize(deserializer).map(Some)
 }
 
+/// Refuses a checkpoint trained under the portable math, as
+/// [`load_expanded_inference_v1`] does.
 fn initialize(
+    source: &ExpandedModelSourceV1,
+) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
+    let (policy, state) = initialize_any_math_v1(source)?;
+    refuse_portable_math_v1(&policy)?;
+    Ok((policy, state))
+}
+
+/// [`initialize`] under the checkpoint's own math.
+fn initialize_any_math_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
     let (policy, state, _) = initialize_with_transfer_context(source)?;
@@ -1642,9 +1713,85 @@ fn restore_checkpoint_fields_v1(
     )?;
     // Validate the model's gauge anchor and full optimizer state before the
     // live policy or copied sideboard embeddings are replaced.
-    let state = NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
+    let mut state =
+        NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
     policy.replace_training_parameters_v3(&snapshot.parameters)?;
+    // Inference and probes run a checkpoint under the math it trained with.
+    state.set_training_math_v1(saved.training_math);
+    policy.set_training_math_v1(saved.training_math);
     Ok(state)
+}
+
+/// Binds a training command's math to its learner. A checkpoint must have
+/// been trained under the same math; a source without one starts under it.
+/// The portable math is not available to registry-transfer sources.
+fn bind_training_math_v1(
+    source: &ExpandedModelSourceV1,
+    transfer: Option<&TransferContextV1>,
+    math: TrainingMathV1,
+    policy: &mut FrozenPlayPolicyV1,
+    state: &mut NativePolicyValueTrainStateV1,
+) -> Result<(), String> {
+    ensure(
+        math.is_platform_libm() || transfer.is_none(),
+        "portable training math is not available to registry-transfer sources",
+    )?;
+    if source.checkpoint.is_some() {
+        ensure(
+            state.training_math_v1() == math,
+            "checkpoint training math differs from the command's",
+        )?;
+    }
+    state.set_training_math_v1(math);
+    policy.set_training_math_v1(math);
+    Ok(())
+}
+
+/// An opponent of a training command plays under the command's math: a
+/// checkpoint must have been trained under it, and a source without one (an
+/// import) plays under it.
+fn bind_opponent_math_v1(
+    source: &ExpandedModelSourceV1,
+    policy: &mut FrozenPlayPolicyV1,
+    math: TrainingMathV1,
+) -> Result<(), String> {
+    if source.checkpoint.is_some() {
+        ensure(
+            policy.training_math_v1() == math,
+            "opponent checkpoint training math differs from the command's",
+        )?;
+    }
+    policy.set_training_math_v1(math);
+    Ok(())
+}
+
+/// The update paths the portable math covers: the CPU learner without the
+/// recovery loss, line (b) or E supervision.
+fn validate_update_training_math_v1(
+    math: TrainingMathV1,
+    update_backend: ExpandedUpdateBackendV1,
+    loss_selection: &ExpandedLossSelectionV1,
+    line_b: bool,
+    e_supported: bool,
+) -> Result<(), String> {
+    if math.is_platform_libm() {
+        return Ok(());
+    }
+    ensure(
+        matches!(update_backend, ExpandedUpdateBackendV1::Cpu),
+        "portable training math requires the CPU update backend",
+    )?;
+    ensure(
+        !matches!(
+            loss_selection,
+            ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { .. }
+        ),
+        "portable training math is not available to the recovery loss",
+    )?;
+    ensure(
+        !line_b && !e_supported,
+        "portable training math is not available to line (b) or E updates",
+    )
 }
 
 /// `collect_episode`'s error, split so a tolerant caller (see
@@ -1760,6 +1907,11 @@ fn collect_episode(
                 == other.policy.feature_identity_v1().generation,
             "learner and opponent use different fresh-lineage feature generations",
         )?;
+        // The trajectory records one math, the learner's.
+        ensure(
+            policy.training_math_v1() == other.policy.training_math_v1(),
+            "learner and opponent use different training math",
+        )?;
     }
     let seat_behaviors = opponent.as_ref().map(|other| {
         std::array::from_fn(|actor| {
@@ -1805,6 +1957,7 @@ fn collect_episode(
                     decisions,
                     terminal,
                     learner_sampler: policy.collection_sampler_identity_v1().map(str::to_owned),
+                    training_math: policy.training_math_v1(),
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -2591,6 +2744,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// Learner collection sampler; omitted when legacy.
         #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
         collection_sampler: CollectionSamplerV1,
+        /// The run's training math (`training_math_v1`); omitted for the
+        /// platform's libm, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
+        training_math: TrainingMathV1,
         output_directory: PathBuf,
     },
     /// Explicit execution-only successor. The legacy Collect command and its
@@ -2604,6 +2761,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// Learner collection sampler; omitted when legacy.
         #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
         collection_sampler: CollectionSamplerV1,
+        /// The run's training math (`training_math_v1`); omitted for the
+        /// platform's libm, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
+        training_math: TrainingMathV1,
         output_directory: PathBuf,
     },
     Update {
@@ -2632,6 +2793,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// absent, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         line_b: Option<LineBUpdateOptionsV1>,
+        /// The run's training math (`training_math_v1`); omitted for the
+        /// platform's libm, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
+        training_math: TrainingMathV1,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -2666,6 +2831,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// absent, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         line_b: Option<LineBUpdateOptionsV1>,
+        /// The run's training math (`training_math_v1`); omitted for the
+        /// platform's libm, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
+        training_math: TrainingMathV1,
         output_directory: PathBuf,
     },
     /// Separate E policy supervision, full Adam and unchanged sampler.
@@ -2785,6 +2954,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             None,
             Some(teacher),
+            TrainingMathV1::PlatformLibm,
         ),
 
         ExpandedTrainingCommandV1::ScoreSavedStates {
@@ -2876,6 +3046,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             workers,
             max_non_natural_episode_fraction,
             collection_sampler,
+            training_math,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
@@ -2883,6 +3054,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             workers,
             max_non_natural_episode_fraction,
             collection_sampler,
+            training_math,
             output_directory,
         ),
         ExpandedTrainingCommandV1::Collect {
@@ -2890,6 +3062,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             episodes,
             max_non_natural_episode_fraction,
             collection_sampler,
+            training_math,
             output_directory,
         } => {
             let collection_started = std::time::Instant::now();
@@ -2903,10 +3076,17 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 episode.configurations()?;
                 ensure(ids.insert(&episode.id), "duplicate episode id")?;
             }
-            let (mut policy, state, transfer) = initialize_with_transfer_context(&source)?;
+            let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
             if let Some(context) = &transfer {
                 context.validate_batch(&episodes)?;
             }
+            bind_training_math_v1(
+                &source,
+                transfer.as_ref(),
+                training_math,
+                &mut policy,
+                &mut state,
+            )?;
             collection_sampler.apply_to_learner_v1(&mut policy);
             let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
             let learner = ExpandedSeatBehaviorV1 {
@@ -2915,7 +3095,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             };
             drop(state);
             let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
-            let mut opponent_cache = OpponentCacheV1::for_collection(verified_sources);
+            let mut opponent_cache = OpponentCacheV1::for_collection(verified_sources)
+                .with_training_math_v1(training_math);
             let initialization_seconds = collection_started.elapsed().as_secs_f64();
             fs::create_dir(&output_directory).map_err(err)?;
             let mut outputs = Vec::new();
@@ -2985,6 +3166,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 "collection_elapsed_seconds":collection_started.elapsed().as_secs_f64(),
                 "collection_initialization_seconds":initialization_seconds});
             collection_sampler.record_v1(&mut result);
+            training_math.record_v1(&mut result);
             if let Some(pin) = non_natural_ledger_pin {
                 result["non_natural_ledger"] = json!(pin);
             }
@@ -3000,6 +3182,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             update_backward_execution,
             loss_selection,
             line_b,
+            training_math,
             output_directory,
         } => execute_update_v1(
             source,
@@ -3014,6 +3197,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             line_b,
             None,
+            training_math,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -3026,6 +3210,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             preparation_workers,
             max_prepared_tensor_mebibytes,
             line_b,
+            training_math,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
@@ -3043,6 +3228,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 max_prepared_tensor_mebibytes,
                 line_b,
                 None,
+                training_math,
             )
         }
     }
@@ -3186,10 +3372,18 @@ fn execute_update_v1(
     max_prepared_tensor_mebibytes: usize,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
+    training_math: TrainingMathV1,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
     loss_selection.validate_v1()?;
+    validate_update_training_math_v1(
+        training_math,
+        update_backend,
+        &loss_selection,
+        line_b.is_some(),
+        e_supported.is_some(),
+    )?;
     ensure(
         !trajectories.is_empty() && trajectories.len() <= 1024,
         "invalid update size",
@@ -3222,7 +3416,14 @@ fn execute_update_v1(
             read_pinned_bytes(&packet)?;
         }
     }
-    let (policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+    let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+    bind_training_math_v1(
+        &source,
+        transfer.as_ref(),
+        training_math,
+        &mut policy,
+        &mut state,
+    )?;
     if let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {
         initial_adam_step, ..
     } = loss_selection
@@ -3285,6 +3486,10 @@ fn execute_update_v1(
             episode.source_import == *policy.identity_v1(),
             "trajectory source import differs",
         )?;
+        ensure(
+            episode.training_math == training_math,
+            "trajectory training math differs from the command's",
+        )?;
     }
     if let Some(context) = &transfer {
         let batch: Vec<_> = episodes
@@ -3309,11 +3514,12 @@ fn execute_update_v1(
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
+            training_math,
         )?;
         (prepared.groups, Some(prepared.telemetry))
     } else {
         let mut tensor_groups = Vec::new();
-        let mut opponent_cache = OpponentCacheV1::default();
+        let mut opponent_cache = OpponentCacheV1::default().with_training_math_v1(training_math);
         for (episode_ordinal, episode) in episodes.iter().enumerate() {
             let opponent = episode
                 .episode
@@ -3937,6 +4143,7 @@ fn execute_update_v1(
             .map(|context| context.after_update(snapshot.adam_step))
             .transpose()?,
         archive_distillation: None,
+        training_math,
     };
     let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
     // Readback exercises the real same-format continuation loader.
@@ -3944,9 +4151,10 @@ fn execute_update_v1(
         checkpoint: Some(checkpoint_pin.clone()),
         ..source.clone()
     };
-    let (_, restored) = initialize(&resumed_source)?;
+    let (_, restored) = initialize_any_math_v1(&resumed_source)?;
     ensure(
-        hex(&restored.state_sha256_v1().map_err(err)?) == after,
+        hex(&restored.state_sha256_v1().map_err(err)?) == after
+            && restored.training_math_v1() == training_math,
         "published checkpoint round trip differs",
     )?;
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
@@ -3965,6 +4173,7 @@ fn execute_update_v1(
         result["exploration"] = exploration;
     }
     update_backend.record_update_execution_v1(&mut result);
+    training_math.record_v1(&mut result);
     if let Some(frozen) = frozen_tensor_sha256 {
         // The update's scorer-bias gauge (the step refuses a residual beyond
         // its derived bound, so a published update is within it).
@@ -4155,6 +4364,13 @@ pub(crate) mod tests {
     #[cfg(not(target_os = "windows"))]
     const ORDINARY_GAE_STATE_SHA256_V1: &str =
         "037ef43b1b0bd4eb247790378957fa37591cc5e9b19b1bb99ac2c394cd59f1a5";
+    // B5: under `portable-math-v1` one pin holds on every system.
+    const ORDINARY_PORTABLE_SEQUENTIAL_STATE_SHA256_V1: &str =
+        "63fc3abd63968d59383a32ff676dfcc6ffd1be550fff642334212ddfd627353d";
+    const ORDINARY_PORTABLE_FIXED_PARTITION_STATE_SHA256_V1: &str =
+        "5818f7010d9ef4b0ef4de101a1dbbf33ca13980761920640970bc24301327ec5";
+    const ORDINARY_PORTABLE_GAE_STATE_SHA256_V1: &str =
+        "152c79c7134000ef1b8a44129e1e7afc13448606c1327cd2e86d9d97fdacde62";
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
 
@@ -4732,6 +4948,7 @@ pub(crate) mod tests {
             behavior_state_sha256: learner_behavior.identity.state_sha256.clone(),
             seat_behaviors,
             learner_sampler: None,
+            training_math: TrainingMathV1::PlatformLibm,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -5003,6 +5220,7 @@ pub(crate) mod tests {
             value_coefficient_bits: 0.5_f32.to_bits(),
             registry_transfer: None,
             archive_distillation: None,
+            training_math: TrainingMathV1::PlatformLibm,
         };
         (policy, model, saved)
     }
@@ -6916,6 +7134,7 @@ pub(crate) mod tests {
             episodes: episodes.clone(),
             max_non_natural_episode_fraction: 0.5,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -6947,6 +7166,7 @@ pub(crate) mod tests {
             episodes,
             max_non_natural_episode_fraction: 0.1,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -7648,6 +7868,31 @@ pub(crate) mod tests {
         update_backend: ExpandedUpdateBackendV1,
         loss_selection: ExpandedLossSelectionV1,
     ) -> Result<(String, String, String), String> {
+        run_ordinary_two_iteration_fixture_with_math_v1(
+            feature_identity,
+            label,
+            mutate,
+            decks,
+            backward_execution,
+            update_backend,
+            loss_selection,
+            TrainingMathV1::PlatformLibm,
+        )
+    }
+
+    /// [`run_ordinary_two_iteration_fixture_v1`] with every Collect and
+    /// Update under `training_math`.
+    #[allow(clippy::too_many_arguments)]
+    fn run_ordinary_two_iteration_fixture_with_math_v1(
+        feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+        label: &str,
+        mutate: impl FnOnce(&mut Vec<NativeNamedParameterV1>),
+        decks: [ExpandedDeckListV1; 2],
+        backward_execution: UpdateBackwardExecutionV1,
+        update_backend: ExpandedUpdateBackendV1,
+        loss_selection: ExpandedLossSelectionV1,
+        training_math: TrainingMathV1,
+    ) -> Result<(String, String, String), String> {
         let root = std::env::temp_dir().join(format!(
             "ordinary-two-iteration-{label}-{}",
             std::process::id()
@@ -7699,6 +7944,7 @@ pub(crate) mod tests {
                 episodes: vec![episode],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
+                training_math,
                 output_directory: root.join(format!("collect-{iteration}")),
             })?;
             let trajectories: Vec<PinnedFileV1> =
@@ -7712,6 +7958,7 @@ pub(crate) mod tests {
                 update_backend,
                 update_backward_execution: backward_execution,
                 loss_selection,
+                training_math,
                 output_directory: root.join(format!("update-{iteration}")),
             })?;
             // Engineering timing note only (never a claim): visible in the
@@ -7888,6 +8135,217 @@ pub(crate) mod tests {
             "the V4 fixed-partition ordinary-trainer path over real constructed decks \
              must stay reproducible"
         );
+    }
+
+    /// B5's cross-system check on the real ordinary fixture. Under the
+    /// platform math the pins above differ between Windows and Linux, since
+    /// each system's libm rounds `tanhf`, `expf` and `logf` its own way;
+    /// under `portable-math-v1` each case has one pin for every system, and
+    /// CI runs this test on both. Each case also trains other bits than the
+    /// platform math, so the switch reaches the run.
+    #[test]
+    fn ordinary_trainer_portable_math_trains_one_state_on_every_system() {
+        let cases = [
+            (
+                "portable-sequential",
+                UpdateBackwardExecutionV1::Sequential,
+                ExpandedLossSelectionV1::default(),
+                ORDINARY_SEQUENTIAL_STATE_SHA256_V1,
+                ORDINARY_PORTABLE_SEQUENTIAL_STATE_SHA256_V1,
+            ),
+            (
+                "portable-fixed-partition",
+                UpdateBackwardExecutionV1::FixedPartition4,
+                ExpandedLossSelectionV1::default(),
+                ORDINARY_FIXED_PARTITION_STATE_SHA256_V1,
+                ORDINARY_PORTABLE_FIXED_PARTITION_STATE_SHA256_V1,
+            ),
+            (
+                "portable-gae",
+                UpdateBackwardExecutionV1::Sequential,
+                gae_loss_selection_v1(),
+                ORDINARY_GAE_STATE_SHA256_V1,
+                ORDINARY_PORTABLE_GAE_STATE_SHA256_V1,
+            ),
+        ];
+        let mut states = Vec::new();
+        let mut pins = Vec::new();
+        for (label, backward_execution, loss_selection, platform, portable) in cases {
+            let (contract, encoding, state) = run_ordinary_two_iteration_fixture_with_math_v1(
+                crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+                label,
+                |_parameters| {},
+                [list("Affinity"), list("Terror")],
+                backward_execution,
+                ExpandedUpdateBackendV1::Cpu,
+                loss_selection,
+                TrainingMathV1::PortableV1,
+            )
+            .unwrap();
+            assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+            assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+            assert_ne!(state, platform, "{label}");
+            states.push(state);
+            pins.push(portable);
+        }
+        assert_eq!(states, pins);
+    }
+
+    /// B5's identity binding through the real commands: an update refuses
+    /// trajectories collected under the other math, a command refuses a
+    /// learner or opponent checkpoint trained under the other math, and the
+    /// records name the portable math only. Readers that bind no math (plain
+    /// inference, the BO3 transition) refuse a portable checkpoint.
+    #[test]
+    fn portable_math_binds_trajectories_and_checkpoints_to_their_math() {
+        use TrainingMathV1::{PlatformLibm, PortableV1};
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root =
+            std::env::temp_dir().join(format!("portable-math-binding-{}", std::process::id()));
+        let descriptor =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&descriptor).unwrap();
+        std::fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let decks = [list("Affinity"), list("Terror")];
+        let collect = |learner: &ExpandedModelSourceV1,
+                       opponent: Option<&ExpandedModelSourceV1>,
+                       math,
+                       name: &str| {
+            execute_v1(ExpandedTrainingCommandV1::Collect {
+                source: learner.clone(),
+                episodes: vec![ExpandedEpisodeV1 {
+                    id: format!("binding-{name}"),
+                    seed: 2_026_091_601,
+                    starting_player: 0,
+                    learner_seat: 0,
+                    opponent: opponent.cloned(),
+                    opponent_kind: None,
+                    opponent_search: None,
+                    registered: decks.clone(),
+                    selected: decks.clone(),
+                    postboard: false,
+                    max_physical_decisions: 100_000,
+                    max_policy_steps: 1_000_000,
+                    runtime_rules: None,
+                    reset: None,
+                }],
+                max_non_natural_episode_fraction: 0.0,
+                collection_sampler: CollectionSamplerV1::Legacy,
+                training_math: math,
+                output_directory: root.join(name),
+            })
+        };
+        let update = |trajectories, math, name: &str| {
+            execute_v1(ExpandedTrainingCommandV1::Update {
+                line_b: None,
+                source: source.clone(),
+                trajectories,
+                learning_rate: 0.0003,
+                value_coefficient: 0.5,
+                update_backend: ExpandedUpdateBackendV1::Cpu,
+                update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+                loss_selection: ExpandedLossSelectionV1::default(),
+                training_math: math,
+                output_directory: root.join(name),
+            })
+        };
+        let pins = |result: &Value| -> Vec<PinnedFileV1> {
+            serde_json::from_value(result["trajectories"].clone()).unwrap()
+        };
+        let resumed = |result: &Value| ExpandedModelSourceV1 {
+            checkpoint: Some(serde_json::from_value(result["checkpoint"].clone()).unwrap()),
+            ..source.clone()
+        };
+        // The default math's records gain no field.
+        let platform = collect(&source, None, PlatformLibm, "collect-platform").unwrap();
+        assert!(platform.get("training_math").is_none());
+        let platform_pins = pins(&platform);
+        let bytes = std::fs::read(&platform_pins[0].path).unwrap();
+        assert!(!String::from_utf8(bytes).unwrap().contains("training_math"));
+        let portable = collect(&source, None, PortableV1, "collect-portable").unwrap();
+        assert_eq!(portable["training_math"], "portable-math-v1");
+        let portable_pins = pins(&portable);
+        let saved: ExpandedTrajectoryV1 = read_pinned(&portable_pins[0]).unwrap();
+        assert_eq!(saved.training_math, PortableV1);
+        // Trajectories collected under the other math are refused, both ways.
+        for (trajectories, math, name) in [
+            (platform_pins.clone(), PortableV1, "update-mixed-portable"),
+            (portable_pins.clone(), PlatformLibm, "update-mixed-platform"),
+        ] {
+            let error = update(trajectories, math, name).unwrap_err();
+            assert!(
+                error.contains("trajectory training math differs from the command's"),
+                "{error}"
+            );
+        }
+        let platform_update = update(platform_pins, PlatformLibm, "update-platform").unwrap();
+        assert!(platform_update.get("training_math").is_none());
+        let platform_checkpoint = resumed(&platform_update);
+        let portable_update = update(portable_pins, PortableV1, "update-portable").unwrap();
+        assert_eq!(portable_update["training_math"], "portable-math-v1");
+        let portable_checkpoint = resumed(&portable_update);
+        let saved: ExpandedCheckpointV1 =
+            read_pinned(portable_checkpoint.checkpoint.as_ref().unwrap()).unwrap();
+        assert_eq!(saved.training_math, PortableV1);
+        // A command runs a learner or opponent checkpoint only under its own math.
+        for (learner, opponent, math, name) in [
+            (&portable_checkpoint, None, PlatformLibm, "learner-platform"),
+            (&platform_checkpoint, None, PortableV1, "learner-portable"),
+            (
+                &source,
+                Some(&portable_checkpoint),
+                PlatformLibm,
+                "opponent-platform",
+            ),
+            (
+                &source,
+                Some(&platform_checkpoint),
+                PortableV1,
+                "opponent-portable",
+            ),
+        ] {
+            let error = collect(learner, opponent, math, name).unwrap_err();
+            assert!(
+                error.contains("checkpoint training math differs from the command's"),
+                "{name}: {error}"
+            );
+        }
+        let continued = collect(
+            &portable_checkpoint,
+            Some(&portable_checkpoint),
+            PortableV1,
+            "collect-continued",
+        )
+        .unwrap();
+        assert_eq!(continued["training_math"], "portable-math-v1");
+        let (policy, _) =
+            load_expanded_inference_bound_v1(&portable_checkpoint, PortableV1).unwrap();
+        assert_eq!(policy.training_math_v1(), PortableV1);
+        // Readers that bind no math refuse a portable checkpoint.
+        let Err(error) = load_expanded_inference_v1(&portable_checkpoint) else {
+            panic!("a reader without a math loaded a portable checkpoint");
+        };
+        assert!(error.contains("portable-math-v1"), "{error}");
+        let Err(error) = load_ordinary_bo3_parent_v1(&portable_checkpoint) else {
+            panic!("the BO3 transition loaded a portable checkpoint");
+        };
+        assert!(error.contains("portable training math"), "{error}");
     }
 
     /// V3 must reject `fixed_partition_4` with a clear error, before any
@@ -8214,6 +8672,7 @@ pub(crate) mod tests {
                     episodes: vec![episode],
                     max_non_natural_episode_fraction: 0.0,
                     collection_sampler: CollectionSamplerV1::Legacy,
+                    training_math: TrainingMathV1::PlatformLibm,
                     output_directory: root.join(format!("collect-{iteration}")),
                 })
                 .unwrap();
@@ -8227,6 +8686,7 @@ pub(crate) mod tests {
                     update_backward_execution: UpdateBackwardExecutionV1::Sequential,
                     loss_selection: gae_loss_selection_v1(),
                     line_b: line_b.clone(),
+                    training_math: TrainingMathV1::PlatformLibm,
                     output_directory: root.join(format!("update-{iteration}")),
                 })
                 .unwrap();
@@ -8943,6 +9403,7 @@ pub(crate) mod tests {
             episodes: vec![episode],
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -8976,6 +9437,7 @@ pub(crate) mod tests {
                     optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
                     teacher,
                 }),
+                training_math: TrainingMathV1::PlatformLibm,
                 output_directory: root.join(format!("update-{label}")),
             })
         };
@@ -9411,6 +9873,7 @@ pub(crate) mod tests {
             episodes: vec![episode],
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -9435,6 +9898,7 @@ pub(crate) mod tests {
             update_backward_execution: UpdateBackwardExecutionV1::Sequential,
             loss_selection: gae_loss_selection_v1(),
             line_b: None,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("ordinary"),
         })
         .unwrap();
@@ -9553,6 +10017,7 @@ pub(crate) mod tests {
             episodes: vec![episode],
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("collect"),
         })
         .unwrap();
