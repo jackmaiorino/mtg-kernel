@@ -26,8 +26,12 @@ implementations, their semantic dependencies and the actual catalog identity.
 Integer operands use the existing exact four-u16 limbs, preserving signed i64,
 u64 counts, wide counters, current controllers and incarnation relations.
 
-All 112 inherited test function bodies are retained verbatim. The shared ordinary
-family harness additionally exercises the fifth owner. Eleven new source cases:
+All 112 inherited test names remain. The genuine nine-trigger regression was
+expanded after CI exposed a physical-decision versus policy-prefix validation
+bug; it now checks every authenticated prefix, both owners, restore and refusal.
+The complete model subtree has 141 source cases: the original 112, five Fiery
+cases, eleven NextFive cases below and thirteen fifth-owner inherited-family
+wrappers. The legendary shared harness also exercises the fifth owner.
 
 1. Five genuine reference decks remain Partial and Full-only reset refuses both seats.
 2. All five genuine paid casts, original action order and restored outcomes.
@@ -47,12 +51,16 @@ stream, without rebasing or normalizing differences. Restore fixtures also resto
 a separate native snapshot from the identical pre-restore stream and compare exact
 state, response and both counters. Fixture native clones never become model input.
 
-Observed checks: 71 affected Python deck tests pass; rustfmt parsing/formatting
-and git diff --check pass; static comparison finds all 112 inherited test bodies
-verbatim and the expected five Partial IDs. No Rust build/check/clippy/test,
-native binary, remote session, GPU or paid run was launched. The 11 new Rust cases
-are source inventory, not runtime passes. Existing PR282 Fiery ordinary-root
-runtime failures are owned separately by the root integration lane. New Human and
-Python checkpoints are also composed there. Actual export/catalog/profile and
-runtime qualification remain root-owned after Native176 releases; no hash guess,
-profile waiver, Full promotion, trained policy or strength claim is made here.
+The root composition includes the owning Human session, Python V6 client,
+Fiery repair and the canonical seven-card runtime repairs through
+`0c701ce316b790fe19963d92b2ddceae7493ed45`. Its distinct limited-v6 CI group
+selects 100 source cases across eleven native/public/owner/Human/transport
+filters, then builds V6 and invokes the original two-worker seed-123 plumbing
+checker. The separate model group selects the complete 141-case subtree.
+
+Observed checks include 71 affected Python deck cases and 17 V6 mock protocol
+cases, pinned formatting and diff checks. All NextFive Rust cases, binary and
+checker remain uncompiled/unrun; source counts are not runtime passes. Actual
+export/catalog/profile and runtime qualification remain root-owned after
+Native176 releases. No hash guess, profile waiver, Full promotion, trained
+policy or strength claim is made here.
