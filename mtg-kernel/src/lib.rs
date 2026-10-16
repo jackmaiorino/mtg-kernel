@@ -75,6 +75,7 @@ pub mod linked_aura_return_v1;
 pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
+pub mod niv_mizzet_public_v63;
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
@@ -91,6 +92,7 @@ pub mod rules_meaning_fiendish_panda_v1;
 pub mod rules_meaning_game_outcome_protection_v1;
 pub mod rules_meaning_heraldic_banner_v1;
 pub mod rules_meaning_librarian_v1;
+pub mod rules_meaning_niv_mizzet_v63;
 pub mod rules_meaning_phoenix_v56;
 mod soul_shackled_zombie_v1;
 pub mod source_type_hexproof_v1;
