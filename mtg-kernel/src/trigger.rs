@@ -281,6 +281,8 @@ pub enum TriggerCondition {
     /// A controlled nontoken creature dies without the named effective
     /// subtype, captured before the death batch. The source may itself die.
     ControlledNontokenCreatureDiesWithoutSubtypeV1(Subtype),
+    /// Event-time native wave capture, not generic per-recipient matching.
+    ControlledCreatureCombatDamageDuringOwnTurnV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1011,6 +1013,10 @@ const DAZZLING_ANGEL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
 const SKYKNIGHT_SQUIRE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+static GREATWURM_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledCreatureCombatDamageDuringOwnTurnV1,
+    ..etb_trigger(crate::effect::greatwurm_v1::marker)
 }];
 fn lathril_template_v1() -> EffectOp {
     EffectOp::BindLathrilCombatTokensV1
@@ -3631,6 +3637,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.name == "Quilled Greatwurm" && crate::effect::greatwurm_v1::definition(card_def) {
+        return &GREATWURM_TRIGGERS_V1;
+    }
     if card.name == "Lathril, Blade of the Elves" {
         return &LATHRIL_TRIGGERS_V1;
     }
@@ -4127,6 +4136,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         return true;
     }
     match (template, effect) {
+        (EffectOp::BindGreatwurmCountersV1, EffectOp::GreatwurmCountersV1 { .. }) => true,
         (EffectOp::BindLathrilCombatTokensV1, EffectOp::LathrilCombatTokensV1 { .. }) => true,
         // The actual row validator authenticates this capture's complete
         // enclosing combat operation and original source incarnation.
@@ -4228,6 +4238,9 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
 }
 
 pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
+    if crate::effect::greatwurm_v1::definition(card_def) {
+        return crate::effect::greatwurm_v1::recipe(effect);
+    }
     if crate::effect::kykar_v1::definition(card_def) && crate::effect::kykar_v1::recipe(effect) {
         return true;
     }
@@ -4377,6 +4390,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::effect::greatwurm_v1::definition(card_def) {
+        return crate::effect::greatwurm_v1::recipe(effect).then_some(TargetSpec::None);
+    }
     if crate::effect::kykar_v1::definition(card_def) {
         return match effect {
             EffectOp::KykarChooseModeV1
@@ -5173,6 +5189,16 @@ fn triggers_from_events(
         }
     }
     match crate::event::collect_copied_token_end_step_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::effect::greatwurm_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {
             state.engine.halted = Some((

@@ -833,6 +833,7 @@ pub(super) fn selected_spell_quote_branch_v1(
 /// Complete ephemeral payment, prepared before any real discard or mana use.
 /// The engine must consume it synchronously with the same player/source/state.
 pub(super) struct PreparedSpellPaymentV1 {
+    greatwurm: Option<super::greatwurm_cast_v1::PaymentV1>,
     mana: SpellManaPaymentV1,
     base: PreparedSpellNonmanaV1,
     additional: PreparedSpellNonmanaV1,
@@ -883,6 +884,9 @@ impl PreparedSpellPaymentV1 {
         }
         self.additional.apply(state, player, source);
         self.commit_optional(state);
+        if let Some(plan) = self.greatwurm {
+            plan.apply(state);
+        }
         spent
     }
 }
@@ -978,6 +982,15 @@ pub(super) fn prepare_final_spell_payment_v1(
     };
     let resources = resource_projection.as_ref().unwrap_or(state);
     let mut prepared = PreparedSpellPaymentV1 {
+        greatwurm: if pending
+            .greatwurm_v1
+            .as_ref()
+            .is_some_and(|c| c.printed_route == Some(true))
+        {
+            Some(super::greatwurm_cast_v1::prepare(state, pending)?)
+        } else {
+            None
+        },
         mana: selected.payment_plan_with_component_choices_v1(
             pending.x_value.unwrap_or(0),
             player,
@@ -1007,7 +1020,8 @@ pub(super) fn prepare_final_spell_payment_v1(
             super::standard_cast_convoke::payment(resources, pending, &pending.convoke_chosen)?;
     }
     // Ordinary mana-only spells require no whole-state projection.
-    if selected.component_groups.is_empty()
+    if prepared.greatwurm.is_none()
+        && selected.component_groups.is_empty()
         && discarded.is_empty()
         && optional_kind.is_none()
         && pending.chosen_creature_cost.is_none()
@@ -1084,6 +1098,23 @@ pub(super) fn prepare_final_spell_payment_v1(
                 .unwrap_or(0),
             _ => return None,
         });
+    }
+    if prepared.greatwurm.is_some() {
+        // Counts and exact incarnations were prepared before any real payment.
+        // Automatic mana/base costs may not silently spend the same selected
+        // counter units. Validate the exact counter-payment input before any
+        // real cost. Current Greatwurm has no other printed nonmana cost.
+        for unit in &pending.greatwurm_v1.as_ref()?.units {
+            if crate::effect::greatwurm_v1::count(&projected, unit.permanent.object, unit.kind)
+                .ok()?
+                != crate::effect::greatwurm_v1::count(state, unit.permanent.object, unit.kind)
+                    .ok()?
+            {
+                return None;
+            }
+        }
+        super::greatwurm_cast_v1::prepare(&projected, pending)?.apply(&mut projected);
+        super::validate_battlefield_pt(&projected).ok()?;
     }
     Some(prepared)
 }

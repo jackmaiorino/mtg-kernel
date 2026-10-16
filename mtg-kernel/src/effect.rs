@@ -16,6 +16,7 @@
 //! crate-level invariants in `lib.rs`).
 
 pub(crate) mod curator_v1;
+pub(crate) mod greatwurm_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
 mod standard_ward;
@@ -2721,6 +2722,11 @@ pub enum EffectOp {
     KykarReturnV1 {
         schedule_history_index: u64,
     },
+    BindGreatwurmCountersV1,
+    GreatwurmCountersV1 {
+        capture_history_index: u64,
+        observer: u32,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4286,6 +4292,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if greatwurm_v1::recipe(op)
+        || greatwurm_v1::selected(state, &resolving_item)
+        || greatwurm_v1::waiting(state, ctx)
+    {
+        return Err("Greatwurm requires its genuine native row".into());
+    }
     if kykar_v1::recipe(op) || kykar_v1::item_selected(state, &resolving_item) {
         return Err("Kykar requires its authentic native row".into());
     }
@@ -4518,6 +4530,11 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        greatwurm_v1::selected(state, &p.resolving_item) || greatwurm_v1::waiting(state, &p.ctx)
+    }) {
+        return Err("Greatwurm atomic root has no public continuation".into());
+    }
     if state
         .engine
         .pending_effect
@@ -9962,6 +9979,14 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| greatwurm_v1::selected(state, &p.resolving_item))
+    {
+        return Err("Greatwurm atomic root cannot retain a continuation".into());
+    }
     if state
         .engine
         .pending_effect
@@ -18859,6 +18884,15 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
+    if (greatwurm_v1::recipe(op) || greatwurm_v1::waiting(state, ctx))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     let native_row = native_proof.map(|proof| proof.owner);
     if kykar_v1::recipe(op) && native_proof.is_none_or(|p| p.ctx != ctx || *p.owner.root != *op) {
         state.engine.halted = Some((
@@ -18879,6 +18913,21 @@ fn execute_with_native_row_v1(
         return;
     }
     match op {
+        EffectOp::BindGreatwurmCountersV1 | EffectOp::GreatwurmCountersV1 { .. } => {
+            if greatwurm_v1::execute(
+                op,
+                ctx,
+                state,
+                native_proof.expect("Greatwurm native proof"),
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::KykarChooseModeV1
         | EffectOp::KykarExileV1
         | EffectOp::KykarSpiritV1
@@ -25696,6 +25745,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if greatwurm_v1::waiting(state, ctx) {
+        return true;
+    }
     if kykar_v1::waiting(state, ctx) {
         return true;
     }

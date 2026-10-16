@@ -94,7 +94,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         {
             out.atoms.push(Atom::Opaque)
         }
-        EffectOp::KykarChooseModeV1
+        EffectOp::BindGreatwurmCountersV1
+        | EffectOp::GreatwurmCountersV1 { .. }
+        | EffectOp::KykarChooseModeV1
         | EffectOp::KykarExileV1
         | EffectOp::KykarSpiritV1
         | EffectOp::KykarReturnV1 { .. }

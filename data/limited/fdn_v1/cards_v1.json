@@ -8485,6 +8485,38 @@
       "sideboard_only": false,
       "complexity": "simple",
       "is_token": true
+    },
+    {
+      "name": "Quilled Greatwurm",
+      "mana_cost": "{4}{G}{G}",
+      "mana_value": 6,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Wurm"
+      ],
+      "supertypes": [],
+      "power": 7,
+      "toughness": 7,
+      "mechanics": [
+        "trample",
+        "controlled_creature_combat_damage_own_turn_counters",
+        "graveyard_cast_remove_six_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/q/QuilledGreatwurm.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_quilled_greatwurm_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

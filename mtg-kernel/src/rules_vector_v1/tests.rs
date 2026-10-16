@@ -1011,6 +1011,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Cori-Steel Cutter",
     "Crackling Cyclops",
     "Kykar, Zephyr Awakener",
+    "Quilled Greatwurm",
     "Cryogen Relic",
     "Crypt Feaster",
     "Darkstar Augur",
@@ -1163,6 +1164,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect/greatwurm_v1.rs", "Quilled Greatwurm", "final native combat wave counter capture remains opaque; no old permission"),
     ("effect/kykar_v1.rs", "Kykar, Zephyr Awakener", "cast noncreature mode at announcement; exact exile and one-shot owner return remain Opaque"),
     ("effect/kykar_v1.rs", "Kykar Spirit Token", "exact white 1/1 flying token remains within Opaque Kykar root"),
     ("effect/kykar_v1.rs", "Spirit Token", "copiable name of the closed Limited 1/1 token; does not select the Standard 2/2 blueprint"),
@@ -1442,6 +1444,14 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
 const RULES_MODULES: &[(&str, &str)] = &[
     ("effect/loot_v1.rs", include_str!("../effect/loot_v1.rs")),
     ("effect/kykar_v1.rs", include_str!("../effect/kykar_v1.rs")),
+    (
+        "effect/greatwurm_v1.rs",
+        include_str!("../effect/greatwurm_v1.rs"),
+    ),
+    (
+        "engine/greatwurm_cast_v1.rs",
+        include_str!("../engine/greatwurm_cast_v1.rs"),
+    ),
     (
         "effect/curator_v1.rs",
         include_str!("../effect/curator_v1.rs"),
