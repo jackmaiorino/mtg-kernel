@@ -1163,7 +1163,7 @@ fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_
                     &mut state,
                     actor,
                     if attached {
-                        "Pacifism"
+                        "Witness Protection"
                     } else {
                         "Llanowar Elves"
                     },
