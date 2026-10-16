@@ -68,6 +68,13 @@ including the typed dungeon-kind projection, physical Drake history-position
 binding and exact replay memoization. The latter retains the original replay
 predicate on misses and every other validation check on hits; its two new
 genuine paid tamper/restore cases remain unexecuted. No speedup is measured.
+Canonical `060b792682087b13b595321409f84a1d089c49b0` is now composed as well.
+Spinner acquires private authority before native row removal, lends the exact
+authentic row to the unchanged public resumer, and returns the captured remaining
+stack on both success and error. Its new paid both-seat/RNG-mode regression
+preserves all ten previous Spinner bodies. The Human Conqueror projector reuses
+its already authenticated observation instead of recomputing it. Both changes
+remain unqualified; no performance improvement is claimed.
 Both the complete Divine printing and semantic-boolean conversion are in the
 feature source identity; `rl_variable_cast_v1.rs` occurs exactly once alongside
 the public variable-cast observation and owning session implementation.
