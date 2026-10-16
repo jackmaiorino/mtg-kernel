@@ -748,6 +748,10 @@ fn matching(state: &GameState, predicate: impl Fn(&JournalV43) -> bool) -> Vec<(
         .collect()
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::FaebloomValidateState,
+    );
     // Captures alone are trigger events; every other receipt is private history.
     for e in &state.engine.event_log {
         if let Some(j) = journal(e) {

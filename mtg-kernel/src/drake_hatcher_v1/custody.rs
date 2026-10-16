@@ -121,6 +121,10 @@ thread_local! {
 /// inputs, including every nested serde-skipped runtime field. Ineligibility
 /// affects performance only and must never become a validation rejection.
 fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::DrakeReplayKeys,
+    );
     let mut keys = BTreeMap::new();
     let mut prefix = Sha256::new();
     prefix.update(b"drake-enclosing-actual-history/v1");
@@ -280,6 +284,10 @@ fn emit(state: &mut GameState, value: JournalV1) -> Result<u64, String> {
 /// Strip only the outer history; replay reattaches its actual immutable prefix.
 /// Pending logs, complete stack, hidden world and family checkpoints are retained.
 fn world(state: &GameState) -> Result<GameState, String> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::DrakeWorld,
+    );
     let mut copy = state.clone();
     copy.engine.event_history.clear();
     let mut value = serde_json::to_value(&copy).map_err(|e| e.to_string())?;
@@ -1358,13 +1366,18 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     if !hit {
                         verification(|| {
                             let input = restore_world(original, prefix)?;
-                            let replay =
+                            let replay = {
+                                #[cfg(test)]
+                                let _timing = crate::rl_session::test_timing_v1::span(
+                                    crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
+                                );
                                 crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
                                     &input,
                                     operation,
                                     answers,
                                     *used_banner,
-                                )?;
+                                )?
+                            };
                             if replay.engine.event_history.get(*start as usize..)
                                 != state
                                     .engine
