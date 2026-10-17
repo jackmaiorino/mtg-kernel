@@ -212,3 +212,66 @@ pub(crate) fn owning_ready(p: PlayerId, hidden: &str) -> (GameState, ObjectId, O
     turn(&mut state, p);
     (state, tiny, card)
 }
+
+/// Independent legal initial hidden slots, followed by the same real paid cast.
+pub(crate) fn sampler_ready(
+    p: PlayerId,
+    hidden: &str,
+) -> (GameState, ObjectId, ObjectId, ObjectId, ObjectId) {
+    let mut state = ready(p, hidden);
+    let tiny = put(&mut state, p, NAME, Zone::Hand);
+    let second = put(&mut state, p, NAME, Zone::Hand);
+    let card = put(&mut state, p.opponent(), "Think Twice", Zone::Hand);
+    let bolt = put(&mut state, p.opponent(), "Lightning Bolt", Zone::Hand);
+    put(&mut state, p.opponent(), "Mountain", Zone::Hand);
+    put(&mut state, p, "Island", Zone::Library);
+    put(&mut state, p.opponent(), "Mountain", Zone::Library);
+    paid(&mut state, p, tiny);
+    turn(&mut state, p);
+    // Actor-authorized library knowledge is a labelled native knowledge primitive.
+    state.reveal_library_top(p, p, 1);
+    (state, tiny, card, second, bolt)
+}
+pub(crate) fn sampler_replace_source(
+    state: &mut GameState,
+    p: PlayerId,
+    tiny: ObjectId,
+    second: ObjectId,
+    bolt: ObjectId,
+) {
+    cast(state, p.opponent(), bolt, Some(Target::Object(tiny)));
+    finish(state);
+    assert_eq!(state.objects.get(tiny).zone, Zone::Graveyard);
+    paid(state, p, second);
+}
+/// Real paid Time Stop disposes the original published discard trigger.
+pub(crate) fn sampler_disposed(p: PlayerId) -> GameState {
+    let mut state = ready(p, "Forest");
+    let tiny = put(&mut state, p, NAME, Zone::Hand);
+    let stop = put(&mut state, p, "Time Stop", Zone::Hand);
+    let card = put(&mut state, p.opponent(), "Think Twice", Zone::Hand);
+    for _ in 0..4 {
+        put(&mut state, p, "Island", Zone::Battlefield);
+    }
+
+    put(&mut state, p, "Island", Zone::Library);
+    put(&mut state, p.opponent(), "Mountain", Zone::Library);
+    paid(&mut state, p, tiny);
+    turn(&mut state, p);
+    activate_to_discard(&mut state, p, tiny, card);
+    act(&mut state, Action::Discard(vec![card]));
+    cast(&mut state, p, stop, None);
+    for _ in 0..512 {
+        let d = next(&mut state);
+        if crate::tinybones_public_v72::capture(&state, p)
+            .unwrap()
+            .triggers
+            .iter()
+            .any(|r| r.stage == crate::tinybones_public_v72::StageV72::Disposed)
+        {
+            return state;
+        }
+        pass(&mut state, d);
+    }
+    panic!("genuine paid Time Stop did not dispose original Tinybones trigger")
+}

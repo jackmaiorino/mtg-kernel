@@ -380,6 +380,9 @@ pub fn feature_identity() -> String {
             include_str!("limited_tinybones_session_v13.rs"),
             include_str!("bin/kernel_limited_tinybones_env_v13.rs"),
             include_str!("../../python/tools/limited_tinybones_session_v13.py"),
+            include_str!("rl_session/flat_action_v4.rs"),
+            include_str!("rl_session/flat_action_v4/search_state.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
