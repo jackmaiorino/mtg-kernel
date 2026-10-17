@@ -350,6 +350,7 @@ pub fn feature_identity() -> String {
             include_str!("effect/squad_rallier_resolution_v1.rs"),
             crate::engine::time_stop_v1::source_sha256_v1(),
             crate::effect::genesis_wave_v1::source_sha256_v1(),
+            include_str!("engine/tinybones_v72.rs"),
             include_str!("muldrotha_public_v71.rs"),
             include_str!("rules_meaning_muldrotha_v71.rs"),
             include_str!("muldrotha_observation_v71.rs"),

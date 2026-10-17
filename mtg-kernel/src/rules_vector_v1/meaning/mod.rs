@@ -99,6 +99,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::BindThousandYearStormV1
         | EffectOp::ThousandYearStormCaptureV1 { .. }
         | EffectOp::GenesisWaveV1
+        | EffectOp::TinybonesStashV72 { .. }
+        | EffectOp::LilianaZombieV1
+        | EffectOp::LilianaSacrificeV1 { ultimate: _ }
         | EffectOp::FiendArtisanSearchV1
         | EffectOp::BindSphinxLoreV1
         | EffectOp::SphinxLoreV1 { .. }

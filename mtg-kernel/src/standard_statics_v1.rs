@@ -395,9 +395,12 @@ pub(crate) fn expire_attack_block_restrictions(state: &mut GameState) {
     state.attack_block_restrictions_v1 = (!restrictions.is_empty()).then_some(restrictions);
 }
 
-pub(crate) use crate::creature_stats_lki_v1::{
-    current_or_last_creature_stats, record_creature_stats_lki,
-};
+pub(crate) use crate::creature_stats_lki_v1::current_or_last_creature_stats;
+#[cfg(any(
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+))]
+pub(crate) use crate::creature_stats_lki_v1::record_creature_stats_lki;
 
 /// Whether a recorded restriction stops `id` from attacking or blocking.
 pub(crate) fn cant_attack_or_block(state: &GameState, id: ObjectId) -> bool {

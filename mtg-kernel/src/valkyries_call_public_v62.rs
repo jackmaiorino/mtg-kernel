@@ -131,7 +131,11 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV62, String> {
         incubation,
         revival,
         fellowship,
+        stash,
     } = live.counters;
+    if stash != 0 {
+        return Err("public projection does not expose stash counters".into());
+    }
     let lifelink = live.v4.lifelink_keyword_counters;
     if [
         i64::from(plus1_plus1),

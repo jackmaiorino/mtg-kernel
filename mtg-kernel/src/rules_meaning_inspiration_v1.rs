@@ -177,6 +177,10 @@ pub fn producer_sha256_v1() -> String {
                 "genesis-wave-native-source/v1",
                 crate::effect::genesis_wave_v1::source_sha256_v1(),
             ),
+            (
+                "mtg-kernel/src/engine/tinybones_v72.rs",
+                include_str!("engine/tinybones_v72.rs"),
+            ),
         ] {
             hash.update(path.as_bytes());
             hash.update([0]);

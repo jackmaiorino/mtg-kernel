@@ -517,6 +517,7 @@ fn action_source_id(action: &ActionSemanticV1) -> Option<u16> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn label(
     action: &ActionSemanticV1,
     observation: &RavenousObservationV51,
@@ -1450,6 +1451,7 @@ type ProjectionWithHandles = (
     Handles,
 );
 
+#[allow(clippy::too_many_arguments)]
 fn project_with_handles(
     observation: &RavenousObservationV51,
     actions: &[ActionSemanticV1],
@@ -1631,10 +1633,10 @@ fn project_with_handles(
     }
     let prepared_facts = if let Some(obs) = call {
         Some(super::prepared_v57::facts_parts(
-            &obs.drake,
-            &obs.spinner,
-            &obs.quandary,
-            &obs.phoenix,
+            obs.drake,
+            obs.spinner,
+            obs.quandary,
+            obs.phoenix,
             &mut handles,
             true,
         )?)

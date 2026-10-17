@@ -2060,6 +2060,12 @@ pub enum CommittedEvent {
     MuldrothaPlayedV1 {
         played: crate::engine::muldrotha_v1::PlayedV1,
     },
+    TinybonesV72 {
+        journal: Box<crate::engine::tinybones_v72::JournalV72>,
+    },
+    LilianaDreadhordeV1 {
+        journal: Box<crate::effect::liliana_dreadhorde_v1::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2475,7 +2481,7 @@ pub(crate) fn niv_mizzet_visionary_removes_hand_limit_v1(
 
 /// Remembers the counters of a departing permanent whose own leave ability
 /// reads them. Each exact departing incarnation remains available to its triggers.
-fn record_counter_lki(state: &mut GameState, object: ObjectId) {
+pub(crate) fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
     #[cfg(feature = "standard-magezero-fixtures")]
     let reads_standard = crate::standard_statics_v1::reads_counter_lki(live.card_def);
@@ -2485,7 +2491,8 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let reads_revival = live.counters.revival != 0
         || crate::card_def::CARD_DEFS[usize::from(live.card_def)].name == "Nine-Lives Familiar";
     let reads_fellowship = live.counters.fellowship != 0;
-    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship {
+    let reads_stash = live.counters.stash != 0;
+    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship && !reads_stash {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
@@ -4047,6 +4054,7 @@ type EntryContextWithSourceColorV1<'a> = (
     Option<u64>,
     Option<&'a FinalZonePtPlanV1>,
 );
+#[allow(clippy::too_many_arguments)]
 fn commit_with_entry_batch_and_source_color(
     state: &mut GameState,
     event: ProposedEvent,
@@ -4118,21 +4126,20 @@ fn commit_with_entry_batch_and_source_color(
                 .v4
                 .spell_cast_origin
                 .is_some_and(|origin| origin.finalized_method.is_some());
-        if cast_nine_lives {
-            if crate::doubling_season_v48::entry_amount(
+        if cast_nine_lives
+            && crate::doubling_season_v48::entry_amount(
                 state,
                 counter_input.as_ref(),
                 change.battlefield_controller.unwrap_or(source.controller),
                 8,
             )
             .is_err()
-            {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    change.object,
-                ));
-                return;
-            }
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                change.object,
+            ));
+            return;
         }
     }
     let season_entry_active = crate::doubling_season_v48::requires_successor(state)
@@ -4322,14 +4329,14 @@ fn commit_with_entry_batch_and_source_color(
         ProposedEvent::Draw(draw) => state
             .objects
             .iter()
-            .filter_map(|(id, object)| {
-                (object.zone == Zone::Battlefield
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield
                     && object.controller == draw.player
                     && object.v4.face_index == 0
-                    && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
-                    && is_sphinxs_tutelage_v1(object.card_def))
-                .then(|| crate::state::AbilitySourceContractV4::capture(state, id))
+                    && crate::continuous_characteristics_v1::printed_abilities_active(state, *id)
+                    && is_sphinxs_tutelage_v1(object.card_def)
             })
+            .map(|(id, _)| crate::state::AbilitySourceContractV4::capture(state, id))
             .collect::<Vec<_>>(),
         _ => Vec::new(),
     };
@@ -5756,7 +5763,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    batch_with_aura_token_hosts_v1(state, events, attachments, None, None, None, None);
+    batch_with_aura_token_hosts_v1(state, events, attachments, None, None, None, None, None);
 }
 
 /// The bound copy continuation supplies one untargeted host per actual expanded
@@ -5775,6 +5782,7 @@ pub(crate) fn batch_with_copied_aura_hosts_v1(
         None,
         None,
         None,
+        None,
     );
 }
 /// Consumes one private genuine finishing permit. It cannot be reconstructed
@@ -5787,7 +5795,16 @@ pub(crate) fn commit_goblin_excess_tokens_owned(
     if !permit.allows(state, &events) {
         return Err("excess token batch lost exact continuation owner".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, Some(&permit), None, None);
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        Some(&permit),
+        None,
+        None,
+        None,
+    );
     if state.engine.halted.is_some() {
         return Err("excess token batch halted".into());
     }
@@ -5804,6 +5821,7 @@ fn batch_with_aura_token_hosts_v1(
     excess_permit: Option<&crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>>,
     kykar_permit: Option<&crate::effect::kykar_v1::TokenPermitV1<'_, '_>>,
     spirit_copy_permit: Option<&crate::effect::SpiritCopyPermitV1<'_, '_>>,
+    liliana_permit: Option<&crate::effect::liliana_dreadhorde_v1::TokenPermitV1<'_, '_>>,
 ) {
     if !preflight_wide_batch_v59(state, &events) {
         return;
@@ -5811,6 +5829,7 @@ fn batch_with_aura_token_hosts_v1(
     if events.iter().any(unsupported_partial_token_v1)
         && kykar_permit.is_none_or(|p| !p.allows(state, &events))
         && spirit_copy_permit.is_none_or(|p| !p.allows(state, &events))
+        && liliana_permit.is_none_or(|p| !p.allows(state, &events))
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -6364,13 +6383,12 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
     let mut progenitus_completions = Vec::new();
     let progenitus_removed = chosen
         .iter()
-        .filter_map(|id| {
-            crate::progenitus_v1::definition(state.objects.get(*id).card_def).then(|| {
-                (
-                    *id,
-                    !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
-                )
-            })
+        .filter(|id| crate::progenitus_v1::definition(state.objects.get(**id).card_def))
+        .map(|id| {
+            (
+                *id,
+                !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
+            )
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
@@ -6466,13 +6484,12 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     let mut progenitus_completions = Vec::new();
     let progenitus_removed = dying
         .iter()
-        .filter_map(|id| {
-            crate::progenitus_v1::definition(state.objects.get(*id).card_def).then(|| {
-                (
-                    *id,
-                    !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
-                )
-            })
+        .filter(|id| crate::progenitus_v1::definition(state.objects.get(**id).card_def))
+        .map(|id| {
+            (
+                *id,
+                !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
+            )
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
@@ -6814,6 +6831,13 @@ fn permanent_enters_battlefield_tapped(
     controlled_other_count < usize::from(rule.minimum_count)
 }
 
+type MaterializedZoneEntryV1<'a> = (
+    Option<&'a [crate::state::AbilitySourceContractV4]>,
+    Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
+    Option<&'a crate::doubling_season_v48::ReplacementInputV48>,
+    Option<i32>,
+);
+
 /// Zone bookkeeping shared by every `MoveObject` effect leaf. "Hand ->
 /// Stack" (casting) is deliberately not reachable here: putting a spell on
 /// the stack is an engine action (see `engine::begin_cast`), never
@@ -6829,12 +6853,7 @@ fn materialize_zone_change_v1(
     force_battlefield_tapped: bool,
     battlefield_face_index: Option<u8>,
     battlefield_controller: Option<PlayerId>,
-    entry_context: (
-        Option<&[crate::state::AbilitySourceContractV4]>,
-        Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
-        Option<&crate::doubling_season_v48::ReplacementInputV48>,
-        Option<i32>,
-    ),
+    entry_context: MaterializedZoneEntryV1<'_>,
 ) {
     let (authority_observers, entering_characteristics, counter_input, requested_revival) =
         entry_context;
@@ -9945,6 +9964,10 @@ fn copied_token_entry_v1(
     }
     Ok(*count)
 }
+#[cfg(any(
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+))]
 pub(crate) fn record_copied_token_end_step_v1(
     state: &mut GameState,
     end_step: usize,
@@ -10217,20 +10240,19 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
                 return Err("live copied token lost its original ability multiplicity".into());
             }
         }
-        if matches!(state.engine.event_log.iter().find(|e| *e == event), Some(_)) {
+        if state.engine.event_log.iter().any(|e| e == event) {
             return Err("private copied entry receipt exposed as an event".into());
         }
     }
     for (id, live) in state.objects.iter() {
-        if live.v4.copied_end_step_sacrifices_v1 != 0 {
-            if copied_token_entry_v1(
+        if live.v4.copied_end_step_sacrifices_v1 != 0
+            && (copied_token_entry_v1(
                 state,
                 crate::state::AbilitySourceContractV4::capture(state, id),
             )? != live.v4.copied_end_step_sacrifices_v1
-                || !live.v4.is_token
-            {
-                return Err("native copied token count lacks its actual entry".into());
-            }
+                || !live.v4.is_token)
+        {
+            return Err("native copied token count lacks its actual entry".into());
         }
     }
     Ok(())
@@ -10247,7 +10269,16 @@ pub(crate) fn commit_kykar_spirit_owned_v1(
     if !permit.allows(state, &events) {
         return Err("Kykar Spirit lost genuine mode owner".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, None, Some(&permit), None);
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        Some(&permit),
+        None,
+        None,
+    );
     if state.engine.halted.is_some() {
         return Err("Kykar Spirit batch halted".into());
     }
@@ -10264,9 +10295,44 @@ pub(crate) fn commit_spirit_copy_owned_v1(
     if !permit.allows(state, &events) {
         return Err("Spirit copy lost its actual spell/target/proposal".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, None, None, Some(&permit));
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        None,
+        Some(&permit),
+        None,
+    );
     if state.engine.halted.is_some() {
         return Err("Spirit copy batch halted".into());
+    }
+    Ok(())
+}
+
+/// The exact native Liliana +1 owns the existing Partial Zombie dependency.
+/// No caller-authored token ID, event row or serialized marker mints this permit.
+pub(crate) fn commit_liliana_zombie_owned_v1(
+    state: &mut GameState,
+    permit: crate::effect::liliana_dreadhorde_v1::TokenPermitV1<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Liliana Zombie lost actual native +1 owner".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        None,
+        None,
+        Some(&permit),
+    );
+    if state.engine.halted.is_some() {
+        return Err("Liliana Zombie native batch halted".into());
     }
     Ok(())
 }

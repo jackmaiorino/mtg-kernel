@@ -683,9 +683,9 @@ pub(crate) mod alesha_optional_v1 {
             || item.kind != StackItemKind::TriggeredAbility
             || source.source != item.source
             || source.controller != item.controller
-            || !crate::card_def::CARD_DEFS
+            || crate::card_def::CARD_DEFS
                 .get(usize::from(source.card_def))
-                .is_some_and(|d| d.name == "Alesha, Who Laughs at Fate")
+                .is_none_or(|d| d.name != "Alesha, Who Laughs at Fate")
         {
             return Err("Alesha optional root/source/controller changed".into());
         }
@@ -2762,6 +2762,15 @@ pub enum EffectOp {
     },
     /// Definition-owned revealed subset and simultaneous permanent entry.
     GenesisWaveV1,
+    /// Exact discarded incarnation and original observing Tinybones.
+    TinybonesStashV72 {
+        discard: u64,
+        observer: u32,
+    },
+    LilianaZombieV1,
+    LilianaSacrificeV1 {
+        ultimate: bool,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -3244,6 +3253,10 @@ pub enum EffectFrame {
         choice: genesis_wave_v1::ChoiceV1,
         cards: Vec<EffectObjectBinding>,
     },
+    LilianaV1 {
+        choice: liliana_dreadhorde_v1::ChoiceV1,
+        selected: Vec<EffectObjectBinding>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -3623,6 +3636,9 @@ pub enum EffectTargetSelectionPurpose {
     },
     GenesisWaveCardsV1 {
         choice: genesis_wave_v1::ChoiceV1,
+    },
+    LilianaV1 {
+        choice: liliana_dreadhorde_v1::ChoiceV1,
     },
 }
 
@@ -4305,6 +4321,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
         | EffectOp::SacrificeCreature { .. }
         | EffectOp::BlasphemousEdictV1
+        | EffectOp::LilianaSacrificeV1 { .. }
         | EffectOp::MayPayManaThen { .. }
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
@@ -4348,6 +4365,18 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if matches!(op, EffectOp::TinybonesStashV72 { .. })
+        || crate::engine::tinybones_v72::waiting(state, ctx)
+        || resolving_item
+            .v4
+            .ability_source_contract
+            .is_some_and(|c| crate::engine::tinybones_v72::definition(c.card_def))
+    {
+        return Err("Tinybones requires its actual lexical native row".into());
+    }
+    if *op == EffectOp::LilianaZombieV1 {
+        return Err("Liliana Zombie requires its genuine native row".into());
+    }
     if vivien_reid_v1::recipe(op)
         || vivien_reid_v1::selected(state, &resolving_item)
         || vivien_reid_v1::context_selected(state, ctx)
@@ -4484,6 +4513,16 @@ fn begin_resumable_resolution_with_native_row_v1(
     inspiration_owner: Option<&InspirationResolutionOwnerV1>,
     native_row: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
+    if native_row.is_none()
+        && (matches!(op, EffectOp::TinybonesStashV72 { .. })
+            || crate::engine::tinybones_v72::waiting(state, ctx)
+            || resolving_item
+                .v4
+                .ability_source_contract
+                .is_some_and(|c| crate::engine::tinybones_v72::definition(c.card_def)))
+    {
+        return Err("Tinybones requires its actual lexical native row".into());
+    }
     if native_row.is_none()
         && (vivien_reid_v1::recipe(op)
             || vivien_reid_v1::selected(state, &resolving_item)
@@ -6092,6 +6131,9 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::LilianaV1 { choice } => {
+            liliana_dreadhorde_v1::answer(continuation, choice, objects, path)?;
         }
         EffectTargetSelectionPurpose::BlasphemousEdictV1 { choice } => {
             blasphemous_edict_v1::answer(continuation, choice, objects, path)?;
@@ -9266,6 +9308,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::CuratorV1 { .. }
                         | EffectFrame::GenesisWaveV1 { .. }
                         | EffectFrame::BlasphemousEdictV1 { .. }
+                        | EffectFrame::LilianaV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
                             ordered: Some(_),
@@ -9304,7 +9347,7 @@ fn validate_answered_choice_guard(
             }
             if pending.choice.is_some()
                 || pending.frames.last() != Some(&**frame)
-                || !matches!(
+                || !(matches!(
                     **frame,
                     EffectFrame::WardPayment { .. }
                         | EffectFrame::ConvokeLook { .. }
@@ -9318,19 +9361,20 @@ fn validate_answered_choice_guard(
                         | EffectFrame::CuratorV1 { .. }
                         | EffectFrame::GenesisWaveV1 { .. }
                         | EffectFrame::BlasphemousEdictV1 { .. }
+                        | EffectFrame::LilianaV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
                             ordered: Some(_),
                             ..
                         }
-                ) && !(aberration_continuation_v1(pending)
+                ) || (aberration_continuation_v1(pending)
                     && matches!(
                         **frame,
                         EffectFrame::RevealedLibraryToGraveyardBatch {
                             order_resolved: true,
                             ..
                         }
-                    ))
+                    )))
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
             }
@@ -10248,6 +10292,7 @@ fn validate_aberration_continuation_v1(
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     vivien_reid_v1::validate_state(state)?;
+    liliana_dreadhorde_v1::validate_state(state)?;
     vivien_reid_v1::validate_pending(state)?;
     fiend_artisan_v1::validate_pending(state)?;
     if state
@@ -10384,6 +10429,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     thousand_year_storm_v1::validate_continuation(state, pending)?;
     blasphemous_edict_v1::validate(state, pending)?;
+    liliana_dreadhorde_v1::validate_continuation(state, pending)?;
     if genesis_wave_v1::pending_selected(state, pending) {
         return genesis_wave_v1::validate(state, pending);
     }
@@ -10649,6 +10695,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => {
                     return Err("Curator purpose requires its native root".into())
+                }
+                EffectTargetSelectionPurpose::LilianaV1 { .. } => {
+                    liliana_dreadhorde_v1::validate_continuation(state, pending)?;
                 }
                 EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => {
                     blasphemous_edict_v1::validate(state, pending)?;
@@ -12617,7 +12666,7 @@ fn drive_resumable_inner_with_native_row_v1(
         ) {
             resolution_answer = Some(frame.clone());
         }
-        if matches!(
+        if (matches!(
             frame,
             EffectFrame::WardPayment { .. }
                 | EffectFrame::ConvokeLook { .. }
@@ -12631,6 +12680,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 | EffectFrame::CuratorV1 { .. }
                 | EffectFrame::GenesisWaveV1 { .. }
                 | EffectFrame::BlasphemousEdictV1 { .. }
+                | EffectFrame::LilianaV1 { .. }
                 | EffectFrame::AleshaRaidAnswerV1 { .. }
                 | EffectFrame::SphinxsTutelageMillV1 {
                     ordered: Some(_),
@@ -12643,15 +12693,13 @@ fn drive_resumable_inner_with_native_row_v1(
                     order_resolved: true,
                     ..
                 }
-            ))
-        {
-            if continuation.answered_choice_guard.take()
+            )))
+            && continuation.answered_choice_guard.take()
                 != Some(EffectAnsweredChoiceGuard::StandardSelection {
                     frame: Box::new(frame.clone()),
                 })
-            {
-                return Err("Standard selection answer changed before execution".into());
-            }
+        {
+            return Err("Standard selection answer changed before execution".into());
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
@@ -12663,6 +12711,12 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
                 EffectFrame::CuratorV1 { choice, answer } => {
                     if curator_v1::apply(state, &mut continuation, choice, answer)? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+                EffectFrame::LilianaV1 { choice, selected } => {
+                    if liliana_dreadhorde_v1::advance(state, &mut continuation, choice, selected)? {
                         state.engine.pending_effect = Some(continuation);
                         return Ok(ResumableProgress::Suspended);
                     }
@@ -15726,6 +15780,13 @@ fn drive_resumable_inner_with_native_row_v1(
                     return Ok(ResumableProgress::Suspended);
                 }
             }
+            EffectOp::LilianaSacrificeV1 { ultimate } => {
+                if liliana_dreadhorde_v1::start(state, &mut continuation, path, ultimate)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::LilianaZombieV1 => return Err("Liliana Zombie requires the lexical native leaf owner".into()),
             EffectOp::BlasphemousEdictV1 => {
                 if blasphemous_edict_v1::start(state, &mut continuation, path)? {
                     state.engine.pending_effect = Some(continuation);
@@ -19318,6 +19379,31 @@ fn execute_with_native_row_v1(
     if state.engine.halted.is_some() {
         return;
     }
+    if (matches!(op, EffectOp::TinybonesStashV72 { .. })
+        || crate::engine::tinybones_v72::waiting(state, ctx))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
+    if matches!(op, EffectOp::TinybonesStashV72 { .. }) {
+        let proof = native_proof.expect("checked Tinybones native proof");
+        if *proof.owner.root != *op
+            || crate::engine::tinybones_v72::resolve_stash(state, ctx, &proof.owner.item).is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        return;
+    }
+    if state.engine.halted.is_some() {
+        return;
+    }
     if (vivien_reid_v1::recipe(op)
         || vivien_reid_v1::context_selected(state, ctx)
         || state
@@ -19331,6 +19417,18 @@ fn execute_with_native_row_v1(
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
         ));
+        return;
+    }
+    if *op == EffectOp::LilianaZombieV1 {
+        let result = native_proof
+            .ok_or("Liliana Zombie has no lexical proof".to_string())
+            .and_then(|proof| liliana_dreadhorde_v1::create_zombie(state, proof));
+        if result.is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         return;
     }
     if *op == vivien_reid_v1::emblem() {
@@ -19580,6 +19678,7 @@ fn execute_with_native_row_v1(
                 ctx.source,
             ));
         }
+        EffectOp::TinybonesStashV72 { .. } => unreachable!("handled by native Tinybones proof"),
         EffectOp::FiendArtisanSearchV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -23636,6 +23735,8 @@ fn execute_with_native_row_v1(
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
         | EffectOp::SacrificeCreature { .. }
         | EffectOp::BlasphemousEdictV1
+        | EffectOp::LilianaSacrificeV1 { .. }
+        | EffectOp::LilianaZombieV1
         | EffectOp::MayPayManaThen { .. }
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
@@ -26537,8 +26638,14 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // Only a current actual published row selects its source. Caller-supplied
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
+pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if crate::engine::tinybones_v72::waiting(state, ctx)
+        || liliana_dreadhorde_v1::waiting(state, ctx)
+    {
+        return true;
+    }
     if vivien_reid_v1::waiting(state, ctx) {
         return true;
     }
@@ -26989,7 +27096,8 @@ pub(crate) mod blasphemous_edict_v1 {
         })
     }
     fn item_family(state: &GameState, item: &StackItem) -> bool {
-        matches!(item.inline_effect, Some(EffectOp::BlasphemousEdictV1))
+        liliana_dreadhorde_v1::sacrifice_selected(state, item)
+            || matches!(item.inline_effect, Some(EffectOp::BlasphemousEdictV1))
             || item
                 .v4
                 .source_contract
@@ -27017,7 +27125,7 @@ pub(crate) mod blasphemous_edict_v1 {
     }
     pub(super) fn contains(op: &EffectOp) -> bool {
         match op {
-            EffectOp::BlasphemousEdictV1 => true,
+            EffectOp::BlasphemousEdictV1 | EffectOp::LilianaSacrificeV1 { .. } => true,
             EffectOp::Sequence(ops) | EffectOp::Choice { options: ops, .. } => {
                 ops.iter().any(contains)
             }
@@ -27082,12 +27190,20 @@ pub(crate) mod blasphemous_edict_v1 {
         state: &GameState,
         choice: &ChoiceV1,
     ) -> Result<[Vec<EffectObjectBinding>; 2], String> {
-        let mut scene = state.clone();
-        let mut found = [Vec::new(), Vec::new()];
-        for b in choice.chosen[choice.active.index()]
+        let chosen = choice.chosen[choice.active.index()]
             .iter()
             .chain(&choice.chosen[choice.active.opponent().index()])
-        {
+            .copied()
+            .collect::<Vec<_>>();
+        actual_graveyard_destinations(state, &chosen)
+    }
+    pub(super) fn actual_graveyard_destinations(
+        state: &GameState,
+        chosen: &[EffectObjectBinding],
+    ) -> Result<[Vec<EffectObjectBinding>; 2], String> {
+        let mut scene = state.clone();
+        let mut found = [Vec::new(), Vec::new()];
+        for b in chosen {
             let Some(event::ProposedEvent::ZoneChange(mut change)) = event::apply_replacements(
                 &mut scene,
                 event::ProposedEvent::zone_change(b.object, Zone::Graveyard),
@@ -27164,7 +27280,7 @@ pub(crate) mod blasphemous_edict_v1 {
         Ok(())
     }
     fn chooser(choice: &ChoiceV1) -> PlayerId {
-        if choice.phase % 2 == 0 {
+        if choice.phase.is_multiple_of(2) {
             choice.active
         } else {
             choice.active.opponent()
@@ -27194,6 +27310,9 @@ pub(crate) mod blasphemous_edict_v1 {
         }
     }
     pub(super) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
+        if liliana_dreadhorde_v1::sacrifice_selected(state, &pending.resolving_item) {
+            return liliana_dreadhorde_v1::validate_continuation(state, pending);
+        }
         let carries = matches!(
             pending.choice,
             Some(PendingEffectChoice::SelectTargets {
@@ -27409,6 +27528,9 @@ pub(crate) mod blasphemous_edict_v1 {
             return Ok(None);
         }
         crate::engine::validated_stack_item_target_spec(item, state)?;
+        if liliana_dreadhorde_v1::sacrifice_selected(state, item) {
+            liliana_dreadhorde_v1::publication(state, item)?;
+        }
         let position = state
             .stack
             .iter()
@@ -27475,11 +27597,20 @@ pub(crate) mod blasphemous_edict_v1 {
         if *ctx != expected {
             return Err("Edict original execution context changed".into());
         }
+        let root = if liliana_dreadhorde_v1::sacrifice_selected(state, &owner.item) {
+            owner
+                .item
+                .inline_effect
+                .clone()
+                .ok_or("Liliana sacrifice root absent")?
+        } else {
+            EffectOp::BlasphemousEdictV1
+        };
         state.engine.pending_effect = Some(EffectContinuation {
             resolving_item: owner.item,
             ctx: ctx.clone(),
             frames: vec![EffectFrame::Program {
-                op: EffectOp::BlasphemousEdictV1,
+                op: root,
                 path: Vec::new(),
             }],
             choice: None,

@@ -126,7 +126,11 @@ fn counter_values(state: &GameState, id: ObjectId) -> Result<CountersV65, String
         incubation,
         revival,
         fellowship,
+        stash,
     } = o.counters;
+    if stash != 0 {
+        return Err("public projection does not expose stash counters".into());
+    }
     let lifelink = o.v4.lifelink_keyword_counters;
     if [
         plus1_plus1,
@@ -219,6 +223,8 @@ fn source_current(state: &GameState, source: AbilitySourceContractV4) -> bool {
             && o.owner == source.owner
     })
 }
+// These are independent fields of the existing published ability contract.
+#[allow(clippy::too_many_arguments)]
 fn ability(
     state: &GameState,
     viewer: PlayerId,
