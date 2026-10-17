@@ -347,7 +347,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     }
     if matches!(
         d.name,
-        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie"
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" | "Axgard Cavalry"
     ) {
         return early_activation_printing::baseline(id, d);
     }
@@ -715,7 +715,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
             return tyrant_herald_printing::printing(id, d)
         }
         "Squad Rallier" | "Bloom Tender" => return rallier_bloom_printing::printing(id, d),
-        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" => {
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" | "Axgard Cavalry" => {
             return early_activation_printing::printing(id, d)
         }
         "Arahbo, the First Fang" | "Zul Ashur, Lich Lord" => {

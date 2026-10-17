@@ -196,7 +196,8 @@ fn genuine_paid_printing_each_opponent_first_land_empty_and_no_land_both_seats()
         ] {
             let mut state = ready(actor, &library);
             let source = paid_aberration(&mut state, actor);
-            assert!(crate::drake_public_v53::capture(&state).is_err());
+            // The V53 appendix is not a whole-world legacy consumer gate.
+            assert!(crate::rl::observe_v1(&state, actor, 0).is_err());
             cast(&mut state, actor, "Think Twice", None, 2);
             let rows = trigger_rows(&state);
             assert_eq!(rows.len(), 1);
@@ -455,6 +456,11 @@ fn all_zone_cda_owner_control_departure_and_all_card_kinds_native_primitives_bot
 fn genuine_paid_copy_and_witness_suppression_preserve_cda_and_cast_occurrences_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor, &["Forest"; 24]);
+        // Original declared mana setup covers the complete same-turn paid
+        // chain. Its first three spells can spend all twelve original Islands.
+        for _ in 0..4 {
+            put(&mut state, actor, "Island", Zone::Battlefield);
+        }
         let source = paid_aberration(&mut state, actor);
         cast(
             &mut state,
@@ -972,7 +978,8 @@ fn genuine_paid_waiting_answered_mill_overflow_restore_keeps_original_zones_both
 fn paid_suppressed_boundary(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
     let mut state = ready(actor, &["Forest"; 4]);
     let source = paid_aberration(&mut state, actor);
-    engine::step(&mut state, Action::Pass).unwrap();
+    // The Aura has normal sorcery timing, so its real caster needs their main.
+    crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, actor.opponent());
     let aura = cast(
         &mut state,
         actor.opponent(),
@@ -1102,6 +1109,9 @@ fn genuine_paid_looting_madness_abort_overflow_keeps_placeholder_and_graveyard_b
         let mut state = ready(actor, &["Forest"; 8]);
         let source = paid_aberration(&mut state, actor);
         let caster = actor.opponent();
+        // Looting is a sorcery. Reach the actual caster's main before the
+        // original one-red-source setup, without untapping after that setup.
+        crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, caster);
         let temper = put(&mut state, caster, "Fiery Temper", Zone::Hand);
         let other_discard = put(&mut state, caster, "Island", Zone::Hand);
         // Fixture mana availability: exactly one untapped red source. The
@@ -1115,7 +1125,6 @@ fn genuine_paid_looting_madness_abort_overflow_keeps_placeholder_and_graveyard_b
         for &object in mountains.iter().skip(1) {
             state.objects.get_mut(object).tapped = true;
         }
-        engine::step(&mut state, Action::Pass).unwrap();
         let looting = cast(&mut state, caster, "Faithless Looting", None, 1);
         let mut reached_madness = false;
         for _ in 0..128 {
@@ -1286,6 +1295,10 @@ fn paid_longbow_granted_activation_above_original_mill_keeps_native_owner_both_s
         assert!(ping.v4.granted_by.is_some());
         assert!(state.stack.iter().any(|row| row == &waiting));
         assert!(state.objects.get(source).tapped);
+        // The actual granted damage row needs its native owner, while the
+        // catalog's unrelated as-enters probes need no enclosing Runner.
+        assert!(crate::linked_aura_operation_v1::needs_event_owner(&state));
+        assert!(!crate::linked_aura_operation_v1::needs_surrounding_operation_owner(&state));
         let life = state.players[actor.opponent().index()].life;
         let mut replay = restore(&state);
         finish(&mut state, false);

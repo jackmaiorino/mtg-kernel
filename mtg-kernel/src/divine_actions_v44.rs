@@ -210,6 +210,22 @@ pub(crate) fn candidates_liliana_v73(
         true,
     )
 }
+pub(crate) fn candidates_chandra_v74(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::chandra_observation_v74::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_chandra_v74(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
 
 fn candidates_current_scope(
     origin: &PolicyDecisionV5,
@@ -351,6 +367,26 @@ fn candidates_current_scope_liliana_v73(
         Some(crate::rl::CommonProjectionScopeV42::LilianaV73),
     )
 }
+fn candidates_current_scope_chandra_v74(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::ChandraV74),
+    )
+}
 
 #[allow(clippy::too_many_arguments)]
 fn candidates_current_scope_inner_v68(
@@ -377,7 +413,9 @@ fn candidates_current_scope_inner_v68(
     if context.is_none() && !priority_offer {
         return Ok(None);
     }
-    let candidates = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::LilianaV73) {
+    let candidates = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::ChandraV74) {
+        crate::rl_variable_cast_v1::candidates_chandra_v74(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::LilianaV73) {
         crate::rl_variable_cast_v1::candidates_liliana_v73(state, surface, origin)?
     } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::TinybonesV72) {
         crate::rl_variable_cast_v1::candidates_tinybones_v72(state, surface, origin)?

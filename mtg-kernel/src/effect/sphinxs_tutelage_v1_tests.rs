@@ -257,7 +257,8 @@ fn exact_partial_printing_and_paid_activation_pair_stops_both_seats() {
                 put(&mut state, actor, "Twinflame Tyrant", Zone::Battlefield);
             }
             let source = paid_tutelage(&mut state, actor);
-            assert!(crate::drake_public_v53::capture(&state).is_err());
+            // The V53 appendix is not a whole-world legacy consumer gate.
+            assert!(crate::rl::observe_v1(&state, actor, 0).is_err());
             activate_to_discard(&mut state, actor, source);
             let before_discard = restore(&state);
             let discard = engine::advance_until_decision(&mut state);
@@ -485,10 +486,16 @@ fn event_time_draw_membership_control_and_generation_native_primitives_both_seat
 fn no_observer_and_empty_failed_draw_preserve_old_event_shape() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor, &[]);
+        // A normal selected-catalog turn anchor can already precede this draw.
+        let original = state.engine.event_history.clone();
         event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
-        assert_eq!(state.engine.event_history.len(), 1);
+        assert_eq!(
+            &state.engine.event_history[..original.len()],
+            original.as_slice()
+        );
+        assert_eq!(state.engine.event_history.len(), original.len() + 1);
         assert!(matches!(
-            state.engine.event_history[0],
+            state.engine.event_history[original.len()],
             CommittedEvent::Draw {
                 object: Some(_),
                 ..
@@ -523,10 +530,10 @@ fn paid_repeat_receipt_pair_and_full_library_corruption_refuse_readonly_both_sea
         let discard = engine::advance_until_decision(&mut state);
         respond(&mut state, discard, false);
         to_mill_order(&mut state);
-        for _ in 0..2 {
-            let decision = engine::advance_until_decision(&mut state);
-            respond(&mut state, decision, true);
-        }
+        // The pair's last remaining member is forced and appended by the
+        // genuine first ordering action. Do not advance into the next pair.
+        let decision = engine::advance_until_decision(&mut state);
+        respond(&mut state, decision, true);
         let answered = restore(&state);
         validate_pending_effect_choice(&answered).unwrap();
         let mut changed_order = answered.clone();
@@ -736,10 +743,10 @@ fn paid_published_mill_changed_root_and_erased_stages_refuse_public_apis_both_se
         respond(&mut state, discard, false);
         to_mill_order(&mut state);
         let waiting = restore(&state);
-        for _ in 0..2 {
-            let decision = engine::advance_until_decision(&mut state);
-            respond(&mut state, decision, false);
-        }
+        // The pair's last remaining member is forced and appended by the
+        // genuine first ordering action. Do not advance into the next pair.
+        let decision = engine::advance_until_decision(&mut state);
+        respond(&mut state, decision, false);
         let answered = restore(&state);
         assert!(answered
             .engine
@@ -883,6 +890,10 @@ fn paid_draw_discard_above_published_mill_keeps_lexical_native_owner_and_restore
         }
         let waiting = waiting.expect("genuine first mill is published before its response window");
         event::validate_published_tutelage_v1(&state, &waiting).unwrap();
+        // Catalog-only entry probes do not require an enclosing Runner for
+        // this separate genuine draw/discard activation above the mill row.
+        assert!(crate::linked_aura_operation_v1::needs_event_owner(&state));
+        assert!(!crate::linked_aura_operation_v1::needs_surrounding_operation_owner(&state));
         let before = taps(&state, actor);
         activate_to_discard(&mut state, actor, source);
         assert_eq!(taps(&state, actor) - before, 6);
