@@ -94,6 +94,30 @@ impl KaitoSession {
         .map_err(|e| Error::Projection(format!("{e:?}")))
     }
 
+    pub fn sampled_clone(&self, decision: &KaitoDecision, seed: u64) -> Result<Self> {
+        if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
+            return Err(Error::StaleBinding);
+        }
+        self.inner
+            .validate_decision_v75(&decision.backend)
+            .map_err(|_| Error::StaleBinding)?;
+        if packet_from_current(
+            decision.backend.candidates_v75(),
+            decision.backend.actions(),
+        )? != decision.packet
+        {
+            return Err(Error::StaleBinding);
+        }
+        let inner = self
+            .inner
+            .sampled_clone_v75(&decision.backend, seed)
+            .map_err(|e| Error::Projection(e.to_string()))?;
+        let sampled = Self::from_kaito(inner);
+        if sampled.encode(decision.backend.expected())?.packet != decision.packet {
+            return Err(Error::StaleBinding);
+        }
+        Ok(sampled)
+    }
     pub fn current_response(&self) -> FastActorResponseV1 {
         self.inner.response()
     }

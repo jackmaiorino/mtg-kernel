@@ -1654,6 +1654,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "python/tools/limited_kaito_session_v16.py",
                     include_str!("../../../python/tools/limited_kaito_session_v16.py"),
                 ),
+                (
+                    "mtg-kernel/src/effect/kaito_cunning_v75.rs",
+                    include_str!("kaito_cunning_v75.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

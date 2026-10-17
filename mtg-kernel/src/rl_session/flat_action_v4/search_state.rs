@@ -44,6 +44,13 @@ pub(super) fn redeterminize_liliana_v73(
 ) -> Result<(), V4SearchStateErrorV1> {
     sampler::redeterminize_liliana_v73(state, actor, seed)
 }
+pub(super) fn redeterminize_kaito_v75(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_kaito_v75(state, actor, seed)
+}
 pub(super) fn redeterminize_chandra_v74(
     state: &mut crate::state::GameState,
     actor: crate::ids::PlayerId,
