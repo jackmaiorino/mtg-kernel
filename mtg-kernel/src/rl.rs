@@ -11585,6 +11585,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         },
                         ordered: *ordered,
                         purpose: match purpose {
+                            crate::effect::EffectTargetSelectionPurpose::LilianaV1 { .. } => return Err(RlContractError("Liliana sacrifice choice requires a complete V73 consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. } => return Err(RlContractError("Progenitus mill ordering needs a complete successor".into())),
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: Some(_), .. } => TargetSelectionPurposeV4::LibraryOrder,
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: None, .. }
