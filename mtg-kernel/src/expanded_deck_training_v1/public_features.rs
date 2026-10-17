@@ -774,7 +774,7 @@ fn collect_parallel(
 /// the results in item order. Every thread joins before this returns, and the
 /// first failure by item index wins, so the outcome never depends on timing.
 /// One worker, or one item, runs inline on the calling thread.
-fn ordered_parallel_map<'a, T: Sync, R: Send>(
+pub(super) fn ordered_parallel_map<'a, T: Sync, R: Send>(
     items: &'a [T],
     workers: usize,
     task: impl Fn(usize, &'a T) -> Result<R, String> + Sync,

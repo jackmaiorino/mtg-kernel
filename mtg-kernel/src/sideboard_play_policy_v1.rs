@@ -68,6 +68,8 @@ use std::path::{Path, PathBuf};
 
 mod origin;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+pub(crate) mod own_registration;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod public_inputs;
 pub mod registry_evolution_v1;
 #[cfg(any(
