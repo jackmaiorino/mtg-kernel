@@ -332,7 +332,7 @@ pub(crate) fn require_call_legacy_visible_v62(
 }
 
 pub(crate) fn counter_values(state: &GameState, id: ObjectId) -> Result<CountersV61, String> {
-    counter_values_scoped(state, id, false)
+    counter_values_scoped(state, id, public::CounterScopeV61::CompleteV61)
 }
 /// Private compatibility prefix: the distinct Call observation retains the
 /// complete seventeen-field roster. No old V61 artifact admits fellowship.
@@ -343,14 +343,29 @@ pub(crate) fn counter_values_call_compat_v62(
     if state.objects.get(id).counters.fellowship < 0 {
         return Err("Call negative native fellowship counter".into());
     }
-    counter_values_scoped(state, id, true)
+    counter_values_scoped(state, id, public::CounterScopeV61::CallV62)
+}
+/// V72-only sixteen-field prefix. The complete eighteen counters remain mandatory
+/// in the enclosing Tinybones observation; legacy V61/Call entrypoints still refuse stash.
+pub(crate) fn counter_values_tinybones_compat_v72(
+    state: &GameState,
+    id: ObjectId,
+) -> Result<CountersV61, String> {
+    counter_values_scoped(state, id, public::CounterScopeV61::TinybonesV72)
 }
 fn counter_values_scoped(
     state: &GameState,
     id: ObjectId,
-    call: bool,
+    scope: public::CounterScopeV61,
 ) -> Result<CountersV61, String> {
     let live = state.objects.get(id);
+    let call = matches!(
+        scope,
+        public::CounterScopeV61::CallV62 | public::CounterScopeV61::TinybonesV72
+    );
+    if scope == public::CounterScopeV61::TinybonesV72 {
+        crate::tinybones_public_v72::counters(state, id)?;
+    }
     if call && live.counters.fellowship < 0 {
         return Err("Call negative native fellowship counter".into());
     }
@@ -370,7 +385,7 @@ fn counter_values_scoped(
         fellowship,
         stash,
     } = live.counters;
-    if stash != 0 {
+    if stash != 0 && scope != public::CounterScopeV61::TinybonesV72 {
         return Err("public projection does not expose stash counters".into());
     }
     if fellowship != 0 && !call {
@@ -675,15 +690,29 @@ fn trigger(
     }))
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV61, String> {
-    capture_scoped(state, viewer, false)
+    capture_scoped(state, viewer, public::CounterScopeV61::CompleteV61)
 }
 pub(crate) fn capture_complete_call_v62(
     state: &GameState,
     viewer: PlayerId,
 ) -> Result<FactsV61, String> {
-    capture_scoped(state, viewer, true)
+    capture_scoped(state, viewer, public::CounterScopeV61::CallV62)
 }
-fn capture_scoped(state: &GameState, viewer: PlayerId, call: bool) -> Result<FactsV61, String> {
+pub(crate) fn capture_tinybones_compat_v72(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV61, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::TinybonesV72)
+}
+fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    scope: public::CounterScopeV61,
+) -> Result<FactsV61, String> {
+    let call = matches!(
+        scope,
+        public::CounterScopeV61::CallV62 | public::CounterScopeV61::TinybonesV72
+    );
     let ids = FamilyV61::ALL
         .into_iter()
         .map(|f| Ok((f, meaning::selected_id(f)?)))
@@ -755,7 +784,7 @@ fn capture_scoped(state: &GameState, viewer: PlayerId, call: bool) -> Result<Fac
             battlefield_counters[seat.index()].push(BattlefieldCountersV61 {
                 card: public::reference(state, id, Some(viewer))
                     .ok_or("V61 public battlefield reference absent")?,
-                counters: counter_values_scoped(state, id, call)?,
+                counters: counter_values_scoped(state, id, scope)?,
             });
         }
     }

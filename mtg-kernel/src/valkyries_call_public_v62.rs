@@ -115,7 +115,11 @@ pub fn producer_sha256() -> String {
 fn ordinal(value: usize) -> Result<u32, String> {
     u32::try_from(value).map_err(|_| "V62 public ordinal overflow".into())
 }
-fn counters(state: &GameState, id: ObjectId) -> Result<CountersV62, String> {
+fn counters(
+    state: &GameState,
+    id: ObjectId,
+    scope: public::CounterScopeV61,
+) -> Result<CountersV62, String> {
     let live = state.objects.get(id);
     let Counters {
         plus1_plus1,
@@ -133,7 +137,10 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV62, String> {
         fellowship,
         stash,
     } = live.counters;
-    if stash != 0 {
+    if scope == public::CounterScopeV61::TinybonesV72 {
+        crate::tinybones_public_v72::counters(state, id)?;
+    }
+    if stash != 0 && scope != public::CounterScopeV61::TinybonesV72 {
         return Err("public projection does not expose stash counters".into());
     }
     let lifelink = live.v4.lifelink_keyword_counters;
@@ -356,6 +363,19 @@ fn return_row(
     })
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV62, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::CallV62)
+}
+pub(crate) fn capture_tinybones_compat_v72(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV62, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::TinybonesV72)
+}
+fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    scope: public::CounterScopeV61,
+) -> Result<FactsV62, String> {
     let selected = meaning::selected_id()?;
     if state.engine.halted.is_some() {
         return Err("V62 native state is halted".into());
@@ -414,7 +434,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV62, String> 
                 tapped: live.tapped,
                 summoning_sick: live.summoning_sick,
                 marked_damage: live.damage,
-                counters: counters(state, id)?,
+                counters: counters(state, id, scope)?,
                 form: public::checked_form(state, id)?,
             });
         }

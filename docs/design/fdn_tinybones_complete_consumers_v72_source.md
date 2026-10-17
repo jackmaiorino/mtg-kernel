@@ -1,0 +1,11 @@
+# Tinybones V72 complete-consumer source work
+
+This checkpoint adds a distinct read-only V72 observation and exact-bound candidate projection. Tinybones remains Partial. Sealed owning sessions, numeric policy, Human and V13 transport adapters are still pending. No Rust compilation or gameplay execution has been performed for this checkpoint.
+
+The complete observation retains all V71 fields and adds the native Tinybones facts. Its mandatory battlefield roster has all eighteen original-width counters. Private closed V72 counter scopes validate the full native record before emitting inherited fifteen/sixteen/seventeen-field compatibility prefixes. The full eighteen-field current record, identity, order, form and ordinary flags must equal each inherited prefix. Predecessor public capture entrypoints still refuse stash. The new scope refuses Liliana, Chandra and every other unsupported later family rather than admitting a numeric ID interval.
+
+The new scope selects the existing checked wide Snack, Conqueror and Panda successor where the inherited observation carries those fields. No predecessor schema or scope is widened. Archived Time Stop rows use the same distinct V72 supported-family predicate and complete source/target/cost/X projector; original archived private hand/library contents remain outside admission decisions.
+
+The supplied-value validators are supplemental structural checks. Fresh native recapture establishes inventory completeness. Read-only candidate projection retains the existing idempotent actual-origin probe and never returns executable native pairs or an action application capability. The future private owning entry must use its own issued-origin borrow; it must not gain authority from this source-only API. No sampler admission is added.
+
+Three additional source fixtures, all UNRUN, use genuine paid native histories for complete eighteen-counter compatibility/freshness (with explicitly labelled wide storage operands), independent prepaid unknown worlds, and paid Time Stop disposal of an original Tinybones trigger with serialized restoration. The original thirteen native and four foundation groups remain separate. The foundation's one legacy-refusal assertion correction is separately committed as 343e8bed8.

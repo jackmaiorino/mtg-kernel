@@ -876,6 +876,7 @@ enum PublicScopeV69 {
     GenesisWaveV69,
     VivienV70,
     MuldrothaV71,
+    TinybonesV72,
 }
 pub(crate) fn public_facts_v68(
     state: &GameState,
@@ -900,6 +901,12 @@ pub(crate) fn public_facts_muldrotha_v71(
     viewer: PlayerId,
 ) -> Result<crate::time_stop_public_v68::FactsV68, String> {
     public_facts_for_scope_v69(state, viewer, PublicScopeV69::MuldrothaV71)
+}
+pub(crate) fn public_facts_tinybones_v72(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::time_stop_public_v68::FactsV68, String> {
+    public_facts_for_scope_v69(state, viewer, PublicScopeV69::TinybonesV72)
 }
 fn public_facts_for_scope_v69(
     state: &GameState,
@@ -936,6 +943,9 @@ fn public_facts_for_scope_v69(
             PublicScopeV69::MuldrothaV71 => {
                 crate::muldrotha_observation_v71::require_supported(&original, None)?
             }
+            PublicScopeV69::TinybonesV72 => {
+                crate::tinybones_observation_v72::require_supported(&original, None)?
+            }
             PublicScopeV69::VivienV70 => {
                 crate::vivien_observation_v70::require_supported(&original, None)?
             }
@@ -971,6 +981,9 @@ fn public_facts_for_scope_v69(
                             &original, viewer, position, row,
                         ),
                         PublicScopeV69::MuldrothaV71 => crate::rl::stack_item_public_muldrotha_v71(
+                            &original, viewer, position, row,
+                        ),
+                        PublicScopeV69::TinybonesV72 => crate::rl::stack_item_public_tinybones_v72(
                             &original, viewer, position, row,
                         ),
                         PublicScopeV69::VivienV70 => crate::rl::stack_item_public_vivien_v70(
@@ -1622,6 +1635,14 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                 (
                     "mtg-kernel/src/effect/liliana_dreadhorde_public_v73.rs",
                     include_str!("../effect/liliana_dreadhorde_public_v73.rs"),
+                ),
+                (
+                    "mtg-kernel/src/tinybones_observation_v72.rs",
+                    include_str!("../tinybones_observation_v72.rs"),
+                ),
+                (
+                    "mtg-kernel/src/tinybones_candidates_v72.rs",
+                    include_str!("../tinybones_candidates_v72.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());

@@ -186,6 +186,8 @@ pub(crate) enum CounterScopeV61 {
     Legacy,
     CompleteV61,
     CallV62,
+    /// Prefix only inside the distinct V72 complete observation.
+    TinybonesV72,
 }
 pub(crate) fn current(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
     current_with_form(state, id, form, CounterScopeV61::Legacy)
@@ -204,6 +206,12 @@ pub(crate) fn current_complete_call_v62(
     id: u16,
 ) -> Result<Vec<CurrentV1>, String> {
     current_with_form(state, id, checked_form, CounterScopeV61::CallV62)
+}
+pub(crate) fn current_tinybones_compat_v72(
+    state: &GameState,
+    id: u16,
+) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, checked_form, CounterScopeV61::TinybonesV72)
 }
 fn current_with_form(
     state: &GameState,
@@ -393,13 +401,21 @@ fn counters(state: &GameState, id: ObjectId, scope: CounterScopeV61) -> Result<C
         fellowship,
         stash,
     } = live.counters;
-    if stash != 0 {
+    if stash != 0 && scope != CounterScopeV61::TinybonesV72 {
         return Err(error("public projection does not expose stash counters"));
     }
-    if fellowship != 0 && scope != CounterScopeV61::CallV62 {
+    if fellowship != 0
+        && !matches!(
+            scope,
+            CounterScopeV61::CallV62 | CounterScopeV61::TinybonesV72
+        )
+    {
         return Err(error(
             "optional trigger public projection does not expose fellowship counters",
         ));
+    }
+    if scope == CounterScopeV61::TinybonesV72 {
+        crate::graveyard_return_public_v61::counter_values_tinybones_compat_v72(state, id)?;
     }
     if scope == CounterScopeV61::CallV62 {
         crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)?;

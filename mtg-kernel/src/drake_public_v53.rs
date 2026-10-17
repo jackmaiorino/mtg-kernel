@@ -273,11 +273,21 @@ fn counters(
         fellowship,
         stash,
     } = live.counters;
-    if stash != 0 {
+    if stash != 0 && scope != crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72 {
         return Err(error("public projection does not expose stash counters"));
     }
-    if fellowship != 0 && scope != crate::optional_trigger_public_v1::CounterScopeV61::CallV62 {
+    if fellowship != 0
+        && !matches!(
+            scope,
+            crate::optional_trigger_public_v1::CounterScopeV61::CallV62
+                | crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72
+        )
+    {
         return Err(error("V53 does not expose fellowship counters"));
+    }
+    if scope == crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72 {
+        crate::graveyard_return_public_v61::counter_values_tinybones_compat_v72(state, id)
+            .map_err(error)?;
     }
     if scope == crate::optional_trigger_public_v1::CounterScopeV61::CallV62 {
         crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)
@@ -654,6 +664,12 @@ pub(crate) fn capture_complete_call_v62(state: &GameState) -> Result<FactsV53, R
     capture_scoped(
         state,
         crate::optional_trigger_public_v1::CounterScopeV61::CallV62,
+    )
+}
+pub(crate) fn capture_tinybones_compat_v72(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_scoped(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
     )
 }
 fn capture_scoped(

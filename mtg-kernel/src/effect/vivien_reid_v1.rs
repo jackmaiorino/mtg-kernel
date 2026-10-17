@@ -738,6 +738,27 @@ pub(crate) fn public_facts_v70(
     state: &GameState,
     viewer: PlayerId,
 ) -> Result<crate::vivien_public_v70::FactsV70, String> {
+    public_facts_counter_scope_v72(
+        state,
+        viewer,
+        crate::optional_trigger_public_v1::CounterScopeV61::CallV62,
+    )
+}
+pub(crate) fn public_facts_tinybones_compat_v72(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::vivien_public_v70::FactsV70, String> {
+    public_facts_counter_scope_v72(
+        state,
+        viewer,
+        crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
+    )
+}
+fn public_facts_counter_scope_v72(
+    state: &GameState,
+    viewer: PlayerId,
+    scope: crate::optional_trigger_public_v1::CounterScopeV61,
+) -> Result<crate::vivien_public_v70::FactsV70, String> {
     use crate::{optional_trigger_public_v1 as public, vivien_public_v70::*};
     validate_state(state)?;
     validate_pending(state)?;
@@ -748,7 +769,13 @@ pub(crate) fn public_facts_v70(
         .filter_map(|(id, _)| public::reference(state, id, Some(viewer)))
         .filter(|r| matches!(r.identity, public::IdentityV1::Known { card_id: 488 }))
         .collect();
-    let battlefield = crate::valkyries_call_public_v62::capture(state, viewer)?.battlefield;
+    let battlefield = match scope {
+        crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72 => {
+            crate::valkyries_call_public_v62::capture_tinybones_compat_v72(state, viewer)?
+        }
+        _ => crate::valkyries_call_public_v62::capture(state, viewer)?,
+    }
+    .battlefield;
     let current = battlefield
         .into_iter()
         .flatten()

@@ -842,3 +842,5 @@ pub mod tinybones_public_v72;
 pub mod limited_muldrotha_session_v12;
 pub mod muldrotha_candidates_v71;
 pub mod muldrotha_observation_v71;
+pub mod tinybones_candidates_v72;
+pub mod tinybones_observation_v72;
