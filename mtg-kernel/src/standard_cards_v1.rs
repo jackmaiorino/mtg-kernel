@@ -147,7 +147,6 @@ fn nightmare_false_v1(value: &bool) -> bool {
 }
 impl std::hash::Hash for AegisCopyV1 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        use std::hash::Hash;
         self.aegis.hash(h);
         self.host.hash(h);
         self.card_def.hash(h);

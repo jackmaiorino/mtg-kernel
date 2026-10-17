@@ -27,7 +27,6 @@ pub struct CaptureV1 {
 }
 impl std::hash::Hash for CaptureV1 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        use std::hash::Hash;
         self.previous.hash(h);
         self.history_start.hash(h);
         self.ctx.hash(h);
