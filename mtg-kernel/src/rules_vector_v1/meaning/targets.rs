@@ -695,6 +695,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::CreatureCardPutIntoGraveyardThisTurnV1 => creature(),
         S::AnotherNonlegendaryControlledCreature
         | S::UpToOneCreature
+        | S::UpToOneControlledCreatureV1
         | S::TappedOpponentCreature
         | S::CrewedSourceThisTurn
         | S::UpToTwoControlledCreatures => creature(),
@@ -713,6 +714,7 @@ pub(super) fn standard_target_origin(
         }
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
+        | S::UpToOneControlledCreatureV1
         | S::UpToTwoControlledCreatures
         | S::UpToTwoControlledArtifactsOrCreatures => (Some(ZoneF::Battlefield), Some(RelF::You)),
         S::OpponentNonlandPermanentManaValueAtMost(_)
@@ -749,7 +751,9 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             // Exact current-turn entry and physical incarnation need a successor.
             out.atoms.push(Atom::Opaque);
         }
-        S::UpToTwoControlledCreatures | S::UpToTwoControlledArtifactsOrCreatures => {
+        S::UpToTwoControlledCreatures
+        | S::UpToTwoControlledArtifactsOrCreatures
+        | S::UpToOneControlledCreatureV1 => {
             // Preserve the native payload without admitting these new target
             // programs through the frozen v1 facet vocabulary.
             out.atoms.push(Atom::Opaque);
