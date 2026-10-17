@@ -124,6 +124,11 @@ pub fn producer_sha256() -> String {
             include_str!("current_mixed_policy_v1/tinybones.rs"),
             include_str!("current_mixed_policy_v1/normalize.rs"),
             include_str!("rules_meaning_tinybones_v72.rs"),
+            include_str!("human_bo3_v1/tinybones_v72.rs"),
+            include_str!("human_bo3_v1/limited_tinybones_v13.rs"),
+            include_str!("limited_tinybones_session_v13.rs"),
+            include_str!("bin/kernel_limited_tinybones_env_v13.rs"),
+            include_str!("../../python/tools/limited_tinybones_session_v13.py"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

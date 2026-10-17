@@ -111,7 +111,7 @@ record!(HumanMuldrothaCandidateV71 {
     vivien_choices:Vec<crate::vivien_public_v70::ChoiceContextV70>,
     vivien_activation:Option<HumanLoyaltyCostV71>
 });
-fn stable(
+pub(super) fn stable(
     value: &crate::optional_trigger_public_v1::ReferenceV1,
 ) -> Result<CardStableRefV1, Error> {
     use crate::optional_trigger_public_v1::IdentityV1;
@@ -133,13 +133,13 @@ fn stable(
         zone_change_count: value.generation,
     })
 }
-fn href(
+pub(super) fn href(
     value: &crate::optional_trigger_public_v1::ReferenceV1,
     h: &mut Handles,
 ) -> Result<HumanCardRefV1, Error> {
     h.insert(&stable(value)?)
 }
-fn root(
+pub(super) fn root(
     value: &crate::optional_trigger_public_v1::RootV1,
     h: &mut Handles,
 ) -> Result<HumanCallRootV62, Error> {
@@ -153,7 +153,7 @@ fn root(
         captured_controller: value.captured_controller,
     })
 }
-fn target(v: &public::TargetV61, h: &mut Handles) -> Result<HumanCallTargetV62, Error> {
+pub(super) fn target(v: &public::TargetV61, h: &mut Handles) -> Result<HumanCallTargetV62, Error> {
     Ok(HumanCallTargetV62 {
         original: href(&v.original, h)?,
         current_exact_graveyard_card: v
@@ -164,7 +164,10 @@ fn target(v: &public::TargetV61, h: &mut Handles) -> Result<HumanCallTargetV62, 
         legal_now: v.legal_now,
     })
 }
-fn trigger(v: &public::TriggerV61, h: &mut Handles) -> Result<HumanCallTriggerV62, Error> {
+pub(super) fn trigger(
+    v: &public::TriggerV61,
+    h: &mut Handles,
+) -> Result<HumanCallTriggerV62, Error> {
     Ok(HumanCallTriggerV62 {
         family: v.family,
         stage: v.stage,
@@ -178,7 +181,7 @@ fn trigger(v: &public::TriggerV61, h: &mut Handles) -> Result<HumanCallTriggerV6
             .collect::<Result<_, _>>()?,
     })
 }
-fn death(v: &public::DeathV61, h: &mut Handles) -> Result<HumanCallDeathV62, Error> {
+pub(super) fn death(v: &public::DeathV61, h: &mut Handles) -> Result<HumanCallDeathV62, Error> {
     Ok(HumanCallDeathV62 {
         occurrence: v.occurrence,
         source: root(&v.source, h)?,
@@ -192,7 +195,10 @@ fn death(v: &public::DeathV61, h: &mut Handles) -> Result<HumanCallDeathV62, Err
             .transpose()?,
     })
 }
-fn schedule(v: &public::ScheduleV61, h: &mut Handles) -> Result<HumanCallScheduleV62, Error> {
+pub(super) fn schedule(
+    v: &public::ScheduleV61,
+    h: &mut Handles,
+) -> Result<HumanCallScheduleV62, Error> {
     Ok(HumanCallScheduleV62 {
         occurrence: v.occurrence,
         source: root(&v.source, h)?,
@@ -1076,7 +1082,7 @@ record!(HumanWaveContextV71 {
 record!(HumanLoyaltyTargetV71 {original:HumanCardRefV1,current_original:Option<HumanCardRefV1>,legal_now:bool});
 record!(HumanLoyaltyActivationV71 {occurrence:u32,source:HumanCallRootV62,ability_index:u8,loyalty_before:u32,loyalty_after:u32,original_targets:Vec<HumanLoyaltyTargetV71>,stage:crate::vivien_public_v70::StageV70});
 record!(HumanLoyaltyFactsV71 {viewer:PlayerSeatV1,meaning:crate::rules_meaning_vivien_v70::MeaningV70,visible_printings:Vec<HumanCardRefV1>,current:Vec<HumanNativeCallCurrentV62>,activations:Vec<HumanLoyaltyActivationV71>,emblems:Vec<crate::vivien_public_v70::EmblemV70>});
-fn loyalty_facts(
+pub(super) fn loyalty_facts(
     v: &crate::vivien_public_v70::FactsV70,
     h: &mut Handles,
 ) -> Result<HumanLoyaltyFactsV71, Error> {
@@ -1166,7 +1172,7 @@ record!(HumanMuldrothaBudgetV71{source:HumanCallRootV62,turn:u32,active_own_turn
 record!(HumanMuldrothaPlayV71{occurrence:u32,card:HumanCardRefV1,current_original:Option<HumanCardRefV1>,controller:PlayerSeatV1,turn:u32,land:bool,ordinary_available:bool,permissions:Vec<HumanMuldrothaPermissionV71>,selected_menu_index:Option<u16>,stage:crate::muldrotha_public_v71::StageV71});
 record!(HumanMuldrothaFactsV71{viewer:PlayerSeatV1,meaning:crate::rules_meaning_muldrotha_v71::MeaningV71,visible_printings:Vec<HumanCardRefV1>,current:Vec<HumanNativeCallCurrentV62>,budgets:Vec<HumanMuldrothaBudgetV71>,plays:Vec<HumanMuldrothaPlayV71>});
 record!(HumanMuldrothaPermissionActionV71{occurrence:u32,menu_index:u16,permission:Option<HumanMuldrothaPermissionV71>});
-fn permission(
+pub(super) fn permission(
     p: &crate::muldrotha_public_v71::PermissionV71,
     h: &mut Handles,
 ) -> Result<HumanMuldrothaPermissionV71, Error> {
@@ -1175,7 +1181,7 @@ fn permission(
         permanent_type: p.permanent_type,
     })
 }
-fn muldrotha_facts(
+pub(super) fn muldrotha_facts(
     v: &crate::muldrotha_public_v71::FactsV71,
     h: &mut Handles,
 ) -> Result<HumanMuldrothaFactsV71, Error> {
