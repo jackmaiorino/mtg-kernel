@@ -44,6 +44,7 @@ pub mod mandatory_cast_cost_v1;
 pub mod muldrotha_v1;
 pub mod omniscience_cast_v1;
 pub mod sphinx_lore_cast_v1;
+pub(crate) mod tinybones_v72;
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
     Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, OptionalAdditionalCostDef,
@@ -24225,6 +24226,12 @@ fn materialize_aborted_cast_v1(
     pending: &PendingCast,
     cast_method: CastMethodV4,
 ) -> AbortedCastSceneV1 {
+    let original_exile_counters = pending
+        .source_contract
+        .spell_cast_origin
+        .filter(|o| o.origin_zone == Zone::Exile && cast_method != CastMethodV4::Madness)
+        .and_then(|o| state.counter_lki_for(pending.spell, o.origin_zone_change_count))
+        .filter(|c| c.stash != 0);
     let harvester_rollback = crate::effect::harvester_v1::rollback_input(state, pending);
     let was_face_down = state.objects.get(pending.spell).v4.face_down_v1.is_some();
     let item = state.stack.pop();
@@ -24258,6 +24265,9 @@ fn materialize_aborted_cast_v1(
         let object = state.objects.get_mut(pending.spell);
         object.zone = to_zone;
         object.controller = owner;
+        if let Some(counters) = original_exile_counters {
+            object.counters = counters;
+        }
         object.plotted_turn = if cast_method == CastMethodV4::Plotted && to_zone == Zone::Exile {
             plotted_turn
         } else {
@@ -24784,6 +24794,10 @@ fn push_paid_activation(
 /// casting is an engine action, not a `MoveObject` effect leaf any card
 /// program emits.
 fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+    let reset_stash = state.objects.get(id).counters.stash != 0;
+    if reset_stash {
+        event::record_counter_lki(state, id);
+    }
     let owner = state.objects.get(id).owner;
     match from_zone {
         Zone::Graveyard => state.players[owner.index()].graveyard.retain(|&x| x != id),
@@ -24795,6 +24809,9 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
     let turn = state.turn_key_v1();
     let object = state.objects.get_mut(id);
     object.zone = Zone::Stack;
+    if reset_stash {
+        object.counters = Default::default();
+    }
     object.plotted_turn = None;
     object.zone_change_count += 1;
     object

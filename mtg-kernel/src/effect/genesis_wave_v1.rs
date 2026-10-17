@@ -1357,6 +1357,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/engine/muldrotha_v1.rs",
                     include_str!("../engine/muldrotha_v1.rs"),
                 ),
+                (
+                    "mtg-kernel/src/engine/tinybones_v72.rs",
+                    include_str!("../engine/tinybones_v72.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

@@ -2475,7 +2475,7 @@ pub(crate) fn niv_mizzet_visionary_removes_hand_limit_v1(
 
 /// Remembers the counters of a departing permanent whose own leave ability
 /// reads them. Each exact departing incarnation remains available to its triggers.
-fn record_counter_lki(state: &mut GameState, object: ObjectId) {
+pub(crate) fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
     #[cfg(feature = "standard-magezero-fixtures")]
     let reads_standard = crate::standard_statics_v1::reads_counter_lki(live.card_def);

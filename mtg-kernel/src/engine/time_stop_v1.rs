@@ -1453,6 +1453,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/genesis_wave_public_v69.rs",
                     include_str!("../genesis_wave_public_v69.rs"),
                 ),
+                (
+                    "mtg-kernel/src/engine/tinybones_v72.rs",
+                    include_str!("tinybones_v72.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

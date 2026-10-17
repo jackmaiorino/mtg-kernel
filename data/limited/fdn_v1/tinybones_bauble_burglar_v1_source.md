@@ -36,3 +36,20 @@ are still being authored. This preparation is not a registered printing or
 an implementation-completeness claim. All Rust checks and execution are
 UNRUN. V72 is reserved for a later distinct complete consumer; no Full,
 owning, model, sampler, Human or transport admission is granted.
+
+
+The native prerequisite now separates actual mana matching from mana cost
+construction. An ephemeral definition-owned source/card grant changes which
+floating or produced mana can pay a pip. Generic reductions still operate on
+the original generic requirement; Convoke still uses the creature's original
+colors; Phyrexian life branches and restricted mana eligibility remain native.
+The grant itself does not authorize a cast and is never serialized. Own-turn
+play permission and any-type mana matching remain distinct printed predicates.
+
+A stash-bearing card's native cast announcement records its original counter
+LKI and resets counters on its new Stack incarnation. An illegal cast returning
+to the original Exile zone restores those original counters. Ordinary casts
+with no stash use their unchanged bookkeeping. The new mana-matching regression
+is explicitly a solver primitive, not evidence of a genuinely paid Tinybones
+printing. Card490 remains unregistered pending complete discard/trigger/play
+ownership and genuine paid fixture coverage. All Rust checks remain UNRUN.
