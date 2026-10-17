@@ -40,7 +40,7 @@ fn discard_state(p: PlayerId, reverse_initial_hidden: bool) -> GameState {
     state
 }
 fn packet(session: EndTurnSessionV68) -> crate::current_mixed_policy_v1::Packet {
-    let model = crate::current_mixed_policy_v1::end_turn::EndTurnSession::from_end_turn(session);
+    let model = crate::current_mixed_policy_v1::EndTurnSession::from_end_turn(session);
     let FastActorResponseV1::Decision(expected) = model.current_response() else {
         panic!("paid decision absent")
     };
