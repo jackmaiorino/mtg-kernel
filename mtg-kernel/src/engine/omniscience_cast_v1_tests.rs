@@ -447,7 +447,13 @@ fn source_removal_after_payment_preserves_spell_but_future_hand_graveyard_exile_
         let mut s = ready(p, "Forest");
         let omni = paid(&mut s, p);
         let gy = put(&mut s, p, "Lightning Bolt", Zone::Graveyard);
-        let exile = put(&mut s, p, "Lightning Bolt", Zone::Exile);
+        let exile = put(&mut s, p, "Lightning Bolt", Zone::Hand);
+        // Native exile operand, not a granted permission or a paid exile spell.
+        event::propose_and_commit(
+            &mut s,
+            event::ProposedEvent::zone_change(exile, Zone::Exile),
+        );
+        assert_eq!(s.objects.get(exile).zone, Zone::Exile);
         assert!(!offered_free(&s, gy, p));
         assert!(!offered_free(&s, exile, p));
         assert!(
@@ -724,6 +730,11 @@ fn paid_source_control_suppression_face_and_independent_hidden_world_operands_bo
 fn genuine_paid_replication_copy_and_free_only_resource_window_restore_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p, "Forest");
+        // The first ten-mana payment consumes the original eight Islands.
+        // Keep two real initial blue sources for Replication's paid {U}{U}.
+        for _ in 0..2 {
+            put(&mut s, p, "Island", Zone::Battlefield);
+        }
         let original = paid(&mut s, p);
         let replication = cast(
             &mut s,

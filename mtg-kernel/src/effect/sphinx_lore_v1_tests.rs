@@ -512,7 +512,7 @@ fn paid_counter_fizzle_and_native_copy_departure_keep_flashback_costs_and_exile_
         for mode in 0..3 {
             let (mut s, _, card, _) = scenario(p, "Lightning Bolt");
             install(&mut s, p, card);
-            let target = put(&mut s, p.opponent(), "Bear Cub", Zone::Battlefield);
+            let target = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Battlefield);
             let before = tapped(&s, p);
             let row = pay_existing(
                 &mut s,
@@ -574,7 +574,7 @@ fn granted_additional_discard_x_and_kicker_use_complete_native_costs_both_seats(
             let (mut s, _, card, _) = scenario(p, name);
             install(&mut s, p, card);
             let discard = put(&mut s, p, "Forest", Zone::Hand);
-            let bear = put(&mut s, p.opponent(), "Bear Cub", Zone::Battlefield);
+            let bear = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Battlefield);
             let targets = if name == "Thrill of Possibility" {
                 vec![]
             } else if name == "Goblin Negotiation" {
@@ -771,6 +771,9 @@ fn real_published_attack_public_apis_and_grant_cast_tampering_refuse_readonly_bo
 }
 fn copied_scene(p: PlayerId, hidden: &str) -> (GameState, ObjectId, ObjectId, StackItem) {
     let mut s = ready_hidden(p, hidden);
+    // Sphinx and Self-Reflection consume the original eight Islands before
+    // Witness Protection. Supply its actual blue payment in the initial scene.
+    put(&mut s, p, "Island", Zone::Battlefield);
     let target = put(&mut s, p, "Lightning Bolt", Zone::Graveyard);
     let sphinx = paid(&mut s, p);
     cast(&mut s, p, "Self-Reflection", &[Target::Object(sphinx)], 6);
