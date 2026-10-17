@@ -168,7 +168,7 @@ fn genuine_paid_call_cast_death_opposing_source_removal_and_return_keep_full_nat
         let mut s = ready(p, "Forest");
         let call = hand(&mut s, p, "Valkyrie's Call");
         let elf = hand(&mut s, p, "Llanowar Elves");
-        let shock = hand(&mut s, p.opponent(), "Shock");
+        let bolt = hand(&mut s, p.opponent(), "Lightning Bolt");
         let wings = hand(&mut s, p.opponent(), "Broken Wings");
         let mut pair = Pair::new(s);
         pair.cast(call, None, 5);
@@ -176,7 +176,7 @@ fn genuine_paid_call_cast_death_opposing_source_removal_and_return_keep_full_nat
         pair.drain();
         pair.cast(elf, None, 1);
         pair.drain();
-        pair.cast(shock, Some(elf), 1);
+        pair.cast(bolt, Some(elf), 1);
         for _ in 0..60 {
             let d = pair.own.decision_v62().unwrap();
             if d.observation()

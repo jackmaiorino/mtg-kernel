@@ -94,7 +94,7 @@ fn genuine_paid_three_printing_death_call_return_and_stale_familiar_schedule_num
         let call = hand(&mut state, actor, "Valkyrie's Call");
         let familiar = hand(&mut state, actor, "Nine-Lives Familiar");
         let alesha = hand(&mut state, actor, "Alesha, Who Laughs at Fate");
-        let shock = hand(&mut state, actor.opponent(), "Shock");
+        let bolt = hand(&mut state, actor.opponent(), "Lightning Bolt");
         let mut pair = Pair::new(state);
         for (spell, cost) in [(call, 5), (familiar, 3), (alesha, 3)] {
             paid_cast(&mut pair, actor, spell, None, cost);
@@ -115,7 +115,7 @@ fn genuine_paid_three_printing_death_call_return_and_stale_familiar_schedule_num
             .objects
             .get(familiar)
             .zone_change_count;
-        paid_cast(&mut pair, actor.opponent(), shock, Some(familiar), 1);
+        paid_cast(&mut pair, actor.opponent(), bolt, Some(familiar), 1);
         let mut seen_death_program = false;
         let mut seen_call_return = false;
         for _ in 0..100 {
