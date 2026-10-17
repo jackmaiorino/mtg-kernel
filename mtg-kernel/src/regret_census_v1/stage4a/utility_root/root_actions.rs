@@ -27,8 +27,9 @@
 //! policies (`branch_retained`), so every action at a root shares a
 //! repetition's streams. No search and no hidden-world sampling. The receipt
 //! (one row at a fresh `out`) carries the root identity, the saved action,
-//! the root's ordered menu (action kind and actor-visible label) and every
-//! branch, including a failed branch's partial receipt.
+//! the root's ordered menu (action kind and actor-visible label), the focal
+//! policy's root logit and value bits, and every branch, including a failed
+//! branch's partial receipt.
 
 use super::*;
 use std::collections::HashSet;
@@ -211,6 +212,22 @@ fn diagnose(
         out["shared_prefix_actions_sha256"] = json!(root.prefix_sha256);
         out["saved_action"] = json!(root.saved_action);
         out["ordered_menu"] = Value::Array(super::inspect::menu(&observation, &menu)?);
+        // The focal policy's own scores at the root, from a separate fork so no
+        // branch stream is touched. Consumers compare these bits with the bank
+        // that recorded the root: equal bits show this build encodes and scores
+        // the root as the bank's build did.
+        let scores = policy
+            .fork_for_collection_v3()?
+            .score_fast_session_v1(&root.session)?;
+        if scores.logits.len() != d.legal_action_count as usize {
+            return Err("root scores width differs from the live menu".into());
+        }
+        out["root_policy_logit_bits"] = json!(scores
+            .logits
+            .iter()
+            .map(|x| x.to_bits())
+            .collect::<Vec<u32>>());
+        out["root_policy_value_bits"] = json!(scores.value.to_bits());
         let mut focal = policy.fork_for_collection_v3()?;
         let mut opponent = sh.opponents[opponent_index].fork_for_collection_v3()?;
         for (repetition, seeds) in req.repetitions.iter().enumerate() {
