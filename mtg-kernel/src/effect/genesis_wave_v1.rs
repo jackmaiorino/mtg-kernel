@@ -1630,6 +1630,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "python/tools/limited_chandra_session_v15.py",
                     include_str!("../../../python/tools/limited_chandra_session_v15.py"),
                 ),
+                (
+                    "mtg-kernel/src/effect/chandra_flameshaper_v1.rs",
+                    include_str!("chandra_flameshaper_v1.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

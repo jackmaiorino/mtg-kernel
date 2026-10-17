@@ -1623,3 +1623,120 @@ fn has_pending_exile(state: &GameState) -> bool {
 ))]
 #[path = "chandra_flameshaper_v1_tests.rs"]
 pub(crate) mod tests;
+
+/// Keep original Chandra references factual across later hidden incarnations.
+/// No original library remainder or hidden printing controls current placements.
+pub(crate) fn sampler_conflicts_v74(state: &GameState, pool: &[ObjectId]) -> Result<bool, String> {
+    validate_state(state)?;
+    validate_pending(state)?;
+    let raw = |id: ObjectId| pool.contains(&id);
+    let ability =
+        |a: AbilitySourceContractV4| raw(a.source) || a.attached_to.is_some_and(|r| raw(r.object));
+    let source = |s: crate::state::StackSourceContractV4| {
+        raw(s.source)
+            || s.spell_copy_origin.is_some_and(|o| raw(o.parent))
+            || s.finalized_cast_binding.is_some_and(|b| {
+                b.chosen_creature_cost.is_some_and(|r| raw(r.object))
+                    || b.mandatory_additional_cost.is_some()
+            })
+    };
+    let stack = |s: &StackItem| {
+        raw(s.source)
+            || s.targets
+                .iter()
+                .any(|t| matches!(t,Target::Object(id)if raw(*id)))
+            || s.v4.target_contracts.iter().any(|t| match t {
+                crate::state::StackTargetContractV4::Player(_) => false,
+                crate::state::StackTargetContractV4::Object { object, .. } => raw(*object),
+                crate::state::StackTargetContractV4::StackItem { source, .. } => raw(*source),
+            })
+            || s.discarded.iter().any(|id| raw(*id))
+            || s.v4.paid_cost_refs.iter().any(|r| raw(r.object))
+            || s.v4.ability_source_contract.is_some_and(ability)
+            || s.v4.granted_by.is_some_and(ability)
+            || s.v4.source_contract.is_some_and(source)
+            || s.v4.hidden_ability_source.is_some_and(|r| raw(r.object))
+            || s.v4.madness_source_contract.is_some_and(|r| raw(r.source))
+            || s.v4
+                .cauldron_grant
+                .0
+                .as_ref()
+                .is_some_and(|r| ability(r.host) || ability(r.donor))
+    };
+    let targets = |targets: &[Target]| {
+        targets.iter().any(|t| match t {
+            Target::Object(id) => raw(*id),
+            Target::StackItem(id) => state
+                .stack
+                .iter()
+                .find(|r| r.v4.stack_item_id == *id)
+                .is_none_or(|r| raw(r.source)),
+            Target::Player(_) => false,
+        })
+    };
+    let contracts = |contracts: &[crate::state::StackTargetContractV4]| {
+        contracts.iter().any(|t| match t {
+            crate::state::StackTargetContractV4::Player(_) => false,
+            crate::state::StackTargetContractV4::Object { object, .. } => raw(*object),
+            crate::state::StackTargetContractV4::StackItem { source, .. } => raw(*source),
+        })
+    };
+    let pending = |p: &crate::engine::PendingActivation| {
+        raw(p.source)
+            || targets(&p.targets_chosen)
+            || contracts(&p.target_contracts)
+            || p.object_cost_chosen.iter().any(|b| raw(b.object))
+            || p.cost_discard_paid
+                .as_ref()
+                .is_some_and(|v| v.iter().any(|id| raw(*id)))
+            || p.cauldron_grant
+                .0
+                .as_ref()
+                .is_some_and(|g| ability(g.host) || ability(g.donor))
+    };
+    if state
+        .engine
+        .pending_activation
+        .as_ref()
+        .is_some_and(pending)
+    {
+        return Ok(true);
+    }
+    for (_, j) in rows(state) {
+        let conflict = match j {
+            JournalV74::DamageDeparture { facts, .. } => ability(facts.source),
+            JournalV74::Payment { input } => ability(input.source) || pending(&input.pending),
+            JournalV74::Published { input, item } => {
+                ability(input.source) || pending(&input.pending) || stack(item)
+            }
+            JournalV74::ExileInput {
+                prefix, original, ..
+            } => {
+                prefix.iter().any(|b| raw(b.object))
+                    || original.iter().any(|r| raw(ObjectId(r.arena_id)))
+            }
+            JournalV74::Exiled { cards, public, .. } => {
+                cards.iter().any(|b| raw(b.object))
+                    || public.iter().any(|r| raw(ObjectId(r.arena_id)))
+            }
+            JournalV74::Granted {
+                chosen, permission, ..
+            } => raw(chosen.object) || raw(permission.object),
+            JournalV74::Expired { .. }
+            | JournalV74::Completed { .. }
+            | JournalV74::NotResolved { .. } => false,
+        };
+        if conflict {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+pub(crate) fn sampler_exile_conflicts_v74(
+    state: &GameState,
+    pool: &[ObjectId],
+    index: u64,
+) -> Result<bool, String> {
+    let (_, cards) = capture(state, index)?;
+    Ok(cards.iter().any(|b| pool.contains(&b.object)))
+}

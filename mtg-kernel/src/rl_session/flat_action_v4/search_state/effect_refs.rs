@@ -83,11 +83,12 @@ impl Scan<'_> {
             | SphinxLoreV1 { .. }
             | HarvesterExileAndCopyV1
             | FiendArtisanSearchV1 => true,
-            LilianaZombieV1 | LilianaSacrificeV1 { .. } => self.scope != ReferenceScopeV68::Liliana,
-            KaitoCunningV75{..}|ChandraFlameshaperV74{..}=>true,
-            TinybonesStashV72 {discard,observer} => !matches!(self.scope,ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana)
+            LilianaZombieV1 | LilianaSacrificeV1 { .. } => !matches!(self.scope, ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra),
+            KaitoCunningV75{..}=>true,
+            ChandraFlameshaperV74{..}=>self.scope != ReferenceScopeV68::Chandra,
+            TinybonesStashV72 {discard,observer} => !matches!(self.scope,ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra)
                 || crate::engine::tinybones_v72::sampler_stash_conflicts_v72(self.state,self.pool,*discard,*observer).unwrap_or(true),
-            GenesisWaveV1 => !matches!(self.scope, ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha | ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana),
+            GenesisWaveV1 => !matches!(self.scope, ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha | ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra),
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
@@ -383,19 +384,29 @@ impl Scan<'_> {
                         | ReferenceScopeV68::Muldrotha
                         | ReferenceScopeV68::Tinybones
                         | ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
                 ) || self.bs(&crate::effect::genesis_wave_v1::sampler_bindings_v69(
                     choice,
                 )) || self.bs(cards)
             }
             LilianaV1 { choice, selected } => {
-                self.scope != ReferenceScopeV68::Liliana
-                    || crate::effect::liliana_dreadhorde_v1::sampler_choice_conflicts_v73(
-                        self.state, self.pool, choice,
-                    )
-                    .unwrap_or(true)
+                !matches!(
+                    self.scope,
+                    ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra
+                ) || crate::effect::liliana_dreadhorde_v1::sampler_choice_conflicts_v73(
+                    self.state, self.pool, choice,
+                )
+                .unwrap_or(true)
                     || self.bs(selected)
             }
-            ChandraExileGrantV74 { .. } => true,
+            ChandraExileGrantV74 { capture, chosen } => {
+                self.scope != ReferenceScopeV68::Chandra
+                    || crate::effect::chandra_flameshaper_v1::sampler_exile_conflicts_v74(
+                        self.state, self.pool, *capture,
+                    )
+                    .unwrap_or(true)
+                    || self.raw(chosen.object)
+            }
             CuratorV1 { .. }
             | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
@@ -660,18 +671,27 @@ impl Scan<'_> {
                         | ReferenceScopeV68::Muldrotha
                         | ReferenceScopeV68::Tinybones
                         | ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
                 ) || self.bs(&crate::effect::genesis_wave_v1::sampler_bindings_v69(
                     choice,
                 ))
             }
             LilianaV1 { choice } => {
-                self.scope != ReferenceScopeV68::Liliana
-                    || crate::effect::liliana_dreadhorde_v1::sampler_choice_conflicts_v73(
-                        self.state, self.pool, choice,
+                !matches!(
+                    self.scope,
+                    ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra
+                ) || crate::effect::liliana_dreadhorde_v1::sampler_choice_conflicts_v73(
+                    self.state, self.pool, choice,
+                )
+                .unwrap_or(true)
+            }
+            ChandraExileV74 { capture } => {
+                self.scope != ReferenceScopeV68::Chandra
+                    || crate::effect::chandra_flameshaper_v1::sampler_exile_conflicts_v74(
+                        self.state, self.pool, *capture,
                     )
                     .unwrap_or(true)
             }
-            ChandraExileV74 { .. } => true,
             CuratorCardsV1 { .. }
             | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
@@ -1018,6 +1038,18 @@ pub(super) fn op_conflicts_liliana_v73(
     }
     .op(op)
 }
+pub(super) fn op_conflicts_chandra_v74(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Chandra,
+    }
+    .op(op)
+}
 pub(super) fn op_conflicts_end_turn_v68(
     state: &GameState,
     pool: &[ObjectId],
@@ -1176,6 +1208,7 @@ enum ReferenceScopeV68 {
     Muldrotha,
     Tinybones,
     Liliana,
+    Chandra,
 }
 
 pub(super) fn conflicts(
@@ -1227,6 +1260,13 @@ pub(super) fn conflicts_liliana_v73(
 ) -> bool {
     conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Liliana)
 }
+pub(super) fn conflicts_chandra_v74(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Chandra)
+}
 fn conflicts_in_scope(
     state: &GameState,
     pool: &[ObjectId],
@@ -1242,7 +1282,9 @@ fn conflicts_in_scope(
         && [PlayerId::P0, PlayerId::P1].into_iter().any(|viewer| {
             if matches!(
                 scope,
-                ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana
+                ReferenceScopeV68::Tinybones
+                    | ReferenceScopeV68::Liliana
+                    | ReferenceScopeV68::Chandra
             ) {
                 crate::graveyard_return_public_v61::capture_tinybones_compat_v72(state, viewer)
                     .is_err()
@@ -1261,6 +1303,7 @@ fn conflicts_in_scope(
             | ReferenceScopeV68::Muldrotha
             | ReferenceScopeV68::Tinybones
             | ReferenceScopeV68::Liliana
+            | ReferenceScopeV68::Chandra
     ) && crate::engine::time_stop_v1::sampler_conflicts_v68(state, pool).unwrap_or(true)
     {
         return true;
@@ -1271,7 +1314,10 @@ fn conflicts_in_scope(
         EventKindV1::MuldrothaPlayedV1,
     ]) && (!matches!(
         scope,
-        ReferenceScopeV68::Muldrotha | ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana
+        ReferenceScopeV68::Muldrotha
+            | ReferenceScopeV68::Tinybones
+            | ReferenceScopeV68::Liliana
+            | ReferenceScopeV68::Chandra
     ) || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, pool).unwrap_or(true))
     {
         return true;
@@ -1282,7 +1328,7 @@ fn conflicts_in_scope(
         .has_any(&[EventKindV1::TinybonesV72])
         && (!matches!(
             scope,
-            ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana
+            ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra
         ) || crate::engine::tinybones_v72::sampler_conflicts_v72(state, pool).unwrap_or(true))
     {
         return true;
@@ -1291,26 +1337,39 @@ fn conflicts_in_scope(
         .engine
         .event_history
         .has_any(&[EventKindV1::LilianaDreadhordeV1])
-        && (scope != ReferenceScopeV68::Liliana
-            || crate::effect::liliana_dreadhorde_v1::sampler_conflicts_v73(state, pool)
+        && (!matches!(
+            scope,
+            ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra
+        ) || crate::effect::liliana_dreadhorde_v1::sampler_conflicts_v73(state, pool)
+            .unwrap_or(true))
+    {
+        return true;
+    }
+    if state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::ChandraFlameshaperV74])
+        && (scope != ReferenceScopeV68::Chandra
+            || crate::effect::chandra_flameshaper_v1::sampler_conflicts_v74(state, pool)
                 .unwrap_or(true))
     {
         return true;
     }
-    if state.engine.event_history.has_any(&[
-        EventKindV1::VivienReidV1,
-        EventKindV1::ChandraFlameshaperV74,
-        EventKindV1::KaitoCunningV75,
-    ]) || state.engine.event_log.iter().any(|e| {
-        matches!(
-            e,
-            crate::event::CommittedEvent::VivienReidV1 { .. }
-                | crate::event::CommittedEvent::TinybonesV72 { .. }
-                | crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }
-                | crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
-                | crate::event::CommittedEvent::KaitoCunningV75 { .. }
-        )
-    }) {
+    if state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::VivienReidV1, EventKindV1::KaitoCunningV75])
+        || state.engine.event_log.iter().any(|e| {
+            matches!(
+                e,
+                crate::event::CommittedEvent::VivienReidV1 { .. }
+                    | crate::event::CommittedEvent::TinybonesV72 { .. }
+                    | crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }
+                    | crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
+                    | crate::event::CommittedEvent::KaitoCunningV75 { .. }
+            )
+        })
+    {
         return true;
     }
     if crate::engine::ordinary_cleanup_v1::validate(state).is_err()
@@ -1442,6 +1501,7 @@ fn conflicts_in_scope(
                         | ReferenceScopeV68::Muldrotha
                         | ReferenceScopeV68::Tinybones
                         | ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
                 );
             }
             if matches!(
@@ -1455,6 +1515,7 @@ fn conflicts_in_scope(
                         | ReferenceScopeV68::Muldrotha
                         | ReferenceScopeV68::Tinybones
                         | ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
                 );
             }
             matches!(
