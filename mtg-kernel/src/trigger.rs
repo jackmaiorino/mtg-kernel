@@ -4268,6 +4268,11 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
 }
 
 pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
+    if crate::effect::kaito_cunning_v75::definition(card_def)
+        && matches!(effect, EffectOp::KaitoCunningV75 { kind: 3 | 4, .. })
+    {
+        return true;
+    }
     if crate::effect::sphinx_lore_v1::definition(card_def) {
         return crate::effect::sphinx_lore_v1::recipe(effect);
     }
@@ -4437,6 +4442,11 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     if crate::effect::sphinx_lore_v1::definition(card_def) {
         return crate::effect::sphinx_lore_v1::recipe(effect)
             .then_some(crate::effect::sphinx_lore_v1::target_spec());
+    }
+    if crate::effect::kaito_cunning_v75::definition(card_def)
+        && matches!(effect, EffectOp::KaitoCunningV75 { kind: 3 | 4, .. })
+    {
+        return Some(TargetSpec::None);
     }
     if crate::effect::greatwurm_v1::definition(card_def) {
         return crate::effect::greatwurm_v1::recipe(effect).then_some(TargetSpec::None);
@@ -5265,6 +5275,16 @@ fn triggers_from_events(
         }
     }
     match crate::effect::sphinx_lore_v1::collect(state, events) {
+        Ok(p) => new_triggers.extend(p),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return vec![];
+        }
+    }
+    match crate::effect::kaito_cunning_v75::collect(state, events) {
         Ok(p) => new_triggers.extend(p),
         Err(_) => {
             state.engine.halted = Some((

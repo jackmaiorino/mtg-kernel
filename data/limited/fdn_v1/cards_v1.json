@@ -9125,6 +9125,68 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/ChandraFlameshaper.java",
       "is_token": false
+    },
+    {
+      "name": "Kaito, Cunning Infiltrator",
+      "mana_cost": "{1}{U}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Kaito"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_kaito_cunning_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "native_loyalty_optional_creature_evasion_draw_then_discard",
+        "native_blue_two_one_ninja",
+        "native_persistent_any_player_spell_cast_ninja_emblem",
+        "native_original_observer_final_combat_damage_loyalty"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KaitoCunningInfiltrator.java",
+      "engine_capability": "partial",
+      "is_token": false
+    },
+    {
+      "name": "Ninja Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Ninja"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/NinjaToken2.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "is_token": true
     }
   ]
 }

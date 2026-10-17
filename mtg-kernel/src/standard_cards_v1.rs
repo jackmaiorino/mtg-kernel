@@ -213,6 +213,8 @@ pub enum StandardTargetV1 {
     CreatureLandOrPlaneswalkerV1,
     ArtifactEnchantmentOrFlyingCreatureV1,
     UpToEightCreaturesOrPlaneswalkersV74,
+    /// Zero or one creature controlled by the targeting player.
+    UpToOneControlledCreatureV1,
 }
 
 impl StandardTargetV1 {
@@ -223,9 +225,60 @@ impl StandardTargetV1 {
             | Self::UpToTwoControlledCreatures
             | Self::UpToTwoControlledArtifactsOrCreatures => (2, 0),
             Self::OneToThreeDistinctAnyTargetsV1 => (3, 1),
-            Self::UpToOneCreature => (1, 0),
+            Self::UpToOneCreature | Self::UpToOneControlledCreatureV1 => (1, 0),
             Self::UpToEightCreaturesOrPlaneswalkersV74 => (8, 0),
             _ => (1, 1),
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod kaito_target_prerequisite_tests {
+    use super::*;
+
+    #[test]
+    fn optional_controlled_creature_domain_preserves_controller_and_old_filter_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            // Native scene primitives test the target domain, not a Kaito cast.
+            let mut state = crate::extra_turn_v1::tests::ready(actor);
+            let controlled = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let opposing = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Forest",
+                Zone::Battlefield,
+            );
+            let filter = StandardTargetV1::UpToOneControlledCreatureV1;
+            assert_eq!(filter.counts(), (1, 0));
+            assert_eq!(
+                legal_targets(filter, actor, None, &[], &state),
+                [Target::Object(controlled)]
+            );
+            let old = legal_targets(StandardTargetV1::UpToOneCreature, actor, None, &[], &state);
+            assert_eq!(old.len(), 2);
+            assert!(old.contains(&Target::Object(controlled)));
+            assert!(old.contains(&Target::Object(opposing)));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                legal_targets(filter, actor, None, &[], &restored),
+                [Target::Object(controlled)]
+            );
         }
     }
 }
@@ -387,7 +440,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::ControlledArtifact => {
             live.controller == controller && has(CardType::Artifact)
         }
-        StandardTargetV1::UpToTwoControlledCreatures => {
+        StandardTargetV1::UpToTwoControlledCreatures
+        | StandardTargetV1::UpToOneControlledCreatureV1 => {
             live.controller == controller && has(CardType::Creature)
         }
         StandardTargetV1::UpToTwoControlledArtifactsOrCreatures => {
