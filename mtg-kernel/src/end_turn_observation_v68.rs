@@ -419,7 +419,9 @@ pub(crate) fn observe_parts_v68(
     Ok((value, families))
 }
 /// Closed value checks are supplemental. validate_current recaptures from the
-/// supplied native world. Neither function grants action or restore authority.
+/// supplied native world, including the complete compatibility-terminal roster.
+/// Standalone checks do not prove that an untrusted sender supplied every
+/// historical row or terminal. Neither function grants action or restore authority.
 pub fn validate_artifact(value: &EndTurnObservationV68) -> Result<(), RlContractError> {
     crate::time_stop_public_v68::validate(&value.end_turn).map_err(RlContractError)?;
     let inherited = &value.common.common;

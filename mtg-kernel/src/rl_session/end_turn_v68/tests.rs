@@ -273,3 +273,46 @@ fn genuine_paid_time_stop_cleanup_discard_complete_context_native_parity_and_res
         pair.equal();
     }
 }
+
+#[test]
+fn genuine_paid_disposed_drake_erased_overlay_is_not_a_fresh_owner_binding_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p);
+        let h = crate::engine::time_stop_v1::tests::cast(&mut s, p, "Drake Hatcher", &[], 2);
+        crate::engine::time_stop_v1::tests::finish(&mut s);
+        // Genuine native combat-commit primitive, not declared combat.
+        crate::engine::commit_combat_damage_events(
+            &mut s,
+            vec![crate::event::ProposedEvent::damage(
+                h,
+                crate::state::Target::Player(p.opponent()),
+                1,
+            )],
+        );
+        crate::engine::time_stop_v1::tests::priority(&mut s, p);
+        assert!(s
+            .stack
+            .iter()
+            .any(|r| r.source == h && r.kind == crate::state::StackItemKind::TriggeredAbility));
+        crate::engine::time_stop_v1::tests::cast(&mut s, p, "Time Stop", &[], 6);
+        crate::engine::time_stop_v1::tests::end_turn(&mut s);
+        let pair = Pair::new(s);
+        let d = pair.own.decision_v68().unwrap();
+        assert_eq!(d.observation().end_turn.compatibility_terminals.len(), 1);
+        let before = pair.own.fixture_state_v68().clone();
+        let counts = pair.own.fixture_counts_v68();
+        let mut forged = d.clone();
+        let observation = &mut forged.binding.projection.observation;
+        observation.end_turn.compatibility_terminals.clear();
+        observation.projection_sha256 =
+            crate::end_turn_observation_v68::commitment(observation).unwrap();
+        // Supplemental value checks cannot authenticate an omitted inventory.
+        // The actual owner recaptures the complete native publication roster.
+        crate::time_stop_public_v68::validate(&observation.end_turn).unwrap();
+        crate::end_turn_observation_v68::validate_artifact(observation).unwrap();
+        assert!(pair.own.validate_decision_v68(&forged).is_err());
+        assert_eq!(pair.own.fixture_state_v68(), &before);
+        assert_eq!(pair.own.fixture_counts_v68(), counts);
+        pair.own.validate_decision_v68(&d).unwrap();
+    }
+}

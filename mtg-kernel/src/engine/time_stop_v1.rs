@@ -861,7 +861,10 @@ pub(crate) fn public_facts_v68(
             continue;
         };
         let original = saved.original.restore(state, index)?;
-        crate::end_turn_observation_v68::require_supported(&original, Some(viewer))?;
+        // Scope selection for an archived public event cannot depend on an
+        // old private hand, known library card, or face-down look permission.
+        // The row projector below still applies original public visibility.
+        crate::end_turn_observation_v68::require_supported(&original, None)?;
         for (position, row) in original.stack.iter().enumerate() {
             for target in compatibility_targets_v68(&original, row)? {
                 compatibility_terminals.push(

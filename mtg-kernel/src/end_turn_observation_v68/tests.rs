@@ -110,3 +110,37 @@ fn independent_initial_hidden_worlds_paid_disposal_public_facts_are_identical_bo
         }
     }
 }
+#[test]
+fn independent_initial_private_hand_does_not_select_archived_public_scope_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let make = |hidden| {
+            let mut s = ready(p);
+            // Independent initial native worlds, before any paid history.
+            crate::policy_observation_v6::tests::put(&mut s, p.opponent(), hidden, Zone::Hand);
+            cast(&mut s, p, "Think Twice", &[], 2);
+            cast(&mut s, p, "Time Stop", &[], 6);
+            end_turn(&mut s);
+            s
+        };
+        let a = make("Forest");
+        let b = make("Imprisoned in the Moon");
+        assert_ne!(a.state_hash(), b.state_hash());
+        for viewer in [p, p.opponent()] {
+            let before = serde_json::to_vec(&b).unwrap();
+            let actual = crate::time_stop_public_v68::capture(&b, viewer).unwrap();
+            assert_eq!(
+                actual,
+                crate::time_stop_public_v68::capture(&a, viewer).unwrap()
+            );
+            assert_eq!(
+                actual,
+                crate::time_stop_public_v68::capture(&restore(&b), viewer).unwrap()
+            );
+            assert_eq!(serde_json::to_vec(&b).unwrap(), before);
+        }
+        // Current actor-visible admission remains strict. This test only
+        // isolates archived public facts, not admission of the hidden printing.
+        assert!(require_supported(&b, Some(p.opponent())).is_err());
+        assert!(require_supported(&b, Some(p)).is_ok());
+    }
+}

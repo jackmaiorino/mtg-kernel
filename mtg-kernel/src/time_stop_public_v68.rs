@@ -95,6 +95,9 @@ pub fn producer_sha256() -> String {
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV68, String> {
     crate::engine::time_stop_v1::public_facts_v68(state, viewer)
 }
+/// Closed value and supplied-binding checks only. Native capture establishes
+/// inventory completeness; validate_current and sealed owners recapture it.
+/// A recomputed public commitment is not native authenticity or completeness.
 pub fn validate(value: &FactsV68) -> Result<(), String> {
     if value.schema != SCHEMA || value.producer_sha256 != producer_sha256() {
         return Err("V68 facts identity changed".into());
