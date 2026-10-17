@@ -40,6 +40,12 @@ MAX_PHYSICAL_DECISIONS = ndb.MAX_PHYSICAL_DECISIONS
 MAX_POLICY_STEPS = ndb.MAX_POLICY_STEPS
 RUNTIME_RULES = "resolution-boundary-v1"
 PANEL_REPEATS = 12
+# The frozen panel's seed namespace, and the fresh one of search-evidence
+# distillation (SD1, collab LANES/search-evidence-distillation-20261016
+# section 6), whose readings must not reuse the frozen panel's seeds.
+PANEL_NS = f"{NS}/eval"
+SD1_PANEL_NS = "sd1-panel-v1"
+PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS)
 
 
 def key(parts: list) -> bytes:
@@ -177,8 +183,10 @@ def cut_index(q: Fraction, m: int) -> int:
     return int(q * (m - 1))  # floor, exact (q is dyadic)
 
 
-def panel_seed(own: int, other: int, repeat: int) -> int:
-    return seed([f"{NS}/eval", own, other, repeat])
+def panel_seed(own: int, other: int, repeat: int, namespace: str = PANEL_NS) -> int:
+    if namespace not in PANEL_NAMESPACES:
+        raise ValueError(f"unknown panel seed namespace {namespace!r}")
+    return seed([namespace, own, other, repeat])
 
 
 def all_seeds() -> dict:

@@ -581,6 +581,7 @@ mod extravagant_replication_v1;
 pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub(crate) mod life_loss_turn_v1;
+pub mod own_registration_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;

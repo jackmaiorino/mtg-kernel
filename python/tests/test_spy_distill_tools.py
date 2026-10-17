@@ -1,6 +1,8 @@
 """Spy archive distillation run tools: schedules, archive projection, commands,
 phase-2 opponent mapping and the fit check. Pure; nothing is played."""
+import contextlib
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -226,6 +228,44 @@ class Commands(Temp):
         rerun = dict(records[0], stop_after_steps=32)
         with self.assertRaisesRegex(ValueError, "complete full phase-1 runs"):
             phase1.probe_command("r1", source("r1"), o_final, games, bank_file, {}, [], [rerun], "d")
+
+    def test_probe_cli_without_phase1_holds_the_parent_and_o_final_alone(self):
+        # A reference probe, such as search-evidence distillation's stage-0 exactness probe: the parent and
+        # O-final on a chosen bank, with no evidence. With --phase1 the command is as before.
+        games, bank_file = self.root / "games.jsonl", self.root / "bank.json"
+        games.write_text('{"id":"g1"}\n')
+        bank_file.write_text("{}")
+        o_final = {**source("r1"), "checkpoint": {"path": "o.json", "sha256": "8" * 64}}
+        anchor = {"training": [{"path": "t", "sha256": "0" * 64}], "held_out": [{"path": "h", "sha256": "0" * 64}]}
+        files = {}
+        for name, value in (("parent", source("r1")), ("o-final", o_final), ("anchor", anchor), ("offers", [])):
+            files[name] = self.root / f"{name}.json"
+            files[name].write_text(json.dumps(value))
+        step = self.root / "U-source-32.json"
+        step.write_text(json.dumps({**source("r1"), "checkpoint": {"path": "U32", "sha256": "9" * 64}}))
+        record = {"schema": phase1.PHASE1_SCHEMA, "complete": True, "stop_after_steps": None,
+                  "identity": {"lineage": "r1", "arm": "uniform"},
+                  "checkpoints": [{"step": 32, "source": common.pin(step)}]}
+        files["phase1"] = self.root / "phase1.json"
+        files["phase1"].write_text(json.dumps(record))
+        argv = ["probe", "--lineage", "r1", "--parent", str(files["parent"]), "--o-final", str(files["o-final"]),
+                "--games", str(games), "--bank", str(bank_file), "--anchor", str(files["anchor"]),
+                "--offers", str(files["offers"]), "--output-directory", str(self.root / "probe")]
+        alone, runs = self.root / "alone.json", self.root / "runs.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(phase1.main(argv + ["--out", str(alone)]), 0)
+            self.assertEqual(phase1.main(argv + ["--phase1", str(files["phase1"]), "--out", str(runs)]), 0)
+        command = json.loads(alone.read_text())
+        self.assertEqual([c["id"] for c in command["candidates"]], ["parent", "O-final"])
+        self.assertEqual([b["role"] for b in command["banks"]], ["training"])
+        self.assertNotIn("evidence", command)
+        self.assertEqual(command, phase1.probe_command("r1", source("r1"), o_final, games, bank_file, anchor, [],
+                                                       [], str(self.root / "probe")))
+        expected = phase1.probe_command("r1", source("r1"), o_final, games, bank_file, anchor, [], [record],
+                                        str(self.root / "probe"))
+        self.assertEqual([c["id"] for c in expected["candidates"]], ["parent", "O-final", "U-step-32"])
+        common.write_json(self.root / "expected.json", expected)
+        self.assertEqual(runs.read_bytes(), (self.root / "expected.json").read_bytes())
 
 
 def o_config(lineage="r1"):
