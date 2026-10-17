@@ -1,5 +1,5 @@
-//! Complete source-only Vivien V70 projection. Distinct compatibility
-//! schemas plus the mandatory seventeen-counter roster preserve every native value.
+//! Complete source-only Muldrotha V71 projection. Distinct compatibility
+//! schemas retain the inherited supported counter roster. Stash counters refuse.
 //! This module grants no session, action execution, model or transport admission.
 use crate::{
     ids::PlayerId,
@@ -17,7 +17,7 @@ pub const ELENDA_COMPAT_SCHEMA: &str = "mtg-kernel/muldrotha-compat-elenda/v71";
 pub struct MuldrothaObservationV71 {
     pub schema: String,
     pub producer_sha256: String,
-    /// Inherited layout only. Both nested schemas are distinct V70 schemas.
+    /// Inherited layout only. Both nested schemas are distinct V71 schemas.
     /// Compatibility slots never supersede call.battlefield[*].counters.
     pub common: crate::elenda_observation_v52::ElendaObservationV52,
     pub drake: crate::drake_public_v53::FactsV53,
@@ -207,7 +207,9 @@ pub(crate) fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> 
             E::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. } => {
                 unsupported(source.card_def)
             }
-            E::KinshipEntryV1 { .. }
+            E::TinybonesV72 { .. }
+            | E::LilianaDreadhordeV1 { .. }
+            | E::KinshipEntryV1 { .. }
             | E::SphinxsTutelageDrawV1 { .. }
             | E::SphinxsTutelageCollectedV1 { .. }
             | E::SphinxsTutelagePublishedV1 { .. }
@@ -230,7 +232,7 @@ pub(crate) fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> 
             _ => false,
         });
     if visible || retained || historical_unsupported {
-        Err("V70 has no unsupported later-family semantics".into())
+        Err("V71 has no unsupported later-family semantics".into())
     } else {
         Ok(())
     }
@@ -318,12 +320,12 @@ pub(crate) fn stack_source_reference(
                 .is_some_and(|pending| pending.resolving_item == *item))
     {
         return Err(RlContractError(
-            "V70 source requires unique genuine live or resolving full row".into(),
+            "V71 source requires unique genuine live or resolving full row".into(),
         ));
     }
     if item.source != source.source || item.controller != source.controller {
         return Err(RlContractError(
-            "V70 original source/controller changed".into(),
+            "V71 original source/controller changed".into(),
         ));
     }
     Ok(Some(captured_reference(state, source)))
@@ -353,7 +355,7 @@ pub(crate) fn pending_source_reference(
         || pending.controller != source.controller
     {
         return Err(RlContractError(
-            "V70 source requires unique genuine held trigger".into(),
+            "V71 source requires unique genuine held trigger".into(),
         ));
     }
     Ok(Some(captured_reference(state, source)))
@@ -459,7 +461,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
         || value.genesis_wave.viewer != inherited.acting_player
     {
         return Err(RlContractError(
-            "V70 Time Stop viewer differs from current actor".into(),
+            "V71 Time Stop viewer differs from current actor".into(),
         ));
     }
     let meanings = crate::rules_meaning_next_five_v59::FamilyV59::ALL
@@ -478,7 +480,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
     }
     inherited.validate_muldrotha_compatibility_v71()?;
     crate::rules_meaning_elenda_v52::validate(&value.common.elenda.meaning)
-        .map_err(|e| RlContractError(format!("V70 Elenda meaning:{e:?}")))?;
+        .map_err(|e| RlContractError(format!("V71 Elenda meaning:{e:?}")))?;
     crate::rules_meaning_spinner_v54::validate(&value.spinner.meaning).map_err(RlContractError)?;
     crate::rules_meaning_quandary_v55::validate(&value.quandary.meaning)
         .map_err(RlContractError)?;
@@ -513,7 +515,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
         || value.phoenix.card_db_hash != inherited.card_db_hash
     {
         return Err(RlContractError(
-            "V70 inherited family artifact identity/root order changed".into(),
+            "V71 inherited family artifact identity/root order changed".into(),
         ));
     }
     if value.schema != SCHEMA
@@ -530,7 +532,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
         || inherited.substep_count == 0
         || inherited.substep_index >= inherited.substep_count
     {
-        return Err(RlContractError("V70 artifact identity changed".into()));
+        return Err(RlContractError("V71 artifact identity changed".into()));
     }
     let meanings = crate::rules_meaning_graveyard_return_v61::FamilyV61::ALL
         .into_iter()
@@ -548,7 +550,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
         || value.graveyard_return.owning_consumer_admitted
     {
         return Err(RlContractError(
-            "V70 closed source identity/permission changed".into(),
+            "V71 closed source identity/permission changed".into(),
         ));
     }
     crate::rules_meaning_valkyries_call_v62::validate(&value.call.meaning)
@@ -574,7 +576,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
             || exact.len() != value.call.battlefield[seat].len()
         {
             return Err(RlContractError(
-                "V70 complete battlefield roster changed".into(),
+                "V71 complete battlefield roster changed".into(),
             ));
         }
         for (ordinal, (((card, compat), base), complete)) in exact
@@ -622,7 +624,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
                         .map_err(|e| RlContractError(e.to_string()))?
             {
                 return Err(RlContractError(
-                    "V70 mandatory counter incarnation/order changed".into(),
+                    "V71 mandatory counter incarnation/order changed".into(),
                 ));
             }
             let source = &card.reference;
@@ -645,7 +647,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
             .iter()
             .any(|n| *n < 0)
             {
-                return Err(RlContractError("V70 public counter underflow".into()));
+                return Err(RlContractError("V71 public counter underflow".into()));
             }
             if !seen.insert(source.incarnation.object)
                 || source.incarnation.object != reference.arena_id
@@ -669,7 +671,7 @@ pub fn validate_artifact(value: &MuldrothaObservationV71) -> Result<(), RlContra
                 || card.counters.incubation < 0
             {
                 return Err(RlContractError(
-                    "V70 exact card roster/value mismatch".into(),
+                    "V71 exact card roster/value mismatch".into(),
                 ));
             }
         }
@@ -687,7 +689,7 @@ pub fn validate_current(
 ) -> Result<(), RlContractError> {
     if observe_v71(state, surface, actor_and_origin, step, physical, substep)? != *value {
         return Err(RlContractError(
-            "V70 observation differs from current actual decision".into(),
+            "V71 observation differs from current actual decision".into(),
         ));
     }
     Ok(())
@@ -700,21 +702,21 @@ fn validate_counter_prefix(
     let mut encoded = serde_json::to_value(full).map_err(|e| RlContractError(e.to_string()))?;
     if encoded
         .as_object()
-        .ok_or_else(|| RlContractError("V70 counter object absent".into()))?
+        .ok_or_else(|| RlContractError("V71 counter object absent".into()))?
         .values()
         .any(|n| n.as_i64().is_none_or(|n| n < 0))
     {
         return Err(RlContractError(
-            "V70 counter underflow/width changed".into(),
+            "V71 counter underflow/width changed".into(),
         ));
     }
     encoded
         .as_object_mut()
-        .ok_or_else(|| RlContractError("V70 counter object absent".into()))?
+        .ok_or_else(|| RlContractError("V71 counter object absent".into()))?
         .remove("revival");
     if encoded != serde_json::to_value(prefix).map_err(|e| RlContractError(e.to_string()))? {
         return Err(RlContractError(
-            "V70 complete counters lost compatibility prefix meaning".into(),
+            "V71 complete counters lost compatibility prefix meaning".into(),
         ));
     }
     Ok(())
@@ -738,10 +740,10 @@ fn validate_compatibility_terminals_v68(
                     .drake
                     .combat
                     .get(occurrence as usize)
-                    .ok_or_else(|| RlContractError("V70 Drake combat role absent".into()))?;
+                    .ok_or_else(|| RlContractError("V71 Drake combat role absent".into()))?;
                 if row.outcome != crate::drake_public_v53::CombatOutcomeV53::Published {
                     return Err(RlContractError(
-                        "V70 disposed combat acquired another terminal outcome".into(),
+                        "V71 disposed combat acquired another terminal outcome".into(),
                     ));
                 }
                 drake_compatibility_reference_v68(&row.original_source)?
@@ -751,10 +753,10 @@ fn validate_compatibility_terminals_v68(
                     .drake
                     .activations
                     .get(occurrence as usize)
-                    .ok_or_else(|| RlContractError("V70 Drake activation role absent".into()))?;
+                    .ok_or_else(|| RlContractError("V71 Drake activation role absent".into()))?;
                 if row.outcome != crate::drake_public_v53::ActivationOutcomeV53::Published {
                     return Err(RlContractError(
-                        "V70 disposed activation acquired another terminal outcome".into(),
+                        "V71 disposed activation acquired another terminal outcome".into(),
                     ));
                 }
                 drake_compatibility_reference_v68(&row.original_source)?
@@ -764,10 +766,10 @@ fn validate_compatibility_terminals_v68(
                     .ravenous
                     .activations
                     .get(occurrence as usize)
-                    .ok_or_else(|| RlContractError("V70 Amulet role absent".into()))?;
+                    .ok_or_else(|| RlContractError("V71 Amulet role absent".into()))?;
                 if row.outcome != crate::ravenous_public_v51::OutcomeV51::Published {
                     return Err(RlContractError(
-                        "V70 disposed Amulet acquired another terminal outcome".into(),
+                        "V71 disposed Amulet acquired another terminal outcome".into(),
                     ));
                 }
                 row.source.clone()
@@ -777,10 +779,10 @@ fn validate_compatibility_terminals_v68(
                     .ajani
                     .activations
                     .get(position as usize)
-                    .ok_or_else(|| RlContractError("V70 Ajani role absent".into()))?;
+                    .ok_or_else(|| RlContractError("V71 Ajani role absent".into()))?;
                 if row.stage != crate::ajani_public_v42::StageV42::OnStack {
                     return Err(RlContractError(
-                        "V70 disposed Ajani acquired another terminal outcome".into(),
+                        "V71 disposed Ajani acquired another terminal outcome".into(),
                     ));
                 }
                 row.source_at_payment.clone()
@@ -795,19 +797,19 @@ fn validate_compatibility_terminals_v68(
                 });
                 let family = families
                     .next()
-                    .ok_or_else(|| RlContractError("V70 Fishing family absent".into()))?;
+                    .ok_or_else(|| RlContractError("V71 Fishing family absent".into()))?;
                 if families.next().is_some() {
-                    return Err(RlContractError("V70 duplicate Fishing family".into()));
+                    return Err(RlContractError("V71 duplicate Fishing family".into()));
                 }
                 let row = family
                     .operations
                     .get(position as usize)
-                    .ok_or_else(|| RlContractError("V70 Fishing role absent".into()))?;
+                    .ok_or_else(|| RlContractError("V71 Fishing role absent".into()))?;
                 if row.stage != crate::fishing_pole_public_v39::StageV39::OnStack
                     || row.stack_ordinal.is_some()
                 {
                     return Err(RlContractError(
-                        "V70 disposed Fishing acquired another live/terminal outcome".into(),
+                        "V71 disposed Fishing acquired another live/terminal outcome".into(),
                     ));
                 }
                 row.original_pole.clone()
@@ -817,12 +819,12 @@ fn validate_compatibility_terminals_v68(
                     .faebloom
                     .spells
                     .get(ordinal as usize)
-                    .ok_or_else(|| RlContractError("V70 Faebloom spell role absent".into()))?;
+                    .ok_or_else(|| RlContractError("V71 Faebloom spell role absent".into()))?;
                 if row.stage != crate::faebloom_public_v43::StageV43::OnStack
                     || row.stack_ordinal.is_some()
                 {
                     return Err(RlContractError(
-                        "V70 disposed Faebloom acquired another live/terminal outcome".into(),
+                        "V71 disposed Faebloom acquired another live/terminal outcome".into(),
                     ));
                 }
                 row.original_source.clone()
@@ -832,19 +834,19 @@ fn validate_compatibility_terminals_v68(
                     .faebloom
                     .reflexives
                     .get(ordinal as usize)
-                    .ok_or_else(|| RlContractError("V70 Faebloom reflexive role absent".into()))?;
+                    .ok_or_else(|| RlContractError("V71 Faebloom reflexive role absent".into()))?;
                 if row.stage != crate::faebloom_public_v43::StageV43::OnStack
                     || row.stack_ordinal.is_some()
                 {
                     return Err(RlContractError(
-                        "V70 disposed reflexive acquired another live/terminal outcome".into(),
+                        "V71 disposed reflexive acquired another live/terminal outcome".into(),
                     ));
                 }
                 row.original_source.clone()
             }
         };
         if source != original.source || source.controller != original.controller {
-            return Err(RlContractError("V70 compatibility terminal lost exact original public source/controller/incarnation".into()));
+            return Err(RlContractError("V71 compatibility terminal lost exact original public source/controller/incarnation".into()));
         }
     }
     Ok(())
@@ -860,7 +862,7 @@ fn drake_compatibility_reference_v68(
             } else {
                 "Face-down card"
             })
-            .ok_or_else(|| RlContractError("V70 neutral source sentinel absent".into()))?
+            .ok_or_else(|| RlContractError("V71 neutral source sentinel absent".into()))?
         }
     };
     Ok(CardStableRefV1 {

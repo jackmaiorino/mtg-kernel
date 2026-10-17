@@ -1,4 +1,4 @@
-//! Separate schema-12 limited transport projection for the owning Genesis Wave V71 decision.
+//! Separate schema-12 limited transport projection for the owning Muldrotha V71 decision.
 use super::limited_common_v1::{LimitedCombatAssignmentV1, LimitedCombatV1};
 use super::muldrotha_v71::HumanMuldrothaCandidateV71;
 use super::*;

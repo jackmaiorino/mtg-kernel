@@ -341,7 +341,7 @@ fn validate_references(action: &A, authorized: &[CardStableRefV1]) -> Result<(),
     references(&serde_json::to_value(action).map_err(error)?, &mut refs)?;
     if refs.iter().any(|r| !authorized.contains(r)) {
         return Err(error(
-            "V70 candidate reference is outside the actor's complete public projection",
+            "V71 candidate reference is outside the actor's complete public projection",
         ));
     }
     Ok(())
@@ -390,7 +390,7 @@ fn visible_action(value: &MuldrothaObservationV71, mut action: A) -> Result<A, R
                 .and_then(|p| p.source.as_ref())
             {
                 if source.arena_id != captured.arena_id {
-                    return Err(error("V70 candidate resolving source changed"));
+                    return Err(error("V71 candidate resolving source changed"));
                 }
                 *source = captured.clone();
             }
@@ -545,7 +545,7 @@ pub(crate) fn project_parts_v71(
         || actual.actor(state) != Some(actor_and_origin.0)
     {
         return Err(error(
-            "V70 candidates require the actual already-current exact-bound surface",
+            "V71 candidates require the actual already-current exact-bound surface",
         ));
     }
     project_authenticated_parts_v71(state, surface, actor_and_origin, step, physical, substep)
@@ -690,7 +690,7 @@ pub fn validate_artifact(value: &MuldrothaCandidatesV71) -> Result<(), RlContrac
         || value.candidates.is_empty()
         || value.projection_sha256 != commitment(value)?
     {
-        return Err(error("V70 candidate artifact identity changed"));
+        return Err(error("V71 candidate artifact identity changed"));
     }
     let authorized = authorized_references(&value.observation)?;
     let facts = &value.observation.graveyard_return;
@@ -712,7 +712,7 @@ pub fn validate_artifact(value: &MuldrothaCandidatesV71) -> Result<(), RlContrac
             )
         {
             return Err(error(
-                "V70 candidate changed its actual policy actor or action family",
+                "V71 candidate changed its actual policy actor or action family",
             ));
         }
         if row.muldrotha_permission
@@ -760,7 +760,7 @@ pub fn validate_current(
 ) -> Result<(), RlContractError> {
     if project_v71(state, surface, actor_and_origin, step, physical, substep)? != *value {
         return Err(error(
-            "V70 candidate artifact differs from current native pairs",
+            "V71 candidate artifact differs from current native pairs",
         ));
     }
     Ok(())

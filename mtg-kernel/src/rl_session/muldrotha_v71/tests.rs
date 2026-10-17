@@ -56,6 +56,25 @@ impl Pair {
         );
         self.equal();
     }
+    pub(crate) fn permission(&mut self, kind: crate::card_def::CardType) {
+        let d = self.own.decision_v71().unwrap();
+        let option = d
+            .candidates_v71()
+            .candidates
+            .iter()
+            .find_map(|c| {
+                c.muldrotha_permission
+                    .as_ref()
+                    .filter(|a| {
+                        a.permission
+                            .as_ref()
+                            .is_some_and(|p| p.permanent_type == kind)
+                    })
+                    .map(|a| a.menu_index)
+            })
+            .unwrap();
+        self.act(|a| matches!(a,A::ChooseEffectOption{option_index,..}if *option_index==option));
+    }
     pub(crate) fn quiet(&mut self) {
         self.act(|a| {
             matches!(
@@ -205,5 +224,79 @@ fn paid_complete_projection_keeps_hidden_worlds_equal_and_legacy_v70_refuses_bot
             );
         }
         assert_eq!(all[0], all[1]);
+    }
+}
+
+#[test]
+fn paid_land_permission_and_original_native_index_have_no_stack_or_mana_charge_both_seats() {
+    use crate::{card_def::CardType, muldrotha_public_v71::StageV71};
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut world = native::ready(p, "Island");
+        native::paid(&mut world, p);
+        let land = put(&mut world, p, "Forest", Zone::Graveyard);
+        let before = native::tapped(&world, p);
+        let mut pair = Pair::new(world);
+        pair.act(|a| matches!(a,A::PlayLand{source,..}if source.arena_id==land.0));
+        let d = pair.own.decision_v71().unwrap();
+        assert_eq!(d.observation().muldrotha.plays[0].permissions.len(), 1);
+        assert_eq!(
+            d.observation().muldrotha.plays[0].permissions[0].permanent_type,
+            CardType::Land
+        );
+        pair.permission(CardType::Land);
+        let d = pair.own.decision_v71().unwrap();
+        assert_eq!(
+            d.observation().muldrotha.plays[0].stage,
+            StageV71::PlayedLand
+        );
+        assert_eq!(d.observation().muldrotha.budgets[0].spent, [CardType::Land]);
+        assert!(pair.own.fixture_state_v71().stack.is_empty());
+        assert_eq!(
+            pair.own.fixture_state_v71().players[p.index()].lands_played_this_turn,
+            1
+        );
+        assert_eq!(native::tapped(pair.own.fixture_state_v71(), p), before);
+        assert!(!d.actions().iter().any(|a| matches!(a, A::PlayLand { .. })));
+    }
+}
+#[test]
+fn paid_multitype_menu_spends_only_selected_budget_and_native_payment_both_seats() {
+    use crate::card_def::CardType;
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for kind in [CardType::Creature, CardType::Artifact] {
+            let mut world = native::ready(p, "Island");
+            native::paid(&mut world, p);
+            let first = put(&mut world, p, "Burnished Hart", Zone::Graveyard);
+            let second = put(&mut world, p, "Burnished Hart", Zone::Graveyard);
+            let before = native::tapped(&world, p);
+            let mut pair = Pair::new(world);
+            pair.act(|a| matches!(a,A::CastSpell{source,..}if source.arena_id==first.0));
+            let d = pair.own.decision_v71().unwrap();
+            assert_eq!(
+                d.observation().muldrotha.plays[0]
+                    .permissions
+                    .iter()
+                    .map(|v| v.permanent_type)
+                    .collect::<Vec<_>>(),
+                [CardType::Creature, CardType::Artifact]
+            );
+            pair.permission(kind);
+            assert_eq!(native::tapped(pair.own.fixture_state_v71(), p) - before, 3);
+            pair.finish();
+            pair.act(|a| matches!(a,A::CastSpell{source,..}if source.arena_id==second.0));
+            let d = pair.own.decision_v71().unwrap();
+            let play = d.observation().muldrotha.plays.last().unwrap();
+            assert_eq!(play.permissions.len(), 1);
+            assert_ne!(play.permissions[0].permanent_type, kind);
+            let other = play.permissions[0].permanent_type;
+            pair.permission(other);
+            pair.finish();
+            assert_eq!(native::tapped(pair.own.fixture_state_v71(), p) - before, 6);
+            let d = pair.own.decision_v71().unwrap();
+            assert_eq!(
+                d.observation().muldrotha.budgets[0].spent,
+                [CardType::Creature, CardType::Artifact]
+            );
+        }
     }
 }

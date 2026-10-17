@@ -1,4 +1,4 @@
-//! Distinct numeric Muldrotha Reid V71 owner. No predecessor artifact or executable is encoded.
+//! Distinct numeric Muldrotha V71 owner. No predecessor artifact or executable is encoded.
 use super::{normalize, Error, NativeModel, Packet, Result, Source};
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1, MuldrothaDecisionV71,

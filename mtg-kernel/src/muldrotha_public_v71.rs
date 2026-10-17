@@ -72,6 +72,7 @@ pub struct FactsV71 {
 pub struct ActionPermissionV71 {
     pub occurrence: u32,
     pub menu_index: u16,
+    #[serde(deserialize_with = "required_optional")]
     pub permission: Option<PermissionV71>,
 }
 pub fn action_permission(
@@ -142,7 +143,10 @@ pub fn validate(f: &FactsV71) -> Result<(), String> {
     }
     crate::rules_meaning_muldrotha_v71::validate(&f.meaning)?;
     let source = |s: &public::RootV1| {
-        s.original_source.zone == Zone::Battlefield
+        s.current_original_source.as_ref().is_none_or(|current| {
+            current.object == s.original_source.object
+                && current.generation == s.original_source.generation
+        }) && s.original_source.zone == Zone::Battlefield
             && s.original_source.controller == s.captured_controller
             && matches!(
                 s.original_source.identity,
@@ -172,11 +176,30 @@ pub fn validate(f: &FactsV71) -> Result<(), String> {
                     != 1
             })
             || b.unused.len() + b.spent.len() != 5
+            || b.unused
+                != TYPES
+                    .into_iter()
+                    .filter(|t| b.unused.contains(t))
+                    .collect::<Vec<_>>()
+            || b.spent
+                != TYPES
+                    .into_iter()
+                    .filter(|t| b.spent.contains(t))
+                    .collect::<Vec<_>>()
         {
             return Err("V71 exact source budget changed".into());
         }
     }
+    if f.plays
+        .iter()
+        .filter(|p| p.stage == StageV71::PermissionChoice)
+        .count()
+        > 1
+    {
+        return Err("V71 multiple current permission scenes".into());
+    }
     for (i, p) in f.plays.iter().enumerate() {
+        let mut permissions = std::collections::BTreeSet::new();
         if p.occurrence as usize != i
             || p.card.zone != Zone::Graveyard
             || p.card.owner != p.controller
@@ -186,6 +209,11 @@ pub fn validate(f: &FactsV71) -> Result<(), String> {
                     || a.source.captured_controller != p.controller
                     || !TYPES.contains(&a.permanent_type)
                     || p.land != (a.permanent_type == CardType::Land)
+                    || !permissions.insert((
+                        a.source.original_source.object,
+                        a.source.original_source.generation,
+                        TYPES.iter().position(|t| *t == a.permanent_type),
+                    ))
             })
         {
             return Err("V71 original permission scene changed".into());
@@ -209,7 +237,7 @@ pub fn validate(f: &FactsV71) -> Result<(), String> {
             return Err("V71 play kind changed".into());
         }
         if let Some(c) = &p.current_original {
-            if c.object != p.card.object || c.generation != p.card.generation {
+            if c != &p.card {
                 return Err("V71 original card incarnation changed".into());
             }
         }

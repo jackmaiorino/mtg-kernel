@@ -520,7 +520,7 @@ impl MuldrothaSessionV71 {
         if !std::sync::Arc::ptr_eq(&self.owner, &decision.owner)
             || self.generation != decision.generation
         {
-            return Err(RlContractError("foreign or stale V68 decision".into()));
+            return Err(RlContractError("foreign or stale V71 decision".into()));
         }
         let fresh = self.fresh_binding()?;
         if fresh != decision.binding

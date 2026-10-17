@@ -413,7 +413,7 @@ pub(super) fn project_with_handles(
                     .muldrotha_permission
                     .as_ref()
                     .map(|a| {
-                        Ok(HumanMuldrothaPermissionActionV71 {
+                        Ok::<_, Error>(HumanMuldrothaPermissionActionV71 {
                             occurrence: a.occurrence,
                             menu_index: a.menu_index,
                             permission: a

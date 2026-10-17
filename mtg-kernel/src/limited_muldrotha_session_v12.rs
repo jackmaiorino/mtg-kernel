@@ -1,4 +1,4 @@
-//! Distinct schema-12 actor-facing playback over the sealed Call V62 owner.
+//! Distinct schema-12 actor-facing playback over the sealed Muldrotha V71 owner.
 //! This is a trusted two-seat host interface, not a remote-player authorization
 //! service. Only the current actor's canonical safe DTO is returned.
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
