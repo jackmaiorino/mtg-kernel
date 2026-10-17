@@ -203,3 +203,7 @@ path = "src/bin/kernel_limited_call_env_v8.rs"
 [[bin]]
 name = "kernel_limited_end_turn_env_v9"
 path = "src/bin/kernel_limited_end_turn_env_v9.rs"
+
+[[bin]]
+name = "kernel_limited_genesis_wave_env_v10"
+path = "src/bin/kernel_limited_genesis_wave_env_v10.rs"

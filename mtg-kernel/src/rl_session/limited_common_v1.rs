@@ -23,6 +23,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         )
     }
     #[cfg(all(

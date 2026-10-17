@@ -11,7 +11,7 @@ use crate::{
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(player: PlayerId, library: &[&str], lands: usize, hidden: &str) -> GameState {
+pub(crate) fn ready(player: PlayerId, library: &[&str], lands: usize, hidden: &str) -> GameState {
     let own = library.iter().map(|n| id(n)).collect::<Vec<_>>();
     let other = vec![id(hidden); 32];
     let (a, b) = if player == PlayerId::P0 {
@@ -35,19 +35,19 @@ fn ready(player: PlayerId, library: &[&str], lands: usize, hidden: &str) -> Game
     }
     s
 }
-fn restore(s: &GameState) -> GameState {
+pub(crate) fn restore(s: &GameState) -> GameState {
     let copy: GameState = serde_json::from_slice(&serde_json::to_vec(s).unwrap()).unwrap();
     assert_eq!(s, &copy);
     assert_eq!(s.state_hash(), copy.state_hash());
     copy
 }
-fn next(s: &mut GameState) -> Decision {
+pub(crate) fn next(s: &mut GameState) -> Decision {
     let d = engine::advance_until_decision(s);
     assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
     assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
     d
 }
-fn pass(s: &mut GameState, d: Decision) {
+pub(crate) fn pass(s: &mut GameState, d: Decision) {
     let a = match d {
         Decision::CastSpellOrPass { .. } => Action::Pass,
         Decision::OrderTriggers { pending, .. } => {
@@ -67,14 +67,20 @@ fn priority(s: &mut GameState, p: PlayerId) {
     }
     panic!("priority absent")
 }
-fn tapped(s: &GameState, p: PlayerId) -> usize {
+pub(crate) fn tapped(s: &GameState, p: PlayerId) -> usize {
     s.players[p.index()]
         .battlefield
         .iter()
         .filter(|o| s.objects.get(**o).tapped)
         .count()
 }
-fn paid(s: &mut GameState, p: PlayerId, name: &str, x: Option<u16>, cost: usize) -> ObjectId {
+pub(crate) fn paid(
+    s: &mut GameState,
+    p: PlayerId,
+    name: &str,
+    x: Option<u16>,
+    cost: usize,
+) -> ObjectId {
     // Multi-spell scenes declare all their hand operands before play. Other
     // scenes install this initial hand card before their first native action.
     let existing = s.players[p.index()]
@@ -131,7 +137,7 @@ fn paid(s: &mut GameState, p: PlayerId, name: &str, x: Option<u16>, cost: usize)
     }
     panic!("paid spell never published")
 }
-fn subset(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn subset(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     for _ in 0..32 {
         let d = next(s);
         if let Decision::ChooseEffectTargets {
@@ -176,7 +182,7 @@ fn subset(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     }
     panic!("Wave subset absent")
 }
-fn choose(s: &mut GameState, objects: &[ObjectId]) {
+pub(crate) fn choose(s: &mut GameState, objects: &[ObjectId]) {
     for o in objects {
         assert!(
             matches!(next(s),Decision::ChooseEffectTargets{legal_targets,..}if legal_targets.contains(&Target::Object(*o)))
@@ -188,7 +194,7 @@ fn choose(s: &mut GameState, objects: &[ObjectId]) {
     }
     validate_pending_effect_choice(s).unwrap();
 }
-fn finish(s: &mut GameState, wave: ObjectId) {
+pub(crate) fn finish(s: &mut GameState, wave: ObjectId) {
     for _ in 0..512 {
         let d = next(s);
         if s.objects.get(wave).zone == Zone::Graveyard && s.engine.pending_effect.is_none() {

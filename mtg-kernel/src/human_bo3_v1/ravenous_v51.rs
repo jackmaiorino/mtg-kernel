@@ -1106,6 +1106,46 @@ pub(super) fn project_end_turn_base_with_handles(
     ))
 }
 
+pub(super) fn project_genesis_wave_base_with_handles(
+    candidates: &crate::genesis_wave_candidates_v69::GenesisWaveCandidatesV69,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::GenesisWave(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
 pub(super) fn project_graveyard_return_base_with_handles(
     candidates: &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
     actions: &[ActionSemanticV1],
@@ -1150,11 +1190,13 @@ pub(super) fn project_graveyard_return_base_with_handles(
 enum CompleteCandidatesV68<'a> {
     Call(&'a crate::call_candidates_v62::CallCandidatesV62),
     EndTurn(&'a crate::end_turn_candidates_v68::EndTurnCandidatesV68),
+    GenesisWave(&'a crate::genesis_wave_candidates_v69::GenesisWaveCandidatesV69),
 }
 #[derive(Clone, Copy)]
 enum CompleteOriginalV68<'a> {
     Call(&'a crate::call_observation_v62::CallObservationV62),
     EndTurn(&'a crate::end_turn_observation_v68::EndTurnObservationV68),
+    GenesisWave(&'a crate::genesis_wave_observation_v69::GenesisWaveObservationV69),
 }
 #[derive(Clone, Copy)]
 struct CompleteObservationV68<'a> {
@@ -1167,6 +1209,7 @@ struct CompleteObservationV68<'a> {
     graveyard_return: &'a crate::graveyard_return_public_v61::FactsV61,
     call: &'a crate::valkyries_call_public_v62::FactsV62,
     end_turn: Option<&'a crate::time_stop_public_v68::FactsV68>,
+    genesis_wave: Option<&'a crate::genesis_wave_public_v69::FactsV69>,
     original: CompleteOriginalV68<'a>,
 }
 impl<'a> CompleteCandidatesV68<'a> {
@@ -1184,6 +1227,7 @@ impl<'a> CompleteCandidatesV68<'a> {
                     graveyard_return: &o.graveyard_return,
                     call: &o.call,
                     end_turn: None,
+                    genesis_wave: None,
                     original: CompleteOriginalV68::Call(o),
                 }
             }
@@ -1199,7 +1243,24 @@ impl<'a> CompleteCandidatesV68<'a> {
                     graveyard_return: &o.graveyard_return,
                     call: &o.call,
                     end_turn: Some(&o.end_turn),
+                    genesis_wave: None,
                     original: CompleteOriginalV68::EndTurn(o),
+                }
+            }
+            Self::GenesisWave(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::GenesisWave(o),
                 }
             }
         }
@@ -1211,6 +1272,7 @@ impl<'a> CompleteCandidatesV68<'a> {
         match self {
             Self::Call(v) => v.candidates.get(index)?.drake_activation.as_ref(),
             Self::EndTurn(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::GenesisWave(v) => v.candidates.get(index)?.drake_activation.as_ref(),
         }
     }
 }
@@ -1221,6 +1283,9 @@ impl CompleteObservationV68<'_> {
             CompleteOriginalV68::EndTurn(v) => {
                 crate::end_turn_observation_v68::validate_artifact(v)
             }
+            CompleteOriginalV68::GenesisWave(v) => {
+                crate::genesis_wave_observation_v69::validate_artifact(v)
+            }
         }
         .map_err(|_| Error::InvalidVisibleReference)
     }
@@ -1228,6 +1293,7 @@ impl CompleteObservationV68<'_> {
         match self.original {
             CompleteOriginalV68::Call(v) => super::call_v62::choice_label(v, a, h),
             CompleteOriginalV68::EndTurn(v) => super::end_turn_v68::choice_label(v, a, h),
+            CompleteOriginalV68::GenesisWave(v) => super::genesis_wave_v69::choice_label(v, a, h),
         }
     }
     fn label_parts(
@@ -1241,6 +1307,9 @@ impl CompleteObservationV68<'_> {
             CompleteOriginalV68::Call(v) => super::labels::label_parts_call_v62(a, p, h, human, v),
             CompleteOriginalV68::EndTurn(v) => {
                 super::labels::label_parts_end_turn_v68(a, p, h, human, v)
+            }
+            CompleteOriginalV68::GenesisWave(v) => {
+                super::labels::label_parts_genesis_wave_v69(a, p, h, human, v)
             }
         }
     }
@@ -1374,6 +1443,10 @@ fn project_with_handles(
     let end_turn_facts = call
         .and_then(|o| o.end_turn)
         .map(|v| super::end_turn_v68::end_turn_facts(v, &mut handles))
+        .transpose()?;
+    let genesis_wave_facts = call
+        .and_then(|o| o.genesis_wave)
+        .map(|v| super::genesis_wave_v69::genesis_wave_facts(v, &mut handles))
         .transpose()?;
     for row in &observation.ajani.permanents {
         handles.insert(&row.source)?;
@@ -1660,11 +1733,19 @@ fn project_with_handles(
             if let Some(graveyard) = &graveyard_facts {
                 if let Some(call) = &call_facts {
                     if let Some(end_turn) = &end_turn_facts {
-                        handles.canonicalize_parts_with_prepared(
-                            &initial,
-                            unary,
-                            &(facts, next_five, graveyard, call, end_turn),
-                        )?;
+                        if let Some(genesis) = &genesis_wave_facts {
+                            handles.canonicalize_parts_with_prepared(
+                                &initial,
+                                unary,
+                                &(facts, next_five, graveyard, call, end_turn, genesis),
+                            )?;
+                        } else {
+                            handles.canonicalize_parts_with_prepared(
+                                &initial,
+                                unary,
+                                &(facts, next_five, graveyard, call, end_turn),
+                            )?;
+                        }
                     } else {
                         handles.canonicalize_parts_with_prepared(
                             &initial,

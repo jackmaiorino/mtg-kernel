@@ -369,6 +369,7 @@ pub(crate) fn battlefield_complete_scope(
             | crate::rl::CommonProjectionScopeV42::GraveyardReturnV61
             | crate::rl::CommonProjectionScopeV42::CallV62
             | crate::rl::CommonProjectionScopeV42::EndTurnV68
+            | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
     ) {
         return Err(RlContractError(
             "wrong complete counter compatibility scope".into(),
@@ -399,6 +400,7 @@ pub(crate) fn battlefield_complete_scope(
                     scope,
                     crate::rl::CommonProjectionScopeV42::CallV62
                         | crate::rl::CommonProjectionScopeV42::EndTurnV68
+                        | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
                 ) {
                     crate::rl::public_card_call_compat_v62(state, *id)?
                 } else if scope == crate::rl::CommonProjectionScopeV42::GraveyardReturnV61 {

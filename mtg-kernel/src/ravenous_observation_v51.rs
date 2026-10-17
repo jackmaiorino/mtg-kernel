@@ -544,6 +544,24 @@ pub(crate) fn observe_parts_complete_end_turn_v68(
         crate::rl::CommonProjectionScopeV42::EndTurnV68,
     )
 }
+pub(crate) fn observe_parts_complete_genesis_wave_v69(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::GenesisWaveV69,
+    )
+}
 fn observe_parts_complete_current_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -624,6 +642,10 @@ fn observe_parts_complete_current_scope_using_family_builder(
         crate::rl::CommonProjectionScopeV42::EndTurnV68 => (
             crate::end_turn_observation_v68::COMMON_SCHEMA,
             crate::end_turn_observation_v68::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::GenesisWaveV69 => (
+            crate::genesis_wave_observation_v69::COMMON_SCHEMA,
+            crate::genesis_wave_observation_v69::producer_sha256(),
         ),
         _ => return Err(RlContractError("wrong complete compatibility scope".into())),
     };
@@ -815,6 +837,12 @@ impl RavenousObservationV51 {
         self.validate_artifact_identity(
             crate::end_turn_observation_v68::COMMON_SCHEMA,
             &crate::end_turn_observation_v68::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_genesis_wave_compatibility_v69(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::genesis_wave_observation_v69::COMMON_SCHEMA,
+            &crate::genesis_wave_observation_v69::producer_sha256(),
         )
     }
     fn validate_artifact_identity(

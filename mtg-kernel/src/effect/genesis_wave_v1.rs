@@ -74,6 +74,8 @@ pub(crate) fn pending_selected(state: &GameState, pending: &EffectContinuation) 
 pub struct ChoiceV1 {
     original_library: Vec<EffectObjectBinding>,
     prefix: Vec<EffectObjectBinding>,
+    revealed: Vec<crate::genesis_wave_public_v69::RevealedV69>,
+    attachment_sources: Vec<crate::rl::CardStableRefV1>,
     selected: Vec<EffectObjectBinding>,
     attachments: Vec<(EffectObjectBinding, EffectObjectBinding)>,
     // A selected Aura without a legal host cannot enter (303.4g).
@@ -220,6 +222,7 @@ fn candidate(b: EffectObjectBinding) -> EffectTargetCandidate {
     }
 }
 fn validate_data(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> Result<(), String> {
+    validate_public_snapshots(c, p.ctx.x_value)?;
     row_context(state, p)?;
     let player = p.ctx.controller;
     let prefix_len = usize::from(p.ctx.x_value).min(c.original_library.len());
@@ -277,6 +280,17 @@ fn validate_data(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> Res
                 return Err(
                     "Genesis Wave original library changed before simultaneous entry".into(),
                 );
+            }
+            if c.prefix
+                .iter()
+                .zip(&c.revealed)
+                .any(|(b, r)| revealed_snapshot(state, *b, p.ctx.x_value).as_ref() != Ok(r))
+                || c.attachments
+                    .iter()
+                    .zip(&c.attachment_sources)
+                    .any(|((_, b), r)| public_host_snapshot(state, *b).as_ref() != Ok(r))
+            {
+                return Err("Genesis Wave original public reveal/host snapshot changed".into());
             }
             for b in &c.selected {
                 if !eligible(state, *b, p.ctx.x_value)? {
@@ -464,6 +478,8 @@ fn validate_remainder_record(
     if committed.ordinal != previous.ordinal + 1
         || committed.original_library != previous.original_library
         || committed.prefix != previous.prefix
+        || committed.revealed != previous.revealed
+        || committed.attachment_sources != previous.attachment_sources
         || committed.selected != previous.selected
         || committed.attachments != previous.attachments
         || committed.failed_auras != previous.failed_auras
@@ -846,11 +862,17 @@ pub(crate) fn start(state: &mut GameState, p: &mut EffectContinuation) -> Result
     for viewer in [player, player.opponent()] {
         state.reveal_library_top(viewer, player, prefix.len());
     }
+    let revealed = prefix
+        .iter()
+        .map(|b| revealed_snapshot(state, *b, p.ctx.x_value))
+        .collect::<Result<_, _>>()?;
     issue(
         state,
         p,
         ChoiceV1 {
             original_library,
+            revealed,
+            attachment_sources: Vec::new(),
             prefix,
             selected: Vec::new(),
             attachments: Vec::new(),
@@ -873,9 +895,12 @@ pub(crate) fn apply(
             return Err("Genesis Wave remainder cannot commit twice".into())
         }
         PhaseV1::Subset => c.selected = canonical_subset(&c.prefix, &cards)?,
-        PhaseV1::Aura { index } => c
-            .attachments
-            .push((c.selected[usize::from(index)], cards[0])),
+        PhaseV1::Aura { index } => {
+            c.attachment_sources
+                .push(public_host_snapshot(state, cards[0])?);
+            c.attachments
+                .push((c.selected[usize::from(index)], cards[0]));
+        }
         PhaseV1::Graveyard {
             cards: ref original,
             ..
@@ -1052,6 +1077,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         match event {
             event::CommittedEvent::GenesisWaveProgressV1 { item, choice } => {
                 let id = item.v4.stack_item_id;
+                validate_public_snapshots(choice, item.v4.x_value)?;
                 if !printed_row_shape(item) {
                     return Err("Genesis Wave journal lost its original printed row".into());
                 }
@@ -1080,6 +1106,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         || choice.ordinal != ordinal + 1
                         || choice.original_library != old.original_library
                         || choice.prefix != old.prefix
+                        || choice.revealed != old.revealed
+                        || !choice
+                            .attachment_sources
+                            .starts_with(&old.attachment_sources)
                         || matches!(choice.phase, PhaseV1::Subset)
                         || matches!(old.phase, PhaseV1::RemainderCommitted { .. })
                         || matches!(old.phase, PhaseV1::Graveyard { .. })
@@ -1201,6 +1231,124 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/optional_trigger_public_v1.rs",
                     include_str!("../optional_trigger_public_v1.rs"),
                 ),
+                (
+                    "mtg-kernel/src/genesis_wave_public_v69.rs",
+                    include_str!("../genesis_wave_public_v69.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rules_meaning_genesis_wave_v69.rs",
+                    include_str!("../rules_meaning_genesis_wave_v69.rs"),
+                ),
+                (
+                    "mtg-kernel/src/genesis_wave_observation_v69.rs",
+                    include_str!("../genesis_wave_observation_v69.rs"),
+                ),
+                (
+                    "mtg-kernel/src/genesis_wave_candidates_v69.rs",
+                    include_str!("../genesis_wave_candidates_v69.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/genesis_wave_v69.rs",
+                    include_str!("../rl_session/genesis_wave_v69.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/genesis_wave.rs",
+                    include_str!("../current_mixed_policy_v1/genesis_wave.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/genesis_wave_v69.rs",
+                    include_str!("../human_bo3_v1/genesis_wave_v69.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_genesis_wave_v10.rs",
+                    include_str!("../human_bo3_v1/limited_genesis_wave_v10.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_genesis_wave_session_v10.rs",
+                    include_str!("../limited_genesis_wave_session_v10.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_genesis_wave_env_v10.rs",
+                    include_str!("../bin/kernel_limited_genesis_wave_env_v10.rs"),
+                ),
+                ("mtg-kernel/src/rl.rs", include_str!("../rl.rs")),
+                (
+                    "mtg-kernel/src/rl_session.rs",
+                    include_str!("../rl_session.rs"),
+                ),
+                ("mtg-kernel/src/lib.rs", include_str!("../lib.rs")),
+                (
+                    "mtg-kernel/src/ravenous_observation_v51.rs",
+                    include_str!("../ravenous_observation_v51.rs"),
+                ),
+                (
+                    "mtg-kernel/src/ravenous_public_v51.rs",
+                    include_str!("../ravenous_public_v51.rs"),
+                ),
+                (
+                    "mtg-kernel/src/akroma_family_public_v40.rs",
+                    include_str!("../akroma_family_public_v40.rs"),
+                ),
+                (
+                    "mtg-kernel/src/divine_actions_v44.rs",
+                    include_str!("../divine_actions_v44.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_variable_cast_v1.rs",
+                    include_str!("../rl_variable_cast_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/ravenous_v51.rs",
+                    include_str!("../rl_session/ravenous_v51.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/limited_common_v1.rs",
+                    include_str!("../rl_session/limited_common_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1.rs",
+                    include_str!("../current_mixed_policy_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/normalize.rs",
+                    include_str!("../current_mixed_policy_v1/normalize.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1.rs",
+                    include_str!("../human_bo3_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/ravenous_v51.rs",
+                    include_str!("../human_bo3_v1/ravenous_v51.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/labels.rs",
+                    include_str!("../human_bo3_v1/labels.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/prepared_v57.rs",
+                    include_str!("../human_bo3_v1/prepared_v57.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_session_v1.rs",
+                    include_str!("../limited_session_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/engine/time_stop_v1.rs",
+                    include_str!("../engine/time_stop_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/time_stop_public_v68.rs",
+                    include_str!("../time_stop_public_v68.rs"),
+                ),
+                (
+                    "python/tools/limited_genesis_wave_session_v10.py",
+                    include_str!("../../../python/tools/limited_genesis_wave_session_v10.py"),
+                ),
+                (
+                    "python/tools/limited_end_turn_session_v9.py",
+                    include_str!("../../../python/tools/limited_end_turn_session_v9.py"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());
@@ -1212,10 +1360,397 @@ pub(crate) fn source_sha256_v1() -> &'static str {
         .as_str()
 }
 
+/// Snapshot only an actually revealed current library incarnation. The complete
+/// private library remains exclusively in ChoiceV1 and is never projected.
+fn revealed_snapshot(
+    state: &GameState,
+    b: EffectObjectBinding,
+    x: u16,
+) -> Result<crate::genesis_wave_public_v69::RevealedV69, String> {
+    validate_effect_object_binding(state, b)?;
+    let o = state.objects.get(b.object);
+    let card = crate::optional_trigger_public_v1::reference(state, b.object, Some(o.owner))
+        .ok_or("Genesis Wave revealed card is not known to its controller")?;
+    if card.zone != Zone::Library
+        || !matches!(
+            card.identity,
+            crate::optional_trigger_public_v1::IdentityV1::Known { .. }
+        )
+    {
+        return Err("Genesis Wave reveal lost original library identity".into());
+    }
+    let d = &card_def::CARD_DEFS[usize::from(o.card_def)];
+    let permanent = [
+        CardType::Artifact,
+        CardType::Creature,
+        CardType::Enchantment,
+        CardType::Land,
+        CardType::Planeswalker,
+    ]
+    .iter()
+    .any(|t| d.has_type(*t));
+    Ok(crate::genesis_wave_public_v69::RevealedV69 {
+        card: crate::rl::CardStableRefV1 {
+            arena_id: b.object.0,
+            card_db_id: o.card_def,
+            owner: o.owner.into(),
+            controller: o.controller.into(),
+            zone: Zone::Library,
+            zone_change_count: b.expected_zone_change_count,
+        },
+        mana_value: d.mana_value,
+        permanent,
+        eligible: permanent && d.mana_value <= x,
+        aura: d.attachment.is_some(),
+    })
+}
+fn public_host_snapshot(
+    state: &GameState,
+    b: EffectObjectBinding,
+) -> Result<crate::rl::CardStableRefV1, String> {
+    validate_effect_object_binding(state, b)?;
+    let r = crate::optional_trigger_public_v1::reference(state, b.object, None)
+        .ok_or("Genesis Wave Aura host is not public")?;
+    let card_db_id = match r.identity {
+        crate::optional_trigger_public_v1::IdentityV1::Known { card_id } => card_id,
+        crate::optional_trigger_public_v1::IdentityV1::FaceDown { disguised } => {
+            card_def::card_id_by_name(if disguised {
+                "Face-down creature"
+            } else {
+                "Face-down card"
+            })
+            .ok_or("Genesis Wave neutral host definition missing")?
+        }
+    };
+    if r.zone != Zone::Battlefield {
+        return Err("Genesis Wave Aura host left battlefield".into());
+    }
+    Ok(crate::rl::CardStableRefV1 {
+        arena_id: r.object,
+        card_db_id,
+        owner: r.owner,
+        controller: r.controller,
+        zone: r.zone,
+        zone_change_count: r.generation,
+    })
+}
+fn validate_public_snapshots(c: &ChoiceV1, x: u16) -> Result<(), String> {
+    if c.revealed.len() != c.prefix.len() || c.attachment_sources.len() != c.attachments.len() {
+        return Err("Genesis Wave public snapshot cardinality changed".into());
+    }
+    for (b, r) in c.prefix.iter().zip(&c.revealed) {
+        let d = card_def::CARD_DEFS
+            .get(usize::from(r.card.card_db_id))
+            .ok_or("Genesis Wave revealed definition missing")?;
+        let permanent = [
+            CardType::Artifact,
+            CardType::Creature,
+            CardType::Enchantment,
+            CardType::Land,
+            CardType::Planeswalker,
+        ]
+        .iter()
+        .any(|t| d.has_type(*t));
+        if r.card.arena_id != b.object.0
+            || r.card.zone_change_count != b.expected_zone_change_count
+            || r.card.zone != b.expected_zone
+            || r.card.zone != Zone::Library
+            || r.card.owner != r.card.controller
+            || r.mana_value != d.mana_value
+            || r.permanent != permanent
+            || r.eligible != (permanent && d.mana_value <= x)
+            || r.aura != d.attachment.is_some()
+        {
+            return Err("Genesis Wave original public reveal snapshot changed".into());
+        }
+    }
+    for ((_, b), r) in c.attachments.iter().zip(&c.attachment_sources) {
+        if r.arena_id != b.object.0
+            || r.zone_change_count != b.expected_zone_change_count
+            || r.zone != b.expected_zone
+            || r.zone != Zone::Battlefield
+        {
+            return Err("Genesis Wave original public Aura host changed".into());
+        }
+    }
+    Ok(())
+}
+pub(crate) fn selection_purpose_v69(c: &ChoiceV1) -> crate::rl::TargetSelectionPurposeV4 {
+    match c.phase {
+        PhaseV1::Subset => crate::rl::TargetSelectionPurposeV4::CardSelection,
+        PhaseV1::Aura { .. } => crate::rl::TargetSelectionPurposeV4::PermanentSelection,
+        PhaseV1::Graveyard { .. } | PhaseV1::RemainderCommitted { .. } => {
+            crate::rl::TargetSelectionPurposeV4::LibraryOrder
+        }
+    }
+}
+/// Native journal validation precedes sanitation. No original/remaining private
+/// library, operation world, history position or executable stack ID is returned.
+pub(crate) fn public_facts_v69(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::genesis_wave_public_v69::FactsV69, String> {
+    use crate::genesis_wave_public_v69::{self as public, AttachmentV69, StageV69, WaveV69};
+    validate_state(state)?;
+    // A genuine as-enters checkpoint holds the original answered continuation
+    // under the existing full enclosing operation. Recover only its public
+    // subset/host values; never re-execute it or export that private world.
+    let entry_choice = if let Some((original, _)) =
+        crate::linked_aura_operation_v1::pending_original_operation(state)
+    {
+        if let Some(p) = original
+            .engine
+            .pending_effect
+            .as_ref()
+            .filter(|p| selected(original, &p.resolving_item))
+        {
+            if !crate::linked_aura_operation_v1::owns_entry_row_checkpoint_v1(
+                state,
+                &p.resolving_item,
+            ) {
+                return Err("V69 entry checkpoint row changed".into());
+            }
+            crate::linked_aura_operation_v1::validate(state)?;
+            validate(original, p)?;
+            if let [EffectFrame::GenesisWaveV1 { choice, cards }] = p.frames.as_slice() {
+                let mut c = choice.clone();
+                match c.phase {
+                    PhaseV1::Subset => c.selected = canonical_subset(&c.prefix, cards)?,
+                    PhaseV1::Aura { index } => {
+                        let host = *cards.first().ok_or("V69 entry host answer absent")?;
+                        c.attachments.push((c.selected[usize::from(index)], host));
+                        c.attachment_sources
+                            .push(public_host_snapshot(original, host)?);
+                    }
+                    _ => {
+                        return Err("V69 entry checkpoint has no answered entry instruction".into())
+                    }
+                }
+                let first = if let PhaseV1::Aura { index } = c.phase {
+                    usize::from(index) + 1
+                } else {
+                    0
+                };
+                for b in c
+                    .selected
+                    .iter()
+                    .copied()
+                    .skip(first)
+                    .filter(|b| aura(original, *b))
+                {
+                    if !returning_aura_hosts_in_zone(original, b, Zone::Library)?.is_empty() {
+                        return Err(
+                            "V69 entry checkpoint skipped a mandatory Aura host answer".into()
+                        );
+                    }
+                    c.failed_auras.push(b);
+                }
+                Some((p.resolving_item.v4.stack_item_id, c))
+            } else {
+                return Err("V69 entry checkpoint erased original answer".into());
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let mut rows = Vec::<(&StackItem, Option<&ChoiceV1>, bool, Option<Zone>)>::new();
+    let mut ids = std::collections::BTreeMap::<StackItemId, usize>::new();
+    for e in state.engine.event_history.iter() {
+        match e {
+            event::CommittedEvent::GenesisWaveProgressV1 { item, choice } => {
+                if let Some(i) = ids.get(&item.v4.stack_item_id) {
+                    rows[*i] = (item, Some(choice), false, None);
+                } else {
+                    ids.insert(item.v4.stack_item_id, rows.len());
+                    rows.push((item, Some(choice), false, None));
+                }
+            }
+            event::CommittedEvent::GenesisWaveFinishedV1 {
+                stack_item_id,
+                departure,
+                ..
+            } => {
+                let i = *ids
+                    .get(stack_item_id)
+                    .ok_or("V69 completion has no native progress")?;
+                rows[i].2 = true;
+                rows[i].3 = *departure;
+            }
+            _ => {}
+        }
+    }
+    for item in &state.stack {
+        if selected(state, item) && !ids.contains_key(&item.v4.stack_item_id) {
+            crate::engine::validated_stack_item_target_spec(item, state)?;
+            if !printed_row_shape(item) {
+                return Err("V69 published Genesis row changed".into());
+            }
+            ids.insert(item.v4.stack_item_id, rows.len());
+            rows.push((item, None, false, None));
+        }
+    }
+    if let Some(p) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .filter(|p| pending_selected(state, p))
+    {
+        validate(state, p)?;
+        if !ids.contains_key(&p.resolving_item.v4.stack_item_id) {
+            ids.insert(p.resolving_item.v4.stack_item_id, rows.len());
+            rows.push((&p.resolving_item, None, false, None));
+        }
+    }
+    let index = |c: &ChoiceV1, b: EffectObjectBinding| -> Result<u16, String> {
+        c.prefix
+            .iter()
+            .position(|r| *r == b)
+            .and_then(|i| u16::try_from(i).ok())
+            .ok_or("V69 public original revealed slot missing".into())
+    };
+    let mut waves = Vec::new();
+    for (occurrence, (item, c, finished, departure)) in rows.into_iter().enumerate() {
+        let c = entry_choice
+            .as_ref()
+            .filter(|(id, _)| *id == item.v4.stack_item_id)
+            .map(|(_, c)| c)
+            .or(c);
+        let source = item
+            .v4
+            .source_contract
+            .ok_or("V69 original spell source absent")?;
+        let mut w = WaveV69 {
+            occurrence: u64::try_from(occurrence).map_err(|_| "V69 occurrence width")?,
+            stage: StageV69::Published,
+            source: crate::rl::CardStableRefV1 {
+                arena_id: source.source.0,
+                card_db_id: source.card_def,
+                owner: source.owner.into(),
+                controller: source.controller.into(),
+                zone: source.zone,
+                zone_change_count: source.zone_change_count,
+            },
+            controller: item.controller.into(),
+            x_value: item.v4.x_value,
+            is_copy: item.is_copy,
+            is_flashback: item.is_flashback,
+            cast_method: source.cast_method,
+            revealed: vec![],
+            selected_indices: vec![],
+            attachments: vec![],
+            failed_aura_indices: vec![],
+            remainder_indices: vec![],
+            answer_indices: vec![],
+            answer_host: None,
+            answer_waits_for_advance: false,
+            spell_departure: departure,
+        };
+        if let Some(c) = c {
+            w.revealed = c.revealed.clone();
+            w.selected_indices = c
+                .selected
+                .iter()
+                .map(|b| index(c, *b))
+                .collect::<Result<_, _>>()?;
+            w.failed_aura_indices = c
+                .failed_auras
+                .iter()
+                .map(|b| index(c, *b))
+                .collect::<Result<_, _>>()?;
+            w.attachments = c
+                .attachments
+                .iter()
+                .zip(&c.attachment_sources)
+                .map(|((b, _), r)| {
+                    Ok(AttachmentV69 {
+                        revealed_index: index(c, *b)?,
+                        original_host: r.clone(),
+                    })
+                })
+                .collect::<Result<_, String>>()?;
+            w.stage = match &c.phase {
+                PhaseV1::Subset => StageV69::Subset,
+                PhaseV1::Aura { index } => StageV69::AuraHost {
+                    selected_index: *index,
+                },
+                PhaseV1::Graveyard { cards, .. } => {
+                    w.remainder_indices = cards
+                        .iter()
+                        .map(|b| index(c, *b))
+                        .collect::<Result<_, _>>()?;
+                    StageV69::GraveyardOrder
+                }
+                PhaseV1::RemainderCommitted { ordered, .. } => {
+                    w.remainder_indices = ordered
+                        .iter()
+                        .map(|b| index(c, *b))
+                        .collect::<Result<_, _>>()?;
+                    StageV69::RemainderCommitted
+                }
+            };
+            if finished {
+                w.stage = StageV69::Finished;
+            }
+            if entry_choice
+                .as_ref()
+                .is_some_and(|(id, _)| *id == item.v4.stack_item_id)
+            {
+                w.stage = StageV69::EntryChoices;
+            }
+            if let Some(p) = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .filter(|p| p.resolving_item.v4.stack_item_id == item.v4.stack_item_id)
+            {
+                let answer = match (&p.choice, &p.answered_choice_guard, p.frames.as_slice()) {
+                    (Some(PendingEffectChoice::SelectTargets { selected, .. }), _, _) => selected
+                        .iter()
+                        .filter_map(|r| r.expected_object)
+                        .collect::<Vec<_>>(),
+                    (
+                        None,
+                        Some(EffectAnsweredChoiceGuard::StandardSelection { .. }),
+                        [EffectFrame::GenesisWaveV1 { cards, .. }],
+                    ) => {
+                        w.answer_waits_for_advance = true;
+                        cards.clone()
+                    }
+                    _ => vec![],
+                };
+                // Aura host selections are not original revealed slots. Their
+                // exact native target semantic remains in the complete menu.
+                if matches!(c.phase, PhaseV1::Aura { .. }) {
+                    w.answer_host = answer
+                        .first()
+                        .map(|b| public_host_snapshot(state, *b))
+                        .transpose()?;
+                } else {
+                    w.answer_indices = answer
+                        .iter()
+                        .map(|b| index(c, *b))
+                        .collect::<Result<_, _>>()?;
+                }
+            }
+        }
+        waves.push(w);
+    }
+    let facts=public::FactsV69 {
+        schema:public::SCHEMA.into(),producer_sha256:public::producer_sha256(),viewer:viewer.into(),
+        meaning:crate::rules_meaning_genesis_wave_v69::printed_meaning()?,
+        visible_printings:state.objects.iter().filter_map(|(id,_)|crate::optional_trigger_public_v1::reference(state,id,Some(viewer))).filter(|r|matches!(r.identity,crate::optional_trigger_public_v1::IdentityV1::Known{card_id}if definition(card_id))).collect(),
+        waves,
+    };
+    public::validate(&facts)?;
+    Ok(facts)
+}
+
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "genesis_wave_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

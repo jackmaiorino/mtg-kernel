@@ -176,6 +176,22 @@ pub(crate) fn candidates_end_turn_v68(
         true,
     )
 }
+pub(crate) fn candidates_genesis_wave_v69(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    crate::genesis_wave_observation_v69::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_genesis_wave_v69(
+        state,
+        surface,
+        decision,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
 fn candidates_current_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -214,6 +230,26 @@ fn candidates_current_scope_end_turn_v68(
         accept_graveyard_return,
         accept_call,
         Some(crate::rl::CommonProjectionScopeV42::EndTurnV68),
+    )
+}
+fn candidates_current_scope_genesis_wave_v69(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        state,
+        surface,
+        decision,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::GenesisWaveV69),
     )
 }
 #[allow(clippy::too_many_arguments)]
@@ -428,8 +464,11 @@ fn candidates_current_scope_inner_v68(
                 }
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
-                let old = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::EndTurnV68)
+                let old = if selected_scope
+                    == Some(crate::rl::CommonProjectionScopeV42::GenesisWaveV69)
                 {
+                    crate::rl::core_policy_action_candidates_genesis_wave_v69(decision, state)?
+                } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::EndTurnV68) {
                     crate::rl::core_policy_action_candidates_end_turn_v68(decision, state)?
                 } else if accept_call {
                     crate::rl::core_policy_action_candidates_call_v62(decision, state)?

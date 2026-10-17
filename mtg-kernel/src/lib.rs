@@ -815,3 +815,9 @@ pub mod rules_meaning_time_stop_v68;
 pub mod time_stop_public_v68;
 
 pub mod limited_end_turn_session_v9;
+
+pub mod genesis_wave_candidates_v69;
+pub mod genesis_wave_observation_v69;
+pub mod genesis_wave_public_v69;
+pub mod limited_genesis_wave_session_v10;
+pub mod rules_meaning_genesis_wave_v69;
