@@ -2,7 +2,9 @@
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
 mod call;
 mod end_turn;
+mod genesis_wave;
 pub use end_turn::{EndTurnDecision, EndTurnSession, EndTurnSnapshot};
+pub use genesis_wave::{GenesisWaveDecision, GenesisWaveSession, GenesisWaveSnapshot};
 mod canonical_semantic_booleans;
 mod elenda;
 mod fiery_public_operands;
@@ -64,6 +66,7 @@ pub enum Source {
     GraveyardReturnV61,
     CallV62,
     EndTurnV68,
+    GenesisWaveV69,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {

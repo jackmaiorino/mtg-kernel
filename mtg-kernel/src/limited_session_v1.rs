@@ -56,6 +56,9 @@ impl CustomDeckV1 {
     pub(crate) fn resolve_end_turn_v68(&self) -> Result<Vec<u16>, String> {
         self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::EndTurnV68)
     }
+    pub(crate) fn resolve_genesis_wave_v69(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::GenesisWaveV69)
+    }
     fn resolve_for_scope(
         &self,
         scope: crate::rl::CommonProjectionScopeV42,

@@ -974,6 +974,22 @@ pub(super) fn choice_label_end_turn(
     )
 }
 
+pub(super) fn choice_label_genesis_wave(
+    obs: &crate::genesis_wave_observation_v69::GenesisWaveObservationV69,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    choice_label_parts(
+        &obs.common.common,
+        obs.common.common.trigger_order.as_ref(),
+        &obs.spinner,
+        &obs.phoenix,
+        &obs.quandary,
+        action,
+        handles,
+    )
+}
+
 pub(super) fn choice_label_graveyard_return(
     obs: &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
     action: &ActionSemanticV1,

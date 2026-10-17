@@ -870,9 +870,27 @@ pub(crate) fn sampler_conflicts_v68(state: &GameState, pool: &[ObjectId]) -> Res
     Ok(false)
 }
 
+#[derive(Clone, Copy)]
+enum PublicScopeV69 {
+    EndTurnV68,
+    GenesisWaveV69,
+}
 pub(crate) fn public_facts_v68(
     state: &GameState,
     viewer: PlayerId,
+) -> Result<crate::time_stop_public_v68::FactsV68, String> {
+    public_facts_for_scope_v69(state, viewer, PublicScopeV69::EndTurnV68)
+}
+pub(crate) fn public_facts_genesis_wave_v69(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::time_stop_public_v68::FactsV68, String> {
+    public_facts_for_scope_v69(state, viewer, PublicScopeV69::GenesisWaveV69)
+}
+fn public_facts_for_scope_v69(
+    state: &GameState,
+    viewer: PlayerId,
+    scope: PublicScopeV69,
 ) -> Result<crate::time_stop_public_v68::FactsV68, String> {
     use crate::time_stop_public_v68::{CleanupV68, DisposalV68, DisposedV68, FactsV68, PhaseV68};
     validate(state)?;
@@ -897,7 +915,14 @@ pub(crate) fn public_facts_v68(
         // Scope selection for an archived public event cannot depend on an
         // old private hand, known library card, or face-down look permission.
         // The row projector below still applies original public visibility.
-        crate::end_turn_observation_v68::require_supported(&original, None)?;
+        match scope {
+            PublicScopeV69::EndTurnV68 => {
+                crate::end_turn_observation_v68::require_supported(&original, None)?
+            }
+            PublicScopeV69::GenesisWaveV69 => {
+                crate::genesis_wave_observation_v69::require_supported(&original, None)?
+            }
+        }
         for (position, row) in original.stack.iter().enumerate() {
             for target in compatibility_targets_v68(&original, row)? {
                 compatibility_terminals.push(
@@ -921,9 +946,16 @@ pub(crate) fn public_facts_v68(
                     .map_err(|_| "V68 original stack position exceeds u32")?;
                 Ok(DisposedV68 {
                     original_stack_position: position,
-                    original: crate::rl::stack_item_public_end_turn_v68(
-                        &original, viewer, position, row,
-                    )
+                    original: match scope {
+                        PublicScopeV69::EndTurnV68 => crate::rl::stack_item_public_end_turn_v68(
+                            &original, viewer, position, row,
+                        ),
+                        PublicScopeV69::GenesisWaveV69 => {
+                            crate::rl::stack_item_public_genesis_wave_v69(
+                                &original, viewer, position, row,
+                            )
+                        }
+                    }
                     .map_err(|e| e.0)?,
                 })
             })
@@ -1408,6 +1440,18 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                 (
                     "mtg-kernel/src/optional_trigger_public_v1.rs",
                     include_str!("../optional_trigger_public_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/genesis_wave_observation_v69.rs",
+                    include_str!("../genesis_wave_observation_v69.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/genesis_wave_v1.rs",
+                    include_str!("../effect/genesis_wave_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/genesis_wave_public_v69.rs",
+                    include_str!("../genesis_wave_public_v69.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
