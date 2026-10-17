@@ -283,6 +283,7 @@ pub enum TriggerCondition {
     ControlledNontokenCreatureDiesWithoutSubtypeV1(Subtype),
     /// Event-time native wave capture, not generic per-recipient matching.
     ControlledCreatureCombatDamageDuringOwnTurnV1,
+    OpponentDiscardsV72,
 }
 
 pub struct TriggeredAbilityDef {
@@ -3746,6 +3747,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Grappling Kraken" => &GRAPPLING_KRAKEN_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
+        "Tinybones, Bauble Burglar" => &crate::engine::tinybones_v72::TRIGGERS,
         "Fiendish Panda" => &crate::fiendish_panda_v1::TRIGGERS,
         "Bloodthirsty Conqueror" => &crate::bloodthirsty_conqueror_v49::TRIGGERS,
         "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
@@ -4140,6 +4142,11 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
 pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if *template == crate::engine::tinybones_v72::trigger_recipe()
+        && matches!(effect, EffectOp::TinybonesStashV72 { .. })
+    {
+        return true;
+    }
     if crate::snack_wide_life_v59::custody::binding(effect).is_some() {
         return *template == crate::bloodthirsty_conqueror_v49::recipe();
     }
@@ -4421,6 +4428,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::engine::tinybones_v72::definition(card_def) {
+        return matches!(effect, EffectOp::TinybonesStashV72 { .. }).then_some(TargetSpec::None);
+    }
     if crate::effect::thousand_year_storm_v1::definition(card_def) {
         return crate::effect::thousand_year_storm_v1::recipe(effect).then_some(TargetSpec::None);
     }
@@ -6445,6 +6455,8 @@ fn trigger_matches(
     }
 
     match (cond, ev) {
+        // The shared discard transaction captures each original observer once.
+        (TriggerCondition::OpponentDiscardsV72, _) => false,
         (
             TriggerCondition::TurnedFaceUp,
             CommittedEvent::TurnedFaceUp {

@@ -3122,6 +3122,7 @@ fn has_counters(state: &GameState, object: ObjectId) -> bool {
         || counters.charge > 0
         || counters.incubation > 0
         || counters.fellowship > 0
+        || counters.stash > 0
         || live.v4.lifelink_keyword_counters > 0
         || live.v4.time_counters_v1 > 0
         || live

@@ -82,6 +82,7 @@ impl Scan<'_> {
             | BindSphinxLoreV1
             | SphinxLoreV1 { .. }
             | HarvesterExileAndCopyV1
+            | TinybonesStashV72 { .. }
             | FiendArtisanSearchV1 => true,
             GenesisWaveV1 => self.scope != ReferenceScopeV68::GenesisWave,
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
@@ -1165,12 +1166,14 @@ fn conflicts_in_scope(
     if state
         .engine
         .event_history
-        .has_any(&[EventKindV1::VivienReidV1])
-        || state
-            .engine
-            .event_log
-            .iter()
-            .any(|e| matches!(e, crate::event::CommittedEvent::VivienReidV1 { .. }))
+        .has_any(&[EventKindV1::VivienReidV1, EventKindV1::TinybonesV72])
+        || state.engine.event_log.iter().any(|e| {
+            matches!(
+                e,
+                crate::event::CommittedEvent::VivienReidV1 { .. }
+                    | crate::event::CommittedEvent::TinybonesV72 { .. }
+            )
+        })
     {
         return true;
     }
@@ -1545,6 +1548,8 @@ fn conflicts_in_scope(
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
             PublishedCastIdentityV1 { .. }
+            | TinybonesV72 { .. }
+            | MuldrothaOptionsV1 { .. } | MuldrothaSelectedV1 { .. } | MuldrothaPlayedV1 { .. }
             | VivienReidV1 { .. }
             | OrdinaryCleanupStageV1 { .. }
             | TimeStopJournalV1 { .. }

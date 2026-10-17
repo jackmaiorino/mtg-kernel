@@ -2762,6 +2762,11 @@ pub enum EffectOp {
     },
     /// Definition-owned revealed subset and simultaneous permanent entry.
     GenesisWaveV1,
+    /// Exact discarded incarnation and original observing Tinybones.
+    TinybonesStashV72 {
+        discard: u64,
+        observer: u32,
+    },
     LilianaZombieV1,
     LilianaSacrificeV1 {
         ultimate: bool,
@@ -4360,6 +4365,15 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if matches!(op, EffectOp::TinybonesStashV72 { .. })
+        || crate::engine::tinybones_v72::waiting(state, ctx)
+        || resolving_item
+            .v4
+            .ability_source_contract
+            .is_some_and(|c| crate::engine::tinybones_v72::definition(c.card_def))
+    {
+        return Err("Tinybones requires its actual lexical native row".into());
+    }
     if *op == EffectOp::LilianaZombieV1 {
         return Err("Liliana Zombie requires its genuine native row".into());
     }
@@ -4499,6 +4513,16 @@ fn begin_resumable_resolution_with_native_row_v1(
     inspiration_owner: Option<&InspirationResolutionOwnerV1>,
     native_row: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
+    if native_row.is_none()
+        && (matches!(op, EffectOp::TinybonesStashV72 { .. })
+            || crate::engine::tinybones_v72::waiting(state, ctx)
+            || resolving_item
+                .v4
+                .ability_source_contract
+                .is_some_and(|c| crate::engine::tinybones_v72::definition(c.card_def)))
+    {
+        return Err("Tinybones requires its actual lexical native row".into());
+    }
     if native_row.is_none()
         && (vivien_reid_v1::recipe(op)
             || vivien_reid_v1::selected(state, &resolving_item)
@@ -19355,6 +19379,31 @@ fn execute_with_native_row_v1(
     if state.engine.halted.is_some() {
         return;
     }
+    if (matches!(op, EffectOp::TinybonesStashV72 { .. })
+        || crate::engine::tinybones_v72::waiting(state, ctx))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
+    if matches!(op, EffectOp::TinybonesStashV72 { .. }) {
+        let proof = native_proof.expect("checked Tinybones native proof");
+        if *proof.owner.root != *op
+            || crate::engine::tinybones_v72::resolve_stash(state, ctx, &proof.owner.item).is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        return;
+    }
+    if state.engine.halted.is_some() {
+        return;
+    }
     if (vivien_reid_v1::recipe(op)
         || vivien_reid_v1::context_selected(state, ctx)
         || state
@@ -19629,6 +19678,7 @@ fn execute_with_native_row_v1(
                 ctx.source,
             ));
         }
+        EffectOp::TinybonesStashV72 { .. } => unreachable!("handled by native Tinybones proof"),
         EffectOp::FiendArtisanSearchV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -26591,7 +26641,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
-    if liliana_dreadhorde_v1::waiting(state, ctx) {
+    if crate::engine::tinybones_v72::waiting(state, ctx)
+        || liliana_dreadhorde_v1::waiting(state, ctx)
+    {
         return true;
     }
     if vivien_reid_v1::waiting(state, ctx) {

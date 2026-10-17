@@ -2060,6 +2060,9 @@ pub enum CommittedEvent {
     MuldrothaPlayedV1 {
         played: crate::engine::muldrotha_v1::PlayedV1,
     },
+    TinybonesV72 {
+        journal: Box<crate::engine::tinybones_v72::JournalV72>,
+    },
     LilianaDreadhordeV1 {
         journal: Box<crate::effect::liliana_dreadhorde_v1::JournalV1>,
     },
@@ -2478,7 +2481,7 @@ pub(crate) fn niv_mizzet_visionary_removes_hand_limit_v1(
 
 /// Remembers the counters of a departing permanent whose own leave ability
 /// reads them. Each exact departing incarnation remains available to its triggers.
-fn record_counter_lki(state: &mut GameState, object: ObjectId) {
+pub(crate) fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
     #[cfg(feature = "standard-magezero-fixtures")]
     let reads_standard = crate::standard_statics_v1::reads_counter_lki(live.card_def);
@@ -2488,7 +2491,8 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let reads_revival = live.counters.revival != 0
         || crate::card_def::CARD_DEFS[usize::from(live.card_def)].name == "Nine-Lives Familiar";
     let reads_fellowship = live.counters.fellowship != 0;
-    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship {
+    let reads_stash = live.counters.stash != 0;
+    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship && !reads_stash {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();

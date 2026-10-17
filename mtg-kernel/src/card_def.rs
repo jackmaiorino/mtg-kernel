@@ -3152,7 +3152,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                489
+                491
             } else {
                 192
             }
@@ -3637,6 +3637,7 @@ mod tests {
                 (487, "Genesis Wave"),
                 (488, "Vivien Reid"),
                 (489, "Muldrotha, the Gravetide"),
+                (490, "Tinybones, Bauble Burglar"),
             ]
         } else {
             &[]

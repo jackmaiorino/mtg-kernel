@@ -190,6 +190,7 @@ pub(crate) fn place_counters_checked_v1(
         c.incubation,
         c.revival,
         c.fellowship,
+        c.stash,
         i32::from(snapshot.extras.lifelink),
         i32::from(snapshot.extras.time),
         i32::from(snapshot.extras.finality),
@@ -229,7 +230,7 @@ fn apply_counter_transfer(
     };
     let placed_i16 = |amount: i16| i16::try_from(scale(i32::from(amount))?).ok();
     let live = state.objects.get(target);
-    if live.counters.fellowship < 0 {
+    if live.counters.fellowship < 0 || live.counters.stash < 0 {
         return None;
     }
     let minus_one = live
@@ -266,6 +267,13 @@ fn apply_counter_transfer(
             .replaced_count(fellowship_scaled)
             .ok()?;
     let fellowship = live.counters.fellowship.checked_add(fellowship_placed)?;
+    let stash_scaled =
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.stash).ok()?;
+    let stash_placed =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller)
+            .replaced_count(stash_scaled)
+            .ok()?;
+    let stash = live.counters.stash.checked_add(stash_placed)?;
     let soul_scaled =
         crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.soul).ok()?;
     let soul_placed =
@@ -316,6 +324,7 @@ fn apply_counter_transfer(
     live.counters.incubation = incubation;
     live.counters.revival = revival;
     live.counters.fellowship = fellowship;
+    live.counters.stash = stash;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {
@@ -1297,6 +1306,7 @@ mod doubling_season_transfer_tests_v48 {
                     incubation: 1,
                     revival: 1,
                     fellowship: 0,
+                    stash: 1,
                 },
                 extras: CounterExtrasV1 {
                     loyalty: 1,
@@ -1311,6 +1321,7 @@ mod doubling_season_transfer_tests_v48 {
                 apply_counter_transfer(branch, target, actor, snapshot).unwrap();
                 let o = branch.objects.get(target);
                 assert_eq!(o.counters.plus1_plus1, 2);
+                assert_eq!(o.counters.stash, 2);
                 assert_eq!(o.counters.minus1_minus1, 2);
                 assert_eq!(o.counters.minus0_minus1, 2);
                 assert_eq!(o.counters.stun, 2);

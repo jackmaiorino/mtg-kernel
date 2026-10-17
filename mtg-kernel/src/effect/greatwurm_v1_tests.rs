@@ -320,6 +320,7 @@ fn genuine_paid_cast_accepts_every_native_counter_kind_without_narrowing_both_se
                 CounterKindV1::Incubation => o.counters.incubation = 6,
                 CounterKindV1::Revival => o.counters.revival = 6,
                 CounterKindV1::Fellowship => o.counters.fellowship = 6,
+                CounterKindV1::Stash => o.counters.stash = 6,
                 CounterKindV1::Loyalty => {}
                 CounterKindV1::Lifelink => o.v4.lifelink_keyword_counters = 6,
                 CounterKindV1::Time => o.v4.time_counters_v1 = 6,

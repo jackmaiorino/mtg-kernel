@@ -550,6 +550,7 @@ fn genuine_paid_all17_counter_widths_and_neutral_copy_suppression_primitives_res
             incubation: i32::MAX,
             revival: i32::MAX,
             fellowship: i32::MAX,
+            stash: 0,
         };
         o.v4.lifelink_keyword_counters = i16::MAX;
         o.v4.time_counters_v1 = u8::MAX;

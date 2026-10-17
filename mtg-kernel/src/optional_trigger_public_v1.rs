@@ -391,7 +391,11 @@ fn counters(state: &GameState, id: ObjectId, scope: CounterScopeV61) -> Result<C
         incubation,
         revival,
         fellowship,
+        stash,
     } = live.counters;
+    if stash != 0 {
+        return Err(error("public projection does not expose stash counters"));
+    }
     if fellowship != 0 && scope != CounterScopeV61::CallV62 {
         return Err(error(
             "optional trigger public projection does not expose fellowship counters",

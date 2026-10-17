@@ -1934,6 +1934,8 @@ pub fn observe_v1(
         .map_err(RlContractError)?;
     crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
+    crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -2382,6 +2384,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     if text_mode != ObservationTextModeV2::VivienV70Artifact {
         crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
@@ -2985,6 +2989,8 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     if text_mode != ObservationTextModeV2::VivienV70Artifact {
         crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
@@ -4806,6 +4812,8 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     )
     .map_err(RlContractError)?;
     crate::engine::muldrotha_v1::require_legacy(request.state, Some(request.acting_player))
+        .map_err(RlContractError)?;
+    crate::engine::tinybones_v72::require_legacy(request.state, Some(request.acting_player))
         .map_err(RlContractError)?;
     if request.text_mode != ObservationTextModeV2::VivienV70Artifact {
         crate::effect::vivien_reid_v1::require_legacy(request.state, Some(request.acting_player))
@@ -9349,6 +9357,15 @@ fn effect_target_ref_visible(
 /// before projecting any card carrying one through those older shapes. Keep this guard in `rl.rs`
 /// so the existing RL source-identity closure covers the behavior.
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|o| o.counters.stash != 0)
+    {
+        return Err(RlContractError(
+            "legacy public counter schema cannot represent stash counters".into(),
+        ));
+    }
     if state.objects.try_get(object).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && (crate::progenitus_v1::definition(o.card_def)
