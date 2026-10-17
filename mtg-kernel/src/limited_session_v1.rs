@@ -62,6 +62,9 @@ impl CustomDeckV1 {
     pub(crate) fn resolve_vivien_v70(&self) -> Result<Vec<u16>, String> {
         self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::VivienV70)
     }
+    pub(crate) fn resolve_muldrotha_v71(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::MuldrothaV71)
+    }
     fn resolve_for_scope(
         &self,
         scope: crate::rl::CommonProjectionScopeV42,

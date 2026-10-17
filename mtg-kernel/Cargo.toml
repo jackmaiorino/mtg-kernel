@@ -212,3 +212,8 @@ path = "src/bin/kernel_limited_genesis_wave_env_v10.rs"
 name = "kernel_limited_vivien_env_v11"
 path = "src/bin/kernel_limited_vivien_env_v11.rs"
 required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_muldrotha_env_v12"
+path = "src/bin/kernel_limited_muldrotha_env_v12.rs"
+required-features = ["limited-fdn-fixtures"]

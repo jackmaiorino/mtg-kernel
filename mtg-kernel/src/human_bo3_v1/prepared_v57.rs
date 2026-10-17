@@ -1006,6 +1006,21 @@ pub(super) fn choice_label_vivien(
         handles,
     )
 }
+pub(super) fn choice_label_muldrotha(
+    obs: &crate::muldrotha_observation_v71::MuldrothaObservationV71,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    choice_label_parts(
+        &obs.common.common,
+        obs.common.common.trigger_order.as_ref(),
+        &obs.spinner,
+        &obs.phoenix,
+        &obs.quandary,
+        action,
+        handles,
+    )
+}
 
 pub(super) fn choice_label_graveyard_return(
     obs: &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,

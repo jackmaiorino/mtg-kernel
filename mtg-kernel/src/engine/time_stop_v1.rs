@@ -875,6 +875,7 @@ enum PublicScopeV69 {
     EndTurnV68,
     GenesisWaveV69,
     VivienV70,
+    MuldrothaV71,
 }
 pub(crate) fn public_facts_v68(
     state: &GameState,
@@ -893,6 +894,12 @@ pub(crate) fn public_facts_vivien_v70(
     viewer: PlayerId,
 ) -> Result<crate::time_stop_public_v68::FactsV68, String> {
     public_facts_for_scope_v69(state, viewer, PublicScopeV69::VivienV70)
+}
+pub(crate) fn public_facts_muldrotha_v71(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::time_stop_public_v68::FactsV68, String> {
+    public_facts_for_scope_v69(state, viewer, PublicScopeV69::MuldrothaV71)
 }
 fn public_facts_for_scope_v69(
     state: &GameState,
@@ -926,6 +933,9 @@ fn public_facts_for_scope_v69(
             PublicScopeV69::EndTurnV68 => {
                 crate::end_turn_observation_v68::require_supported(&original, None)?
             }
+            PublicScopeV69::MuldrothaV71 => {
+                crate::muldrotha_observation_v71::require_supported(&original, None)?
+            }
             PublicScopeV69::VivienV70 => {
                 crate::vivien_observation_v70::require_supported(&original, None)?
             }
@@ -958,6 +968,9 @@ fn public_facts_for_scope_v69(
                     original_stack_position: position,
                     original: match scope {
                         PublicScopeV69::EndTurnV68 => crate::rl::stack_item_public_end_turn_v68(
+                            &original, viewer, position, row,
+                        ),
+                        PublicScopeV69::MuldrothaV71 => crate::rl::stack_item_public_muldrotha_v71(
                             &original, viewer, position, row,
                         ),
                         PublicScopeV69::VivienV70 => crate::rl::stack_item_public_vivien_v70(
@@ -1531,16 +1544,60 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("tinybones_v72.rs"),
                 ),
                 (
+                    "mtg-kernel/src/effect/liliana_dreadhorde_v1.rs",
+                    include_str!("../effect/liliana_dreadhorde_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/muldrotha_public_v71.rs",
+                    include_str!("../muldrotha_public_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rules_meaning_muldrotha_v71.rs",
+                    include_str!("../rules_meaning_muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/muldrotha_observation_v71.rs",
+                    include_str!("../muldrotha_observation_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/muldrotha_candidates_v71.rs",
+                    include_str!("../muldrotha_candidates_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/muldrotha_v71.rs",
+                    include_str!("../rl_session/muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/muldrotha.rs",
+                    include_str!("../current_mixed_policy_v1/muldrotha.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/muldrotha_v71.rs",
+                    include_str!("../human_bo3_v1/muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_muldrotha_v12.rs",
+                    include_str!("../human_bo3_v1/limited_muldrotha_v12.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_muldrotha_session_v12.rs",
+                    include_str!("../limited_muldrotha_session_v12.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_muldrotha_env_v12.rs",
+                    include_str!("../bin/kernel_limited_muldrotha_env_v12.rs"),
+                ),
+                (
+                    "python/tools/limited_muldrotha_session_v12.py",
+                    include_str!("../../../python/tools/limited_muldrotha_session_v12.py"),
+                ),
+                (
                     "mtg-kernel/src/effect/chandra_flameshaper_v1.rs",
                     include_str!("../effect/chandra_flameshaper_v1.rs"),
                 ),
                 (
                     "mtg-kernel/src/effect/crystal_prevention_v1.rs",
                     include_str!("../effect/crystal_prevention_v1.rs"),
-                ),
-                (
-                    "mtg-kernel/src/effect/liliana_dreadhorde_v1.rs",
-                    include_str!("../effect/liliana_dreadhorde_v1.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());

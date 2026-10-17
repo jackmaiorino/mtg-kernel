@@ -689,6 +689,22 @@ pub(super) fn label_parts_vivien_v70(
     }
     label_parts_next_five(action, observation, handles, human, &complete.next_five)
 }
+pub(super) fn label_parts_muldrotha_v71(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::muldrotha_observation_v71::MuldrothaObservationV71,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
 
 pub(super) fn label_parts_graveyard_return_v61(
     action: &A,
