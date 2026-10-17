@@ -4,6 +4,8 @@
 use super::*;
 use crate::{card_def, event::CommittedEvent as E, ids::StackItemId};
 use serde::{Deserialize, Serialize};
+#[path = "chandra_flameshaper_public_v74.rs"]
+pub(crate) mod public_v74;
 
 pub(crate) fn program(index: usize) -> EffectOp {
     EffectOp::ChandraFlameshaperV74 {

@@ -832,8 +832,10 @@ pub mod vivien_observation_v70;
 
 pub mod limited_vivien_session_v11;
 
+pub mod chandra_public_v74;
 pub mod liliana_public_v73;
 pub mod muldrotha_public_v71;
+pub mod rules_meaning_chandra_v74;
 pub mod rules_meaning_liliana_v73;
 pub mod rules_meaning_muldrotha_v71;
 pub mod rules_meaning_tinybones_v72;

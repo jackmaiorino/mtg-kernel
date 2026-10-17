@@ -1530,6 +1530,18 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/effect/liliana_dreadhorde_public_v73.rs",
                     include_str!("liliana_dreadhorde_public_v73.rs"),
                 ),
+                (
+                    "mtg-kernel/src/rules_meaning_chandra_v74.rs",
+                    include_str!("../rules_meaning_chandra_v74.rs"),
+                ),
+                (
+                    "mtg-kernel/src/chandra_public_v74.rs",
+                    include_str!("../chandra_public_v74.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/chandra_flameshaper_public_v74.rs",
+                    include_str!("chandra_flameshaper_public_v74.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());
