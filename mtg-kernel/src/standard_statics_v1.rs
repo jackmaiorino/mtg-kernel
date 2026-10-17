@@ -397,7 +397,6 @@ pub(crate) fn expire_attack_block_restrictions(state: &mut GameState) {
 
 pub(crate) use crate::creature_stats_lki_v1::current_or_last_creature_stats;
 #[cfg(any(
-    test,
     feature = "limited-fdn-fixtures",
     feature = "standard-magezero-fixtures"
 ))]
