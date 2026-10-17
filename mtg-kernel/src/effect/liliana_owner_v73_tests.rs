@@ -47,3 +47,26 @@ pub(crate) fn published_source_boundary(
     }
     (s, id, original)
 }
+
+/// Legal initial hidden-slot operands; all Liliana payment/history is then native.
+pub(crate) fn sampler_ready(p: PlayerId, hidden: &str) -> (GameState, ObjectId) {
+    let library = (0..128)
+        .map(|i| ["Forest", "Island", "Mountain", "Plains"][i % 4])
+        .collect::<Vec<_>>();
+    let mut s = crate::effect::vivien_reid_v1::tests::ready(p, &library, &[], hidden);
+    for player in [p, p.opponent()] {
+        for name in [
+            "Llanowar Elves",
+            "Healer's Hawk",
+            "Savannah Lions",
+            "Burnished Hart",
+            "Goldvein Pick",
+            "Paradise Druid",
+        ] {
+            put(&mut s, player, name, Zone::Battlefield);
+        }
+    }
+    let id = walker(&mut s, p);
+    priority(&mut s, p);
+    (s, id)
+}

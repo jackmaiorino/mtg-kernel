@@ -400,6 +400,7 @@ pub fn feature_identity() -> String {
             include_str!("kaito_public_v75.rs"),
             include_str!("effect/kaito_cunning_v75.rs"),
             include_str!("rules_meaning_kaito_v75.rs"),
+            include_str!("effect/liliana_dreadhorde_v1.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

@@ -128,3 +128,26 @@ the numeric Source prefix, registry, event schemas and native fixture file are
 unchanged. There is no runtime/model/sampler/Full admission. Human transport,
 distinct LimitedV14, their wire/Python/CI coverage and later sampling/production
 adapters remain pending the actual Tinybones Human/V13 predecessor checkpoint.
+
+## V73 current-slot sampler source checkpoint
+
+The distinct Liliana sampler validates the sealed original complete decision,
+clones its backend, permutes only the existing actor-unknown current slots, and
+requires exact rebuilt full binding equality before returning a new owner. The
+numeric sibling also compares the complete normalized packet and issues a new
+Arc. No prior decision becomes executable on the sampled owner.
+
+The closed reference walk authenticates Liliana payment/publication, original
+scene/choices and token journals and rejects any unknown pool intersecting their
+physical references, including later hidden incarnations. Native death captures
+retain original observer/deceased references. It never pins an original private
+hand/library or conditions placements on printing identity. All original current
+slot eligibility, permutation and knowledge writes remain unchanged.
+
+Whole-world entry/Drake/Season and other unsupported-owner histories retain
+conservative refusals. Existing scopes still refuse Liliana. Four new genuine
+paid both-seat source groups cover active choices, completion, native-index
+parity, independently compatible hidden worlds, numeric packets, serialization,
+restore, fresh/stale/foreign authority and altered original journal refusal.
+Hidden returns and wide setup remain explicitly labelled native primitives.
+All Rust is UNCOMPILED and UNRUN. This is not Full or playing-strength admission.

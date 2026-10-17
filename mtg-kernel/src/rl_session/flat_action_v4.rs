@@ -123,6 +123,13 @@ pub(super) fn redeterminize_tinybones_v72(
 ) -> Result<(), search_state::V4SearchStateErrorV1> {
     search_state::redeterminize_tinybones_v72(state, actor, seed)
 }
+pub(super) fn redeterminize_liliana_v73(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_liliana_v73(state, actor, seed)
+}
 pub(super) fn redeterminize_genesis_wave_v69(
     state: &mut crate::state::GameState,
     actor: crate::ids::PlayerId,
