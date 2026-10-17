@@ -307,16 +307,28 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV72, String> {
         complete_ordinary_observation: false,
         owning_consumer_admitted: false,
     };
-    for (id, o) in s.objects.iter() {
+    // Authorized printing discovery has its own stable arena scan. The complete
+    // battlefield projection follows the actual native per-seat row order instead.
+    for (id, _) in s.objects.iter() {
         if let Some(r) = public::reference(s, id, Some(v)) {
             if matches!(r.identity, public::IdentityV1::Known { card_id: 490 }) {
                 out.authorized_printings.push(r);
             }
         }
-        if o.zone == Zone::Battlefield {
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for seat in [PlayerId::P0, PlayerId::P1] {
+        for &id in &s.players[seat.index()].battlefield {
+            let o = s
+                .objects
+                .try_get(id)
+                .ok_or("V72 battlefield member absent")?;
+            if o.zone != Zone::Battlefield || o.controller != seat || !seen.insert(id.0) {
+                return Err("V72 battlefield membership changed".into());
+            }
             let card =
                 public::reference(s, id, Some(v)).ok_or("V72 battlefield reference absent")?;
-            out.battlefield[o.controller.index()].push(CurrentV72 {
+            out.battlefield[seat.index()].push(CurrentV72 {
                 card,
                 is_token: o.v4.is_token,
                 tapped: o.tapped,
@@ -326,6 +338,12 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV72, String> {
                 form: public::checked_form(s, id)?,
             });
         }
+    }
+    if s.objects
+        .iter()
+        .any(|(id, o)| o.zone == Zone::Battlefield && !seen.contains(&id.0))
+    {
+        return Err("V72 battlefield roster incomplete".into());
     }
     let mut discard_map = std::collections::BTreeMap::new();
     for (at, e) in s.engine.event_history.iter().enumerate() {
