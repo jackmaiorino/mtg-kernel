@@ -49,6 +49,9 @@ pub(super) use reused::{run_acquisition, run_comparison};
 #[cfg(feature = "gameplay-decision-trace-v1")]
 mod inspect;
 
+#[cfg(feature = "gameplay-decision-trace-v1")]
+mod root_actions;
+
 pub(super) fn run_inspect(
     cfg: &CensusConfigV1,
     policy: &FrozenPlayPolicyV1,
@@ -61,6 +64,21 @@ pub(super) fn run_inspect(
     {
         let _ = (cfg, policy, sh, bank_spec_bytes);
         Err("s4a-utility-root-inspect requires gameplay-decision-trace-v1".into())
+    }
+}
+
+pub(super) fn run_root_actions(
+    cfg: &CensusConfigV1,
+    policy: &FrozenPlayPolicyV1,
+    sh: &BankShared,
+    bank_spec_bytes: &[u8],
+) -> Result<(), String> {
+    #[cfg(feature = "gameplay-decision-trace-v1")]
+    return root_actions::run(cfg, policy, sh, bank_spec_bytes);
+    #[cfg(not(feature = "gameplay-decision-trace-v1"))]
+    {
+        let _ = (cfg, policy, sh, bank_spec_bytes);
+        Err("s4a-root-actions requires gameplay-decision-trace-v1".into())
     }
 }
 
