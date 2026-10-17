@@ -56,8 +56,8 @@ sibling's payload where the types match.
 
 ## Unqualified future source bridge
 
-The future native source classifies 312 event kinds. The 237 current samples
-above remain byte-for-byte unchanged. The following 75 future kinds do not yet
+The future native source classifies 313 event kinds. The 237 current samples
+above remain byte-for-byte unchanged. The following 76 future kinds do not yet
 have sample rows. The existing complete-kind assertions are retained and will
 remain unqualified until genuine or honestly hand-built typed samples are
 appended in this order. The initial future export builds and lists its binary;
@@ -143,4 +143,5 @@ MuldrothaPlayedV1
 TinybonesV72
 LilianaDreadhordeV1
 ChandraFlameshaperV74
+KaitoCunningV75
 ```

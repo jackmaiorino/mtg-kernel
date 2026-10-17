@@ -31,6 +31,24 @@ const fn loyalty(
     }
 }
 
+const KAITO_CUNNING: [ActivatedAbilityRecipe; 3] = [
+    loyalty(
+        &[Loyalty(1)],
+        Program("crate::effect::kaito_cunning_v75::plus_one"),
+        "StandardV1(crate::standard_cards_v1::StandardTargetV1::UpToOneControlledCreatureV1)",
+    ),
+    loyalty(
+        &[Loyalty(-2)],
+        Program("crate::effect::kaito_cunning_v75::ninja"),
+        "None",
+    ),
+    loyalty(
+        &[Loyalty(-9)],
+        Program("crate::effect::kaito_cunning_v75::emblem"),
+        "None",
+    ),
+];
+
 const CHANDRA_FLAMESHAPER: [ActivatedAbilityRecipe; 3] = [
     loyalty(&[Loyalty(2)], Program("crate::effect::chandra_flameshaper_v1::plus_two"), "None"),
     loyalty(&[Loyalty(1)], Program("crate::effect::chandra_flameshaper_v1::plus_one"), "ControlledCreature"),
@@ -376,6 +394,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
         "Chandra, Hope's Beacon" => &CHANDRA,
         "Vivien Reid" => &VIVIEN_REID,
+        "Kaito, Cunning Infiltrator" => &KAITO_CUNNING,
         "Chandra, Flameshaper" => &CHANDRA_FLAMESHAPER,
         "Fable of the Mirror-Breaker" => &REFLECTION_OF_KIKI_JIKI,
         "Repurposing Bay" => &REPURPOSING_BAY,
@@ -447,6 +466,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
 /// `standard_cards_v1::controlled_boost`.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Kaito, Cunning Infiltrator"=>"loyalty_plus1:optional_controlled_creature_exact_incarnation_cannot_be_blocked_this_turn_then_draw_then_discard;loyalty_minus2:blue2x1Ninja;loyalty_minus9:persistent_any_player_actual_spell_cast_Ninja_emblem;controlled_creature_final_combat_damage_to_player:original_Kaito_loyalty_counter",
         "Chandra, Flameshaper"=>"loyalty_plus2:add_red3_then_exile_top3_choose1_ordinary_play_this_turn;loyalty_plus1:controlled_creature_copy_copiable_haste_and_end_step_sacrifice;loyalty_minus4:prepayment_divide8_positive_units_zero_to8_creature_or_planeswalker_targets_one_damage_batch",
         "Vivien Reid" => "loyalty_plus1:look4_optional_creature_or_land_reveal_random_bottom;loyalty_minus3:destroy_artifact_enchantment_or_flying_creature;loyalty_minus8:timestamped_persistent_emblem_controlled_creatures_plus2_plus2_vigilance_trample_indestructible",
         "Thousand Moons Smithy" => "etb:create_gnome_soldier;precombat_main:may_tap_five_artifact_creatures_transform;back:cast_artifact_creature_using_source_mana:create_gnome_soldier",

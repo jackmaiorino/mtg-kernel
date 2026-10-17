@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "admission": "native_partial_source_only",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "registration_dependency": "actual Chandra493 dc67f19e29de7e83f6cbcda71a8bd841cfaa5666 and canonical c99eb188986d914ea5c2aa37a40ecedaefb49e88",
+  "card_db_id": 494,
+  "token_db_id": 495,
+  "printing": {
+    "name": "Kaito, Cunning Infiltrator",
+    "set": "FDN",
+    "collector_number": "44",
+    "scryfall_id": "5dabdea9-2015-49b9-853d-4f7e1262eab3",
+    "oracle_id": "f6d3f145-00e0-47cd-91d8-0381c19a000d",
+    "rarity": "mythic"
+  },
+  "frozen_token_dependency": "aeec04b1-475c-4e55-b72f-327ea5258146",
+  "cards": [
+    {
+      "name": "Kaito, Cunning Infiltrator",
+      "mana_cost": "{1}{U}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Kaito"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_kaito_cunning_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "native_loyalty_optional_creature_evasion_draw_then_discard",
+        "native_blue_two_one_ninja",
+        "native_persistent_any_player_spell_cast_ninja_emblem",
+        "native_original_observer_final_combat_damage_loyalty"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KaitoCunningInfiltrator.java",
+      "engine_capability": "partial",
+      "is_token": false
+    },
+    {
+      "name": "Ninja Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Ninja"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/NinjaToken2.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "is_token": true
+    }
+  ],
+  "qualification": "Native Partial source and genuine paid/native both-seat fixture groups only. Rust uncompiled/unrun; no Full/owner/model/Human/transport/sampler admission."
+}

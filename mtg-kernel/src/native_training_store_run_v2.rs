@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 494);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 496);
         assert_eq!(
             partials,
             [
@@ -9052,6 +9052,8 @@ mod tests {
                 (491, "Liliana, Dreadhorde General"),
                 (492, "Zombie Token"),
                 (493, "Chandra, Flameshaper"),
+                (494, "Kaito, Cunning Infiltrator"),
+                (495, "Ninja Token"),
             ]
         );
         let mut playable = Vec::new();

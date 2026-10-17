@@ -2069,6 +2069,9 @@ pub enum CommittedEvent {
     ChandraFlameshaperV74 {
         journal: Box<crate::effect::chandra_flameshaper_v1::JournalV74>,
     },
+    KaitoCunningV75 {
+        journal: Box<crate::effect::kaito_cunning_v75::JournalV75>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4301,6 +4304,9 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         Vec::new()
     };
+    let kaito_single = (!entry_context.1).then(|| {
+        crate::effect::kaito_cunning_v75::capture_wave(state, std::slice::from_ref(&event))
+    });
     let greatwurm_single = if !entry_context.1 {
         match crate::effect::greatwurm_v1::capture_wave(state, std::slice::from_ref(&event)) {
             Ok(wave) => Some(wave),
@@ -4567,6 +4573,15 @@ fn commit_with_entry_batch_and_source_color(
     }
     if let Some(wave) = greatwurm_single {
         if wave.finish(state, greatwurm_history_start).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+    if let Some(wave) = kaito_single {
+        if wave.finish(state, entry_history_index).is_err() {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
@@ -5790,6 +5805,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         None,
         None,
         None,
+        None,
     );
 }
 
@@ -5806,6 +5822,7 @@ pub(crate) fn batch_with_copied_aura_hosts_v1(
         vec![event],
         Vec::new(),
         Some(hosts),
+        None,
         None,
         None,
         None,
@@ -5833,6 +5850,7 @@ pub(crate) fn commit_goblin_excess_tokens_owned(
         None,
         None,
         None,
+        None,
     );
     if state.engine.halted.is_some() {
         return Err("excess token batch halted".into());
@@ -5852,6 +5870,7 @@ fn batch_with_aura_token_hosts_v1(
     spirit_copy_permit: Option<&crate::effect::SpiritCopyPermitV1<'_, '_>>,
     liliana_permit: Option<&crate::effect::liliana_dreadhorde_v1::TokenPermitV1<'_, '_>>,
     chandra_copy_permit: Option<&crate::effect::chandra_flameshaper_v1::CopyPermitV74<'_, '_>>,
+    kaito_permit: Option<&crate::effect::kaito_cunning_v75::TokenPermitV75<'_, '_>>,
 ) {
     if !preflight_wide_batch_v59(state, &events) {
         return;
@@ -5861,6 +5880,7 @@ fn batch_with_aura_token_hosts_v1(
         && spirit_copy_permit.is_none_or(|p| !p.allows(state, &events))
         && liliana_permit.is_none_or(|p| !p.allows(state, &events))
         && chandra_copy_permit.is_none_or(|p| !p.allows(state, &events))
+        && kaito_permit.is_none_or(|p| !p.allows(state, &events))
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -6239,6 +6259,7 @@ fn commit_batch_survivors(
     } else {
         None
     };
+    let kaito_wave = crate::effect::kaito_cunning_v75::capture_wave(state, &survivors);
     let greatwurm_wave = match crate::effect::greatwurm_v1::capture_wave(state, &survivors) {
         Ok(wave) => wave,
         Err(_) => {
@@ -6331,6 +6352,13 @@ fn commit_batch_survivors(
         .finish(state, greatwurm_history_start)
         .is_err()
     {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    if kaito_wave.finish(state, greatwurm_history_start).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ObjectId(0),
@@ -6631,11 +6659,19 @@ pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: Player
     let committed = CommittedEvent::SpellCast { spell, controller };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    let kaito_cast = state.engine.event_history.len() - 1;
     if crate::effect::thousand_year_storm_v1::record_cast(state, spell).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             spell,
         ));
+    }
+    if crate::effect::kaito_cunning_v75::record_cast(state, kaito_cast).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            spell,
+        ));
+        return;
     }
 }
 
@@ -10310,6 +10346,7 @@ pub(crate) fn commit_kykar_spirit_owned_v1(
         None,
         None,
         None,
+        None,
     );
     if state.engine.halted.is_some() {
         return Err("Kykar Spirit batch halted".into());
@@ -10335,6 +10372,7 @@ pub(crate) fn commit_spirit_copy_owned_v1(
         None,
         None,
         Some(&permit),
+        None,
         None,
         None,
     );
@@ -10364,6 +10402,7 @@ pub(crate) fn commit_liliana_zombie_owned_v1(
         None,
         Some(&permit),
         None,
+        None,
     );
     if state.engine.halted.is_some() {
         return Err("Liliana Zombie native batch halted".into());
@@ -10390,9 +10429,39 @@ pub(crate) fn commit_chandra_copy_v74(
         None,
         None,
         Some(&permit),
+        None,
     );
     if state.engine.halted.is_some() {
         Err("Chandra copy batch halted".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Only the original paid Kaito -2 or the exact captured emblem trigger may
+/// issue this Partial Ninja dependency. All raw/generic token paths refuse.
+pub(crate) fn commit_kaito_ninja_v75(
+    state: &mut GameState,
+    permit: crate::effect::kaito_cunning_v75::TokenPermitV75<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Kaito Ninja native owner lost".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        vec![],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(&permit),
+    );
+    if state.engine.halted.is_some() {
+        Err("Kaito Ninja batch halted".into())
     } else {
         Ok(())
     }

@@ -102,6 +102,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::TinybonesStashV72 { .. }
         | EffectOp::LilianaZombieV1
         | EffectOp::LilianaSacrificeV1 { ultimate: _ }
+        | EffectOp::KaitoCunningV75 { .. }
         | EffectOp::ChandraFlameshaperV74 { .. }
         | EffectOp::FiendArtisanSearchV1
         | EffectOp::BindSphinxLoreV1

@@ -682,7 +682,8 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         EffectOp::HighSocietyHunterFromCaptureV45 { .. } => true,
         EffectOp::NivMizzetVisionaryDrawV1 { .. } => true,
         // Both ordered batches move cards only; resulting ETBs resolve later.
-        EffectOp::GenesisWaveV1
+        EffectOp::KaitoCunningV75 { .. }
+        | EffectOp::GenesisWaveV1
         | EffectOp::LilianaZombieV1
         | EffectOp::LilianaSacrificeV1 { .. } => true,
         EffectOp::ChandraFlameshaperV74 {
