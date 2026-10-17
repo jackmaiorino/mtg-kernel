@@ -178,3 +178,6 @@ fn genuine_foreign_paid_play_and_real_suppression_keep_printed_cost_and_current_
         assert_eq!(capture(&restore(&s), p), f);
     }
 }
+
+#[path = "tinybones_roster_v72_tests.rs"]
+mod roster;
