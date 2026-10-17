@@ -193,10 +193,11 @@ fn public_runtime_rules_reach_session_preserve_defaults_and_refuse_reset() {
 
 #[test]
 fn public_runtime_rules_keep_delve_refusal_in_collection_and_opponent_replay() {
+    let swamp = crate::card_def::card_id_by_name("Swamp").unwrap();
     let mut delve = ExpandedDeckListV1 {
         label: "public-runtime-delve".into(),
-        mainboard: vec![crate::card_def::card_id_by_name("Swamp").unwrap(); 60],
-        sideboard: Vec::new(),
+        mainboard: vec![swamp; 60],
+        sideboard: vec![swamp; 15],
     };
     delve.mainboard[0] = crate::card_def::card_id_by_name("Gurmag Angler").unwrap();
     for delve_seat in [0, 1] {
@@ -206,7 +207,11 @@ fn public_runtime_rules_keep_delve_refusal_in_collection_and_opponent_replay() {
         episode.runtime_rules = Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1);
         // Declaration admission succeeds, but the real session refuses a Delve
         // reader in either player's deck before any policy forward or action.
-        assert!(episode.configurations_for_public_collector_v1().is_ok());
+        episode
+            .configurations_for_public_collector_v1()
+            .unwrap_or_else(|error| {
+                panic!("Delve fixture registration for seat {delve_seat} must be valid: {error}")
+            });
         let error = collect_with_opponent(
             &mut learner(),
             &episode,
