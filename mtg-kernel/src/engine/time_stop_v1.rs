@@ -874,6 +874,7 @@ pub(crate) fn sampler_conflicts_v68(state: &GameState, pool: &[ObjectId]) -> Res
 enum PublicScopeV69 {
     EndTurnV68,
     GenesisWaveV69,
+    VivienV70,
 }
 pub(crate) fn public_facts_v68(
     state: &GameState,
@@ -886,6 +887,12 @@ pub(crate) fn public_facts_genesis_wave_v69(
     viewer: PlayerId,
 ) -> Result<crate::time_stop_public_v68::FactsV68, String> {
     public_facts_for_scope_v69(state, viewer, PublicScopeV69::GenesisWaveV69)
+}
+pub(crate) fn public_facts_vivien_v70(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::time_stop_public_v68::FactsV68, String> {
+    public_facts_for_scope_v69(state, viewer, PublicScopeV69::VivienV70)
 }
 fn public_facts_for_scope_v69(
     state: &GameState,
@@ -919,6 +926,9 @@ fn public_facts_for_scope_v69(
             PublicScopeV69::EndTurnV68 => {
                 crate::end_turn_observation_v68::require_supported(&original, None)?
             }
+            PublicScopeV69::VivienV70 => {
+                crate::vivien_observation_v70::require_supported(&original, None)?
+            }
             PublicScopeV69::GenesisWaveV69 => {
                 crate::genesis_wave_observation_v69::require_supported(&original, None)?
             }
@@ -948,6 +958,9 @@ fn public_facts_for_scope_v69(
                     original_stack_position: position,
                     original: match scope {
                         PublicScopeV69::EndTurnV68 => crate::rl::stack_item_public_end_turn_v68(
+                            &original, viewer, position, row,
+                        ),
+                        PublicScopeV69::VivienV70 => crate::rl::stack_item_public_vivien_v70(
                             &original, viewer, position, row,
                         ),
                         PublicScopeV69::GenesisWaveV69 => {
@@ -1452,6 +1465,46 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                 (
                     "mtg-kernel/src/genesis_wave_public_v69.rs",
                     include_str!("../genesis_wave_public_v69.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rules_meaning_vivien_v70.rs",
+                    include_str!("../rules_meaning_vivien_v70.rs"),
+                ),
+                (
+                    "mtg-kernel/src/vivien_public_v70.rs",
+                    include_str!("../vivien_public_v70.rs"),
+                ),
+                (
+                    "mtg-kernel/src/vivien_observation_v70.rs",
+                    include_str!("../vivien_observation_v70.rs"),
+                ),
+                (
+                    "mtg-kernel/src/vivien_candidates_v70.rs",
+                    include_str!("../vivien_candidates_v70.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/vivien_v70.rs",
+                    include_str!("../rl_session/vivien_v70.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/vivien.rs",
+                    include_str!("../current_mixed_policy_v1/vivien.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/vivien_v70.rs",
+                    include_str!("../human_bo3_v1/vivien_v70.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_vivien_v11.rs",
+                    include_str!("../human_bo3_v1/limited_vivien_v11.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_vivien_session_v11.rs",
+                    include_str!("../limited_vivien_session_v11.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_vivien_env_v11.rs",
+                    include_str!("../bin/kernel_limited_vivien_env_v11.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());

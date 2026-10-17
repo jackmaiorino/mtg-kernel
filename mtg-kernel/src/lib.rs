@@ -822,3 +822,11 @@ pub mod genesis_wave_observation_v69;
 pub mod genesis_wave_public_v69;
 pub mod limited_genesis_wave_session_v10;
 pub mod rules_meaning_genesis_wave_v69;
+
+pub mod rules_meaning_vivien_v70;
+pub mod vivien_public_v70;
+
+pub mod vivien_candidates_v70;
+pub mod vivien_observation_v70;
+
+pub mod limited_vivien_session_v11;
