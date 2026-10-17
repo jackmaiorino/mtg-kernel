@@ -19,7 +19,7 @@ import limited_decks_v1 as limited
 
 
 @dataclass(frozen=True)
-class DraftCard:
+class _DraftCard:
     # (round, original pack seat, copy ordinal within that supplied pack).
     copy_id: tuple[int, int, int]
     entry: limited.DeckEntry
@@ -39,8 +39,8 @@ class DraftView:
     seat: int
     complete: bool
     prompt: DraftPrompt | None
-    pack: tuple[DraftCard, ...]
-    picked: tuple[DraftCard, ...]
+    pack: tuple[limited.DeckEntry, ...]
+    picked: tuple[limited.DeckEntry, ...]
 
 
 def _integer(value: Any, label: str) -> int:
@@ -91,7 +91,7 @@ class DraftSession:
         self._pick = 0
         self._generation = 0
         self._packs = self._open_round(0)
-        self._picked: list[tuple[DraftCard, ...]] = [() for _ in range(self.seat_count)]
+        self._picked: list[tuple[_DraftCard, ...]] = [() for _ in range(self.seat_count)]
         self._answered: set[int] = set()
         self._picks: list[dict] = []
 
@@ -112,12 +112,12 @@ class DraftSession:
                 raise ValueError("invalid pack printing annotation")
         return limited.ImportedDeck(pack.name, tuple(pack.mainboard), tuple(pack.sideboard))
 
-    def _open_round(self, round_index: int) -> tuple[tuple[DraftCard, ...], ...]:
+    def _open_round(self, round_index: int) -> tuple[tuple[_DraftCard, ...], ...]:
         result = []
         for seat, pack in enumerate(self._supplied[round_index]):
             copies = [limited.DeckEntry(1, entry.name, entry.printing)
                       for entry in (*pack.mainboard, *pack.sideboard) for _ in range(entry.count)]
-            result.append(tuple(DraftCard((round_index, seat, i), entry) for i, entry in enumerate(copies)))
+            result.append(tuple(_DraftCard((round_index, seat, i), entry) for i, entry in enumerate(copies)))
         return tuple(result)
 
     @property
@@ -139,8 +139,11 @@ class DraftSession:
         prompt = None
         if not self.complete and seat not in self._answered:
             prompt = DraftPrompt(self._session_id, self._generation, seat, self._round, self._pick)
-        pack = () if self.complete else self._packs[seat]
-        return DraftView(seat, self.complete, prompt, pack, self._picked[seat])
+        # Original physical ordinals can disclose unseen initial pack order.
+        # Current tuple indexes bind choices; actors need only visible cards.
+        pack = () if self.complete else tuple(card.entry for card in self._packs[seat])
+        picked = tuple(card.entry for card in self._picked[seat])
+        return DraftView(seat, self.complete, prompt, pack, picked)
 
     def pick(self, seat: int, prompt: DraftPrompt, index: int) -> DraftView:
         """Reject stale/foreign/duplicate/index-invalid input before any change."""
@@ -230,7 +233,8 @@ class DraftSession:
             copy_id = pick["copy_id"]
             if type(copy_id) is not list or len(copy_id) != 3 or any(type(value) is not int for value in copy_id):
                 raise ValueError("invalid recorded physical copy identity")
-            if pick["index"] >= len(view.pack) or tuple(copy_id) != view.pack[pick["index"]].copy_id:
+            physical_pack = session._packs[pick["seat"]]
+            if pick["index"] >= len(physical_pack) or tuple(copy_id) != physical_pack[pick["index"]].copy_id:
                 raise ValueError("record index and physical copy disagree")
             session.pick(pick["seat"], view.prompt, pick["index"])
         return session

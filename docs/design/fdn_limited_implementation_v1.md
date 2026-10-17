@@ -64,8 +64,10 @@ of ordered `ImportedDeck` packs, one per seat, for any pod of at least two seats
 Both `.dck` zones contribute pickable copies in row/copy order. Packs must have
 the same positive size within a round; different rounds may have different
 sizes. Round zero passes to seat+1 modulo the pod size, then direction alternates.
-Passing waits for every seat to pick. Physical copy IDs retain the original
-round, pack seat and copy ordinal, including repeated copies of the same name.
+Passing waits for every seat to pick. Trusted internal state and host records
+retain physical copy IDs with the original round, pack seat and copy ordinal,
+including repeated copies of the same name. Actor card values contain only
+count-one `DeckEntry` fields, never original physical IDs or hidden-derived aliases.
 Only `view(seat)` goes to that authenticated actor: it contains that seat's
 current pack, ordered picks and a session-bound prompt. Invalid or already-used
 prompts and invalid indexes change nothing. `record()` is trusted-host data

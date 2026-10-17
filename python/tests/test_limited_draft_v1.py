@@ -44,6 +44,8 @@ class SuppliedDraftTests(unittest.TestCase):
             ("1 Healer's Hawk", "1 Forest", "1 Island"),
         ))
         expected = [[] for _ in range(3)]
+        round_names = (("Forest", "Island", "Mountain"), ("Plains", "Swamp", "Llanowar Elves"),
+                       ("Healer's Hawk", "Forest", "Island"))
         generation = 0
         for round_index, size in enumerate((3, 2, 1)):
             direction = 1 if round_index % 2 == 0 else -1
@@ -54,30 +56,32 @@ class SuppliedDraftTests(unittest.TestCase):
                                      (round_index, pick, generation))
                     self.assertEqual(len(view.pack), size - pick)
                     card = view.pack[0]
-                    self.assertEqual(card.copy_id, (round_index, (seat - direction * pick) % 3, pick))
+                    self.assertEqual(card, limited.DeckEntry(1, round_names[round_index][(seat - direction * pick) % 3]))
                     expected[seat].append(card)
                 # An arbitrary host arrival order cannot affect pass direction.
                 for seat in (2, 0, 1):
                     self.choose(session, seat)
+                    self.assertEqual(session.record()["picks"][-1]["copy_id"],
+                                     [round_index, (seat - direction * pick) % 3, pick])
                 generation += 1
         self.assertTrue(session.complete)
         for seat in range(3):
             view = session.view(seat)
             self.assertEqual(view.picked, tuple(expected[seat]))
             self.assertEqual((view.pack, view.prompt), ((), None))
-            self.assertEqual(session.acquired_pool(seat).mainboard, tuple(card.entry for card in expected[seat]))
+            self.assertEqual(session.acquired_pool(seat).mainboard, tuple(expected[seat]))
 
     def test_packs_wait_at_barrier_and_other_seat_prompts_stay_valid(self) -> None:
         session = draft.DraftSession(supplied(("1 Forest\n1 Island", "1 Swamp\n1 Mountain", "2 Plains")))
         pending = [session.view(seat) for seat in range(3)]
         after = self.choose(session, 0, 1)
         self.assertIsNone(after.prompt)
-        self.assertEqual(after.pack[0].entry.name, "Forest")
+        self.assertEqual(after.pack[0].name, "Forest")
         self.assertEqual(session.view(1), pending[1])
         self.assertEqual(session.view(2), pending[2])
         session.pick(2, pending[2].prompt, 0)
         session.pick(1, pending[1].prompt, 0)
-        self.assertEqual(session.view(1).pack[0].entry.name, "Forest")
+        self.assertEqual(session.view(1).pack[0].name, "Forest")
         self.assertEqual(session.view(1).prompt.pick, 1)
 
     def test_equal_positive_sizes_required_per_round_but_not_across_rounds(self) -> None:
@@ -115,18 +119,20 @@ class SuppliedDraftTests(unittest.TestCase):
         while not session.complete:
             for seat in (1, 2, 0):
                 self.choose(session, seat)
-                views = [session.view(i) for i in range(3)]
-                copies = [card.copy_id for view in views for card in (*view.pack, *view.picked)]
-                # Future supplied copies remain unopened, outside actor views.
-                current_round = views[0].prompt.round if views[0].prompt else session.record()["picks"][-1]["round"]
-                if not session.complete and current_round == 0:
-                    copies += [(1, i, copy) for i in range(3) for copy in range(2)]
+                # Physical custody is checked only in trusted host state/records.
+                recorded = session.record()["picks"]
+                copies = [tuple(pick["copy_id"]) for pick in recorded]
+                copies += [card.copy_id for pack in session._packs for card in pack]
+                copies += [copy for copy in expected if copy[0] > session._round]
                 self.assertEqual(Counter(copies), Counter({copy: 1 for copy in expected}))
+                for drafter in range(3):
+                    self.assertEqual([card.copy_id for card in session._picked[drafter]],
+                                     [tuple(pick["copy_id"]) for pick in recorded if pick["seat"] == drafter])
                 if session.complete:
                     break
         cards = [card for seat in range(3) for card in session.view(seat).picked]
-        self.assertEqual(sum(card.entry.name == "Llanowar Elves" for card in cards), 15)
-        self.assertEqual(sum(card.entry.printing == "FDN:227" for card in cards), 6)
+        self.assertEqual(sum(card.name == "Llanowar Elves" for card in cards), 15)
+        self.assertEqual(sum(card.printing == "FDN:227" for card in cards), 6)
 
     def test_stale_foreign_duplicate_and_bad_index_refusals_do_not_mutate(self) -> None:
         packs = supplied(("2 Forest", "2 Island", "2 Swamp"), ("1 Mountain",) * 3)
@@ -166,6 +172,33 @@ class SuppliedDraftTests(unittest.TestCase):
         self.assertNotIn("Island", repr(left.view(0)))
         self.choose(left, 0)
         self.choose(right, 0)
+        self.assertEqual(visible_without_session(left.view(0)), visible_without_session(right.view(0)))
+
+    def test_post_pass_view_does_not_disclose_unseen_original_pack_order(self) -> None:
+        left = draft.DraftSession(supplied(("1 Forest\n1 Island", "1 Swamp\n1 Mountain")))
+        right = draft.DraftSession(supplied(("1 Forest\n1 Island", "1 Mountain\n1 Swamp")))
+        self.assertEqual(visible_without_session(left.view(0)), visible_without_session(right.view(0)))
+        # The other drafter takes Mountain from different unseen positions.
+        self.choose(left, 1, 1)
+        self.choose(right, 1, 0)
+        self.choose(left, 0, 0)
+        self.choose(right, 0, 0)
+        for session in (left, right):
+            view = session.view(0)
+            self.assertEqual(view.pack, (limited.DeckEntry(1, "Swamp"),))
+            self.assertEqual(view.picked, (limited.DeckEntry(1, "Forest"),))
+            for card in (*asdict(view)["pack"], *asdict(view)["picked"]):
+                self.assertEqual(set(card), {"count", "name", "printing"})
+        self.assertEqual(visible_without_session(left.view(0)), visible_without_session(right.view(0)))
+        self.choose(left, 0)
+        self.choose(right, 0)
+        # The host still binds the different original Swamp physical copies.
+        self.assertEqual(left.record()["picks"][-1]["copy_id"], [0, 1, 0])
+        self.assertEqual(right.record()["picks"][-1]["copy_id"], [0, 1, 1])
+        self.assertEqual(visible_without_session(left.view(0)), visible_without_session(right.view(0)))
+        self.choose(left, 1)
+        self.choose(right, 1)
+        self.assertTrue(left.complete and right.complete)
         self.assertEqual(visible_without_session(left.view(0)), visible_without_session(right.view(0)))
 
     def test_json_record_replays_partial_waiting_step_with_fresh_prompts_then_completes(self) -> None:
