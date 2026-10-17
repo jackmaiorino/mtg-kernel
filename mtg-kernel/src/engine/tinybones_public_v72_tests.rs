@@ -120,7 +120,7 @@ fn paid_source_full_eighteen_counter_storage_and_supplied_value_freshness_both_s
         assert_eq!(current.counters.charge, i32::MAX);
         let value = serde_json::to_value(&current.counters).unwrap();
         assert_eq!(value.as_object().unwrap().len(), 18);
-        assert!(crate::optional_trigger_public_v1::validate_state_checked(&s).is_err());
+        assert!(crate::valkyries_call_public_v62::capture(&s, p).is_err());
         let mut changed = f.clone();
         changed.battlefield[p.index()]
             .iter_mut()
