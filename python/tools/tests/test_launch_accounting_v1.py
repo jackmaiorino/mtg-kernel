@@ -16,6 +16,14 @@ import archive_distillation_dispatch_v1 as dispatch
 BURN = "import time; end=time.process_time()+.15\nwhile time.process_time()<end: pass"
 HEARTBEAT = ("import pathlib,sys,time; f=pathlib.Path(sys.argv[1]).open('w')"
              "\nwhile True: f.write('x'); f.flush(); time.sleep(.02)")
+PID_READY = """
+def ready(path, role):
+    path = pathlib.Path(path)
+    temporary = path.with_name(path.name+'.tmp')
+    temporary.write_text(json.dumps(dict(pid=os.getpid(), parent_pid=os.getppid(),
+                                         executable=sys.executable, role=role)))
+    temporary.replace(path)
+"""
 
 
 @unittest.skipUnless(os.name == "nt" and os.environ.get(dispatch.slots.CLAIM_ENV),
@@ -50,6 +58,21 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
             self.assertLess(time.monotonic(), until, "bounded child handshake did not complete")
             time.sleep(.01)
 
+    def record_membership(self, name, owner, **readiness):
+        identities = {role: json.loads(path.read_text()) for role, path in readiness.items()}
+        members = owner.tree.members()
+        processes = dispatch.slots.process_table()
+        relevant = set(members) | {os.getpid(), owner.pid}
+        for identity in identities.values():
+            relevant.update([identity["pid"], identity["parent_pid"]])
+        relevant.update(processes[pid][0] for pid in list(relevant) if pid in processes)
+        rows = [dict(pid=pid, parent_pid=processes[pid][0], name=processes[pid][1])
+                for pid in sorted(relevant) if pid in processes]
+        (self.root/(name+".json")).write_text(json.dumps(dict(
+            coordinator_pid=os.getpid(), popen_root_pid=owner.pid, identities=identities,
+            members=members, sample=owner.sample(), processes=rows,
+            scope="owned job members, known fixture PIDs and their immediate parents"), indent=2), encoding="utf-8")
+
     def finish(self):
         # Keep failure logs and partial accounting under the configured TEMP.
         errors, launches = [], []
@@ -83,14 +106,27 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
         peer_child = self.launch(peer, peer_code, trigger, ready, done)
         heartbeat = self.root/"survivor"
         survivor_child = self.launch(survivor, HEARTBEAT, heartbeat)
-        # A console Python descendant otherwise creates an extra conhost process.
+        root_ready, descendant_ready, release = [self.root/name for name in
+                                                ("completed-root-ready", "completed-descendant-ready", "release")]
+        descendant = (BURN+"\nimport json,os,pathlib,sys\n"+PID_READY+
+            "\nready(sys.argv[1], 'descendant'); release=pathlib.Path(sys.argv[2]); until=time.monotonic()+5"
+            "\nwhile not release.exists():"
+            "\n    if time.monotonic() >= until: raise TimeoutError('diagnostic barrier expired')"
+            "\n    time.sleep(.01)")
         child = self.launch(completed,
-            "import subprocess,sys; subprocess.run([sys.executable,'-B','-c',sys.argv[1]],"
-            "check=True,creationflags=subprocess.CREATE_NO_WINDOW)", BURN)
+            "import json,os,pathlib,subprocess,sys\n"+PID_READY+
+            "\nready(sys.argv[2], 'root')"
+            "\nsubprocess.run([sys.executable,'-B','-c',sys.argv[1],sys.argv[3],sys.argv[4]],"
+            "check=True,creationflags=subprocess.CREATE_NO_WINDOW)",
+            descendant, root_ready, descendant_ready, release)
+        self.wait_for(lambda: root_ready.exists() and descendant_ready.exists())
+        self.record_membership("completed-live-members", completed, root=root_ready, descendant=descendant_ready)
+        release.touch()
         self.assertEqual(child.wait(timeout=8), 0)
         self.wait_for(lambda: ready.exists() and heartbeat.exists())
         # A completed job can be quiet while siblings remain active in Guard.
         result = completed.quiet()
+        self.record_membership("completed-exited-members", completed, root=root_ready, descendant=descendant_ready)
         self.assertEqual(result["total_processes"], 2)
         self.assertEqual(result["active_processes"], 0)
         self.assertGreater(result["cpu_100ns"], 0)
@@ -177,13 +213,17 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
 
     def test_lingering_descendant_rejects_natural_drain_retains_cpu_and_can_be_cancelled(self):
         owner, ready = self.owner(), self.root/"descendant-ready"
-        descendant = BURN+"\nimport pathlib,sys; pathlib.Path(sys.argv[1]).touch()\ntime.sleep(20)"
+        root_ready = self.root/"lingering-root-ready"
+        descendant = BURN+"\nimport json,os,pathlib,sys\n"+PID_READY+"\nready(sys.argv[1], 'descendant')\ntime.sleep(20)"
         child = self.launch(owner,
-            "import subprocess,sys; subprocess.Popen([sys.executable,'-B','-c',sys.argv[1],sys.argv[2]],"
+            "import json,os,pathlib,subprocess,sys\n"+PID_READY+
+            "\nready(sys.argv[3], 'root')"
+            "\nsubprocess.Popen([sys.executable,'-B','-c',sys.argv[1],sys.argv[2]],"
             "creationflags=subprocess.CREATE_NO_WINDOW)",
-            descendant, ready)
+            descendant, ready, root_ready)
         self.assertEqual(child.wait(timeout=5), 0)
         self.wait_for(ready.exists)
+        self.record_membership("lingering-live-members", owner, root=root_ready, descendant=ready)
         with self.assertRaisesRegex(ValueError, "descendants remain"):
             owner.quiet(timeout=.05)
         partial = owner.sample()
