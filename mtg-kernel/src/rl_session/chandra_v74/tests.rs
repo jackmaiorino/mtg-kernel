@@ -113,13 +113,7 @@ fn paid_chandra_all_roots_complete_packets_original_indices_and_restore_match_na
         for index in [0, 1, 2] {
             let (s, id, ours, _) = owning_ready(p, index == 1, "Island");
             let mut pair = Pair::new(s);
-            let before = pair
-                .own
-                .fixture_state_v74()
-                .objects
-                .get(id)
-                .counters
-                .loyalty;
+            let before = crate::planeswalker_v1::loyalty(pair.own.fixture_state_v74(), id).unwrap();
             pair.activate(id, index);
             if index == 1 {
                 pair.target(ours);
