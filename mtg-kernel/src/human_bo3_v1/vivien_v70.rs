@@ -466,7 +466,7 @@ pub(super) fn project_with_handles(
         .collect::<Result<_, Error>>()?;
     Ok((
         HumanDecisionVivienV70 {
-            schema: "mtg-kernel-human-genesis-wave-decision/v70".into(),
+            schema: "mtg-kernel-human-vivien-decision/v70".into(),
             human_seat: human,
             prompt_seq,
             state: HumanVisibleStateVivienV70 {

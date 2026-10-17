@@ -37,7 +37,7 @@ fn step(
     assert_eq!(current["state"]["state_type"], "decision");
     assert_eq!(
         current["state"]["decision"]["schema"],
-        "mtg-kernel-limited-genesis-wave-decision/v11"
+        "mtg-kernel-limited-vivien-decision/v11"
     );
     let bound = s.pending.as_ref().unwrap();
     let index = bound.decision.actions().iter().position(choose).unwrap();

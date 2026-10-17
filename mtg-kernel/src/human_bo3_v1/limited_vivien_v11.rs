@@ -51,7 +51,7 @@ pub(crate) fn project_limited_vivien_v11(
         .transpose()?;
     Ok((
         LimitedVivienDecisionV11 {
-            schema: "mtg-kernel-limited-genesis-wave-decision/v11".into(),
+            schema: "mtg-kernel-limited-vivien-decision/v11".into(),
             actor,
             prompt_seq,
             state: projected.state,
