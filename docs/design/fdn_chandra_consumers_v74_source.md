@@ -92,3 +92,29 @@ are retained in their original prefix, with no new duplicate added. Actual
 logs and exact C/E copies are named fdn110-chandra-v74-v15-*.log and the
 source receipt under fdn110-pending-receipts and E:/storage-records/fdn110.
 No Rust build, check, test, Clippy, remote execution or admission was performed.
+
+## V74 current-slot sampler source checkpoint
+
+The distinct Chandra owner validates the original complete binding, samples a
+disposable backend clone using unchanged eligible current slots/permutation,
+rebuilds the full original/native/public binding and returns a fresh Arc. The
+numeric sibling also rebuilds and compares the entire packet. Neither a prior
+decision nor a serialized public DTO gains execution authority on the new owner.
+
+The native typed reference walk preserves original payments/positive damage
+allocations, original top-three prefix and public exile receipts, chosen play
+permission/expiry and original damage-source departure facts, including later
+hidden incarnations of those physical cards. Pending activation/selection
+references stay binding. It never pins future private library order or uses
+printing identity to constrain placements. Existing Liliana and Tinybones
+protection remains mandatory in the new scope, and older scopes refuse Chandra.
+
+Existing whole-world entry/Drake/Season/Crystal and unsupported foreign owners
+remain conservative refusals. Copied-token current logs and pending sacrifice
+owners retain their prior refusals; historical copied-token values alone are
+not reclassified as whole-world proof. Five new genuine paid both-seat source
+groups cover exile/choice/grant/cleanup, all eight divided damage units, native
+index parity, independent hidden worlds, numeric packets, fresh authority,
+serialization/restore/stale refusal, changed journals and explicit native hidden
+returns. They also assert the actual active end-step and Crystal boundaries.
+All Rust remains UNCOMPILED and UNRUN. No Full or playing-strength claim is made.
