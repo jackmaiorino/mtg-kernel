@@ -502,6 +502,129 @@ fn paid_giada_entry_restricted_mana_and_original_source_callback_restore_both_se
 }
 
 #[test]
+fn paid_axgard_tap_haste_opposing_target_incarnation_and_numeric_restore_both_seats() {
+    use crate::card_def::Keywords;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for target_leaves in [false, true] {
+            let mut raw = crate::extra_turn_v1::tests::ready(actor);
+            let cavalry = put(&mut raw, actor, "Axgard Cavalry", Zone::Hand);
+            // Declared mana and opposing vanilla creature are setup operands.
+            for _ in 0..2 {
+                put(&mut raw, actor, "Mountain", Zone::Battlefield);
+            }
+            let target = put(
+                &mut raw,
+                actor.opponent(),
+                "Runeclaw Bear",
+                Zone::Battlefield,
+            );
+            let mut owner = own(raw);
+            cast(&mut owner, cavalry, None, None);
+            drain(&mut owner);
+            assert!(state(&owner).objects.get(cavalry).summoning_sick);
+            assert!(!owner.decision_v59().unwrap().actions().iter().any(|a| {
+                matches!(a,ActionSemanticV1::ActivateAbility{source,..}if source.arena_id==cavalry.0)
+            }));
+            // Advance the actually paid creature through a natural untap turn.
+            let mut raw = state(&owner).clone();
+            let turn = raw.turn_key_v1();
+            for _ in 0..250 {
+                let decision = native::next(&mut raw);
+                if raw.turn_key_v1() != turn
+                    && raw.active_player == actor
+                    && raw.step == crate::state::Step::Main1
+                {
+                    assert!(
+                        matches!(decision,Decision::CastSpellOrPass{player,..}if player==actor)
+                    );
+                    break;
+                }
+                native::quiet(&mut raw, decision);
+            }
+            assert!(raw.turn_key_v1() != turn && !raw.objects.get(cavalry).summoning_sick);
+            let mut owner = own(raw);
+            let pool = state(&owner).players[actor.index()].mana_pool;
+            act(
+                &mut owner,
+                |a| matches!(a,ActionSemanticV1::ActivateAbility{source,ability_index:0,..}if source.arena_id==cavalry.0),
+            );
+            act(
+                &mut owner,
+                |a| matches!(a,ActionSemanticV1::ChooseTarget{target:TargetRefV1::Object{object},..}if object.arena_id==target.0),
+            );
+            assert!(state(&owner).objects.get(cavalry).tapped);
+            assert_eq!(state(&owner).players[actor.index()].mana_pool, pool);
+            assert!(state(&owner).stack.iter().any(|row| {
+                row.source == cavalry
+                    && row.kind == crate::state::StackItemKind::ActivatedAbility
+                    && row.v4.activated_ability_index == Some(0)
+            }));
+            let saved = owner.snapshot_v59();
+            let stale = owner.decision_v59().unwrap();
+            let mut outcomes = Vec::new();
+            let mut resolved_state = None;
+            for replay in 0..2 {
+                if replay != 0 {
+                    owner.restore_v59(&saved).unwrap();
+                    let before = gameplay(&owner);
+                    assert!(owner.apply(&stale, 0).is_err());
+                    assert_eq!(gameplay(&owner), before);
+                }
+                // Labelled native zone primitives on the genuine paid row test
+                // source departure and the original target's legality. No paid
+                // removal spell, model action or replacement target is invented.
+                let mut raw = state(&owner).clone();
+                event::propose_and_commit(
+                    &mut raw,
+                    ProposedEvent::zone_change(cavalry, Zone::Graveyard),
+                );
+                if target_leaves {
+                    event::propose_and_commit(
+                        &mut raw,
+                        ProposedEvent::zone_change(target, Zone::Graveyard),
+                    );
+                    event::propose_and_commit(
+                        &mut raw,
+                        ProposedEvent::zone_change(target, Zone::Battlefield),
+                    );
+                }
+                let mut resolved = own(raw);
+                drain(&mut resolved);
+                assert_eq!(state(&resolved).objects.get(cavalry).zone, Zone::Graveyard);
+                assert_eq!(
+                    state(&resolved).objects.get(target).controller,
+                    actor.opponent()
+                );
+                assert_eq!(
+                    crate::engine::has_effective_keyword(state(&resolved), target, Keywords::HASTE),
+                    !target_leaves
+                );
+                outcomes.push(gameplay(&resolved));
+                resolved_state = Some(state(&resolved).clone());
+            }
+            assert_eq!(outcomes[0], outcomes[1]);
+            if !target_leaves {
+                let mut raw = resolved_state.unwrap();
+                let turn = raw.turn_key_v1();
+                for _ in 0..250 {
+                    let decision = native::next(&mut raw);
+                    if raw.turn_key_v1() != turn {
+                        break;
+                    }
+                    native::quiet(&mut raw, decision);
+                }
+                assert_ne!(raw.turn_key_v1(), turn);
+                assert!(!crate::engine::has_effective_keyword(
+                    &raw,
+                    target,
+                    Keywords::HASTE
+                ));
+            }
+        }
+    }
+}
+
+#[test]
 fn paid_replication_season_aura_owner_menu_and_each_original_index_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut raw = ready(actor);
