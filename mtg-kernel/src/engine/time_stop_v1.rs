@@ -837,8 +837,221 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     }
 }
 
+pub(crate) fn public_facts_v68(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::time_stop_public_v68::FactsV68, String> {
+    use crate::time_stop_public_v68::{CleanupV68, DisposalV68, DisposedV68, FactsV68, PhaseV68};
+    validate(state)?;
+    ordinary_cleanup_v1::validate(state)?;
+    let mut disposals = Vec::new();
+    let mut compatibility_terminals = Vec::new();
+    let mut indices = Vec::new();
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+        .iter()
+        .enumerate()
+    {
+        let Some(saved) = journal(event) else {
+            continue;
+        };
+        let OperationV1::Dispose { item } = &saved.operation else {
+            continue;
+        };
+        let original = saved.original.restore(state, index)?;
+        crate::end_turn_observation_v68::require_supported(&original, Some(viewer))?;
+        for (position, row) in original.stack.iter().enumerate() {
+            for target in compatibility_targets_v68(&original, row)? {
+                compatibility_terminals.push(
+                    crate::time_stop_public_v68::CompatibilityTerminalV68 {
+                        target,
+                        disposal_occurrence: u32::try_from(disposals.len())
+                            .map_err(|_| "V68 disposal count exceeds u32")?,
+                        original_stack_position: u32::try_from(position)
+                            .map_err(|_| "V68 original stack position exceeds u32")?,
+                        outcome: crate::time_stop_public_v68::TerminalOutcomeV68::Disposed,
+                    },
+                );
+            }
+        }
+        let rows = original
+            .stack
+            .iter()
+            .enumerate()
+            .map(|(position, row)| {
+                let position = u32::try_from(position)
+                    .map_err(|_| "V68 original stack position exceeds u32")?;
+                Ok(DisposedV68 {
+                    original_stack_position: position,
+                    original: crate::rl::stack_item_public_end_turn_v68(
+                        &original, viewer, position, row,
+                    )
+                    .map_err(|e| e.0)?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let top = original
+            .stack
+            .last()
+            .ok_or("V68 original ending stack is empty")?;
+        if top != item.as_ref() {
+            return Err("V68 original ending spell changed".into());
+        }
+        indices.push(u64::try_from(index).map_err(|_| "V68 disposal position exceeds u64")?);
+        disposals.push(DisposalV68 {
+            occurrence: u32::try_from(disposals.len())
+                .map_err(|_| "V68 disposal count exceeds u32")?,
+            ending_spell_position: u32::try_from(rows.len() - 1)
+                .map_err(|_| "V68 ending spell position exceeds u32")?,
+            original_step: original.step,
+            original_active_player: original.active_player.into(),
+            disposed_rows: rows,
+        });
+    }
+    let cleanup = state
+        .engine
+        .time_stop_v1
+        .0
+        .as_ref()
+        .map(|owner| -> Result<CleanupV68, String> {
+            let occurrence = indices
+                .iter()
+                .position(|index| *index == owner.disposal)
+                .ok_or("V68 cleanup lost its original disposal")?;
+            Ok(CleanupV68 {
+                disposal_occurrence: u32::try_from(occurrence)
+                    .map_err(|_| "V68 cleanup occurrence exceeds u32")?,
+                turn: owner.turn,
+                active_player: owner.active.into(),
+                phase: match owner.phase {
+                    PhaseV1::BeforeCleanup => PhaseV68::BeforeCleanup,
+                    PhaseV1::Discard => PhaseV68::Discard,
+                    PhaseV1::Expiration => PhaseV68::Expiration,
+                    PhaseV1::Priority => PhaseV68::Priority,
+                    PhaseV1::GameOver => PhaseV68::GameOver,
+                },
+                discard_count: if owner.phase == PhaseV1::Discard {
+                    Some(
+                        state
+                            .engine
+                            .pending_discard
+                            .as_ref()
+                            .ok_or("V68 native cleanup discard erased")?
+                            .count,
+                    )
+                } else {
+                    None
+                },
+            })
+        })
+        .transpose()?;
+    let visible_printings = state.objects.iter().filter_map(|(id, _)| crate::optional_trigger_public_v1::reference(state, id, Some(viewer)))
+        .filter(|reference| matches!(reference.identity, crate::optional_trigger_public_v1::IdentityV1::Known { card_id } if card_id == 486)).collect();
+    let value = FactsV68 {
+        schema: crate::time_stop_public_v68::SCHEMA.into(),
+        producer_sha256: crate::time_stop_public_v68::producer_sha256(),
+        viewer: viewer.into(),
+        meaning: crate::rules_meaning_time_stop_v68::printed_meaning()?,
+        visible_printings,
+        disposals,
+        compatibility_terminals,
+        cleanup,
+    };
+    crate::time_stop_public_v68::validate(&value)?;
+    Ok(value)
+}
+
 /// Explicit source identity for the changed end-turn execution and closure
 /// paths. No world, capability result or runtime validation is cached here.
+// Match complete original publication values under the already replay-validated
+// disposal. The returned role is only a public compatibility-row ordinal.
+fn compatibility_targets_v68(
+    original: &GameState,
+    item: &StackItem,
+) -> Result<Vec<crate::time_stop_public_v68::CompatibilityTargetV68>, String> {
+    use crate::ajani_full_v42::lifecycle::JournalV42 as A;
+    use crate::drake_hatcher_v1::custody::{journal as drake, JournalV1 as D};
+    use crate::faebloom_trick_v43::JournalV43 as F;
+    use crate::fishing_pole_v39::lifecycle::JournalV39 as P;
+    use crate::time_stop_public_v68::CompatibilityTargetV68 as T;
+    let h = &original.engine.event_history;
+    let mut out = Vec::new();
+    let ordinal = |value: usize| {
+        u32::try_from(value).map_err(|_| "V68 compatibility ordinal exceeds u32".to_string())
+    };
+    let (mut dc, mut da, mut ra, mut aa, mut po, mut fs, mut fr) =
+        (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    for (at, event) in h.iter().enumerate() {
+        if let Some(record) = drake(event) {
+            match &record.value {
+                D::Captured { .. } => {
+                    if h.iter().filter_map(drake).any(|r| matches!(&r.value,D::Published{capture,item:owned} if *capture==record.index && owned.as_ref()==item)) {
+                    out.push(T::DrakeCombat{occurrence:ordinal(dc)?});
+                }
+                    dc += 1;
+                }
+                D::Paid { item: owned, .. } => {
+                    if owned.as_ref() == item {
+                        out.push(T::DrakeActivation {
+                            occurrence: ordinal(da)?,
+                        });
+                    }
+                    da += 1;
+                }
+                _ => {}
+            }
+        }
+        match event {
+            CommittedEvent::RavenousPaymentV1 { paid } => {
+                if paid.item.as_ref() == item {
+                    out.push(T::RavenousActivation {
+                        occurrence: ordinal(ra)?,
+                    });
+                }
+                ra += 1;
+            }
+            CommittedEvent::AjaniJournalV42 { journal } => {
+                if let A::Paid { item: owned, .. } = journal.as_ref() {
+                    if owned.as_ref() == item {
+                        out.push(T::AjaniActivation {
+                            position: ordinal(aa)?,
+                        });
+                    }
+                    aa += 1;
+                }
+            }
+            CommittedEvent::FishingPoleJournalV39 { journal } => {
+                if matches!(
+                    journal.as_ref(),
+                    P::PaymentInput { .. } | P::Captured { .. }
+                ) {
+                    if h.iter().any(|e| matches!(e,CommittedEvent::FishingPoleJournalV39{journal} if matches!(journal.as_ref(),P::Published{origin,item:owned}if *origin==at as u64&&owned.as_ref()==item))){out.push(T::FishingOperation{position:ordinal(po)?});}
+                    po += 1;
+                }
+            }
+            CommittedEvent::FaebloomJournalV43 { journal } => match journal.as_ref() {
+                F::Published { item: owned } => {
+                    if owned.as_ref() == item {
+                        out.push(T::FaebloomSpell {
+                            ordinal: ordinal(fs)?,
+                        });
+                    }
+                    fs += 1;
+                }
+                F::ReflexiveCaptured { .. } => {
+                    if h.iter().any(|e| matches!(e,CommittedEvent::FaebloomJournalV43{journal} if matches!(journal.as_ref(),F::TriggerPublished{capture,item:owned,..}if *capture==at as u64&&owned.as_ref()==item))){out.push(T::FaebloomReflexive{ordinal:ordinal(fr)?});}
+                    fr += 1;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn source_sha256_v1() -> &'static str {
     static VALUE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     VALUE
@@ -996,6 +1209,120 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/engine/ordinary_cleanup_v1.rs",
                     include_str!("ordinary_cleanup_v1.rs"),
                 ),
+                ("mtg-kernel/Cargo.toml", include_str!("../../Cargo.toml")),
+                (
+                    "mtg-kernel/src/akroma_family_public_v40.rs",
+                    include_str!("../akroma_family_public_v40.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_end_turn_env_v9.rs",
+                    include_str!("../bin/kernel_limited_end_turn_env_v9.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1.rs",
+                    include_str!("../current_mixed_policy_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/end_turn.rs",
+                    include_str!("../current_mixed_policy_v1/end_turn.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/normalize.rs",
+                    include_str!("../current_mixed_policy_v1/normalize.rs"),
+                ),
+                (
+                    "mtg-kernel/src/divine_actions_v44.rs",
+                    include_str!("../divine_actions_v44.rs"),
+                ),
+                (
+                    "mtg-kernel/src/end_turn_candidates_v68.rs",
+                    include_str!("../end_turn_candidates_v68.rs"),
+                ),
+                (
+                    "mtg-kernel/src/end_turn_observation_v68.rs",
+                    include_str!("../end_turn_observation_v68.rs"),
+                ),
+                (
+                    "mtg-kernel/src/flat_policy_v1.rs",
+                    include_str!("../flat_policy_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/flat_policy_v2.rs",
+                    include_str!("../flat_policy_v2.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1.rs",
+                    include_str!("../human_bo3_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/end_turn_v68.rs",
+                    include_str!("../human_bo3_v1/end_turn_v68.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/labels.rs",
+                    include_str!("../human_bo3_v1/labels.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_end_turn_v9.rs",
+                    include_str!("../human_bo3_v1/limited_end_turn_v9.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/prepared_v57.rs",
+                    include_str!("../human_bo3_v1/prepared_v57.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/ravenous_v51.rs",
+                    include_str!("../human_bo3_v1/ravenous_v51.rs"),
+                ),
+                ("mtg-kernel/src/lib.rs", include_str!("../lib.rs")),
+                (
+                    "mtg-kernel/src/limited_end_turn_session_v9.rs",
+                    include_str!("../limited_end_turn_session_v9.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_session_v1.rs",
+                    include_str!("../limited_session_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/ravenous_observation_v51.rs",
+                    include_str!("../ravenous_observation_v51.rs"),
+                ),
+                (
+                    "mtg-kernel/src/ravenous_public_v51.rs",
+                    include_str!("../ravenous_public_v51.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session.rs",
+                    include_str!("../rl_session.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/end_turn_v68.rs",
+                    include_str!("../rl_session/end_turn_v68.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/limited_common_v1.rs",
+                    include_str!("../rl_session/limited_common_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/ravenous_v51.rs",
+                    include_str!("../rl_session/ravenous_v51.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_variable_cast_v1.rs",
+                    include_str!("../rl_variable_cast_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rules_meaning_time_stop_v68.rs",
+                    include_str!("../rules_meaning_time_stop_v68.rs"),
+                ),
+                (
+                    "mtg-kernel/src/time_stop_public_v68.rs",
+                    include_str!("../time_stop_public_v68.rs"),
+                ),
+                (
+                    "python/tools/limited_end_turn_session_v9.py",
+                    include_str!("../../../python/tools/limited_end_turn_session_v9.py"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());
@@ -1013,4 +1340,4 @@ pub(crate) fn source_sha256_v1() -> &'static str {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "time_stop_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

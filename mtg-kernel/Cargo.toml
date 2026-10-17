@@ -199,3 +199,7 @@ path = "src/bin/kernel_limited_graveyard_return_env_v7.rs"
 [[bin]]
 name = "kernel_limited_call_env_v8"
 path = "src/bin/kernel_limited_call_env_v8.rs"
+
+[[bin]]
+name = "kernel_limited_end_turn_env_v9"
+path = "src/bin/kernel_limited_end_turn_env_v9.rs"

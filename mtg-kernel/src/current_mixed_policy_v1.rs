@@ -1,6 +1,8 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
 mod call;
+mod end_turn;
+pub use end_turn::{EndTurnDecision, EndTurnSession, EndTurnSnapshot};
 mod canonical_semantic_booleans;
 mod elenda;
 mod fiery_public_operands;
@@ -61,6 +63,7 @@ pub enum Source {
     NextFiveV59,
     GraveyardReturnV61,
     CallV62,
+    EndTurnV68,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {

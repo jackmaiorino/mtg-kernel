@@ -6,10 +6,10 @@ use crate::policy_observation_v6::tests::put;
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(player: PlayerId) -> GameState {
+pub(crate) fn ready(player: PlayerId) -> GameState {
     ready_hidden(player, "Forest")
 }
-fn ready_hidden(player: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready_hidden(player: PlayerId, hidden: &str) -> GameState {
     let own = [id("Island"); 80];
     let other = [id(hidden); 80];
     let (a, b) = if player == PlayerId::P0 {
@@ -34,19 +34,19 @@ fn ready_hidden(player: PlayerId, hidden: &str) -> GameState {
     }
     state
 }
-fn restore(state: &GameState) -> GameState {
+pub(crate) fn restore(state: &GameState) -> GameState {
     let result: GameState = serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
     assert_eq!(state, &result);
     assert_eq!(state.state_hash(), result.state_hash());
     result
 }
-fn next(state: &mut GameState) -> Decision {
+pub(crate) fn next(state: &mut GameState) -> Decision {
     let d = advance_until_decision(state);
     assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
     assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
     d
 }
-fn pass(state: &mut GameState, decision: Decision) {
+pub(crate) fn pass(state: &mut GameState, decision: Decision) {
     let action = match decision {
         Decision::CastSpellOrPass { .. } => Action::Pass,
         Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
@@ -58,7 +58,7 @@ fn pass(state: &mut GameState, decision: Decision) {
     };
     step(state, action).unwrap();
 }
-fn priority(state: &mut GameState, player: PlayerId) {
+pub(crate) fn priority(state: &mut GameState, player: PlayerId) {
     for _ in 0..64 {
         let d = next(state);
         if matches!(d,Decision::CastSpellOrPass{player:p,..} if p==player) {
@@ -68,14 +68,14 @@ fn priority(state: &mut GameState, player: PlayerId) {
     }
     panic!("priority absent")
 }
-fn tapped(state: &GameState, player: PlayerId) -> usize {
+pub(crate) fn tapped(state: &GameState, player: PlayerId) -> usize {
     state.players[player.index()]
         .battlefield
         .iter()
         .filter(|o| state.objects.get(**o).tapped)
         .count()
 }
-fn cast(
+pub(crate) fn cast(
     state: &mut GameState,
     player: PlayerId,
     name: &str,
@@ -134,14 +134,14 @@ fn until(state: &mut GameState, done: impl Fn(&GameState) -> bool) -> Decision {
     }
     panic!("native boundary absent")
 }
-fn finish(state: &mut GameState) {
+pub(crate) fn finish(state: &mut GameState) {
     until(state, |s| {
         s.stack.is_empty()
             && s.engine.pending_effect.is_none()
             && s.engine.pending_triggers.is_empty()
     });
 }
-fn end_turn(state: &mut GameState) {
+pub(crate) fn end_turn(state: &mut GameState) {
     until(state, |s| {
         s.engine.time_stop_v1.is_empty()
             && s.engine

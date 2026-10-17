@@ -527,7 +527,7 @@ fn label(
     graveyard_return: Option<
         &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
     >,
-    call: Option<&crate::call_observation_v62::CallObservationV62>,
+    call: Option<CompleteObservationV68<'_>>,
 ) -> Result<String, Error> {
     if let Some(label) = ravenous_facts::label(action, observation, handles, human)? {
         return Ok(label);
@@ -854,7 +854,7 @@ fn label(
     }
     let parts = parts(observation);
     if let Some(obs) = call {
-        return super::labels::label_parts_call_v62(action, &parts, handles, human, obs);
+        return obs.label_parts(action, &parts, handles, human);
     }
     if let Some(obs) = graveyard_return {
         return super::labels::label_parts_graveyard_return_v61(
@@ -1051,7 +1051,47 @@ pub(super) fn project_call_base_with_handles(
         None,
         None,
         None,
-        Some(candidates),
+        Some(CompleteCandidatesV68::Call(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+pub(super) fn project_end_turn_base_with_handles(
+    candidates: &crate::end_turn_candidates_v68::EndTurnCandidatesV68,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::EndTurn(candidates)),
     )?;
     let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
     let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
@@ -1106,6 +1146,106 @@ pub(super) fn project_graveyard_return_base_with_handles(
     ))
 }
 
+#[derive(Clone, Copy)]
+enum CompleteCandidatesV68<'a> {
+    Call(&'a crate::call_candidates_v62::CallCandidatesV62),
+    EndTurn(&'a crate::end_turn_candidates_v68::EndTurnCandidatesV68),
+}
+#[derive(Clone, Copy)]
+enum CompleteOriginalV68<'a> {
+    Call(&'a crate::call_observation_v62::CallObservationV62),
+    EndTurn(&'a crate::end_turn_observation_v68::EndTurnObservationV68),
+}
+#[derive(Clone, Copy)]
+struct CompleteObservationV68<'a> {
+    common: &'a crate::elenda_observation_v52::ElendaObservationV52,
+    drake: &'a crate::drake_public_v53::FactsV53,
+    spinner: &'a crate::spinner_public_v54::FactsV54,
+    quandary: &'a crate::quandary_public_v55::FactsV55,
+    phoenix: &'a crate::phoenix_public_v56::FactsV56,
+    next_five: &'a crate::next_five_public_v59::FactsV59,
+    graveyard_return: &'a crate::graveyard_return_public_v61::FactsV61,
+    call: &'a crate::valkyries_call_public_v62::FactsV62,
+    end_turn: Option<&'a crate::time_stop_public_v68::FactsV68>,
+    original: CompleteOriginalV68<'a>,
+}
+impl<'a> CompleteCandidatesV68<'a> {
+    fn view(self) -> CompleteObservationV68<'a> {
+        match self {
+            Self::Call(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: None,
+                    original: CompleteOriginalV68::Call(o),
+                }
+            }
+            Self::EndTurn(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    original: CompleteOriginalV68::EndTurn(o),
+                }
+            }
+        }
+    }
+    fn drake_activation(
+        self,
+        index: usize,
+    ) -> Option<&'a crate::next_five_observation_v59::NextFiveActivationV59> {
+        match self {
+            Self::Call(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::EndTurn(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+        }
+    }
+}
+impl CompleteObservationV68<'_> {
+    fn validate(self) -> Result<(), Error> {
+        match self.original {
+            CompleteOriginalV68::Call(v) => crate::call_observation_v62::validate_artifact(v),
+            CompleteOriginalV68::EndTurn(v) => {
+                crate::end_turn_observation_v68::validate_artifact(v)
+            }
+        }
+        .map_err(|_| Error::InvalidVisibleReference)
+    }
+    fn choice_label(self, a: &ActionSemanticV1, h: &Handles) -> Result<Option<String>, Error> {
+        match self.original {
+            CompleteOriginalV68::Call(v) => super::call_v62::choice_label(v, a, h),
+            CompleteOriginalV68::EndTurn(v) => super::end_turn_v68::choice_label(v, a, h),
+        }
+    }
+    fn label_parts(
+        self,
+        a: &ActionSemanticV1,
+        p: &super::life_ward_v8::ProjectionPartsV8<'_>,
+        h: &Handles,
+        human: PlayerSeatV1,
+    ) -> Result<String, Error> {
+        match self.original {
+            CompleteOriginalV68::Call(v) => super::labels::label_parts_call_v62(a, p, h, human, v),
+            CompleteOriginalV68::EndTurn(v) => {
+                super::labels::label_parts_end_turn_v68(a, p, h, human, v)
+            }
+        }
+    }
+}
+
 type ProjectionWithHandles = (
     HumanVisibleStateV1<HumanRavenousExtensionsV51>,
     Vec<HumanLegalActionV1>,
@@ -1125,10 +1265,10 @@ fn project_with_handles(
     graveyard_candidates: Option<
         &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
     >,
-    call_candidates: Option<&crate::call_candidates_v62::CallCandidatesV62>,
+    call_candidates: Option<CompleteCandidatesV68<'_>>,
 ) -> Result<ProjectionWithHandles, Error> {
     let graveyard_return = graveyard_candidates.map(|v| &v.observation);
-    let call = call_candidates.map(|v| &v.observation);
+    let call = call_candidates.map(CompleteCandidatesV68::view);
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
     }
@@ -1136,8 +1276,7 @@ fn project_with_handles(
         return Err(Error::UnsupportedPrompt);
     }
     if let Some(obs) = call {
-        crate::call_observation_v62::validate_artifact(obs)
-            .map_err(|_| Error::InvalidVisibleReference)?;
+        obs.validate()?;
         if &obs.common.common != observation
             || Some(&obs.common.elenda) != elenda
             || graveyard_return.is_some()
@@ -1217,20 +1356,24 @@ fn project_with_handles(
     let next_five_facts = next_five
         .map(|o| &o.next_five)
         .or_else(|| graveyard_return.map(|o| &o.next_five))
-        .or_else(|| call.map(|o| &o.next_five))
+        .or_else(|| call.map(|o| o.next_five))
         .map(|facts| super::next_five_v59::register(facts, &mut handles))
         .transpose()?;
     let graveyard_facts = graveyard_return
-        .map(|o| super::graveyard_return_v61::facts(&o.graveyard_return, &mut handles))
+        .map(|o| super::graveyard_return_v61::facts(o.graveyard_return, &mut handles))
         .transpose()?;
     let graveyard_facts = match graveyard_facts {
         Some(v) => Some(v),
         None => call
-            .map(|o| super::graveyard_return_v61::facts(&o.graveyard_return, &mut handles))
+            .map(|o| super::graveyard_return_v61::facts(o.graveyard_return, &mut handles))
             .transpose()?,
     };
     let call_facts = call
-        .map(|obs| super::call_v62::call_facts(&obs.call, &mut handles))
+        .map(|obs| super::call_v62::call_facts(obs.call, &mut handles))
+        .transpose()?;
+    let end_turn_facts = call
+        .and_then(|o| o.end_turn)
+        .map(|v| super::end_turn_v68::end_turn_facts(v, &mut handles))
         .transpose()?;
     for row in &observation.ajani.permanents {
         handles.insert(&row.source)?;
@@ -1516,11 +1659,19 @@ fn project_with_handles(
         if let Some(next_five) = &next_five_facts {
             if let Some(graveyard) = &graveyard_facts {
                 if let Some(call) = &call_facts {
-                    handles.canonicalize_parts_with_prepared(
-                        &initial,
-                        unary,
-                        &(facts, next_five, graveyard, call),
-                    )?;
+                    if let Some(end_turn) = &end_turn_facts {
+                        handles.canonicalize_parts_with_prepared(
+                            &initial,
+                            unary,
+                            &(facts, next_five, graveyard, call, end_turn),
+                        )?;
+                    } else {
+                        handles.canonicalize_parts_with_prepared(
+                            &initial,
+                            unary,
+                            &(facts, next_five, graveyard, call),
+                        )?;
+                    }
                 } else {
                     handles.canonicalize_parts_with_prepared(
                         &initial,
@@ -1543,10 +1694,10 @@ fn project_with_handles(
         .enumerate()
         .map(|(index, action)| {
             Ok((
-                if let Some(row)=call_candidates.and_then(|v|v.candidates.get(index)).and_then(|v|v.drake_activation.as_ref()) {
+                if let Some(row)=call_candidates.and_then(|v|v.drake_activation(index)) {
                     let source=handles.name(&row.source)?;
                     format!("Activate {source}: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",row.count,row.before,row.after)
-                } else if let Some(label) = call.map(|obs|super::call_v62::choice_label(obs,action,&handles)).transpose()?.flatten() { label
+                } else if let Some(label) = call.map(|obs|obs.choice_label(action,&handles)).transpose()?.flatten() { label
                 } else if let Some(row)=graveyard_candidates.and_then(|v|v.candidates.get(index)).and_then(|v|v.drake_activation.as_ref()) {
                     let source=handles.name(&row.source)?;
                     format!("Activate {source}: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",row.count,row.before,row.after)

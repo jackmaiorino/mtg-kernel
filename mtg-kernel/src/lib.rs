@@ -808,3 +808,10 @@ pub mod call_candidates_v62;
 pub mod call_observation_v62;
 
 pub mod limited_call_session_v8;
+
+pub mod end_turn_candidates_v68;
+pub mod end_turn_observation_v68;
+pub mod rules_meaning_time_stop_v68;
+pub mod time_stop_public_v68;
+
+pub mod limited_end_turn_session_v9;
