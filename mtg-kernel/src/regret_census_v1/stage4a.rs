@@ -38,6 +38,10 @@
 //! `mean` is the formal backup, and rows carry `"backup"` only when it is on.
 //! `S4A_REUSE_WITNESS=1` in searched `s4a-budget` records passive witnesses
 //! at every executed reused decision; unset or `0` leaves rows unchanged.
+//! `s4a-reuse-prefix` captures the first witnessed later-physical-decision
+//! reuse under a separate acquisition ceiling. `s4a-reused-action` consumes
+//! that prefix and compares its action with one isolated ordinary-policy
+//! draw or an explicit same-action control (utility_root/reused.rs).
 
 mod allocation_experiment;
 mod arms;
@@ -106,6 +110,8 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-search-profile"
             | "s4a-utility-root"
             | "s4a-utility-root-inspect"
+            | "s4a-reuse-prefix"
+            | "s4a-reused-action"
     )
 }
 
@@ -1031,6 +1037,12 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
     if cfg.mode == "s4a-utility-root-inspect" {
         return utility_root::run_inspect(cfg, policy, &sh, &spec_bytes);
     }
+    if cfg.mode == "s4a-reuse-prefix" {
+        return utility_root::run_acquisition(cfg, policy, &sh, &spec_bytes);
+    }
+    if cfg.mode == "s4a-reused-action" {
+        return utility_root::run_comparison(cfg, policy, &sh, &spec_bytes);
+    }
     if cfg.mode == "s4a-branch" {
         // Roots: BRANCH_ROOTS (JSONL of branch::RootSpec); this process plays
         // roots [first_game, first_game + games) for arm BRANCH_ARM (B1 or D8).
@@ -1516,6 +1528,11 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     }
     // Every mode refuses a best-line `S4A_BACKUP` it would not use.
     parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
+    if matches!(cfg.mode.as_str(), "s4a-reuse-prefix" | "s4a-reused-action")
+        && parse_interchange(std::env::var("S4A_INTERCHANGE"))?
+    {
+        return Err("reused-action modes require interchange off".into());
+    }
     match cfg.mode.as_str() {
         "s4a-bank"
         | "s4a-bank-trace"
@@ -1527,6 +1544,8 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-root-rebuild"
         | "s4a-search-profile"
         | "s4a-utility-root"
+        | "s4a-reuse-prefix"
+        | "s4a-reused-action"
         | "s4a-utility-root-inspect" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
