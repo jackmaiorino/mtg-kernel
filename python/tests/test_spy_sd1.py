@@ -1878,21 +1878,71 @@ class Custody(Temp):
         self.assertFalse((self.out_dir / "members" / "metadata" / "allocation.json").exists())
         self.assertFalse(out["pass"])
 
-    def test_a_seal_that_maps_an_original_two_ways_is_not_read(self):
-        stale = self.sealed["metadata/stale.json"][1]
+    def test_a_seal_that_maps_an_original_to_other_bytes_is_not_read(self):
         first = self.seal_value["original_archive_members"][0]
+        out = sd1.custody(self.reseal(
+            lambda seal: seal["original_archive_members"][0]["original"].update(sha256="0" * 64)), self.out_dir)
+        self.assertIn(f"the seal maps {first['original']['path']!r} to {first['member']!r} with another SHA-256",
+                      out["failures"])
+        self.assertIn("no member is extracted: the seal or the archive did not verify", out["failures"])
+
+    def seal_again(self, member: str, original: str, data: bytes) -> dict:
+        """The seal with a further member holding ``data``, which it also maps from ``original``, an original
+        it already maps to another member; both archives hold the new member. The spec."""
+        self.seal_value["files"].append({"name": member, "bytes": len(data), "sha256": digest(data)})
+        self.seal_value["original_archive_members"].append({"original": as_pin(original, data), "member": member})
+        return self.retar([*((m, d) for m, (_, d) in sorted(self.sealed.items())), (member, data)])
+
+    def test_an_original_sealed_twice_with_one_sha256_binds_to_the_first_member(self):
+        binary = f"{HOT}/inputs-001/desk/bin/regret.exe"
+        out = sd1.custody(self.seal_again("copies/regret.exe", binary, b"binary"), self.out_dir)
+        self.assertEqual(out["failures"], [])
+        self.assertEqual(out["repeated_originals"], [
+            {"original": binary, "members": ["inputs/desk/bin/regret.exe", "copies/regret.exe"],
+             "sha256": [digest(b"binary")], "binds": "inputs/desk/bin/regret.exe"}])
+        desk = json.loads((self.out_dir / "remapped" / "formal" / f"{self.CASES['r1'][0]}-search-v1" / "command.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual(desk["command"][0], self.mine(self.out_dir, "members", "inputs/desk/bin/regret.exe"))
+        self.assertNotIn("copies/regret.exe", {m["member"] for m in out["members"]})
+
+    def test_an_original_sealed_twice_with_different_bytes_names_neither_member(self):
+        # Never looked up: custody passes, and the record lists it.
+        out = sd1.custody(self.seal_again("copies/notes.txt", f"{HOT}/notes.txt", b"other notes"), self.out_dir)
+        self.assertEqual(out["failures"], [])
+        self.assertEqual(out["repeated_originals"], [
+            {"original": f"{HOT}/notes.txt", "members": ["metadata/notes.txt", "copies/notes.txt"],
+             "sha256": [digest(b"notes"), digest(b"other notes")], "binds": None}])
+        # Looked up, by a pin, through a job spec or as a job spec: each lookup fails, and none reads as a path
+        # that resolves nowhere (which custody's reruns may answer with a rewrite).
+        r1_job, r2_job = (f"formal/{self.CASES[lineage][0]}-search-v1/command.json" for lineage in ("r1", "r2"))
+        binary = f"{HOT}/inputs-001/desk/bin/regret.exe"
+        names = "SHA-256s ({}, copies/{}), so it names none of them".format
         given = [
-            (lambda seal: seal["original_archive_members"][0]["original"].update(sha256="0" * 64),
-             f"the seal maps {first['original']['path']!r} to {first['member']!r} with another SHA-256"),
-            (lambda seal: seal["original_archive_members"].append(
-                {"original": as_pin(f"{HOT}/allocation.json", stale), "member": "metadata/stale.json"}),
-             f"the seal maps {HOT}/allocation.json to two members"),
+            ("allocation", f"{HOT}/allocation.json", "metadata/allocation.json",
+             [f"the allocation the index pins: {HOT}/allocation.json is an original the seal maps to members with "
+              f"different {names('metadata/allocation.json', 'allocation')}"]),
+            # Both desktop jobs run it: r1's spells it with backslashes, r2's with slashes.
+            ("binary", binary, "inputs/desk/bin/regret.exe",
+             [f"{job}: {spelling} is an original the seal maps to members with different "
+              f"{names('inputs/desk/bin/regret.exe', 'binary')}"
+              for job, spelling in ((r1_job, binary.replace("/", "\\")), (r2_job, binary))]),
+            ("job", f"{HOT}/{r1_job}", r1_job,
+             [f"{self.CASES['r1'][0]}-search-v1: its job spec {HOT}/{r1_job} is an original the seal maps to "
+              f"members with different {names(r1_job, 'job')}"]),
         ]
-        for i, (change, needle) in enumerate(given):
-            with self.subTest(needle):
-                out = sd1.custody(self.reseal(change), self.root / f"seal-{i}")
-                self.assertIn(needle, out["failures"])
-                self.assertIn("no member is extracted: the seal or the archive did not verify", out["failures"])
+        for i, (copy_name, original, member, needles) in enumerate(given):
+            with self.subTest(copy_name):
+                self.build(f"twice-{i}")
+                out = sd1.custody(self.seal_again(f"copies/{copy_name}", original, b"other bytes"),
+                                  self.root / f"twice-{i}-out")
+                self.assertEqual(sorted(f for f in out["failures"] if "is an original the seal maps" in f),
+                                 sorted(needles))
+                self.assertFalse(any("resolves to no sealed member, verified file or directory" in f
+                                     for f in out["failures"]), out["failures"])
+                self.assertNotIn("no member is extracted: the seal or the archive did not verify", out["failures"])
+                self.assertEqual(out["repeated_originals"][0]["members"], [member, f"copies/{copy_name}"])
+                self.assertIsNone(out["repeated_originals"][0]["binds"])
+                self.assertFalse(out["pass"])
 
     def test_a_member_custody_cannot_remap_or_a_repeated_entry_is_a_failure(self):
         job = f"formal/{self.CASES['r1'][0]}-search-v1/command.json"
