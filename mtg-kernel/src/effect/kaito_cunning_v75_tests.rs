@@ -8,10 +8,10 @@ use crate::{
     state::Step,
 };
 const NAME: &str = "Kaito, Cunning Infiltrator";
-fn ready(p: PlayerId) -> GameState {
+pub(super) fn ready(p: PlayerId) -> GameState {
     super::super::vivien_reid_v1::tests::ready(p, &["Forest"; 64], &[], "Island")
 }
-fn walker(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(super) fn walker(s: &mut GameState, p: PlayerId) -> ObjectId {
     let k = cast(s, p, NAME, &[], 3);
     finish(s);
     assert_eq!(s.objects.get(k).zone, Zone::Battlefield);
@@ -19,7 +19,7 @@ fn walker(s: &mut GameState, p: PlayerId) -> ObjectId {
     assert_eq!(crate::planeswalker_v1::loyalty(s, k), Some(3));
     k
 }
-fn finish(s: &mut GameState) {
+pub(super) fn finish(s: &mut GameState) {
     for _ in 0..256 {
         let d = next(s);
         if s.stack.is_empty()
@@ -39,7 +39,7 @@ fn finish(s: &mut GameState) {
     }
     panic!("Kaito resolution did not finish")
 }
-fn activate(
+pub(super) fn activate(
     s: &mut GameState,
     p: PlayerId,
     k: ObjectId,
@@ -118,7 +118,7 @@ fn activate(
     }
     panic!("Kaito activation was not published")
 }
-fn discard_prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
+pub(super) fn discard_prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     for _ in 0..64 {
         let d = next(s);
         if let Decision::Discard {
@@ -143,7 +143,7 @@ fn ninja_count(s: &GameState, p: PlayerId) -> usize {
         .filter(|id| token_definition(s.objects.get(**id).card_def))
         .count()
 }
-fn ultimate(s: &mut GameState, p: PlayerId, k: ObjectId) {
+pub(super) fn ultimate(s: &mut GameState, p: PlayerId, k: ObjectId) {
     // Native counter-placement setup for the printed -9, not a fabricated +ability.
     let old = crate::planeswalker_v1::loyalty(s, k).unwrap();
     if old < 9 {
@@ -165,7 +165,7 @@ fn refuses(s: &GameState) {
     assert!(engine::step(&mut bad, Action::Pass).is_err());
     assert_eq!(bad, before);
 }
-fn next_own_main(s: &mut GameState, p: PlayerId) {
+pub(super) fn next_own_main(s: &mut GameState, p: PlayerId) {
     let old = s.turn;
     for _ in 0..256 {
         let d = next(s);
@@ -185,7 +185,7 @@ fn next_own_main(s: &mut GameState, p: PlayerId) {
     }
     panic!("next own main absent")
 }
-fn combat_trigger(s: &mut GameState, p: PlayerId, attacker: ObjectId) -> StackItem {
+pub(super) fn combat_trigger(s: &mut GameState, p: PlayerId, attacker: ObjectId) -> StackItem {
     let mut declared = false;
     for _ in 0..128 {
         let d = next(s);

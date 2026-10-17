@@ -218,7 +218,7 @@ fn root(s: &GameState, c: AbilitySourceContractV4, v: PlayerId) -> Result<public
     };
     Ok(r)
 }
-fn counters(s: &GameState, id: ObjectId) -> Result<CountersV72, String> {
+pub(crate) fn counters(s: &GameState, id: ObjectId) -> Result<CountersV72, String> {
     let o = s.objects.get(id);
     let crate::state::Counters {
         plus1_plus1,
@@ -259,7 +259,7 @@ fn counters(s: &GameState, id: ObjectId) -> Result<CountersV72, String> {
     nonnegative(&c)?;
     Ok(c)
 }
-fn nonnegative(c: &CountersV72) -> Result<(), String> {
+pub(crate) fn nonnegative(c: &CountersV72) -> Result<(), String> {
     if [
         c.plus_one,
         i32::from(c.minus_one),
