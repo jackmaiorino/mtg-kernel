@@ -3,6 +3,8 @@
 use super::*;
 use crate::{event::CommittedEvent as E, ids::StackItemId, state::StackItemKind};
 use serde::{Deserialize, Serialize};
+#[path = "liliana_dreadhorde_public_v73.rs"]
+pub(crate) mod public_v73;
 pub(crate) fn definition(id: u16) -> bool {
     cfg!(all(
         feature = "limited-fdn-fixtures",
