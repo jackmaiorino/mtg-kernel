@@ -4697,8 +4697,8 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
     }) {
         let validation = validate_pending_effect_choice(state);
         #[cfg(test)]
-        if validation.is_err() {
-            eprintln!("native_continuation::resume::required_choice_validation_rejected");
+        if let Err(error) = &validation {
+            eprintln!("native_continuation::resume::required_choice_validation_rejected: {error}");
         }
         validation?;
     }
@@ -10456,7 +10456,11 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         != Some(&pending.resolving_item)
     {
         #[cfg(test)]
-        eprintln!("native_continuation::validate::resolving_stack_row_rejected");
+        eprintln!(
+            "native_continuation::validate::resolving_stack_row_rejected: pending={:?} actual={:?}",
+            pending.resolving_item,
+            state.stack.last(),
+        );
         return Err(
             "effect continuation resolving item no longer exactly matches the public stack top"
                 .to_string(),
