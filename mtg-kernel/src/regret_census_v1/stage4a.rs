@@ -23,6 +23,10 @@
 //! In `s4a-budget`, `S4A_INTERCHANGE=1` merges interchangeable choices
 //! (`stage4a/interchange.rs`); unset or `0` leaves the search unchanged, and
 //! rows carry `"interchange"` only when it is on.
+//! `S4A_EXECUTOR=root-only-v1` in searched `s4a-budget` executes only new-root
+//! tree choices; supported would-be reuse uses one ordinary live-policy draw.
+//! It requires repaired keys, mean backup, no interchange or witness recording.
+//! Alternate rows carry arm `search-root-only-v1`; defaults remain unchanged.
 //! `BUDGET_ARM=plain-v1` selects an explicit ordinary-opening plain control
 //! in `s4a-budget`, with `BUDGET_TOTAL=0`, mean backup and no interchange.
 //! It uses the case's guide policy seeds and never constructs a search.
@@ -1313,6 +1317,8 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         if plain && reuse_witnesses == reuse_witness::Recording::Enabled {
             return Err("S4A_REUSE_WITNESS=1 requires BUDGET_ARM=search-v1".into());
         }
+        let executor = refresh::ExecutionMode::parse(&cfg.mode, std::env::var("S4A_EXECUTOR"))?;
+        executor.validate_budget(plain, mode, interchange, bestline, reuse_witnesses)?;
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1324,7 +1330,20 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                         if plain {
                             return refresh::budget_plain_case(&sh, policy, src, &binding);
                         }
-                        refresh::budget_case(
+                        if executor == refresh::ExecutionMode::Persistent {
+                            return refresh::budget_case(
+                                &sh,
+                                policy,
+                                src,
+                                total,
+                                mode,
+                                interchange,
+                                bestline,
+                                reuse_witnesses,
+                                &binding,
+                            );
+                        }
+                        refresh::budget_case_with_executor(
                             &sh,
                             policy,
                             src,
@@ -1334,6 +1353,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                             bestline,
                             reuse_witnesses,
                             &binding,
+                            executor,
                         )
                     })
                     .map_err(|e| e.to_string())?
@@ -1520,6 +1540,11 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
         .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Validate even non-Stage4a modes before loading their source policy.
+pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
+    refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
 }
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {

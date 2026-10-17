@@ -1430,6 +1430,12 @@ impl FrozenPlayPolicyV1 {
         Ok(&self.embeddings[start..start + CARD_EMBEDDING_DIM_V1])
     }
 
+    /// Exact draw-state oracle for executor tests; no production API or work.
+    #[cfg(test)]
+    pub(crate) fn sampling_stream_snapshot_for_test_v1(&self) -> Vec<u8> {
+        serde_json::to_vec(&self.seat_rng).expect("per-seat RNG state serializes")
+    }
+
     pub fn reset_sampling_v1(&mut self, seeds: [u64; 2]) {
         self.seat_rng = [SplitMix64::seed(seeds[0]), SplitMix64::seed(seeds[1])];
         #[cfg(feature = "gameplay-decision-trace-v1")]

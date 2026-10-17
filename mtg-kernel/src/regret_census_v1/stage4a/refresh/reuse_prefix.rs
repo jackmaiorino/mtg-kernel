@@ -319,6 +319,7 @@ pub(super) fn execute(
             interchange: false,
             bestline: None,
             reuse_witnesses: Recording::Enabled,
+            executor: ExecutionMode::Persistent,
         },
         Some(&mut control),
         #[cfg(feature = "viewer-recording-v1")]
