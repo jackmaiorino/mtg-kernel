@@ -66,7 +66,7 @@ impl Pair {
         self.act(|a|matches!(a,A::ActivateAbility{source,ability_index,..}if source.arena_id==id.0&&*ability_index==index));
     }
     fn target(&mut self, object: ObjectId) {
-        self.act(|a| matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::Object(c),..}|A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object(c),..} if c.arena_id==object.0));
+        self.act(|a| matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::Object{object:c},..}|A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object:c},..} if c.arena_id==object.0));
     }
     fn quiet(&mut self) {
         let d = self.own.decision_v74().unwrap();
