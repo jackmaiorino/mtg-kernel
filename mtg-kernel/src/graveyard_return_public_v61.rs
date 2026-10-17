@@ -894,7 +894,7 @@ fn capture_scoped(state: &GameState, viewer: PlayerId, call: bool) -> Result<Fac
         }
     }
     let mut alesha_departures = vec![];
-    for event in &state.engine.event_history {
+    for (receipt_index, event) in state.engine.event_history.iter().enumerate() {
         let E::AleshaPowerLkiV1 {
             source,
             card_def,
@@ -908,6 +908,8 @@ fn capture_scoped(state: &GameState, viewer: PlayerId, call: bool) -> Result<Fac
         if family(*card_def, &ids) != Some(FamilyV61::Alesha) {
             continue;
         }
+        let departure_index = usize::try_from(*departure_history_index)
+            .map_err(|_| "V61 departure offset overflow")?;
         let E::ZoneChange {
             object,
             from: Zone::Battlefield,
@@ -916,37 +918,71 @@ fn capture_scoped(state: &GameState, viewer: PlayerId, call: bool) -> Result<Fac
         } = state
             .engine
             .event_history
-            .get(
-                usize::try_from(*departure_history_index)
-                    .map_err(|_| "V61 departure offset overflow")?,
-            )
+            .get(departure_index)
             .ok_or("V61 departure row absent")?
         else {
             return Err("V61 departure receipt lost its actual departure".into());
         };
-        if object != source || *to == Zone::Battlefield {
+        if object != source
+            || *to == Zone::Battlefield
+            || departure_index.checked_add(1) != Some(receipt_index)
+            || state
+                .engine
+                .event_history
+                .iter()
+                .filter(|row| matches!(row, E::AleshaPowerLkiV1 {
+                    source: row_source,
+                    card_def: row_card_def,
+                    zone_change_count: row_generation,
+                    ..
+                } if row_source == source && row_card_def == card_def && row_generation == zone_change_count))
+                .count() != 1
+        {
             return Err("V61 departure receipt points at another move".into());
         }
-        let owner = state
+        let live = state
             .objects
             .try_get(*source)
-            .ok_or("V61 departure physical source absent")?
-            .owner;
-        let contract = AbilitySourceContractV4 {
-            source: *source,
-            card_def: *card_def,
-            owner,
-            controller: *controller_before,
-            zone: Zone::Battlefield,
-            zone_change_count: *zone_change_count,
-            attached_to: None,
-        };
-        if crate::engine::alesha_raid_source_power(state, contract) != Some(*power) {
-            return Err("V61 departure receipt changed its exact power binding".into());
+            .ok_or("V61 departure physical source absent")?;
+        if live.zone_change_count <= *zone_change_count {
+            return Err("V61 departure receipt outlived no source incarnation".into());
         }
+        let owner = live.owner;
+        let source_root = if call {
+            // This typed Call projection reads the adjacent native receipt as
+            // the original public Alesha incarnation's LKI. The current
+            // incarnation may occupy an unknown hidden slot, whose definition
+            // cannot become a historical identity oracle.
+            public::RootV1 {
+                original_source: public::ReferenceV1 {
+                    object: source.0,
+                    generation: *zone_change_count,
+                    owner: owner.into(),
+                    controller: (*controller_before).into(),
+                    zone: Zone::Battlefield,
+                    identity: public::IdentityV1::Known { card_id: *card_def },
+                },
+                current_original_source: None,
+                captured_controller: (*controller_before).into(),
+            }
+        } else {
+            let contract = AbilitySourceContractV4 {
+                source: *source,
+                card_def: *card_def,
+                owner,
+                controller: *controller_before,
+                zone: Zone::Battlefield,
+                zone_change_count: *zone_change_count,
+                attached_to: None,
+            };
+            if crate::engine::alesha_raid_source_power(state, contract) != Some(*power) {
+                return Err("V61 departure receipt changed its exact power binding".into());
+            }
+            public::root(state, contract, Some(viewer))?
+        };
         alesha_departures.push(AleshaDepartureV61 {
             occurrence: ordinal(alesha_departures.len())?,
-            source: public::root(state, contract, Some(viewer))?,
+            source: source_root,
             power: *power,
         });
     }
