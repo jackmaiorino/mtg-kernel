@@ -824,7 +824,7 @@ fn trigger_occurrence(
 }
 fn order_label(
     common: &crate::ravenous_observation_v51::RavenousObservationV51,
-    trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,
+    _trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,
     action: &ActionSemanticV1,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {

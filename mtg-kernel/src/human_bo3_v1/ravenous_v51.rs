@@ -1492,7 +1492,7 @@ fn project_with_handles(
         .map(|facts| super::next_five_v59::register(facts, &mut handles))
         .transpose()?;
     let graveyard_facts = graveyard_return
-        .map(|o| super::graveyard_return_v61::facts(o.graveyard_return, &mut handles))
+        .map(|o| super::graveyard_return_v61::facts(&o.graveyard_return, &mut handles))
         .transpose()?;
     let graveyard_facts = match graveyard_facts {
         Some(v) => Some(v),
