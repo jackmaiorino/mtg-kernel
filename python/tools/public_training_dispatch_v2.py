@@ -571,7 +571,7 @@ def resume_inputs(config, binary_sha256, config_sha256, refs):
             or report["config"]["sha256"] != config_sha256 or request["config"] != config
             or report["binary"]["sha256"] != binary_sha256 or execution["binary_sha256"] != binary_sha256
             or execution["request_sha256"] != refs["request"]["sha256"]
-            or execution["exit_code"] != 0 or execution["timeout"]
+            or execution["exit_code"] != 0 or execution["timeout"] or execution["error"] is not None
             or completion["schema"] != "mtg-kernel-public-input-run/v1"
             or checkpoint["schema"] != "mtg-kernel-public-input-checkpoint/v1"
             or checkpoint["config_sha256"] != completion["config_sha256"]

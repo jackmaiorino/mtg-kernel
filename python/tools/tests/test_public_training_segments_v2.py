@@ -36,7 +36,7 @@ class Segments(unittest.TestCase):
         dispatch.write(prior/'request.json', dict(config=config, resume=None, stop_after=3,
             output_directory=str(output), collector_workers=4, execution_gpu_ordinal=1))
         request_ref = dispatch.pin(prior/'request.json')
-        dispatch.write(prior/'execution.json', dict(exit_code=0, timeout=False, binary_sha256=binary['sha256'],
+        dispatch.write(prior/'execution.json', dict(exit_code=0, timeout=False, error=None, binary_sha256=binary['sha256'],
             request_sha256=request_ref['sha256']))
         completion = dict(schema='mtg-kernel-public-input-run/v1', first_update=0, next_update=3,
             config_sha256=checkpoint['config_sha256'], receipts=[dict(update=i, episodes=1, natural_games=1,
@@ -65,19 +65,20 @@ class Segments(unittest.TestCase):
                 dispatch.segment_inputs(dispatch.pin(root/'config.json'), binary['sha256'], segment)
 
     def test_refuses_wrong_config_failed_execution_bad_boundary_and_empty_progress(self):
-        for failure in ('config', 'execution', 'completion', 'optimizer-age', 'checkpoint-digest', 'stop', 'no-progress'):
+        for failure in ('config', 'execution', 'execution-error', 'completion', 'optimizer-age', 'checkpoint-digest', 'stop', 'no-progress'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 config, binary, report, segment = self.fixture(root)
                 if failure == 'config':
                     config['updates'][4][0]['id'] = 'changed scientific schedule'
                     (root/'config.json').write_text(json.dumps(config))
-                elif failure in ('execution', 'completion'):
-                    path = Path(report[failure]['path'])
+                elif failure in ('execution', 'execution-error', 'completion'):
+                    field = 'execution' if failure == 'execution-error' else failure
+                    path = Path(report[field]['path'])
                     value = dispatch.read(path)
-                    value['exit_code' if failure == 'execution' else 'next_update'] = 9
+                    value['error' if failure == 'execution-error' else 'exit_code' if failure == 'execution' else 'next_update'] = 'GPU observation failed' if failure == 'execution-error' else 9
                     path.write_text(json.dumps(value))
-                    report[failure] = dispatch.pin(path)
+                    report[field] = dispatch.pin(path)
                 elif failure == 'optimizer-age':
                     path = Path(report['outputs']['0002/optimizer.json']['path'])
                     value = dispatch.read(path); value['public']['adam_step'] = 1
