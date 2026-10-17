@@ -175,7 +175,8 @@ pub(crate) fn prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
         } = d
         {
             assert_eq!(player, p);
-            assert_eq!((min_targets, max_targets), (0, 1));
+            assert_eq!(min_targets, 0);
+            assert_eq!(max_targets, if legal_targets.is_empty() { 0 } else { 1 });
             assert!(can_finish);
             validate_pending_effect_choice(s).unwrap();
             return legal_targets
@@ -323,10 +324,8 @@ fn paid_short_empty_and_no_eligible_library_decline_without_exposing_other_libra
             let other = s.players[p.opponent().index()].library.clone();
             let v = walker(&mut s, p);
             activate(&mut s, p, v, 0, None);
-            if lib == ["Forest"] {
-                assert_eq!(prompt(&mut s, p).len(), 1);
-                engine::step(&mut s, Action::FinishEffectSelection).unwrap();
-            }
+            assert_eq!(prompt(&mut s, p).len(), usize::from(lib == ["Forest"]));
+            engine::step(&mut s, Action::FinishEffectSelection).unwrap();
             finish(&mut s);
             assert!(s.players[p.index()].hand.is_empty());
             assert_eq!(s.players[p.index()].library.len(), lib.len());

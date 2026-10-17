@@ -236,6 +236,31 @@ pub(crate) fn validate_state_complete_next_five_v59(state: &GameState) -> Result
     validate_state_complete_inherited(state)
 }
 fn validate_state_complete_inherited(state: &GameState) -> Result<(), String> {
+    validate_state_complete_inherited_with_family(
+        state,
+        crate::planeswalker_v1::RecipientScopeV1::FullAjaniV42,
+    )
+}
+pub(crate) fn validate_state_complete_recipient_scope(
+    state: &GameState,
+    scope: crate::planeswalker_v1::RecipientScopeV1,
+) -> Result<(), String> {
+    use crate::planeswalker_v1::RecipientScopeV1 as S;
+    match scope {
+        S::VivienV70 | S::MuldrothaV71 => crate::snack_wide_life_v59::require_legacy(state)?,
+        S::TinybonesV72 | S::LilianaV73 | S::ChandraV74 | S::KaitoV75 => {
+            crate::snack_wide_life_v59::validate(state)?
+        }
+        S::HeartfireV12 | S::FullAjaniV42 => {
+            return Err("unsupported complete loyalty-recipient scope".into())
+        }
+    }
+    validate_state_complete_inherited_with_family(state, scope)
+}
+fn validate_state_complete_inherited_with_family(
+    state: &GameState,
+    scope: crate::planeswalker_v1::RecipientScopeV1,
+) -> Result<(), String> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -245,7 +270,7 @@ fn validate_state_complete_inherited(state: &GameState) -> Result<(), String> {
     crate::ravenous_public_v51::capture(state).map_err(|e| e.0)?;
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     crate::akroma_public_v1::roots().map_err(|e| e.0)?;
-    crate::akroma_family_public_v40::validate_state_for_divine_v44(state)?;
+    crate::akroma_family_public_v40::validate_state_for_complete_recipient_scope(state, scope)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
     crate::ajani_public_v42::facts(state).map_err(|e| e.0)?;
     crate::eaten_public_v46::validate_state(state)?;

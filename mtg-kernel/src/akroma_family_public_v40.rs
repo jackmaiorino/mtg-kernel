@@ -1431,13 +1431,35 @@ pub(crate) fn validate_state_for_divine_v44(state: &GameState) -> Result<(), Str
     validate_state_full_scope(state, true)
 }
 fn validate_state_full_scope(state: &GameState, divine: bool) -> Result<(), String> {
+    validate_state_full_scope_with_recipients(
+        state,
+        divine,
+        crate::planeswalker_v1::RecipientScopeV1::FullAjaniV42,
+    )
+}
+pub(crate) fn validate_state_for_complete_recipient_scope(
+    state: &GameState,
+    scope: crate::planeswalker_v1::RecipientScopeV1,
+) -> Result<(), String> {
+    validate_state_full_scope_with_recipients(state, true, scope)
+}
+fn validate_state_full_scope_with_recipients(
+    state: &GameState,
+    divine: bool,
+    scope: crate::planeswalker_v1::RecipientScopeV1,
+) -> Result<(), String> {
     if let Ok(selector) = crate::rules_meaning_game_outcome_protection_v1::live_selector() {
         crate::game_outcome_protection_public_v1::capture(state, &selector)
             .map_err(|_| "invalid game-outcome current public authority".to_string())?;
     }
     crate::ajani_full_v42::lifecycle::validate_state(state)?;
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
-    crate::planeswalker_v1::validate_full_ajani_recipients_v42(state)?;
+    match scope {
+        crate::planeswalker_v1::RecipientScopeV1::FullAjaniV42 => {
+            crate::planeswalker_v1::validate_full_ajani_recipients_v42(state)?
+        }
+        _ => crate::planeswalker_v1::validate_complete_recipients_v70(state, scope)?,
+    }
     crate::twinflame_observation_v1::validate_projection_authority(state).map_err(|e| e.0)?;
     crate::effect::validate_pending_effect_choice(state)?;
     crate::sower_restriction_capture_v1::complete_family(state).map_err(|e| e.0)?;

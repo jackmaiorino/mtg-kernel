@@ -317,12 +317,31 @@ pub(crate) fn add_loyalty_counters_checked_v1(
 /// Inspect every stored ledger row so stale/hidden/foreign recipients cannot
 /// be silently omitted from the public observation.
 pub(crate) fn validate_heartfire_recipients_v12(state: &GameState) -> Result<(), String> {
-    validate_recipients_inner(state, false)
+    validate_recipients_inner(state, RecipientScopeV1::HeartfireV12)
 }
 pub(crate) fn validate_full_ajani_recipients_v42(state: &GameState) -> Result<(), String> {
-    validate_recipients_inner(state, true)
+    validate_recipients_inner(state, RecipientScopeV1::FullAjaniV42)
 }
-fn validate_recipients_inner(state: &GameState, accept_full: bool) -> Result<(), String> {
+/// Exact recipient definitions already represented by each complete DTO.
+/// Native family validation and the owner's supported-world guard remain required.
+#[derive(Clone, Copy)]
+pub(crate) enum RecipientScopeV1 {
+    HeartfireV12,
+    FullAjaniV42,
+    VivienV70,
+    MuldrothaV71,
+    TinybonesV72,
+    LilianaV73,
+    ChandraV74,
+    KaitoV75,
+}
+pub(crate) fn validate_complete_recipients_v70(
+    state: &GameState,
+    scope: RecipientScopeV1,
+) -> Result<(), String> {
+    validate_recipients_inner(state, scope)
+}
+fn validate_recipients_inner(state: &GameState, scope: RecipientScopeV1) -> Result<(), String> {
     let recipient_ids = || {
         state
             .objects
@@ -356,14 +375,39 @@ fn validate_recipients_inner(state: &GameState, accept_full: bool) -> Result<(),
         let definition = CARD_DEFS
             .get(usize::from(live.card_def))
             .ok_or("Heartfire V12 unknown loyalty recipient definition")?;
+        let supported_definition = definition.name == "Ajani, Caller of the Pride"
+            && (definition.capability == crate::card_def::CardCapability::Partial
+                || !matches!(scope, RecipientScopeV1::HeartfireV12)
+                    && crate::ajani_full_v42::validate_definition(live.card_def).is_ok())
+            && definition.starting_loyalty == Some(4)
+            || match scope {
+                RecipientScopeV1::HeartfireV12 | RecipientScopeV1::FullAjaniV42 => false,
+                RecipientScopeV1::VivienV70
+                | RecipientScopeV1::MuldrothaV71
+                | RecipientScopeV1::TinybonesV72 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::LilianaV73 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::ChandraV74 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                        || crate::effect::chandra_flameshaper_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::KaitoV75 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                        || crate::effect::chandra_flameshaper_v1::definition(live.card_def)
+                        || crate::effect::kaito_cunning_v75::definition(live.card_def)
+                }
+            };
         if live.zone != Zone::Battlefield
             || live.v4.face_index != 0
             || entry.permanent.object != *id
             || entry.permanent.zone_change_count != live.zone_change_count
-            || definition.name != "Ajani, Caller of the Pride"
-            || !(definition.capability == crate::card_def::CardCapability::Partial
-                || accept_full && crate::ajani_full_v42::validate_definition(live.card_def).is_ok())
-            || definition.starting_loyalty != Some(4)
+            || !supported_definition
             || !engine::object_has_type(state, *id, CardType::Planeswalker)
         {
             return Err("Heartfire V12 unsupported or stale loyalty recipient".into());
