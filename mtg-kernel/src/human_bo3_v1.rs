@@ -417,3 +417,13 @@ pub use genesis_wave_v69::{
 pub(crate) mod limited_genesis_wave_v10;
 pub(crate) use limited_genesis_wave_v10::project_limited_genesis_wave_v10;
 pub use limited_genesis_wave_v10::LimitedGenesisWaveDecisionV10;
+
+pub mod vivien_v70;
+pub use vivien_v70::{
+    HumanDecisionVivienV70, HumanVisibleStateVivienV70, HumanVivienProjectorV70,
+    HumanVivienSessionV70, HumanVivienSnapshotV70,
+};
+
+pub(crate) mod limited_vivien_v11;
+pub(crate) use limited_vivien_v11::project_limited_vivien_v11;
+pub use limited_vivien_v11::LimitedVivienDecisionV11;

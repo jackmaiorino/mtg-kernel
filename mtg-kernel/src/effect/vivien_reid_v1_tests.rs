@@ -11,7 +11,7 @@ const NAME: &str = "Vivien Reid";
 fn id(n: &str) -> u16 {
     card_def::card_id_by_name(n).unwrap()
 }
-fn ready(p: PlayerId, library: &[&str], hand: &[&str], hidden: &str) -> GameState {
+pub(crate) fn ready(p: PlayerId, library: &[&str], hand: &[&str], hidden: &str) -> GameState {
     let own = library.iter().map(|n| id(n)).collect::<Vec<_>>();
     let other = vec![id(hidden); 32];
     let (a, b) = if p == PlayerId::P0 {
@@ -86,14 +86,14 @@ fn paid(s: &mut GameState, p: PlayerId, name: &str, targets: &[Target], cost: us
     }
     panic!("paid cast did not publish")
 }
-fn walker(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn walker(s: &mut GameState, p: PlayerId) -> ObjectId {
     let v = paid(s, p, NAME, &[], 5);
     finish(s);
     assert_eq!(s.objects.get(v).zone, Zone::Battlefield);
     assert!(definition(s.objects.get(v).card_def));
     v
 }
-fn activate(
+pub(crate) fn activate(
     s: &mut GameState,
     p: PlayerId,
     v: ObjectId,
@@ -162,7 +162,7 @@ fn activate(
     }
     panic!("loyalty did not publish")
 }
-fn prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     for _ in 0..32 {
         let d = next(s);
         if let Decision::ChooseEffectTargets {
@@ -193,7 +193,7 @@ fn prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     }
     panic!("Vivien private look absent")
 }
-fn emblem_setup(s: &mut GameState, p: PlayerId, v: ObjectId) {
+pub(crate) fn emblem_setup(s: &mut GameState, p: PlayerId, v: ObjectId) {
     // Native counter-placement primitive, not an invented loyalty activation.
     let old = crate::planeswalker_v1::loyalty(s, v).unwrap();
     if old < 8 {

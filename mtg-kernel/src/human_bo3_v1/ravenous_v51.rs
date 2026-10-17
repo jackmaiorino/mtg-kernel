@@ -1145,6 +1145,45 @@ pub(super) fn project_genesis_wave_base_with_handles(
         handles,
     ))
 }
+pub(super) fn project_vivien_base_with_handles(
+    candidates: &crate::vivien_candidates_v70::VivienCandidatesV70,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Vivien(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
 
 pub(super) fn project_graveyard_return_base_with_handles(
     candidates: &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
@@ -1191,12 +1230,14 @@ enum CompleteCandidatesV68<'a> {
     Call(&'a crate::call_candidates_v62::CallCandidatesV62),
     EndTurn(&'a crate::end_turn_candidates_v68::EndTurnCandidatesV68),
     GenesisWave(&'a crate::genesis_wave_candidates_v69::GenesisWaveCandidatesV69),
+    Vivien(&'a crate::vivien_candidates_v70::VivienCandidatesV70),
 }
 #[derive(Clone, Copy)]
 enum CompleteOriginalV68<'a> {
     Call(&'a crate::call_observation_v62::CallObservationV62),
     EndTurn(&'a crate::end_turn_observation_v68::EndTurnObservationV68),
     GenesisWave(&'a crate::genesis_wave_observation_v69::GenesisWaveObservationV69),
+    Vivien(&'a crate::vivien_observation_v70::VivienObservationV70),
 }
 #[derive(Clone, Copy)]
 struct CompleteObservationV68<'a> {
@@ -1263,6 +1304,22 @@ impl<'a> CompleteCandidatesV68<'a> {
                     original: CompleteOriginalV68::GenesisWave(o),
                 }
             }
+            Self::Vivien(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::Vivien(o),
+                }
+            }
         }
     }
     fn drake_activation(
@@ -1273,6 +1330,7 @@ impl<'a> CompleteCandidatesV68<'a> {
             Self::Call(v) => v.candidates.get(index)?.drake_activation.as_ref(),
             Self::EndTurn(v) => v.candidates.get(index)?.drake_activation.as_ref(),
             Self::GenesisWave(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::Vivien(v) => v.candidates.get(index)?.drake_activation.as_ref(),
         }
     }
 }
@@ -1283,6 +1341,7 @@ impl CompleteObservationV68<'_> {
             CompleteOriginalV68::EndTurn(v) => {
                 crate::end_turn_observation_v68::validate_artifact(v)
             }
+            CompleteOriginalV68::Vivien(v) => crate::vivien_observation_v70::validate_artifact(v),
             CompleteOriginalV68::GenesisWave(v) => {
                 crate::genesis_wave_observation_v69::validate_artifact(v)
             }
@@ -1294,6 +1353,7 @@ impl CompleteObservationV68<'_> {
             CompleteOriginalV68::Call(v) => super::call_v62::choice_label(v, a, h),
             CompleteOriginalV68::EndTurn(v) => super::end_turn_v68::choice_label(v, a, h),
             CompleteOriginalV68::GenesisWave(v) => super::genesis_wave_v69::choice_label(v, a, h),
+            CompleteOriginalV68::Vivien(v) => super::vivien_v70::choice_label(v, a, h),
         }
     }
     fn label_parts(
@@ -1307,6 +1367,9 @@ impl CompleteObservationV68<'_> {
             CompleteOriginalV68::Call(v) => super::labels::label_parts_call_v62(a, p, h, human, v),
             CompleteOriginalV68::EndTurn(v) => {
                 super::labels::label_parts_end_turn_v68(a, p, h, human, v)
+            }
+            CompleteOriginalV68::Vivien(v) => {
+                super::labels::label_parts_vivien_v70(a, p, h, human, v)
             }
             CompleteOriginalV68::GenesisWave(v) => {
                 super::labels::label_parts_genesis_wave_v69(a, p, h, human, v)

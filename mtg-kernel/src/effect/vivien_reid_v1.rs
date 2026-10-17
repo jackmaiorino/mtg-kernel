@@ -733,10 +733,170 @@ pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Res
     }
 }
 
+/// Public projection only after the unchanged whole native journal validation.
+pub(crate) fn public_facts_v70(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::vivien_public_v70::FactsV70, String> {
+    use crate::{optional_trigger_public_v1 as public, vivien_public_v70::*};
+    validate_state(state)?;
+    validate_pending(state)?;
+    super::squad_rallier_resolution_v1::validate(state)?;
+    let visible_printings = state
+        .objects
+        .iter()
+        .filter_map(|(id, _)| public::reference(state, id, Some(viewer)))
+        .filter(|r| matches!(r.identity, public::IdentityV1::Known { card_id: 488 }))
+        .collect();
+    let battlefield = crate::valkyries_call_public_v62::capture(state, viewer)?.battlefield;
+    let current = battlefield
+        .into_iter()
+        .flatten()
+        .filter(|r| matches!(r.card.identity, public::IdentityV1::Known { card_id: 488 }))
+        .collect();
+    let mut activations = Vec::new();
+    let mut emblems = Vec::new();
+    for (pub_at, j) in rows(state) {
+        let JournalV1::Published { input, item } = j else {
+            continue;
+        };
+        let occurrence =
+            u32::try_from(activations.len()).map_err(|_| "V70 activation count exceeds u32")?;
+        let current = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .filter(|p| p.resolving_item.v4.stack_item_id == item.v4.stack_item_id);
+        let look_receipts = state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|e| match e {
+                E::SquadRallierResolutionBoundaryV1 { receipt }
+                    if receipt.stack_item_id == item.v4.stack_item_id =>
+                {
+                    Some(receipt)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let created = rows(state).find_map(|(_, j)| match j {
+            JournalV1::EmblemCreated {
+                publication,
+                controller,
+                timestamp,
+                ..
+            } if *publication == pub_at as u64 => Some((*controller, *timestamp)),
+            _ => None,
+        });
+        let stage = if crate::engine::time_stop_v1::disposed(state, item)? {
+            StageV70::Disposed
+        } else if created.is_some() {
+            StageV70::EmblemCreated
+        } else if let Some(p) = current {
+            if p.choice.is_some() {
+                StageV70::Looking
+            } else {
+                StageV70::AnsweredLook
+            }
+        } else if state
+            .stack
+            .iter()
+            .any(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            StageV70::Published
+        } else if look_receipts.last().is_some_and(|r| r.pending.is_none()) {
+            StageV70::LookFinished
+        } else {
+            StageV70::NoLongerPublished
+        };
+        let mut original_targets = Vec::new();
+        for c in &item.v4.target_contracts {
+            let crate::state::StackTargetContractV4::Object {
+                object,
+                card_def,
+                owner,
+                controller,
+                zone,
+                zone_change_count,
+                ..
+            } = *c
+            else {
+                return Err("V70 destroy target is not an object".into());
+            };
+            let original = public::ReferenceV1 {
+                object: object.0,
+                generation: zone_change_count,
+                owner: owner.into(),
+                controller: controller.into(),
+                zone,
+                identity: public::IdentityV1::Known {
+                    card_id: crate::rl::projected_captured_card_def(
+                        state,
+                        object,
+                        zone_change_count,
+                        zone,
+                        card_def,
+                    ),
+                },
+            };
+            let current_original = state
+                .objects
+                .try_get(object)
+                .filter(|o| o.zone_change_count == zone_change_count && o.zone == zone)
+                .and_then(|_| public::reference(state, object, Some(viewer)));
+            let legal_now = crate::engine::target_contract_matches_live(state, c.target(), *c)
+                && crate::engine::effect_target_is_legal_from_ability_source(
+                    state,
+                    input.source,
+                    item.controller,
+                    input.pending.target_spec,
+                    &item.targets,
+                    0,
+                );
+            original_targets.push(TargetV70 {
+                original,
+                current_original,
+                legal_now,
+            });
+        }
+        activations.push(ActivationV70 {
+            occurrence,
+            source: public::root(state, input.source, Some(viewer))?,
+            ability_index: input.pending.ability_index,
+            loyalty_before: input.before,
+            loyalty_after: input.after,
+            original_targets,
+            stage,
+        });
+        if let Some((controller, timestamp)) = created {
+            emblems.push(EmblemV70 {
+                occurrence: u32::try_from(emblems.len())
+                    .map_err(|_| "V70 emblem count exceeds u32")?,
+                activation: occurrence,
+                controller: controller.into(),
+                timestamp,
+            });
+        }
+    }
+    let value = FactsV70 {
+        schema: SCHEMA.into(),
+        producer_sha256: producer_sha256(),
+        viewer: viewer.into(),
+        meaning: crate::rules_meaning_vivien_v70::printed_meaning()?,
+        visible_printings,
+        current,
+        activations,
+        emblems,
+    };
+    crate::vivien_public_v70::validate(&value)?;
+    Ok(value)
+}
+
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "vivien_reid_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;
