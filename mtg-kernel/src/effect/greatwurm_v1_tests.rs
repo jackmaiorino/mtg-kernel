@@ -395,6 +395,36 @@ fn genuine_paid_cast_accepts_every_native_counter_kind_without_narrowing_both_se
                 }
             }
             finish(&mut s);
+            if kind == CounterKindV1::Bait {
+                assert_eq!(s.objects.get(w).zone, Zone::Battlefield);
+                // Real paid cast has resolved. Its original caster remains
+                // bound independently of the matching input/payment pair.
+                let mut forged = restore(&s);
+                for event in &mut forged.engine.event_history {
+                    match event {
+                        event::CommittedEvent::GreatwurmCounterInputV1 { input }
+                        | event::CommittedEvent::GreatwurmCounterPaymentV1 {
+                            paid: input, ..
+                        } => {
+                            input.source.source = ObjectId(u32::MAX);
+                        }
+                        _ => {}
+                    }
+                }
+                let original = forged.clone();
+                assert!(crate::fishing_pole_v39::lifecycle::validate_state(&forged).is_err());
+                assert_eq!(forged, original);
+                // Native departure/reentry and control primitives, not another
+                // paid spell. They cannot relabel the historical cast source.
+                event::propose_and_commit(&mut s, event::ProposedEvent::zone_change(w, Zone::Hand));
+                event::propose_and_commit(
+                    &mut s,
+                    event::ProposedEvent::zone_change(w, Zone::Battlefield),
+                );
+                crate::standard_cards_v1::gain_control(&mut s, w, p.opponent());
+                let later = restore(&s);
+                crate::fishing_pole_v39::lifecycle::validate_state(&later).unwrap();
+            }
         }
     }
 }

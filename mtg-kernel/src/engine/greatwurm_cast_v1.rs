@@ -330,6 +330,65 @@ pub(crate) fn bait_cost_balance(
     {
         return Err("bait cost lost original printed graveyard source".into());
     }
+    // The selected input and payment are independent cost records, but their
+    // equality alone cannot authenticate a jointly relabeled physical caster.
+    // The real finalized cast publishes its own identity after payment.
+    let live = state
+        .objects
+        .try_get(paid.source.source)
+        .ok_or("bait cost physical caster absent")?;
+    if live.owner != paid.source.owner
+        || live.zone_change_count < paid.source.zone_change_count
+        || (live.zone_change_count == paid.source.zone_change_count
+            && (live.zone != Zone::Stack || live.card_def != paid.source.card_def))
+        || origin.origin_zone_change_count.checked_add(1) != Some(paid.source.zone_change_count)
+    {
+        return Err("bait cost physical caster incarnation changed".into());
+    }
+    let publications = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match event {
+            CommittedEvent::PublishedCastIdentityV1 { receipt }
+                if receipt.stack_item_id == paid.stack_item_id
+                    || (receipt.spell == paid.source.source
+                        && receipt.stack_zone_change_count == paid.source.zone_change_count) =>
+            {
+                Some((index, receipt))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [(published, receipt)] = publications.as_slice() else {
+        return Err("bait cost lost unique original cast publication".into());
+    };
+    let cast_at = published
+        .checked_add(1)
+        .ok_or("bait cast history index overflow")?;
+    if at >= *published
+        || receipt.stack_item_id != paid.stack_item_id
+        || receipt.spell != paid.source.source
+        || receipt.owner != paid.source.owner
+        || receipt.controller != paid.source.controller
+        || receipt.origin_zone != origin.origin_zone
+        || receipt.origin_zone_change_count != origin.origin_zone_change_count
+        || receipt.stack_zone_change_count != paid.source.zone_change_count
+        || receipt.public_identity
+            != (crate::cast_identity_v1::PublicIdentityV1::Known {
+                card_def: paid.source.card_def,
+            })
+        || receipt.spell_cast_history_index
+            != u64::try_from(cast_at).map_err(|_| "bait cast history index width")?
+        || state.engine.event_history.get(cast_at)
+            != Some(&CommittedEvent::SpellCast {
+                spell: paid.source.source,
+                controller: paid.source.controller,
+            })
+    {
+        return Err("bait cost differs from actual finalized cast identity".into());
+    }
     let mut before = None;
     let mut removed = 0_i32;
     for (n, unit) in paid.units.iter().enumerate() {
