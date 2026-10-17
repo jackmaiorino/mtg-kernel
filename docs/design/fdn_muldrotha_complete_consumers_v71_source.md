@@ -38,10 +38,9 @@ is not admitted by a test fixture shortcut.
 Human references use opaque handles. Limited V12 has a separate protocol,
 binary and strict Python grammar, original candidate ordinals and monotonic
 prompt/restore authority. Current-world decision-local library projections keep
-the inherited positionless ordering and original private index map. There is
-no V71 sampled-world API or new sampler admission; existing native-history
-sampler exclusions remain. No private current-world search qualification is
-claimed for an unsupported printing or mechanism.
+the inherited positionless ordering and original private index map. A separate V71 sampled-clone API now retains this complete binding in a fresh
+lineage. Existing other-family refusals remain. No private current-world search
+qualification is claimed for an unsupported printing or mechanism.
 
 Ten genuine paid both-seat Rust fixture groups prepare source/type budgets,
 actual ordinary mana payments, land drops without stack or mana charges,
@@ -69,3 +68,30 @@ Artifact1/Creature0 and ordinary0-after-typed1 transport mocks. Eight V12 tests
 and139 affected transport cases pass after the repair. The earlier247-case
 receipt belongs to a07e6d565. Published b4c0db6 and Tinybones reversal0cdf52ba
 are normally composed. All Rust remains uncompiled and unrun.
+
+Follow-on sampler and production source: a distinct V71 scope reuses the actual
+V69/Call whole-object current-slot machinery. Native Muldrotha validates every
+original options/selection/play journal and refuses pools containing any
+historically named physical source or played card. Known cards, factual
+journals, exact menus, type budgets, paid spell forms/costs and original native
+pair vectors remain fixed. The sampled owner revalidates its complete public
+and executable binding before publication and uses a new owner lineage.
+Numeric sampled owners freshly encode that backend and require packet equality.
+Their production reset delegates to the unchanged Full-only deck preflight.
+Unsupported whole-world entry checkpoints, private library-choice resampling,
+Vivien native journals and other unqualified families retain strict refusals.
+Older scopes do not gain a Muldrotha history permission.
+
+Three new paid both-seat sampler groups, one paid numeric derived-owner group,
+one paid Human lexical-menu group and one Full-deck reset/refusal group are
+source-prepared, bringing V71 to15 paid groups plus one reset group. Independent
+native clones preserve the actual current counters and issued origins for
+parity; no fabricated counters or issuers stand in for payment. All16 Rust
+groups are UNCOMPILED and UNRUN.
+
+CI source adds limited-v12 on the existing OS matrix, its declared binary build
+and exact native/public/owner/sampler/Human/wire fixture filters. Muldrotha's
+native filter moves from V11 to V12, avoiding duplicate execution. Numeric
+fixtures remain in the existing complete current-mixed-model aggregate. The
+embedded V12 Python authority now selects Rust CI when edited alone. This is
+workflow wiring only, not observed build or runtime success.

@@ -916,6 +916,38 @@ pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Res
     }
 }
 
+/// Current-slot sampling keeps every factual source/card/type decision intact.
+/// Whole-object pools cannot contain any physical object named by this history,
+/// even after that original incarnation has departed to a hidden zone.
+pub(crate) fn sampler_conflicts_v71(state: &GameState, pool: &[ObjectId]) -> Result<bool, String> {
+    validate_state(state)?;
+    let ability = |source: AbilitySourceContractV4| {
+        pool.contains(&source.source)
+            || source.attached_to.is_some_and(|r| pool.contains(&r.object))
+    };
+    Ok(state.engine.event_history.iter().any(|event| match event {
+        CommittedEvent::MuldrothaOptionsV1 { options } => {
+            pool.contains(&options.card.object)
+                || options.permissions.iter().any(|p| ability(p.source))
+        }
+        CommittedEvent::MuldrothaPlayedV1 { played } => {
+            pool.contains(&played.card.object)
+                || ability(played.permission.source)
+                || played.spell.is_some_and(|(source, _)| {
+                    pool.contains(&source.source)
+                        || source.spell_copy_origin.is_some()
+                        || source.finalized_cast_binding.is_some_and(|b| {
+                            b.chosen_creature_cost
+                                .is_some_and(|r| pool.contains(&r.object))
+                                || b.mandatory_additional_cost.is_some()
+                        })
+                })
+        }
+        // Selection records only refer back to the validated original options.
+        _ => false,
+    }))
+}
+
 pub(crate) fn public_facts_v71(
     state: &GameState,
     viewer: PlayerId,

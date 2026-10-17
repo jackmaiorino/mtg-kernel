@@ -23,6 +23,13 @@ pub(super) fn same_current_unknown_pool_v69(
 ) -> bool {
     sampler::same_current_unknown_pool_v69(before, current, actor)
 }
+pub(super) fn redeterminize_muldrotha_v71(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_muldrotha_v71(state, actor, seed)
+}
 pub(super) fn redeterminize_genesis_wave_v69(
     state: &mut GameState,
     actor: PlayerId,
