@@ -31,7 +31,9 @@ input and adjacent creation receipt. Its timestamp controls layer6 suppression;
 its layer7c +2/+2 uses the existing checked wide-intermediate PT evaluator.
 Emblems follow current creature control, survive Vivien's departure, affect later
 creatures and tokens, and remain outside copied base characteristics. No current
-hand/library or world snapshot is stored in the emblem journal. Legacy consumers
+hand/library or world snapshot is stored in the emblem journal. Exact paid
+publications consult existing replay-proven Time Stop disposal, so disposed
+rows cannot be reintroduced or also claim an emblem-created outcome. Legacy consumers
 refuse selected public Vivien and retained journal semantics; hidden opponents'
 current card identities are not inspected by that refusal.
 

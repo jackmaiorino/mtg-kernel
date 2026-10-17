@@ -530,6 +530,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     return Err("Vivien stack publication duplicated".into());
                 }
                 validate_published(state, input, item)?;
+                if crate::engine::time_stop_v1::disposed(state,item)?
+                    && rows(state).any(|(_,j)|matches!(j,JournalV1::EmblemCreated{publication,..}if *publication==position as u64)) {
+                    return Err("Vivien disposed ultimate also claimed emblem creation".into());
+                }
                 for row in state
                     .stack
                     .iter()

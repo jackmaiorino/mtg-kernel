@@ -635,6 +635,11 @@ fn paid_response_time_stop_disposes_loyalty_without_emblem_or_countering_both_se
             assert!(crate::engine::time_stop_v1::disposed(b, &row).unwrap());
             assert_eq!(emblems(b).count(), 0);
             validate_state(b).unwrap();
+            // A retained paid row cannot be reintroduced after its actual
+            // EndTurnDisposed outcome and gain another execution authority.
+            let mut forged = restore(b);
+            forged.stack.push(row.clone());
+            refuses(&forged);
         }
         assert_eq!(s, replay);
     }
