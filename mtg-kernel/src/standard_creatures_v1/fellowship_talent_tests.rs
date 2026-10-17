@@ -73,12 +73,10 @@ fn paid_talent_level_two_gives_fellowship_only_permanent_real_ward_one_both_seat
                 if amount > 0 { vec![1] } else { vec![] }
             );
             if amount != 0 {
-                assert!(
-                    crate::rl::observe_v1(&state, actor, 0)
-                        .unwrap_err()
-                        .to_string()
-                        .contains("fellowship")
-                );
+                assert!(crate::rl::observe_v1(&state, actor, 0)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("fellowship"));
             }
         }
         assert_eq!(
