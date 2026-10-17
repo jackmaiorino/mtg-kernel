@@ -337,10 +337,10 @@ fn replayed_prefix_rejects_skipped_earlier_reuse_and_duplicate_decisions() {
         })
         .unwrap();
     earlier["chooser"] = json!("reused");
-    assert!(authenticated(&f, &skipped)
-        .err()
-        .expect("must reject earlier reuse")
-        .contains("earlier eligible"));
+    let Err(error) = authenticated(&f, &skipped) else {
+        panic!("must reject earlier reuse");
+    };
+    assert!(error.contains("earlier eligible"));
     let mut duplicated = f.row.clone();
     let record = duplicated["game"]["decisions"]
         .as_array()
