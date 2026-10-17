@@ -54,3 +54,12 @@ retain their prior marker and capture order. Direct low-level step-entry tests
 keep their original primitive behavior; the two genuine production completion
 routes use the new cleanup owner. The inherited Hatcher inventory assertion is
 corrected from486 to the actual487 definitions, without changing admission checks.
+
+A follow-on source review found that a forged scalar Finished suffix plus an
+erased owner could otherwise bypass generic Growth expiration after the real
+discard. Exposed absent-owner Finished state still naming this exact current
+Cleanup/turn/player/End entry now refuses. The genuine Finished transition stays
+internal until native advance leaves Cleanup. GameOver keeps its native owner;
+erasing it also refuses. The paid Growth/discard sampling group covers both
+forged terminal suffixes, snapshot restoration and read-only native/sampler
+refusal, while retaining its positive next-turn replay and lawful sampling.

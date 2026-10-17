@@ -204,7 +204,17 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     let Some(saved) = state.engine.ordinary_cleanup_v1.0.as_ref() else {
         // A direct low-level Cleanup setup has no native End-step entry. An
         // actual issued ordinary Cleanup cannot erase its transient owner.
-        if latest.is_some_and(|(_, stage)| !terminal(stage.phase)) {
+        // Finished+None exists only inside the uninterrupted drive-to-next-step
+        // loop. It cannot authorize an exposed continuation in this Cleanup.
+        // GameOver retains its owner rather than reopening any continuation.
+        if latest.is_some_and(|(_, stage)| {
+            !terminal(stage.phase)
+                || stage.phase == PhaseV1::GameOver
+                || (stage.phase == PhaseV1::Finished
+                    && state.step == Step::Cleanup
+                    && (stage.turn, stage.active) == (state.turn_key_v1(), state.active_player)
+                    && usize::try_from(stage.end_step).ok() == last_end_step(state))
+        }) {
             return Err("ordinary cleanup current native stage was erased".into());
         }
         return Ok(());

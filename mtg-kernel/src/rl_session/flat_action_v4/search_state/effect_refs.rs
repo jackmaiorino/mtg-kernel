@@ -1853,6 +1853,52 @@ mod tests {
                     assert_eq!(forged, before);
                 }
             });
+            // The actual discard has completed but the actual Growth has not
+            // expired. A forged terminal suffix cannot suppress that next
+            // mandatory native operation by erasing the transient owner.
+            let mut expiration = state.clone();
+            engine::step(&mut expiration, Action::Discard(choices[..2].to_vec())).unwrap();
+            assert_eq!(
+                engine::checked_effective_pt(&expiration, target).unwrap(),
+                (5, 5)
+            );
+            let expiration_value = serde_json::to_value(&expiration).unwrap();
+            assert_eq!(
+                expiration_value["engine"]["ordinary_cleanup_v1"]["phase"],
+                "Expiration"
+            );
+            for terminal in ["Finished", "GameOver"] {
+                let mut value = expiration_value.clone();
+                let index = value["engine"]["ordinary_cleanup_v1"]["stage_index"]
+                    .as_u64()
+                    .unwrap() as usize;
+                let mut suffix = value["engine"]["event_history"][index].clone();
+                suffix["OrdinaryCleanupStageV1"]["stage"]["phase"] = terminal.into();
+                value["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(suffix);
+                value["engine"]["ordinary_cleanup_v1"] = serde_json::Value::Null;
+                let forged: GameState = serde_json::from_value(value).unwrap();
+                let restored_forged: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+                assert_eq!(forged, restored_forged);
+                for mut branch in [forged, restored_forged] {
+                    assert_eq!(
+                        engine::checked_effective_pt(&branch, target).unwrap(),
+                        (5, 5)
+                    );
+                    assert!(engine::ordinary_cleanup_v1::validate(&branch).is_err());
+                    assert!(conflicts(&branch, &pool, None));
+                    let before = branch.clone();
+                    assert!(engine::step(&mut branch, Action::Pass).is_err());
+                    assert_eq!(branch, before);
+                    assert!(
+                        super::super::sampler::redeterminize(&mut branch, actor, 110_516).is_err()
+                    );
+                    assert_eq!(branch, before);
+                }
+            }
             let mut replay = restored;
             for branch in [&mut state, &mut replay, &mut sampled] {
                 engine::step(branch, Action::Discard(choices[..2].to_vec())).unwrap();
