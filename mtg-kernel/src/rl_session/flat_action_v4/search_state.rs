@@ -16,6 +16,13 @@ pub(super) fn redeterminize_call_v62(
 ) -> Result<(), V4SearchStateErrorV1> {
     sampler::redeterminize_call_v62(state, actor, seed)
 }
+pub(super) fn redeterminize_genesis_wave_v69(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_genesis_wave_v69(state, actor, seed)
+}
 /// Typed native-only successor entry; old V4 playing/search modes remain frozen.
 pub(super) fn redeterminize_end_turn_v68(
     state: &mut GameState,
