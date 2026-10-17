@@ -2282,7 +2282,7 @@ fn validate_physical_spell_cast_origin(
         }
         SpellCastRouteV4::AdventureExile => {
             origin.origin_zone == Zone::Exile
-                && tinybones_v72::adventure_contract(state, source)
+                && tinybones_v72::adventure_contract(state, contract)
                 && cast_method == CastMethodV4::Normal
                 && def.adventure.is_some()
         }
