@@ -61,3 +61,15 @@ paid creatures, recasts the exact returned physical card, proves native membersh
 order differs from arena allocation order, then checks both viewers, restore and
 malformed-roster/changed-DTO negatives. The original eight V75 groups and fourteen
 native bodies remain unchanged. Rust is still uncompiled/unrun.
+
+## Deferred native trigger holders
+
+The next child uses the canonical held traversal for pending triggers, legend
+waiting rows and resolution-deferred rows. Selected Kaito rows must exactly equal
+their original captured native trigger (apart from native placement ordering),
+be collected exactly once and not also have a published occurrence. A tenth paid
+both-seat group uses labelled native departure/simultaneous combat-entry primitives
+on genuinely paid Kaito cards. The actual collector and legend SBA create the
+waiting row, which projects as Held and restores through the real legend answer.
+A duplicate of that genuine row in another holder refuses read-only. No synthetic
+trigger/legend payload creates the positive scene. Runtime remains unrun.

@@ -542,3 +542,82 @@ fn genuine_paid_return_recast_battlefield_order_and_membership_refuse_readonly_b
         }
     }
 }
+#[test]
+fn genuine_paid_sources_native_legend_deferred_combat_capture_restores_and_rejects_duplicate_held_both_seats(
+) {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p);
+        let first = walker(&mut s, p);
+        // Native departure primitive, not a fabricated paid planeswalker bounce.
+        event::propose_and_commit(&mut s, event::ProposedEvent::zone_change(first, Zone::Hand));
+        let observer = walker(&mut s, p);
+        let creature = cast(&mut s, p, "Axgard Cavalry", &[], 2);
+        finish(&mut s);
+        // Native final-combat-wave plus simultaneous entry primitive. Both Kaito
+        // cards were genuinely paid; no trigger or legend continuation is injected.
+        let mut damage = event::ProposedEvent::damage(creature, Target::Player(p.opponent()), 2);
+        if let event::ProposedEvent::Damage(d) = &mut damage {
+            d.is_combat = true;
+        }
+        engine::commit_combat_damage_events(
+            &mut s,
+            vec![
+                damage,
+                event::ProposedEvent::zone_change(first, Zone::Battlefield),
+            ],
+        );
+        let d = next(&mut s);
+        let engine::Decision::ChooseLegendPermanent { player, candidates } = d else {
+            panic!("real legend choice absent {d:?}")
+        };
+        assert_eq!(player, p);
+        assert!(candidates.contains(&first) && candidates.contains(&observer));
+        assert!(s.engine.pending_triggers.is_empty());
+        assert!(s
+            .pending_legend_rule_v1
+            .as_ref()
+            .unwrap()
+            .waiting_triggers()
+            .iter()
+            .any(|t| matches!(t.effect, EffectOp::KaitoCunningV75 { kind: 3, .. })));
+        let f = capture(&s, p);
+        let t = f
+            .triggers
+            .iter()
+            .find(|t| matches!(t.origin, facts::OriginV75::Combat(_)))
+            .unwrap();
+        assert_eq!(t.stage, facts::StageV75::Held);
+        assert!(t.native_position.is_some());
+        assert_eq!(t.source.original_source.object, observer.0);
+        // Duplicate a genuine existing held row only for a read-only negative.
+        let row = s
+            .pending_legend_rule_v1
+            .as_ref()
+            .unwrap()
+            .waiting_triggers()
+            .iter()
+            .find(|t| matches!(t.effect, EffectOp::KaitoCunningV75 { kind: 3, .. }))
+            .unwrap()
+            .clone();
+        let mut bad = restore(&s);
+        bad.engine.pending_triggers.push(row);
+        let before = bad.clone();
+        assert!(facts::capture(&bad, p).is_err());
+        assert_eq!(bad, before);
+        let mut replay = restore(&s);
+        for state in [&mut s, &mut replay] {
+            engine::step(state, Action::ChooseLegendPermanent(observer)).unwrap();
+            finish(state);
+        }
+        assert_eq!(s, replay);
+        let f = capture(&s, p);
+        let t = f
+            .triggers
+            .iter()
+            .find(|t| matches!(t.origin, facts::OriginV75::Combat(_)))
+            .unwrap();
+        assert_eq!(t.stage, facts::StageV75::Resolved);
+        assert_eq!(s.objects.get(first).zone, Zone::Graveyard);
+        assert_eq!(crate::planeswalker_v1::loyalty(&s, observer), Some(4));
+    }
+}

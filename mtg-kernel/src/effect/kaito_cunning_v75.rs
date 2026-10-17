@@ -1833,6 +1833,32 @@ pub(crate) fn public_facts_v75(
     {
         return Err("V75 battlefield roster incomplete".into());
     }
+    // Native held rows can wait behind legend SBAs or a resolution parent.
+    // Reuse the established complete traversal instead of one storage vector.
+    let held = public::held(state);
+    let mut held_origins = std::collections::BTreeSet::new();
+    for row in &held {
+        if !recipe(&row.effect) {
+            continue;
+        }
+        let EffectOp::KaitoCunningV75 {
+            kind: 3 | 4,
+            origin: Some(index),
+        } = &row.effect
+        else {
+            return Err("V75 held Kaito root is not an actual captured trigger".into());
+        };
+        let mut expected = trigger(state, *index)?;
+        expected.placement_ordered = row.placement_ordered;
+        if **row != expected
+            || !held_origins.insert(*index)
+            || !rows(state).any(|(_, j)| matches!(j,JournalV75::Collected{origin}if origin==index))
+            || rows(state)
+                .any(|(_, j)| matches!(j,JournalV75::TriggerPublished{origin,..}if origin==index))
+        {
+            return Err("V75 held trigger changed, duplicated or also published".into());
+        }
+    }
     let mut publications = BTreeMap::new();
     let mut combats = BTreeMap::new();
     let mut emblems = BTreeMap::new();
@@ -2123,7 +2149,7 @@ pub(crate) fn public_facts_v75(
             (stage, pos)
         } else {
             let expected = trigger(state, at as u64)?;
-            if let Some(pos) = state.engine.pending_triggers.iter().position(|t| {
+            if let Some(pos) = held.iter().copied().position(|t| {
                 let mut expected = expected.clone();
                 expected.placement_ordered = t.placement_ordered;
                 t == &expected
