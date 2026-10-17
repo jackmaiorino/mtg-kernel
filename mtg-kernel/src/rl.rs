@@ -9407,7 +9407,7 @@ pub(crate) fn core_policy_action_candidates_call_v62(
     decision: &PolicyDecisionV5,
     state: &GameState,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
+    crate::call_observation_v62::validate_state(state).map_err(RlContractError)?;
     core_policy_action_candidates_next_five_scoped_v59(
         decision,
         state,
