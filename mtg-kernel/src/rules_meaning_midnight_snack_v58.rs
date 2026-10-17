@@ -187,6 +187,7 @@ pub fn producer_sha256() -> String {
             include_str!("event_history_v1.rs"),
             crate::engine::time_stop_v1::source_sha256_v1(),
             crate::effect::genesis_wave_v1::source_sha256_v1(),
+            include_str!("engine/tinybones_v72.rs"),
         ] {
             h.update((s.len() as u64).to_le_bytes());
             h.update(s.as_bytes());
@@ -519,18 +520,22 @@ mod selector_tests {
     use super::*;
     #[test]
     fn default_standard_and_foreign_catalog_operands_refuse() {
-        match live_selector() {
-            Err(_) => assert!(!cfg!(all(
-                feature = "limited-fdn-fixtures",
-                not(feature = "standard-magezero-fixtures")
-            ))),
-            Ok(selector) => {
-                let forest = crate::card_def::card_id_by_name("Forest").unwrap();
-                assert!(meaning(&selector, forest).is_err());
-                let mut wrong = selector;
-                wrong.card_db_hash ^= 1;
-                assert!(meaning(&wrong, forest).is_err());
-            }
+        let actual = live_selector();
+        if cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) {
+            let selector = actual.expect("pure Limited catalog must supply its selector");
+            let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+            assert!(meaning(&selector, forest).is_err());
+            let mut wrong = selector;
+            wrong.card_db_hash ^= 1;
+            assert!(meaning(&wrong, forest).is_err());
+        } else {
+            assert_eq!(
+                actual,
+                Err("Snack V58 requires pure Limited catalog".into())
+            );
         }
     }
 }

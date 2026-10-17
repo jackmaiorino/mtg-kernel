@@ -8992,6 +8992,104 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Tinybones, Bauble Burglar",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton",
+        "Rogue"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 3,
+      "mechanics": [
+        "opponent_discard_original_incarnation_exile_with_stash",
+        "dynamic_own_turn_unowned_stashed_exile_play",
+        "any_type_mana_original_pips_and_convoke",
+        "sorcery_3B_tap_opponent_discards_one"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TinybonesBaubleBurglar.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tinybones_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Liliana, Dreadhorde General",
+      "mana_cost": "{4}{B}{B}",
+      "mana_value": 6,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Liliana"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "starting_loyalty": 6,
+      "mechanics": [
+        "controlled_creature_dies_draw",
+        "native_loyalty_zombie",
+        "apnap_simultaneous_sacrifice_two",
+        "opponent_keep_each_permanent_type_sacrifice_rest"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LilianaDreadhordeGeneral.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_liliana_dreadhorde_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false,
+      "power": null,
+      "toughness": null
+    },
+    {
+      "name": "Zombie Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/ZombieToken.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "is_token": true
     }
   ]
 }

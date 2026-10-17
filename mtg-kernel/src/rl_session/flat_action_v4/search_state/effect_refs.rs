@@ -82,6 +82,9 @@ impl Scan<'_> {
             | BindSphinxLoreV1
             | SphinxLoreV1 { .. }
             | HarvesterExileAndCopyV1
+            | TinybonesStashV72 { .. }
+            | LilianaZombieV1
+            | LilianaSacrificeV1 { .. }
             | FiendArtisanSearchV1 => true,
             ChandraFlameshaperV74{..}=>true,
             GenesisWaveV1 => self.scope != ReferenceScopeV68::GenesisWave,
@@ -383,6 +386,7 @@ impl Scan<'_> {
             ChandraExileGrantV74 { .. } => true,
             CuratorV1 { .. }
             | BlasphemousEdictV1 { .. }
+            | LilianaV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
             | AleshaRaidAnswerV1 { .. }
             | SphinxsTutelageMillV1 { .. } => true,
@@ -647,6 +651,7 @@ impl Scan<'_> {
             ChandraExileV74 { .. } => true,
             CuratorCardsV1 { .. }
             | BlasphemousEdictV1 { .. }
+            | LilianaV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
             | SphinxsTutelageMillOrderV1 { .. } => true,
             ChooseNewlyExiledCard { .. } => true,
@@ -1167,11 +1172,15 @@ fn conflicts_in_scope(
     }
     if state.engine.event_history.has_any(&[
         EventKindV1::VivienReidV1,
+        EventKindV1::TinybonesV72,
+        EventKindV1::LilianaDreadhordeV1,
         EventKindV1::ChandraFlameshaperV74,
     ]) || state.engine.event_log.iter().any(|e| {
         matches!(
             e,
             crate::event::CommittedEvent::VivienReidV1 { .. }
+                | crate::event::CommittedEvent::TinybonesV72 { .. }
+                | crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }
                 | crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
         )
     }) {
@@ -1548,6 +1557,9 @@ fn conflicts_in_scope(
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
             PublishedCastIdentityV1 { .. }
+            | TinybonesV72 { .. }
+            | LilianaDreadhordeV1 { .. }
+            | MuldrothaOptionsV1 { .. } | MuldrothaSelectedV1 { .. } | MuldrothaPlayedV1 { .. }
             | ChandraFlameshaperV74{..}
             | VivienReidV1 { .. }
             | OrdinaryCleanupStageV1 { .. }

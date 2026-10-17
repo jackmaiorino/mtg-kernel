@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 489);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 491);
         assert_eq!(
             partials,
             [
@@ -9047,6 +9047,8 @@ mod tests {
                 (486, "Time Stop"),
                 (487, "Genesis Wave"),
                 (488, "Vivien Reid"),
+                (489, "Muldrotha, the Gravetide"),
+                (490, "Tinybones, Bauble Burglar"),
             ]
         );
         let mut playable = Vec::new();

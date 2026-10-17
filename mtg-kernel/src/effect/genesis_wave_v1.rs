@@ -446,7 +446,7 @@ fn validate_entry_record(
             }
             _ => None,
         })
-        .last()
+        .next_back()
         .ok_or("Genesis Wave entry has no earlier native progress")?;
     if start <= previous
         || state.engine.event_history.len() != end
@@ -1449,6 +1449,23 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/current_mixed_policy_v1/ordinary_removal_printing.rs",
                     include_str!("../current_mixed_policy_v1/ordinary_removal_printing.rs"),
                 ),
+                (
+                    "mtg-kernel/src/engine/tinybones_v72.rs",
+                    include_str!("../engine/tinybones_v72.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/liliana_dreadhorde_v1.rs",
+                    include_str!("liliana_dreadhorde_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/creature_death_capture_v1.rs",
+                    include_str!("../creature_death_capture_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/planeswalker_v1.rs",
+                    include_str!("../planeswalker_v1.rs"),
+                ),
+                ("mtg-kernel/src/trigger.rs", include_str!("../trigger.rs")),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());
@@ -1698,8 +1715,10 @@ pub(crate) fn public_facts_v69(
         .filter(|p| pending_selected(state, p))
     {
         validate(state, p)?;
-        if !ids.contains_key(&p.resolving_item.v4.stack_item_id) {
-            ids.insert(p.resolving_item.v4.stack_item_id, rows.len());
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            ids.entry(p.resolving_item.v4.stack_item_id)
+        {
+            entry.insert(rows.len());
             rows.push((&p.resolving_item, None, false, None));
         }
     }

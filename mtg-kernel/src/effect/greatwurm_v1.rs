@@ -22,8 +22,9 @@ pub enum CounterKindV1 {
     Lifelink,
     Time,
     Finality,
+    Stash,
 }
-pub const KINDS: [CounterKindV1; 17] = [
+pub const KINDS: [CounterKindV1; 18] = [
     CounterKindV1::PlusOne,
     CounterKindV1::MinusOne,
     CounterKindV1::MinusToughness,
@@ -41,6 +42,7 @@ pub const KINDS: [CounterKindV1; 17] = [
     CounterKindV1::Lifelink,
     CounterKindV1::Time,
     CounterKindV1::Finality,
+    CounterKindV1::Stash,
 ];
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +68,7 @@ pub(crate) fn count(state: &GameState, id: ObjectId, kind: CounterKindV1) -> Res
         CounterKindV1::Incubation => c.incubation,
         CounterKindV1::Revival => c.revival,
         CounterKindV1::Fellowship => c.fellowship,
+        CounterKindV1::Stash => c.stash,
         CounterKindV1::Loyalty => {
             return Ok(crate::planeswalker_v1::loyalty(state, id).unwrap_or(0))
         }
@@ -102,6 +105,7 @@ pub(crate) fn remove_unit(state: &mut GameState, unit: UnitV1) {
         Incubation => o.counters.incubation -= 1,
         Revival => o.counters.revival -= 1,
         Fellowship => o.counters.fellowship -= 1,
+        Stash => o.counters.stash -= 1,
         Lifelink => o.v4.lifelink_keyword_counters -= 1,
         Time => o.v4.time_counters_v1 -= 1,
         Finality => {
@@ -163,12 +167,13 @@ pub struct CaptureV1 {
 }
 // A private pre-materialization wave roster. Merely setting is_combat on a
 // proposal cannot bind it: only the engine's actual wave-finish callback can.
+type WaveSourceV1 = (
+    crate::state::AbilitySourceContractV4,
+    Vec<crate::state::AbilitySourceContractV4>,
+    Vec<(Target, i32)>,
+);
 pub(crate) struct WaveV1 {
-    sources: Vec<(
-        crate::state::AbilitySourceContractV4,
-        Vec<crate::state::AbilitySourceContractV4>,
-        Vec<(Target, i32)>,
-    )>,
+    sources: Vec<WaveSourceV1>,
 }
 pub(crate) fn capture_wave(
     state: &GameState,
@@ -183,21 +188,17 @@ pub(crate) fn capture_wave(
     let observers = state
         .objects
         .iter()
-        .filter_map(|(id, o)| {
-            (o.zone == Zone::Battlefield
+        .filter(|&(id, o)| {
+            o.zone == Zone::Battlefield
                 && o.controller == state.active_player
                 && o.v4.face_down_v1.is_none()
                 && o.v4.face_index == 0
                 && definition(o.card_def)
-                && crate::continuous_characteristics_v1::printed_abilities_active(state, id))
-            .then(|| crate::state::AbilitySourceContractV4::capture(state, id))
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
         })
+        .map(|(id, _)| crate::state::AbilitySourceContractV4::capture(state, id))
         .collect::<Vec<_>>();
-    let mut sources: Vec<(
-        crate::state::AbilitySourceContractV4,
-        Vec<crate::state::AbilitySourceContractV4>,
-        Vec<(Target, i32)>,
-    )> = vec![];
+    let mut sources: Vec<WaveSourceV1> = vec![];
     if observers.is_empty() {
         return Ok(WaveV1 { sources });
     }

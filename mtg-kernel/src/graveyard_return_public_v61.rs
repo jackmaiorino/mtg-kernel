@@ -368,7 +368,11 @@ fn counter_values_scoped(
         incubation,
         revival,
         fellowship,
+        stash,
     } = live.counters;
+    if stash != 0 {
+        return Err("public projection does not expose stash counters".into());
+    }
     if fellowship != 0 && !call {
         return Err("V61 does not expose fellowship counters".into());
     }

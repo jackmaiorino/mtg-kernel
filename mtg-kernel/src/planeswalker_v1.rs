@@ -125,6 +125,7 @@ pub(crate) fn quote_loyalty_change_v48(
     let counters = loyalty(state, object).ok_or("loyalty ledger absent")?;
     let exact = crate::doubling_season_v48::requires_successor(state)
         || crate::effect::vivien_reid_v1::definition(state.objects.get(object).card_def)
+        || crate::effect::liliana_dreadhorde_v1::definition(state.objects.get(object).card_def)
         || crate::effect::chandra_flameshaper_v1::definition(state.objects.get(object).card_def);
     let counters = if delta >= 0 {
         let controller = state.objects.get(object).controller;

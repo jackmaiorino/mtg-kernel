@@ -82,6 +82,10 @@ pub struct Counters {
     /// no consumer admission; zero retains every predecessor encoding.
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub fellowship: i32,
+    /// Tinybones' distinct stash counters. Absent/zero retains old bytes and
+    /// hashes; predecessor public counter rosters must explicitly refuse them.
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub stash: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -108,6 +112,7 @@ impl Counters {
             || self.incubation != 0
             || self.revival != 0
             || self.fellowship != 0
+            || self.stash != 0
     }
 }
 
@@ -159,6 +164,10 @@ impl std::hash::Hash for Counters {
         if self.fellowship != 0 {
             b"fellowship_counters_v1".hash(state);
             self.fellowship.hash(state);
+        }
+        if self.stash != 0 {
+            b"stash_counters_v1".hash(state);
+            self.stash.hash(state);
         }
     }
 }
@@ -945,6 +954,9 @@ pub enum SpellCastRouteV4 {
     },
     MuldrothaGraveyardV1 {
         options_history_index: u64,
+    },
+    TinybonesExileV72 {
+        play_history_index: u64,
     },
 }
 
@@ -5056,6 +5068,31 @@ mod soul_counter_storage_v1_tests {
         assert_eq!(
             serde_json::from_slice::<Counters>(&serde_json::to_vec(&revival).unwrap()).unwrap(),
             revival
+        );
+    }
+    #[test]
+    fn sparse_stash_preserves_absent_counter_bytes_and_distinct_restorable_count() {
+        let legacy = r#"{"plus1_plus1":0,"minus1_minus1":0,"minus0_minus1":0,"stun":0,"lore":0}"#;
+        let empty: Counters = serde_json::from_str(legacy).unwrap();
+        assert_eq!(serde_json::to_string(&empty).unwrap(), legacy);
+        assert_eq!(bytes(empty), vec![0; 10]);
+        assert_eq!(empty.stash, 0);
+        let stash = Counters {
+            stash: i32::MAX,
+            ..Default::default()
+        };
+        assert!(stash.any());
+        assert_ne!(bytes(stash), bytes(empty));
+        assert_ne!(
+            bytes(stash),
+            bytes(Counters {
+                stash: i32::MAX - 1,
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            serde_json::from_slice::<Counters>(&serde_json::to_vec(&stash).unwrap()).unwrap(),
+            stash
         );
     }
     #[test]
