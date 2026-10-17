@@ -1183,8 +1183,9 @@ fn recorded_cell_labels_keep_byte_identical_order_hash_inputs() {
 
 /// `SD1-T-s{k}` with k from 1 to 7 appends k to both hash inputs: each seed
 /// has its own epoch and anchor orders over the same rows, batch sizes and
-/// checkpoints. Any other form reads seed 0, and the cell records no new
-/// field.
+/// checkpoints. A label without the `SD1-T-s` prefix reads seed 0 (one with
+/// it is refused unless exact: `sd1_seed_label_near_misses_are_refused`),
+/// and the cell records no new field.
 #[test]
 fn sd1_seed_labels_reorder_both_orders_over_the_same_rows() {
     for (label, seed) in [
@@ -1192,15 +1193,10 @@ fn sd1_seed_labels_reorder_both_orders_over_the_same_rows() {
         ("SD1-T-s1", 1),
         ("SD1-T-s4", 4),
         ("SD1-T-s7", 7),
-        ("SD1-T-s8", 0),
-        ("SD1-T-s07", 0),
-        ("SD1-T-s", 0),
-        ("SD1-T-s1-x", 0),
         ("SD1-T-S1", 0),
         ("sd1-T-s1", 0),
         ("SD1-P-s1", 0),
         ("xSD1-T-s1", 0),
-        ("SD1-T-s1x", 0),
     ] {
         assert_eq!(order_seed_v1(label), seed, "{label}");
         let recipe = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(label))).unwrap();
@@ -1285,6 +1281,34 @@ fn sd1_seed_labels_reorder_both_orders_over_the_same_rows() {
     }
     assert_eq!(first_epochs.len(), 8, "each seed has its own archive order");
     assert_eq!(first_anchors.len(), 8, "each seed has its own anchor order");
+}
+
+/// A label with the `SD1-T-s` prefix that is not exactly `SD1-T-s{k}`, one
+/// digit k from 0 to 7 and nothing after it, is refused: it would read
+/// seed 0 and repeat D1-0's batch orders under another label. The eight
+/// exact labels read their seeds.
+#[test]
+fn sd1_seed_label_near_misses_are_refused() {
+    for (label, expected) in [
+        ("SD1-T-s8", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s07", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s-1", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s1x", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s1-x", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s1 ", "ASCII letters, digits or '-'"),
+    ] {
+        assert_eq!(order_seed_v1(label), 0, "{label}");
+        let error = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(label)))
+            .err()
+            .unwrap_or_else(|| panic!("{label:?} accepted"));
+        assert!(error.contains(expected), "{label:?}: {error}");
+    }
+    for seed in 0..8 {
+        let label = format!("SD1-T-s{seed}");
+        let recipe = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(&label))).unwrap();
+        assert_eq!(recipe.order_seed, seed, "{label}");
+    }
 }
 
 #[test]

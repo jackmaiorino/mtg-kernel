@@ -30,8 +30,9 @@
 //!   rows, and its held-out anchor readings over all decks, the non-Spy
 //!   decks and each deck.
 //! - A cell labeled exactly `SD1-T-s{k}`, k from 0 to 7, seeds phase 1's
-//!   batch orders with k ([`order_seed_v1`]); seed 0 and every other label
-//!   keep the unseeded orders.
+//!   batch orders with k ([`order_seed_v1`]); seed 0 and every label
+//!   without the `SD1-T-s` prefix keep the unseeded orders, and any other
+//!   label with that prefix is refused.
 //! - Phase-1 options run one cell of the U collapse diagnostic (collab
 //!   LANES/spy-u-collapse-20261014): arm U with one change to its step size,
 //!   anchor coefficient, rows or checkpoint steps. Absent, phase 1 is the
@@ -336,15 +337,20 @@ struct RecipeV1 {
     order_seed: u64,
 }
 
+/// The prefix of SD1's seed labels, `SD1-T-s{k}`.
+const SD1_SEED_PREFIX_V1: &str = "SD1-T-s";
+
 /// The batch-order seed a cell label names: k when the whole label is
 /// exactly `SD1-T-s{k}` with k from 0 to 7, otherwise 0. Every other label
 /// reads as before, so no recorded cell changes meaning (CU1's `U-s32` and
-/// `U-s256`, where s means support, included). The seed enters the
-/// per-epoch archive order and the per-pass anchor order, appended only for
-/// k from 1 to 7 ([`archive_order_key_v1`], [`anchor_order_key_v1`]); seed
-/// 0 keeps the unseeded hash inputs byte for byte.
+/// `U-s256`, where s means support, included); [`recipe_v1`] refuses a
+/// label with the `SD1-T-s` prefix that is not of that form. The seed
+/// enters the per-epoch archive order and the per-pass anchor order,
+/// appended only for k from 1 to 7 ([`archive_order_key_v1`],
+/// [`anchor_order_key_v1`]); seed 0 keeps the unseeded hash inputs byte for
+/// byte.
 fn order_seed_v1(cell: &str) -> u64 {
-    match cell.strip_prefix("SD1-T-s").map(str::as_bytes) {
+    match cell.strip_prefix(SD1_SEED_PREFIX_V1).map(str::as_bytes) {
         Some(&[digit @ b'0'..=b'7']) => u64::from(digit - b'0'),
         _ => 0,
     }
@@ -375,6 +381,15 @@ fn recipe_v1(
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
         "a cell label is 1 to 32 ASCII letters, digits or '-'",
+    )?;
+    // A label with the seed prefix is exactly the label of the seed it
+    // reads: a near miss (`SD1-T-s8`, `SD1-T-s07`) would read seed 0 and
+    // repeat D1-0's batch orders under another label.
+    let order_seed = order_seed_v1(&options.cell);
+    ensure(
+        !options.cell.starts_with(SD1_SEED_PREFIX_V1)
+            || options.cell == format!("{SD1_SEED_PREFIX_V1}{order_seed}"),
+        "a cell label starting with SD1-T-s is one of SD1-T-s0 to SD1-T-s7",
     )?;
     let learning_rate = options.learning_rate.unwrap_or(LEARNING_RATE);
     let anchor_coefficient = options.anchor_coefficient.unwrap_or(ANCHOR_COEFFICIENT);
@@ -422,7 +437,7 @@ fn recipe_v1(
             checkpoint_steps: options.checkpoint_steps.clone().unwrap_or_default(),
             keep_sets: options.keep_sets.clone(),
         }),
-        order_seed: order_seed_v1(&options.cell),
+        order_seed,
     })
 }
 
