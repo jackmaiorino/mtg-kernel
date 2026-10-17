@@ -197,9 +197,14 @@ impl Wire {
     }
     fn menu(&self) -> &Value {
         assert_eq!(
-            self.last["state"]["state_type"], "decision",
-            "{}",
-            self.last
+            self.last["state"]["state_type"],
+            "decision",
+            "last reply: {}; native response: {:?}",
+            self.last,
+            self.server
+                .active
+                .as_ref()
+                .map(|active| active.core.current_response())
         );
         &self.last["state"]["decision"]
     }
@@ -233,11 +238,16 @@ impl Wire {
         serde_json::to_vec(self.state()).unwrap()
     }
     fn native_step(&mut self, choose: impl Fn(&ActionSemanticV1) -> bool) {
-        let bound = self
-            .server
-            .pending
-            .as_ref()
-            .expect("actual executable V6 menu");
+        let bound = self.server.pending.as_ref().unwrap_or_else(|| {
+            panic!(
+                "actual executable V6 menu absent; last reply: {}; native response: {:?}",
+                self.last,
+                self.server
+                    .active
+                    .as_ref()
+                    .map(|active| active.core.current_response())
+            )
+        });
         let native_index = bound
             .decision
             .actions()
