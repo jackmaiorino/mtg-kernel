@@ -30,7 +30,7 @@ private libraries or executable contracts enter public DTOs or numeric input.
 Inherited Vivien facts retain their actual V70 identity. V71 common and Elenda
 compatibility slots have distinct V71 identities, with exact inherited counter
 and current-form semantics. Older observations are never relabeled. Unknown
-later families, Tinybones/Liliana native history and unsupported Stash counters
+later families, Tinybones/Liliana/Chandra native history and unsupported Stash counters
 refuse. Existing legacy graveyard routes, timings, payments and Greatwurm remain
 unchanged. Normal production deck reset still requires Full cards; Partial489
 is not admitted by a test fixture shortcut.
@@ -95,3 +95,18 @@ native filter moves from V11 to V12, avoiding duplicate execution. Numeric
 fixtures remain in the existing complete current-mixed-model aggregate. The
 embedded V12 Python authority now selects Rust CI when edited alone. This is
 workflow wiring only, not observed build or runtime success.
+
+Latest composition includes published ed579609, including Chandra493 and the
+Standard Fellowship inline-effect fix. Strict Chandra refusal remains. The
+canonical Time Stop/Genesis child lists, including Liliana exactly once, are
+unchanged by the sampler follow-on. Additional actual SelectedPayment fixtures
+sample before each Bestow form/X/target/payment stage and compare a native clone
+with its genuine current counts, origins and original action index.
+
+Observed follow-on checks:139 Limited transport mocks,105 deck/metadata cases
+and6 frozen-target cases pass,250 total. Both canonical generators --check pass;
+pinned formatting, diff checks, CI matrix/filter checks and Bash syntax pass.
+Old private sampling-scope enum prefixes and old-scope branch truth tables are
+preserved, with an explicit Muldrotha-history refusal outside V71. Registry,
+frozen target, original sample bytes and shared source guard bytes remain
+identical to ed579609. Rust source and all16 V71 fixture groups are still UNRUN.

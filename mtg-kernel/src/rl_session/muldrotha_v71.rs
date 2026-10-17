@@ -540,7 +540,6 @@ impl MuldrothaSessionV71 {
     }
     /// Samples only eligible current unknown slots. Factual native history,
     /// permission menus, costs and the complete original pair binding stay fixed.
-    /// Failure does not grant a retry or a capability for the supplied DTO.
     pub fn sampled_clone_v71(
         &self,
         decision: &MuldrothaDecisionV71,

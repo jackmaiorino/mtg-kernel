@@ -124,6 +124,70 @@ fn paid_permission_multitype_sampling_keeps_native_source_type_cost_and_index_bo
 #[test]
 fn paid_bestow_adventure_land_published_and_finished_stages_sample_without_refunding_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
+        // A real selected Enchantment route still owes form, X, target and
+        // ordinary payment. Sample each actual pending stage before advancing.
+        let (mut staged, source) = scene(p);
+        let host = put(&mut staged, p, "Llanowar Elves", Zone::Hand);
+        native::pay(&mut staged, p, host, None, None);
+        native::finish(&mut staged);
+        let hydra = put(&mut staged, p, "Nyxborn Hydra", Zone::Graveyard);
+        let before = native::tapped(&staged, p);
+        let mut pair = Pair::new(staged);
+        pair.act(|a| matches!(a,A::CastSpell{source,..}if source.arena_id==hydra.0));
+        pair.permission(CardType::Enchantment);
+        assert_eq!(
+            pair.own
+                .decision_v71()
+                .unwrap()
+                .observation()
+                .muldrotha
+                .plays[0]
+                .stage,
+            crate::muldrotha_public_v71::StageV71::SelectedPayment
+        );
+        let mut staged = sampled(&pair.own, 8180);
+        for seed in 8181..8190 {
+            if staged.fixture_state_v71().engine.pending_cast.is_none() {
+                break;
+            }
+            staged = sampled(&staged, seed);
+            let d = staged.decision_v71().unwrap();
+            let ordinal=d.actions().iter().position(|a|matches!(a,
+                A::ChooseSpellMode{mode_index:1,..}
+                | A::ChooseEffectOption{option_index:3,..}
+            )||matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.arena_id==host.0)).unwrap();
+            let original = d.fixture_original_index_v71(ordinal as u32).unwrap();
+            let mut native = staged.fixture_native_clone_v71();
+            assert_eq!(
+                staged.step_v71(&d, ordinal as u32).unwrap(),
+                native
+                    .step(d.expected().episode_id, d.expected().step, original)
+                    .unwrap()
+            );
+            assert_eq!(staged.fixture_state_v71(), native.muldrotha_fixture_state());
+        }
+        assert!(staged.fixture_state_v71().engine.pending_cast.is_none());
+        let row = staged
+            .fixture_state_v71()
+            .stack
+            .iter()
+            .find(|r| r.source == hydra)
+            .unwrap();
+        assert_eq!(row.v4.cast_method, Some(crate::state::CastMethodV4::Bestow));
+        assert_eq!(row.v4.x_value, 3);
+        assert_eq!(native::tapped(staged.fixture_state_v71(), p) - before, 5);
+        let d = staged.decision_v71().unwrap();
+        assert_eq!(
+            d.observation().muldrotha.budgets[0].spent,
+            [CardType::Enchantment]
+        );
+        assert_eq!(
+            d.observation().muldrotha.plays[0].permissions[1]
+                .source
+                .original_source
+                .object,
+            source.0
+        );
         for (name, kind, form, x, cost) in [
             ("Fang Dragon", CardType::Creature, 0, 0, 7),
             ("Nyxborn Hydra", CardType::Enchantment, 1, 3, 5),
