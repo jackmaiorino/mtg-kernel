@@ -1,5 +1,5 @@
-//! FDN176 native source. ID491 and its exact ID492 Zombie remain reserved
-//! until the actual preceding Tinybones490 definition has been committed.
+//! FDN176 native Partial491 with exact black 2/2 Zombie Partial492.
+//! Registration follows the actual committed Tinybones490 prerequisite.
 use super::*;
 use crate::{event::CommittedEvent as E, ids::StackItemId, state::StackItemKind};
 use serde::{Deserialize, Serialize};

@@ -1,6 +1,6 @@
 //! Future registration fixtures. All casts and loyalty costs use the real
 //! decision engine. Battlefield operands and explicitly labelled event/type
-//! boundaries are setup, not claims that an unregistered card has run.
+//! boundaries are setup. These native Partial source fixtures remain unrun.
 use super::*;
 use crate::{
     engine::time_stop_v1::tests::{next, pass, priority, restore, tapped},

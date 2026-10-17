@@ -1,12 +1,15 @@
 # Liliana, Dreadhorde General native source
 
-Unregistered checkpoint based on root60f7a7bc7c385d9cc83828dc28e9a73bed69418e.
-Reserved491 is frozen FDN176. Reserved492 is the exact 2/2 black Zombie
-dependency, frozen edge e29a360b-11fd-42ba-82ba-de8f7e136c20. Actual Tinybones490
-must be composed before these two registry entries append. Prepared JSON is
-outside generator inputs; the forty-card reference deck currently refuses
-the unregistered Liliana. Frozen286 names,24 token edges, current298 registry
-rows, accepted coverage and catalog/profile tuples are unchanged.
+Native Partial registration follows actual Tinybones490 commit
+8fe859c1978517ef22b9f85083a3ec794b221302 and normal composition of canonical
+38a713af3a4ffac8cf364da99de2042da959db62. Liliana491 is frozen FDN176.
+Zombie492 is the exact 2/2 black Zombie dependency, frozen edge
+e29a360b-11fd-42ba-82ba-de8f7e136c20. The prior 491 registry definitions and
+299 FDN rows remain a prefix; two Partial definitions append. Current totals
+are493 definitions and301 FDN rows. Frozen286 names and24 token edges are
+unchanged. Coverage is250 Full,34 Partial,2 missing among frozen286. The
+reference deck still refuses Full-only resolution because Liliana is Partial.
+Prepared JSON retains its original source metadata outside generator inputs.
 
 Printed authority is pinned Mage a5c90fe180021e70e2a644ade00eeab07f857a40,
 Mage.Sets/src/mage/cards/l/LilianaDreadhordeGeneral.java and
@@ -63,11 +66,24 @@ refuse public Liliana/Zombie and retained native history. V73 is reserved for a
 later complete consumer. No Full promotion, native runtime result, model,
 Human/wire, sampler, production deck or playing strength admission is claimed.
 
-Validation receipt: Rustfmt1.94.1 passes for changed Rust sources. Python3.13.14
-passes109 affected metadata/deck/frozen-target cases. Static checks preserve
-the original274 EffectOp,51 EffectFrame,46 selection-purpose and309 event/kind
-prefixes, all48 ordered Genesis fingerprint inputs, and unchanged frozen
-registry/target/reference/sample content. Four semantic child inputs append.
-The prepared metadata parses and the40-card reference deck refuses the missing
-registration. All eight Rust fixture groups remain UNCOMPILED and UNRUN;
-Rust compilation and execution are prohibited in this source lane.
+Validation receipt: pinned Rustfmt1.94.1 and git diff --check pass. Python
+passes104 affected deck/metadata cases and6 frozen-target cases. Both canonical
+flat-policy generators and their --check passes succeed with no generated
+changes. The v1 generator required the existing Torch-equipped repository
+virtual environment; Python3.13 without Torch refused import before generation.
+No dependency installation or compute was started.
+
+Static comparison to actual Tiny490 preserves275 EffectOp,51 EffectFrame,
+46 selection-purpose and310 event/kind prefixes. Liliana's two operations,
+one frame/purpose and one event append. Canonical38a's50 ordered Genesis and
+102 Time Stop semantic children remain prefixes; Tinybones and Liliana children
+append. The original237 sample payloads and frozen target/reference files are
+byte-identical. The README honestly lists311 kinds with74 samples pending;
+no event payload was fabricated. Explicit sampler refusal arms cover Liliana's
+operations, frame, selection purpose and retained history. Canonical compile
+and Clippy repairs, including Muldrotha history arms, remain composed.
+
+All eight genuine paid both-seat Rust fixture groups remain UNCOMPILED and
+UNRUN. Rust compilation and execution are prohibited in this source lane.
+The parent owns canonical PR, CI, integration and issue110 completion. This
+registration is source support only and makes no consumer or runtime admission.
