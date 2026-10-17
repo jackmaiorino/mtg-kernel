@@ -1236,7 +1236,10 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         // budget_game row of the spec's lineage in each file is replayed
         // without search, checked, and its new_root maps rebuilt
         // (`stage4a/root_rebuild.rs`); one root_rebuild row per game, with
-        // `void` null or the reason the game is void.
+        // `void` null or the reason the game is void. A listed file that
+        // cannot be read, or a line of one that is not JSON, writes a void
+        // row and the run continues; a missing or unreadable list and every
+        // schedule error stop the run.
         let path = std::env::var("BUDGET_ROWS").map_err(|_| "BUDGET_ROWS is required")?;
         // Optional: the frozen schedule (JSONL of cases, as BUDGET_CASES)
         // whose case each record's carried case fields must equal.
@@ -1250,37 +1253,8 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             }
             Err(_) => None,
         };
-        let mut out = String::new();
-        for file in std::fs::read_to_string(&path)
-            .map_err(|e| format!("{path}: {e}"))?
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-        {
-            let text = std::fs::read_to_string(file.trim()).map_err(|e| format!("{file}: {e}"))?;
-            for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                let row: Value = serde_json::from_str(line).map_err(|e| format!("{file}: {e}"))?;
-                if row["kind"] != "budget_game" || row["lineage"] != sh.spec.lineage {
-                    continue;
-                }
-                let mut rebuilt = std::thread::scope(|scope| {
-                    std::thread::Builder::new()
-                        .stack_size(256 << 20)
-                        .spawn_scoped(scope, || {
-                            root_rebuild::game(&sh.spec, &row, schedule.as_ref())
-                        })
-                        .map_err(|e| e.to_string())?
-                        .join()
-                        .map_err(|_| "root rebuild worker panicked".to_owned())
-                })
-                .unwrap_or_else(|e| {
-                    let mut v = root_rebuild::header(&row, schedule.as_ref());
-                    v["void"] = json!(e);
-                    v
-                });
-                rebuilt["file"] = json!(file.trim());
-                out.push_str(&format!("{rebuilt}\n"));
-            }
-        }
+        let list = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+        let out = root_rebuild::rows(&sh.spec, &list, schedule.as_ref());
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
     if cfg.mode == "s4a-budget" {

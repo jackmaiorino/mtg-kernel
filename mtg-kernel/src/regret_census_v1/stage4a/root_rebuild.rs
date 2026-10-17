@@ -18,11 +18,12 @@
 //!   a schedule is given (`S4A_ROOT_SCHEDULE`), every case field the record
 //!   carries equal to its case's there (id, decks, seat, opponent, starting
 //!   player, seed, guide seeds as `live_policy_seeds`, search root). Per
-//!   search: root visits are the sum of n, n and wins
-//!   have the root's menu size, and wins never exceed n. Per decision, by
-//!   chooser: at `new_root`
-//!   the named search was started at the decision's step and n at its
-//!   frozen choice equals the decision's edge backups; at `reused` the named
+//!   search: root visits are the sum of n (a sum past 2^64 voids), n and
+//!   wins have the root's menu size (its recorded root decision's k), and
+//!   wins never exceed n. Per decision, by chooser: at `new_root` the named
+//!   search was started at the decision's step, and n at its frozen choice
+//!   equals the decision's edge backups and is at least eight (the floor
+//!   below which the executor executes no edge); at `reused` the named
 //!   search is earlier and the edge backups (a deeper node's count, which
 //!   the record does not keep) are at least eight; at `plain` the edge
 //!   backups are null and a named search is not later, at the same step
@@ -39,6 +40,15 @@
 //!   `new_root` decision the rebuilt root's identity (observation, menu and
 //!   state hashes) equals the search's recorded root, the map has one entry
 //!   per edge of n, and the frozen choice maps to the executed action.
+//!
+//! Input errors ([`rows`]): a listed record file that cannot be read, or a
+//! line of one that is not JSON, writes a void row with the schema, the
+//! listed file, a null id and the error, and the run goes on to the next
+//! line or file. A row of another kind or lineage is skipped without a
+//! row. Two kinds of input error stop the whole run with no rows: a missing
+//! or unreadable record list (`BUDGET_ROWS`), and any schedule error (a
+//! schedule that cannot be read or is not UTF-8, a line of it that is not
+//! JSON, a case without an id, or an id twice).
 //!
 //! A kept game also reports its focal starts (as `s4a-budget-replay` writes
 //! them), each root's storage view (`untied`, `tie_minimum`, or the fallback
@@ -244,8 +254,11 @@ fn root_of<'a>(game: &'a Value, d: &Value) -> Result<Root<'a>, String> {
     })
 }
 
-/// One search's root counts: visits are the sum of n, n and wins have the
-/// root's menu size, and wins never exceed n. Returns the search's step.
+/// One search's root counts: visits are the sum of n (a sum past 2^64
+/// voids), n and wins have the root's menu size, and wins never exceed n.
+/// The menu size is the recorded root decision's k: the tree's own
+/// `menu_size` is written as n's length, so it cannot differ from it.
+/// Returns the search's step.
 fn search_checks(k: usize, s: &Value) -> Result<u64, String> {
     let at = format!("search {k}");
     if s["search"] != json!(k) {
@@ -255,10 +268,14 @@ fn search_checks(k: usize, s: &Value) -> Result<u64, String> {
     let root = &s["tree"]["root"];
     let n = counts(&root["n"], &format!("{at}: root n"))?;
     let wins = counts(&root["wins"], &format!("{at}: root wins"))?;
-    if count(&root["visits"], &format!("{at}: root visits"))? != n.iter().sum::<u64>() {
+    let sum = n
+        .iter()
+        .try_fold(0u64, |sum, &x| sum.checked_add(x))
+        .ok_or_else(|| format!("{at}: the sum of root n overflows"))?;
+    if count(&root["visits"], &format!("{at}: root visits"))? != sum {
         return Err(format!("{at}: root visits differ from the sum of n"));
     }
-    let size = count(&root["menu_size"], &format!("{at}: root menu size"))?;
+    let size = count(&s["root"]["k"], &format!("{at}: the root's menu size k"))?;
     if n.len() as u64 != size || wins.len() != n.len() {
         return Err(format!(
             "{at}: the lengths of n and wins differ from the root's menu size"
@@ -289,9 +306,15 @@ fn decision_checks(game: &Value, steps: &[u64], d: &Value) -> Result<(), String>
                 return Err(format!("{at}: search {k} is not a search at this step"));
             }
             let root = root_of(game, d)?;
-            if d["edge_backups"].as_u64() != Some(root.n[root.frozen_choice]) {
+            let backups = root.n[root.frozen_choice];
+            if d["edge_backups"].as_u64() != Some(backups) {
                 return Err(format!(
                     "{at}: n at the frozen choice differs from the decision's edge backups"
+                ));
+            }
+            if backups < MIN_EXEC_BACKUPS {
+                return Err(format!(
+                    "{at}: the new root's executed edge has fewer than eight backups"
                 ));
             }
         }
@@ -574,11 +597,76 @@ pub(super) fn game(spec: &BankSpec, row: &Value, schedule: Option<&Schedule>) ->
 
 /// A record's case fields, as every `root_rebuild` row starts, with the
 /// SHA-256 of the schedule it was checked against (null without one).
-pub(super) fn header(row: &Value, schedule: Option<&Schedule>) -> Value {
+fn header(row: &Value, schedule: Option<&Schedule>) -> Value {
     json!({"kind":ROW_KIND,"schema":SCHEMA,"id":row["id"],"lineage":row["lineage"],
         "own":row["own"],"other":row["other"],"seat":row["seat"],"opp":row["opp"],
         "seed":row["seed"],"starting_player":row["starting_player"],
         "key_mode":row["game"]["key_mode"],"schedule_sha256":schedule.map(|s| s.sha256.clone())})
+}
+
+/// The void row of a listed file that cannot be read, or of one of its
+/// lines that is not JSON: no case field can be read, so the id is null.
+fn input_void(file: &str, reason: String) -> String {
+    format!(
+        "{}\n",
+        json!({"schema":SCHEMA,"file":file,"id":null,"void":reason})
+    )
+}
+
+/// The rows of a record list (one record file per line), in list and line
+/// order: a `root_rebuild` row for each `budget_game` row of the spec's
+/// lineage, rebuilt on its own thread (a panic voids its game), and an
+/// input void row for each listed file that cannot be read and each line
+/// that is not JSON, after which the run continues. Rows of another kind or
+/// lineage are skipped without a row.
+pub(super) fn rows(spec: &BankSpec, list: &str, schedule: Option<&Schedule>) -> String {
+    let mut out = String::new();
+    for file in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let text = match std::fs::read_to_string(file) {
+            Ok(text) => text,
+            Err(e) => {
+                out.push_str(&input_void(
+                    file,
+                    format!("the listed file cannot be read: {e}"),
+                ));
+                continue;
+            }
+        };
+        for (i, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let row: Value = match serde_json::from_str(line) {
+                Ok(row) => row,
+                Err(e) => {
+                    out.push_str(&input_void(
+                        file,
+                        format!("line {} of the listed file is not JSON: {e}", i + 1),
+                    ));
+                    continue;
+                }
+            };
+            if row["kind"] != "budget_game" || row["lineage"] != spec.lineage {
+                continue;
+            }
+            let mut rebuilt = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || game(spec, &row, schedule))
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "root rebuild worker panicked".to_owned())
+            })
+            .unwrap_or_else(|e| {
+                let mut v = header(&row, schedule);
+                v["void"] = json!(e);
+                v
+            });
+            rebuilt["file"] = json!(file);
+            out.push_str(&format!("{rebuilt}\n"));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -927,6 +1015,16 @@ mod tests {
             .unwrap();
         assert!(recorded[stale]["search"].as_u64().unwrap() > 0);
         let k = recorded[first]["search"].as_u64().unwrap() as usize;
+        // The search of a refresh whose new root executed nothing: only
+        // its own plain decision names it, so no replay check reads it.
+        let unexecuted = recorded[refreshed]["search"].as_u64().unwrap() as usize;
+        assert_eq!(
+            recorded
+                .iter()
+                .filter(|d| d["search"] == json!(unexecuted))
+                .count(),
+            1
+        );
         type Change = Box<dyn Fn(&mut Value)>;
         let at = move |r: &mut Value| -> Value { r["game"]["searches"][k].clone() };
         let set = move |r: &mut Value, v: Value| r["game"]["searches"][k] = v;
@@ -1005,6 +1103,36 @@ mod tests {
                         .unwrap()
                         .push(json!(0))
                 }),
+            ),
+            // n one edge longer than its root's k, with the tree's menu size
+            // and visits written as the executor writes them (from n), at a
+            // search that only its record checks read.
+            (
+                "lengths of n and wins differ from the root's menu size",
+                Box::new(move |r| {
+                    let t = &mut r["game"]["searches"][unexecuted]["tree"]["root"];
+                    for f in ["n", "wins"] {
+                        t[f].as_array_mut().unwrap().push(json!(0));
+                    }
+                    t["menu_size"] = json!(t["n"].as_array().unwrap().len());
+                }),
+            ),
+            // A new root executed an edge below the executor's floor, with
+            // consistent counts and edge backups.
+            (
+                "fewer than eight backups",
+                Box::new(move |r| {
+                    let t = &mut r["game"]["searches"][k]["tree"]["root"];
+                    let x = t["frozen_choice"].as_u64().unwrap() as usize;
+                    let visits = t["visits"].as_u64().unwrap() - t["n"][x].as_u64().unwrap() + 5;
+                    (t["n"][x], t["wins"][x], t["visits"]) = (json!(5), json!(3), json!(visits));
+                    r["game"]["decisions"][first]["edge_backups"] = json!(5);
+                }),
+            ),
+            // n sums past 2^64: a release build would wrap the sum.
+            (
+                "sum of root n overflows",
+                edit(|s| s["tree"]["root"]["n"][0] = json!(u64::MAX)),
             ),
             (
                 "unknown chooser",
@@ -1122,5 +1250,85 @@ mod tests {
         let missing = game(&spec, &row, Some(&schedule(&[other])));
         assert!(missing["void"].as_str().unwrap().contains("no case"));
         assert!(Schedule::parse(&format!("{}\n{}\n", case(11), case(11)), String::new()).is_err());
+    }
+
+    /// An input error voids only what it reaches, and the run goes on: a
+    /// listed file that cannot be read (missing, or not UTF-8) and a line
+    /// that is not JSON each write a void row with the listed file and a
+    /// null id; the file's other lines and the later files are still read,
+    /// and rows of another kind or lineage write nothing. Every row keeps
+    /// the same key order.
+    #[test]
+    fn root_rebuild_rows_void_input_errors_and_continue() {
+        let spec = spec();
+        let dir = std::env::temp_dir().join(format!("sd1-root-rebuild-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |name: &str| dir.join(name).to_str().unwrap().to_owned();
+        // A budget_game row of the lineage without the record schema: its
+        // record checks void it, with no replay.
+        let budget =
+            |id: &str| json!({"kind":"budget_game","lineage":"fixture","id":id}).to_string();
+        let lines = |rows: &[String]| rows.iter().map(|r| format!("{r}\n")).collect::<String>();
+        let mixed = lines(&[
+            budget("a"),
+            "{\"kind\":".into(),
+            String::new(),
+            json!({"kind":"budget_game","lineage":"other","id":"x"}).to_string(),
+            json!({"kind":"budget_replay","lineage":"fixture","id":"y"}).to_string(),
+            budget("b"),
+        ]);
+        std::fs::write(path("mixed.jsonl"), mixed).unwrap();
+        std::fs::write(path("binary.jsonl"), b"\xff\xfe\n").unwrap();
+        std::fs::write(path("last.jsonl"), lines(&[budget("c")])).unwrap();
+        let list = format!(
+            "{}\n  {}  \r\n\n{}\n{}\n",
+            path("missing.jsonl"),
+            path("mixed.jsonl"),
+            path("binary.jsonl"),
+            path("last.jsonl")
+        );
+        let out = rows(&spec, &list, None);
+        let _ = std::fs::remove_dir_all(&dir);
+        let expected = [
+            (
+                Value::Null,
+                "missing.jsonl",
+                "the listed file cannot be read: ",
+            ),
+            (json!("a"), "mixed.jsonl", "not a budget_game record"),
+            (
+                Value::Null,
+                "mixed.jsonl",
+                "line 2 of the listed file is not JSON: ",
+            ),
+            (json!("b"), "mixed.jsonl", "not a budget_game record"),
+            (
+                Value::Null,
+                "binary.jsonl",
+                "the listed file cannot be read: ",
+            ),
+            (json!("c"), "last.jsonl", "not a budget_game record"),
+        ];
+        assert_eq!(out.lines().count(), expected.len(), "{out}");
+        for (line, (id, file, reason)) in out.lines().zip(expected) {
+            let row: Value = serde_json::from_str(line).unwrap();
+            assert_eq!(row["id"], id, "{line}");
+            assert_eq!(row["file"], json!(path(file)), "{line}");
+            assert_eq!(row["schema"], SCHEMA, "{line}");
+            assert!(row["void"].as_str().unwrap().starts_with(reason), "{line}");
+            if id.is_null() {
+                let keys: Vec<&str> = row
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect();
+                assert_eq!(keys, ["file", "id", "schema", "void"], "{line}");
+            }
+            let at = ["\"file\":", "\"id\":", "\"schema\":", "\"void\":"]
+                .map(|k| line.find(k).unwrap_or_else(|| panic!("{k} in {line}")));
+            assert!(at.windows(2).all(|w| w[0] < w[1]), "{line}");
+        }
     }
 }
