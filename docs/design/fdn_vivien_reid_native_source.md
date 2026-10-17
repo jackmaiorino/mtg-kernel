@@ -1,12 +1,13 @@
 # Vivien Reid native source
 
 Source checkpoint only. All new Rust is uncompiled and unrun. ID488 appends the
-actual frozen FDN237 printing after Genesis Wave487, with Partial capability.
+actual frozen FDN234 printing after Genesis Wave487, with Partial capability.
 V70 is reserved for a later complete meaning/public consumer. No legacy owner,
 model, Human, wire, deck preflight or sampler is admitted by this source.
 
 Pinned Mage a5c90fe180021e70e2a644ade00eeab07f857a40,
-`Mage.Sets/src/mage/cards/v/VivienReid.java`, supplies the exact 3GG/5 loyalty,
+`Mage.Sets/src/mage/cards/v/VivienReid.java` and
+`Mage/src/main/java/mage/game/command/emblems/VivienReidEmblem.java`, supply the exact 3GG/5 loyalty,
 +1 top-four optional creature-or-land/reveal/random-bottom, -3 artifact or
 enchantment or creature with effective flying, and -8 persistent emblem.
 The existing native loyalty protocol retains sorcery timing and once-per-turn

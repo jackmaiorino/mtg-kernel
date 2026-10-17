@@ -53,6 +53,10 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual((len(self.registry), len(rows)), (489, 297))
         self.assertEqual((row["name"], self.registry[row["name"]].card_id, row["engine_capability"]), ("Vivien Reid", 488, "partial"))
         self.assertEqual((row["mana_cost"], row["types"], row["subtypes"], row["supertypes"], row["starting_loyalty"]), ("{3}{G}{G}", ["Planeswalker"], ["Vivien"], ["Legendary"], 5))
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        printing, = [r for r in frozen["cards"] if r["name"] == row["name"]]
+        self.assertEqual((printing["set"], printing["collector_number"], printing["scryfall_id"]),
+                         ("FDN", "234", "38769247-42a1-4571-9071-6d59fe28650a"))
         deck = limited.parse_dck((FIXTURES / "FDN_reference_vivien_reid_partial.dck").read_text())
         self.assertEqual(sum(r.count for r in deck.mainboard), 40)
         with self.assertRaisesRegex(ValueError, r"Vivien Reid \(partial\)"):
