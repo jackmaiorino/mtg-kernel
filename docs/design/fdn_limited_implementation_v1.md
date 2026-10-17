@@ -59,6 +59,24 @@ not pack collation, draft picks, automatic deck selection, BO3 sideboarding or
 a claim of full-printing qualification. Focused tests live in
 `python/tests/test_limited_pool_v1.py`; the existing import parser is unchanged.
 
+The separate `limited_draft_v1.DraftSession` accepts explicitly supplied rounds
+of ordered `ImportedDeck` packs, one per seat, for any pod of at least two seats.
+Both `.dck` zones contribute pickable copies in row/copy order. Packs must have
+the same positive size within a round; different rounds may have different
+sizes. Round zero passes to seat+1 modulo the pod size, then direction alternates.
+Passing waits for every seat to pick. Physical copy IDs retain the original
+round, pack seat and copy ordinal, including repeated copies of the same name.
+Only `view(seat)` goes to that authenticated actor: it contains that seat's
+current pack, ordered picks and a session-bound prompt. Invalid or already-used
+prompts and invalid indexes change nothing. `record()` is trusted-host data
+containing hidden packs; never route it to actors. JSON records retain optional
+seed/provenance and input identity, and `DraftSession.replay(record)` rebuilds
+the state with fresh prompts. Completed `acquired_pool(seat)` results feed
+`construct_deck` directly; extra basics still require explicit additions there.
+No pack collation, rarity probabilities, native gameplay qualification, model,
+training or DraftZero runtime integration is provided by this Python contract.
+Focused tests are in `python/tests/test_limited_draft_v1.py`.
+
 The source reference has 286 names, including all five basics. Before card
 implementation it had seven registry matches and 279 missing names. The two
 starting fixtures contain 39 unique names, originally with 36 missing. Their
