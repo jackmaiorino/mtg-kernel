@@ -276,8 +276,28 @@ fn source_control_copy_and_reentry_do_not_rebind_original_paid_actor_or_reveal_h
         activate_paid(&mut s, actor, source);
         let original = roundtrip(&s, actor).activations[0].clone();
         event::propose_and_commit(&mut s, ProposedEvent::zone_change(source, Zone::Hand));
-        // Returned physical card is new and private to its owner. The public
-        // ability retains only its original public source, with no new handle.
+        // A public graveyard-to-hand return preserves knowledge of the new
+        // incarnation. It does not become secret merely by changing zones.
+        let returned = roundtrip(&s, actor);
+        assert_eq!(returned.activations[0].root, original.root);
+        assert!(returned
+            .authorized_printings
+            .iter()
+            .any(|r| r.object == source.0
+                && r.zone == Zone::Hand
+                && r.generation == s.objects.get(source).zone_change_count));
+        // Labelled native concealment operands: shuffle the physical card into
+        // its owner's library, then move it privately to hand. These are setup
+        // transitions, while the genuine paid ability remains on the stack.
+        event::propose_and_commit(&mut s, ProposedEvent::zone_change(source, Zone::Library));
+        s.shuffle_library(owner).unwrap();
+        event::propose_and_commit(&mut s, ProposedEvent::zone_change(source, Zone::Hand));
+        assert!(!s
+            .known_hand_cards(actor, owner)
+            .iter()
+            .any(|r| r.object == source));
+        // The old ability retains only its original public source, with no
+        // inferred handle to this genuinely concealed new hand incarnation.
         let current = roundtrip(&s, actor);
         assert_eq!(current.activations[0].root, original.root);
         assert!(current.activations[0]
