@@ -748,7 +748,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 out.read(
                     RelF::EachPlayer,
                     Some(ZoneF::Battlefield),
-                    Some(ObjF::Creature),
+                    Some(ObjF::Typed(CardTypeF::Creature)),
                     AggF::AtLeast(u8::try_from(minimum).unwrap_or(u8::MAX)),
                 )
             });

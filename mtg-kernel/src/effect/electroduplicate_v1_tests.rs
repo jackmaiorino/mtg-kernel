@@ -1129,7 +1129,7 @@ fn finish_zombie_copy(s: &mut GameState, target: Option<ObjectId>) {
                 Action::ChooseTarget(Target::Object(card))
             } else {
                 assert!(can_finish);
-                Action::FinishTargetSelection
+                Action::FinishEffectSelection
             };
             let mut replay = restore(s);
             engine::step(s, action.clone()).unwrap();

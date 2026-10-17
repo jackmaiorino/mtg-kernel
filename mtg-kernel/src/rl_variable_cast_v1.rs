@@ -90,7 +90,6 @@ pub(crate) fn candidates_conqueror_scoped_v49(
         accept_panda,
         accept_conqueror,
         false,
-        false,
     )
 }
 

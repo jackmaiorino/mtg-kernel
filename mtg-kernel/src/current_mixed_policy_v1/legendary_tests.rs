@@ -74,6 +74,9 @@ impl Owner {
             Source::GraveyardReturnV61 => {
                 unreachable!("V61 uses its separate typed-candidate owner fixture")
             }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
+            }
         }
     }
     fn current(&self) -> FastActorResponseV1 {
@@ -167,6 +170,9 @@ impl Harness {
             Source::GraveyardReturnV61 => {
                 unreachable!("V61 uses its separate typed-candidate owner fixture")
             }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
+            }
         };
         Self {
             source,
@@ -201,6 +207,9 @@ impl Harness {
             Source::NextFiveV59 => input!(next_five_current_decision_input_v59),
             Source::GraveyardReturnV61 => {
                 unreachable!("V61 uses its separate typed-candidate owner fixture")
+            }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
             }
         }
     }
@@ -283,6 +292,9 @@ impl Harness {
             Source::NextFiveV59 => self.native.next_five_fixture_state(),
             Source::GraveyardReturnV61 => {
                 unreachable!("V61 uses its separate typed-candidate owner fixture")
+            }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
             }
         };
         (

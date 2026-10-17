@@ -3,8 +3,9 @@
 //! trigger and numeric action below uses the genuine engine and sealed owner.
 use super::*;
 use crate::{
-    engine::{self, Action, Decision, Target},
+    engine::{self, Action, Decision},
     graveyard_return_public_v61::{self as public, tests as native},
+    state::Target,
 };
 
 fn equal(pair: &Pair) {

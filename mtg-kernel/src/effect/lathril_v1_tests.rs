@@ -179,7 +179,7 @@ fn exact_partial_printing_cost_trigger_and_opaque_audit() {
         (card.mana_value, card.power, card.toughness),
         (4, Some(2), Some(3))
     );
-    assert!(card.keywords.contains(Keywords::MENACE));
+    assert!(card.keywords.has(Keywords::MENACE));
     assert!(card.subtypes.contains(&Subtype::Elf) && card.subtypes.contains(&Subtype::Noble));
     assert_eq!(card.activated_abilities.len(), 1);
     assert_eq!(

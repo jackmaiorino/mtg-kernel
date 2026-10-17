@@ -260,7 +260,7 @@ pub(crate) fn require_legacy_visible(
             p.source_contract
                 .is_some_and(|s| s.zone == Zone::Battlefield && selected(s.card_def))
         })
-        || state.engine.raid_waiting_v1.iter().flatten().any(|p| {
+        || state.raid_waiting_v1.iter().flatten().any(|p| {
             p.source_contract
                 .is_some_and(|s| s.zone == Zone::Battlefield && selected(s.card_def))
         })

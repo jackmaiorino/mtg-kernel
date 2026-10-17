@@ -401,7 +401,7 @@ fn paid_exile_response_source_departure_owner_return_and_delayed_restore_both_se
         let mut r = restore(&s);
         let row = return_row(&mut s, index);
         assert_eq!(row, return_row(&mut r, index));
-        assert_eq!(s.step, Step::EndStep);
+        assert_eq!(s.step, Step::End);
         assert_eq!(s.active_player, p);
         unchanged_public_refusals(&s, &row);
         finish(&mut s);
@@ -618,7 +618,7 @@ fn paid_instant_on_opponent_turn_and_after_end_step_begins_uses_next_any_end_ste
             for _ in 0..180 {
                 let d = next(&mut s);
                 let wanted = if already_begun {
-                    s.active_player == p && s.step == Step::EndStep
+                    s.active_player == p && s.step == Step::End
                 } else {
                     s.active_player == p.opponent() && s.step == Step::Main1
                 };
@@ -634,7 +634,7 @@ fn paid_instant_on_opponent_turn_and_after_end_step_begins_uses_next_any_end_ste
             assert_eq!(
                 s.step,
                 if already_begun {
-                    Step::EndStep
+                    Step::End
                 } else {
                     Step::Main1
                 }
@@ -648,7 +648,7 @@ fn paid_instant_on_opponent_turn_and_after_end_step_begins_uses_next_any_end_ste
             return_row(&mut s, index);
             return_row(&mut r, index);
             assert_eq!(s.active_player, p.opponent());
-            assert_eq!(s.step, Step::EndStep);
+            assert_eq!(s.step, Step::End);
             finish(&mut s);
             finish(&mut r);
             assert_eq!(s, r);
@@ -710,10 +710,7 @@ fn paid_independent_hidden_worlds_preserve_native_modes_targets_and_restore_both
         finish(&mut a);
         finish(&mut b);
         assert_eq!(start(&mut a, p, ka), start(&mut b, p, kb));
-        assert_eq!(
-            serde_json::to_value(next(&mut a)).unwrap(),
-            serde_json::to_value(next(&mut b)).unwrap()
-        );
+        assert_eq!(next(&mut a), next(&mut b));
         assert_eq!(
             choose(&mut a, p, 0, Some(ea)),
             choose(&mut b, p, 0, Some(eb))

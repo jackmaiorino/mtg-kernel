@@ -828,7 +828,7 @@ fn paid_native_wide_x_preserves_legacy254_pool_headroom_auto300_copy_counter_and
             settle(&mut replay);
             assert_eq!(damage(&replay, spell, target), i32::from(x));
             assert_eq!(replay.objects.get(target).zone, Zone::Battlefield);
-            assert_eq!(replay.objects.get(target).damage, i32::from(x));
+            assert_eq!(replay.objects.get(target).damage, u32::from(x));
             assert!(goblins(&replay, actor).is_empty());
         }
     }
