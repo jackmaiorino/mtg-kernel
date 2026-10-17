@@ -676,7 +676,9 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         EffectOp::HighSocietyHunterFromCaptureV45 { .. } => true,
         EffectOp::NivMizzetVisionaryDrawV1 { .. } => true,
         // Both ordered batches move cards only; resulting ETBs resolve later.
-        EffectOp::GenesisWaveV1 => true,
+        EffectOp::GenesisWaveV1
+        | EffectOp::LilianaZombieV1
+        | EffectOp::LilianaSacrificeV1 { .. } => true,
         // This exact owned root only mills. Draw capture, source, target and
         // private begin/resume authority remain Tutelage-owned.
         EffectOp::SphinxsTutelageMillV1 { .. } => true,

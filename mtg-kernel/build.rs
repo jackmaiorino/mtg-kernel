@@ -3519,6 +3519,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         "Leyline Axe" => program("None", "openingHand:optional_actual_kept_source_to_battlefield_before_turn_one;MoveObject(ThisSource,Battlefield);equipped:+1/+1,doubleStrike,trample;equip:3", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         // Genuine FDN194 native Partial481.
         "Etali, Primal Storm" => program("None", "MoveObject(ThisSource,Battlefield);attacks:original_source_controller:each_player_simultaneous_top_library_to_public_exile:optional_nonland_free_casts_any_order_during_resolution:original_exile_incarnations:normal_targets_and_additional_costs:XZero:lands_stay_exiled", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
+        "Liliana, Dreadhorde General" => program("None", "MoveObject(ThisSource,Battlefield);loyaltyStart6;controlledCreatureDies:prebatchSourceControllerIncludingTokenAndCreatureSelf:drawOne;+1exactBlack2x2Zombie;-4APNAPChooseTwoCreaturesThenOneSacrificeBatch;-9OpponentChoosesOneEachEffectivePermanentTypeMayReuseOnePermanentThenSacrificeRest:nontargeting:originalController:ownerOrdersGraveyard", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Muldrotha, the Gravetide" => program("None", "MoveObject(ThisSource,Battlefield);static:ownTurn:ownGraveyard:ordinaryTimingAndCosts:explicitOriginalSourceIncarnationAndFinalPermanentSpellType:oneEachPerTurn:multipleSourcesIndependent:landUsesOnlyLand:normalLandAllowance:BestowEnchantmentOnly:noNonpermanentAdventureOrOmen", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Omniscience" => program("None", "MoveObject(ThisSource,Battlefield);static:originalControllerMayCastNonlandFromOwnHandWithoutManaCost:optionalDistinctPaidRoute:exactActiveSourceAndHandIncarnation:XZero:ordinaryTimingTargetsAndAllAdditionalCosts:noGraveyardOrExilePermission", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Thousand-Year Storm" => program("None", "MoveObject(ThisSource,Battlefield);ownInstantSorceryCast:copyFrozenSpellForEachEarlierOwnInstantSorceryCastThisTurn;eachCopyMayRetargetEachSlot", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -5000,6 +5001,11 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "Liliana, Dreadhorde General" => &[
+            ActivatedAbilityRecipe { cost:&[AbilityCostRecipe::Loyalty(1)], effect:AbilityEffectRecipe::StandardProgram("crate::effect::liliana_dreadhorde_v1::zombie"), activation_zone:"Battlefield", sorcery_speed_only:true, target_spec:"None", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None },
+            ActivatedAbilityRecipe { cost:&[AbilityCostRecipe::Loyalty(-4)], effect:AbilityEffectRecipe::StandardProgram("crate::effect::liliana_dreadhorde_v1::sacrifice_two"), activation_zone:"Battlefield", sorcery_speed_only:true, target_spec:"None", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None },
+            ActivatedAbilityRecipe { cost:&[AbilityCostRecipe::Loyalty(-9)], effect:AbilityEffectRecipe::StandardProgram("crate::effect::liliana_dreadhorde_v1::ultimate"), activation_zone:"Battlefield", sorcery_speed_only:true, target_spec:"None", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None },
+        ],
         "AjaniFullV42" => &[
             ActivatedAbilityRecipe {
                 cost: &[AbilityCostRecipe::Loyalty(1)],
