@@ -115,13 +115,13 @@ fn paid_call_numeric_complete_program_death_return_native_parity_restore_and_pri
         let mut s = ready(p, "Forest");
         let call = hand(&mut s, p, "Valkyrie's Call");
         let elf = hand(&mut s, p, "Llanowar Elves");
-        let shock = hand(&mut s, p.opponent(), "Shock");
+        let bolt = hand(&mut s, p.opponent(), "Lightning Bolt");
         let mut pair = Pair::new(s);
         pair.cast(call, None);
         pair.drain();
         pair.cast(elf, None);
         pair.drain();
-        pair.cast(shock, Some(elf));
+        pair.cast(bolt, Some(elf));
         for _ in 0..60 {
             if !pair
                 .decision()

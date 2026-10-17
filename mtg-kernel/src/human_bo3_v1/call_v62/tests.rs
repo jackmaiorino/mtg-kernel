@@ -62,7 +62,7 @@ fn genuine_paid_call_human_full_roster_opponent_callback_snapshot_and_foreign_pr
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut world = ready(p, "Forest");
         let card = hand(&mut world, p, "Valkyrie's Call");
-        hand(&mut world, p.opponent(), "Shock");
+        hand(&mut world, p.opponent(), "Lightning Bolt");
         let mut native = FastActorSessionV1::from_call_v62_fixture_state(world.clone());
         let mut s = own(world.clone(), p);
         let foreign = own(world, p);
