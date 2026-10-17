@@ -183,6 +183,25 @@ class ReservedAdapterTests(unittest.TestCase):
                 self.assertEqual(result["setup_seconds"], expected_setup)
                 self.assertEqual(result["recovery_and_release_seconds"], 120-second_end)
 
+    def test_guarded_adapter_routes_inside_timed_owner_and_requires_guard_completion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ref, reservations, slots = self.fixture(root)
+            group = dispatch.read(ref["path"])
+            group["target_limits"] = {}
+            Path(ref["path"]).write_text(json.dumps(group))
+            dispatch.write(root/"guard-result.json", dict(complete=True, final_sample=dict(active_processes=0)))
+            with patch.object(dispatch, "target_helpers", return_value=(reservations, slots)), \
+                    patch.object(dispatch, "target_guard_plan"), \
+                    patch.object(dispatch.platform, "node", return_value="COMPUTEHOST"), \
+                    patch.object(dispatch, "wait_target_dispatch", return_value=dict(outcome="success")), \
+                    patch.object(dispatch.time, "time", side_effect=[100, 115]):
+                result = dispatch.reserve_worker_group(ref["path"])
+            command = reservations.dispatch.call_args.kwargs["command"]
+            self.assertLess(command.index("timed"), command.index("--guarded-target"))
+            self.assertNotIn("-File", command)
+            self.assertTrue(result["guard"]["complete"])
+
     def test_nested_adapter_captures_event_boundary_before_dispatch(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -239,6 +258,12 @@ class ReservedAdapterTests(unittest.TestCase):
             reservations.release.assert_not_called()
 
     def test_transport_stages_helpers_and_charges_target_setup_and_recovery(self):
+        self.transport_fixture()
+
+    def test_transport_stages_guard_closure_and_campaign_root_without_config_changes(self):
+        self.transport_fixture(TargetGuardTests().limits())
+
+    def transport_fixture(self, target_limits=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             binary = root/"fixture.exe"
@@ -255,12 +280,18 @@ class ReservedAdapterTests(unittest.TestCase):
                     self.assertIn("--reserve-worker-group", command)
                     self.assertNotIn("--export", command)
                     group = dispatch.read(local/"group.json")
-                    self.assertEqual(set(group["target_runtime"]), {"host_reservation", "host_slots", "worker", "script"})
+                    expected = {"host_reservation", "host_slots", "worker", "script"}
+                    if target_limits is not None:
+                        expected.update(dispatch.GUARD_MODULES)
+                        self.assertEqual(group["target_limits"], target_limits)
+                        self.assertIn(target_limits["group_root"]+"/worker.py", command)
+                    self.assertEqual(set(group["target_runtime"]), expected)
                     for ref in group["target_runtime"].values():
                         self.assertEqual(dispatch.pin(local/Path(ref["path"]).name)["sha256"], ref["sha256"])
                     script = (local/"run.ps1").read_text()
                     self.assertIn('& $Python -B "$root/worker.py" --worker-group', script)
                     self.assertIn('& $Python -B "$root/worker.py" --export', script)
+                    self.assertEqual("Remove-Item Env:CUDA_VISIBLE_DEVICES" in script, target_limits is not None)
                     request = dispatch.read(local/"jobs/r1/request.json")
                     self.assertEqual(request["config"], dispatch.read(config))
                     self.assertEqual(request["execution_gpu_ordinal"], 0)
@@ -285,7 +316,8 @@ class ReservedAdapterTests(unittest.TestCase):
             with patch.object(dispatch, "preflight", return_value={}), patch.object(dispatch, "ssh_ps"), \
                     patch.object(dispatch.subprocess, "run", side_effect=run):
                 report = dispatch.read(dispatch._dispatch_group(destination, dispatch.pin(binary),
-                    {"r1": dispatch.pin(config)}, {"r1": placement}, "sequential", 1, 30)["path"])
+                    {"r1": dispatch.pin(config)}, {"r1": placement}, "sequential", 1, 30,
+                    target_limits=target_limits)["path"])
             self.assertEqual(sum(command[0] == "ssh" for command in commands), 1)
             self.assertEqual(report["reservation_setup_seconds"], 4)
             self.assertGreaterEqual(report["staging_seconds"], 4)
@@ -307,6 +339,71 @@ class BusyFamilyTests(unittest.TestCase):
         with patch.object(dispatch, "ssh_ps", return_value=json.dumps(report)) as ssh:
             dispatch.preflight("computehost", [], "C")
         self.assertIn("-match '"+dispatch.BUSY_PATTERN+"'", ssh.call_args.args[0])
+
+
+class TargetGuardTests(unittest.TestCase):
+    def limits(self):
+        return dict(group_root="C:/mtg-node/campaign/group-001", cpu_seconds=3600, wall_seconds=900,
+            storage=dict(accounting_roots=["C:/mtg-node/campaign"], max_physical_bytes=8*1024**3,
+                         projected_additional_bytes=4*1024**3, reserve_bytes=60*1024**3),
+            stop_files=["C:/mtg-node/STOP", "C:/mtg-node/campaign/STOP"])
+
+    def test_campaign_cap_covers_group_and_retained_siblings(self):
+        limits = self.limits()
+        plan = dispatch.target_guard_plan(limits, [0, 2], limits["group_root"])
+        self.assertEqual(plan["storage"], limits["storage"])
+        self.assertEqual(plan["run_limits"], dict(cpu_seconds=3600, wall_seconds=900))
+        for change in ("outside", "overlap", "reserve", "projection", "stop", "infinite"):
+            with self.subTest(change=change):
+                limits = self.limits()
+                if change == "outside": limits["storage"]["accounting_roots"] = ["C:/mtg-node/other"]
+                if change == "overlap": limits["storage"]["accounting_roots"].append(limits["group_root"])
+                if change == "reserve": limits["storage"]["reserve_bytes"] = 1
+                if change == "projection": limits["storage"]["projected_additional_bytes"] = 9*1024**3
+                if change == "stop": limits["stop_files"] = []
+                if change == "infinite": limits["wall_seconds"] = float("inf")
+                with self.assertRaises(ValueError):
+                    dispatch.target_guard_plan(limits, [0, 2], limits["group_root"])
+
+    def test_entire_guard_import_closure_is_checked_before_import(self):
+        with patch.object(dispatch, "checked", side_effect=ValueError("changed dependency")), \
+                patch("importlib.import_module") as imported:
+            with self.assertRaisesRegex(ValueError, "changed dependency"):
+                dispatch.target_guard_class({name: {} for name in dispatch.GUARD_MODULES})
+        imported.assert_not_called()
+
+    def test_script_training_and_export_share_contained_guard_and_failure_receipt(self):
+        for code in (0, 9):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                dispatch.write(root/"group.json", dict(target_limits=self.limits(), target_runtime={},
+                    jobs=dict(r1=dict(placement=dict(cpu_affinity=[0, 2])))))
+                instance = Mock()
+                def construct(plan, directory, qualifying):
+                    directory.mkdir()
+                    return instance
+                instance.spawn.return_value.wait.return_value = code
+                instance.check.return_value = {"charged_physical_bound_bytes": 1}
+                instance.terminate_and_drain.return_value = {"active_processes": 0}
+                with patch.object(dispatch, "target_guard_plan", return_value={}), \
+                        patch.object(dispatch, "target_guard_class", return_value=construct), \
+                        patch.object(dispatch, "target_helpers", return_value=(Mock(), Mock())), \
+                        patch.object(dispatch, "checked", return_value=root/"run.ps1"):
+                    # Script pin is obtained only after Guard admission.
+                    group = dispatch.read(root/"group.json")
+                    group["target_runtime"]["script"] = {}
+                    (root/"group.json").write_text(json.dumps(group))
+                    if code:
+                        with self.assertRaisesRegex(RuntimeError, "contained target script failed"):
+                            dispatch.guarded_target(root/"group.json")
+                    else:
+                        dispatch.guarded_target(root/"group.json")
+                instance.spawn.assert_called_once()
+                self.assertIn(str(root/"run.ps1"), instance.spawn.call_args.args[0])
+                instance.quiet.assert_called_once()
+                instance.terminate_and_drain.assert_called_once()
+                instance.close.assert_called_once()
+                self.assertEqual(dispatch.read(root/"guard-result.json")["complete"], code == 0)
 
 
 if __name__ == "__main__":
