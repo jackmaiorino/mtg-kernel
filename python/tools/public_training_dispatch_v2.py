@@ -2,6 +2,9 @@
 
 Production entry: dispatch_qualified. Qualification entry is limited to four
 initial updates and 80 games across the group, and does not authorize a campaign.
+Remote placements supply one shared cpu_affinity list. Their staged pinned
+helpers acquire the target reservation and supervise host_slots timed before
+drive/runtime setup, native workers and export. Desktop ownership is unchanged.
 """
 import argparse
 import base64
@@ -23,6 +26,7 @@ REMOTE_INPUT = "C:/mtg-node/public-device-placement-001"
 HOSTNAMES = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
 DISK_RESERVE_BYTES = 60 * 1024**3
 REMOTE_INPUT_ENV = "MTG_PUBLIC_TRAINING_REMOTE_INPUT_ROOT"
+BUSY_PATTERN = r"^(cargo|rustc|public_.*|native_.*|expanded_deck_.*|learned_sideboard_v1|trainer|mtg_kernel.*)\.exe$"
 
 
 def host_binding(host, placements):
@@ -53,6 +57,153 @@ def host_binding(host, placements):
     if any(binding != bindings[0] for binding in bindings[1:]):
         raise ValueError("remote placements disagree on host/input binding")
     return bindings[0] if bindings else default
+
+
+def target_cores(placements):
+    """Execution-only affinity shared by one reserved remote worker group."""
+    cores = [placement.get("cpu_affinity") for placement in placements]
+    if (not cores or any(not isinstance(row, list) or not row
+                         or any(type(c) is not int or not 0 <= c < 64 for c in row)
+                         or len(set(row)) != len(row) for row in cores)
+            or any(sorted(row) != sorted(cores[0]) for row in cores[1:])):
+        raise ValueError("remote group requires one explicit distinct CPU affinity")
+    return sorted(cores[0])
+
+
+def target_helpers(runtime):
+    # Hash before importing; a copied helper must also be the module in use.
+    paths = {key: checked(runtime[key]) for key in ("host_reservation", "host_slots", "worker", "script")}
+    import host_reservation_v1 as reservations
+    import host_slots_v1 as slots
+    if (paths["host_reservation"].resolve() != Path(reservations.__file__).resolve()
+            or paths["host_slots"].resolve() != Path(slots.__file__).resolve()
+            or paths["worker"].resolve() != Path(__file__).resolve()):
+        raise ValueError("remote canonical helper/worker paths differ")
+    return reservations, slots
+
+
+def require_target_context(spec):
+    runtime = spec.get("target_runtime")
+    if not isinstance(runtime, dict):
+        raise ValueError("remote worker requires pinned canonical runtime")
+    reservations, slots = target_helpers(runtime)
+    cores = target_cores([spec["placement"]])
+    token = os.environ.get(reservations.TOKEN_ENV)
+    timed = slots.timed_state()
+    if (not token or reservations.status(token).get("token_fate") != "holds"
+            or timed.get("token_sha256") != slots.token_hash(token)
+            or timed.get("why") != "timed work declared its cores"
+            or timed.get("cores") != cores
+            or slots.parse_cores(os.environ.get(slots.CORES_ENV, "")) != cores
+            or slots.current_affinity() != cores):
+        raise ValueError("remote worker requires its held reservation and exact timed affinity")
+    return dict(reservation_sha256=slots.token_hash(token), cpu_affinity=cores,
+                helpers={key: runtime[key] for key in ("host_reservation", "host_slots")})
+
+
+def wait_target_dispatch(result, reservations, timeout):
+    """Observe existing canonical state only; never retry, reclaim or release."""
+    if result["state"] not in ("dispatched", "finished-before-handoff"):
+        raise RuntimeError("remote dispatch unconfirmed or refused; do not redispatch: " + result["state"])
+    deadline = time.monotonic()+timeout
+    while True:
+        state = reservations.status(result["token"])
+        fate = state.get("token_fate")
+        events = state.get("events", []) if fate == "holds" else state.get("token_events", [])
+        if result["nested"]:
+            completed = [event for event in events if event["kind"] == "nested-done"
+                         and event["by_pid"] == result["pid"]]
+            if completed:
+                event = completed[-1]
+                if reservations.process_state(event["by_pid"], event["by_process_creation_time"]) == "absent":
+                    return event
+        elif fate == "released":
+            completed = [event for event in events if event["kind"] == "release"]
+            if completed:
+                return completed[-1]
+        if fate not in ("holds", "released"):
+            raise RuntimeError("remote reservation outcome is " + str(fate) + "; preserve and inspect")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("remote reservation still nonterminal; preserve owner and do not redispatch")
+        time.sleep(1)
+
+
+def reserve_worker_group(path):
+    """Target-host adapter over canonical dispatch, supervision and timed slots."""
+    started, unix_start = time.monotonic(), time.time()
+    path, group = Path(path), read(path)
+    root = path.parent
+    result = dict(complete=False, group=pin(path), started_unix=unix_start)
+    try:
+        placements = [job["placement"] for job in group["jobs"].values()]
+        if not placements or any(p["host"] != "computehost" for p in placements):
+            raise ValueError("reserved adapter accepts one remote worker group only")
+        binding = host_binding("computehost", placements)
+        if platform.node().upper() != binding["expected_hostname"]:
+            raise ValueError("reserved adapter running on the wrong host")
+        cores = target_cores(placements)
+        reservations, slots = target_helpers(group["target_runtime"])
+        parent_token = os.environ.get(reservations.TOKEN_ENV)
+        if parent_token:
+            timed = slots.timed_state()
+            if (timed.get("token_sha256") == slots.token_hash(parent_token)
+                    and timed.get("why") == "timed work declared its cores"):
+                raise ValueError("outer reservation already has a timed declaration; run the worker group inside that owner")
+        python = reservations.supervisor_python(sys.executable)
+        command = [python, "-B", str(checked(group["target_runtime"]["host_slots"])), "timed",
+                   "--cores", slots.format_cores(cores), "--",
+                   str(Path(os.environ.get("SystemRoot", "C:/Windows"))/"System32/WindowsPowerShell/v1.0/powershell.exe"),
+                   "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                   str(checked(group["target_runtime"]["script"])), "-Python", python]
+        created = {}
+        def create(line, cwd):
+            created.update(reservations.create_process(line, cwd))
+            write(root/"reservation-created.json", created)
+            return created
+        result["dispatch"] = reservations.dispatch(
+            lane="public-training", work_id=root.name,
+            release_condition="Release after worker group, export and all descendants finish, including failure",
+            command=command, cwd=str(root), busy_pattern=BUSY_PATTERN, create=create, python=python,
+            transport_record=dict(group=result["group"], cpu_affinity=cores))
+        write(root/"reservation-dispatch.json", result["dispatch"])
+        observed = dict(result["dispatch"])
+        if "pid" not in observed and "pid" in created:
+            observed["pid"] = created["pid"]
+        limit = sum(job["wall_seconds"] for job in group["jobs"].values())+720
+        result["terminal"] = wait_target_dispatch(observed, reservations, limit)
+        if result["terminal"].get("outcome") != "success":
+            raise RuntimeError("canonical remote supervisor reported failure")
+        executions = [read(Path(job["request"]["path"]).parent/"execution.json") for job in group["jobs"].values()]
+        first, last = min(e["started_unix"] for e in executions), max(e["finished_unix"] for e in executions)
+        result["startup_seconds"] = first-unix_start
+        result["recovery_and_release_seconds"] = time.time()-last
+        # The allocation model already prices native execution. Charge the
+        # remaining measured setup/stagger gaps too, without charging it twice.
+        durations = [e["finished_unix"]-e["started_unix"] for e in executions]
+        if group["mode"] == "parallel":
+            native = max(durations)
+        elif group["mode"] == "device_queues":
+            queues = {}
+            for job, duration in zip(group["jobs"].values(), durations):
+                device = job["placement"]["gpu_uuid"]
+                queues[device] = queues.get(device, 0)+duration
+            native = max(queues.values())
+        else:
+            native = sum(durations)
+        result["inter_job_seconds"] = max(0, last-first-native)
+        result["setup_seconds"] = result["startup_seconds"]+result["inter_job_seconds"]
+        if result["startup_seconds"] < 0 or result["recovery_and_release_seconds"] < 0:
+            raise ValueError("remote timing clock moved backwards")
+        result["export"] = read(root/"export-execution.json")
+        result["complete"] = True
+    except BaseException as error:
+        result["error"] = str(error)
+        print(json.dumps(result), flush=True)
+        raise
+    finally:
+        result["seconds"] = time.monotonic()-started
+        write(root/"reservation-execution.json", result)
+    return result
 
 
 def read(path):
@@ -116,6 +267,7 @@ def worker(spec):
         if (PureWindowsPath(os.environ.get(REMOTE_INPUT_ENV, "")) != root
                 or PureWindowsPath(os.environ.get("CUDA_PATH", "")) != root/"runtime"):
             raise ValueError("worker remote input/runtime binding differs")
+    ownership = require_target_context(spec) if placement["host"] == "computehost" else None
     if os.environ.get("CUDA_VISIBLE_DEVICES"):
         raise ValueError("explicit CUDA remapping needs separate qualification")
     if gpu_uuid(placement["gpu_ordinal"]) != placement["gpu_uuid"]:
@@ -175,6 +327,8 @@ def worker(spec):
     execution = dict(exit_code=code, timeout=timed_out, error=failure, seconds=time.monotonic()-started,
                      started_unix=unix_start, finished_unix=time.time(), placement=placement,
                      observed_gpu_uuid=observed, binary_sha256=spec["binary"]["sha256"], request_sha256=spec["request"]["sha256"])
+    if ownership is not None:
+        execution["target_ownership"] = ownership
     write(folder/"execution.json",execution)
     if code != 0 or failure:
         raise RuntimeError(f"native execution failed: {folder}: {execution}")
@@ -188,6 +342,8 @@ def worker(spec):
 
 def worker_group(path):
     group = read(path)
+    if "target_runtime" in group:
+        group["jobs"] = {name: dict(job, target_runtime=group["target_runtime"]) for name, job in group["jobs"].items()}
     if group["mode"] == "device_queues":
         queues = {}
         for spec in group["jobs"].values():
@@ -205,6 +361,7 @@ def worker_group(path):
 
 
 def export_group(root):
+    started = time.monotonic()
     files = [p for p in sorted((root/"jobs").rglob("*")) if p.is_file()]
     manifest = {p.relative_to(root).as_posix():pin(p)["sha256"] for p in files}
     write(root/"export-manifest.json",manifest)
@@ -212,7 +369,9 @@ def export_group(root):
         for path in files:
             archive.write(path,path.relative_to(root).as_posix())
         archive.write(root/"export-manifest.json","export-manifest.json")
-    print(json.dumps(dict(files=len(files),zip_sha256=pin(root/"results.zip")["sha256"])))
+    result = dict(files=len(files), zip_sha256=pin(root/"results.zip")["sha256"])
+    write(root/"export-execution.json", dict(**result, seconds=time.monotonic()-started))
+    print(json.dumps(result))
 
 
 def ssh_ps(script, timeout=60):
@@ -268,6 +427,8 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
     for host in {p["host"] for p in placements.values()}:
         if host not in HOSTNAMES:
             raise ValueError("no qualified dispatcher for host")
+        if host == "computehost":
+            target_cores([p for p in placements.values() if p["host"] == host])
         target_drive = root.drive.rstrip(":") if host == "desktop" else "C"
         preflights[host] = preflight(host,[p for p in placements.values() if p["host"]==host],target_drive)
     root.mkdir()
@@ -301,20 +462,14 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
             group["jobs"][name]=dict(placement=placement,wall_seconds=wall_seconds,telemetry=mode=="device_queues",
                 binary=dict(path=native_binary,sha256=binary_pin["sha256"]),
                 request=dict(path=str(Path(native_folder)/"request.json"),sha256=pin(folder/"request.json")["sha256"]))
-        write(local/"group.json",group)
         if host == "computehost":
             binding = host_binding(host, [job["placement"] for job in group["jobs"].values()])
             input_root = binding["input_root"].replace("'", "''")
             binding_environment = (f"$env:{REMOTE_INPUT_ENV}=$inputRoot\n"
                                    if any("remote_binding" in job["placement"] for job in group["jobs"].values()) else "")
-            ssh_ps(f"if (Test-Path -LiteralPath '{remote_root}') {{throw 'remote destination exists'}}; New-Item -ItemType Directory -Path '{remote_root}/jobs' | Out-Null")
             shutil.copy2(__file__,local/"worker.py")
-            for name in group["jobs"]:
-                ssh_ps(f"New-Item -ItemType Directory -Path '{remote_root}/jobs/{name}' | Out-Null")
-                subprocess.run(["scp","-q",str(local/"jobs"/name/"request.json"),f"{REMOTE}:{remote_root}/jobs/{name}/request.json"],check=True,timeout=60)
-            for name in ["trainer.exe","worker.py","group.json"]:
-                subprocess.run(["scp","-q",str(local/name),f"{REMOTE}:{remote_root}/{name}"],check=True,timeout=60)
-            ps=f'''$ErrorActionPreference='Stop'
+            ps=f'''param([Parameter(Mandatory=$true)][string]$Python)
+$ErrorActionPreference='Stop'
 $root='{remote_root}'
 $inputRoot='{input_root}'
 {binding_environment}$created=@()
@@ -329,33 +484,50 @@ try {{
  $env:PATH="$inputRoot/runtime/bin;$env:PATH"
  New-Item -ItemType Directory -Path "$root/temp" | Out-Null
  $env:TEMP="$root/temp"; $env:TMP="$root/temp"
- & python "$root/worker.py" --worker-group "$root/group.json"
+ & $Python -B "$root/worker.py" --worker-group "$root/group.json"
  if ($LASTEXITCODE -ne 0) {{throw 'native worker group failed'}}
+ & $Python -B "$root/worker.py" --export "$root"
+ if ($LASTEXITCODE -ne 0) {{throw 'owned export failed'}}
 }} finally {{ foreach ($drive in $created) {{ & subst "${{drive}}:" /D }} }}
 '''
             (local/"run.ps1").write_text(ps)
-            subprocess.run(["scp","-q",str(local/"run.ps1"),f"{REMOTE}:{remote_root}/run.ps1"],check=True,timeout=60)
+            runtime = {}
+            for key, name in (("host_reservation", "host_reservation_v1.py"), ("host_slots", "host_slots_v1.py"),
+                              ("worker", "worker.py"), ("script", "run.ps1")):
+                if key in ("host_reservation", "host_slots"):
+                    shutil.copy2(Path(__file__).with_name(name), local/name)
+                runtime[key] = dict(path=str(Path(remote_root)/name), sha256=pin(local/name)["sha256"])
+            group["target_runtime"] = runtime
+        write(local/"group.json",group)
+        if host == "computehost":
+            ssh_ps(f"if (Test-Path -LiteralPath '{remote_root}') {{throw 'remote destination exists'}}; New-Item -ItemType Directory -Path '{remote_root}/jobs' | Out-Null")
+            for name in group["jobs"]:
+                ssh_ps(f"New-Item -ItemType Directory -Path '{remote_root}/jobs/{name}' | Out-Null")
+                subprocess.run(["scp","-q",str(local/"jobs"/name/"request.json"),f"{REMOTE}:{remote_root}/jobs/{name}/request.json"],check=True,timeout=60)
+            for name in ("trainer.exe", "worker.py", "group.json", "run.ps1", "host_reservation_v1.py", "host_slots_v1.py"):
+                subprocess.run(["scp","-q",str(local/name),f"{REMOTE}:{remote_root}/{name}"],check=True,timeout=60)
         staged[host]=(local,remote_root,group)
 
     def run_host(host):
         local, remote_root, group=staged[host]
         if host == "desktop":
             worker_group(local/"group.json")
-            return 0.0
+            return dict(startup_seconds=0.0, recovery_seconds=0.0)
         # Native children have their own wall cap even if SSH observation is interrupted.
         command=["ssh","-o","BatchMode=yes","-o","ServerAliveInterval=15","-o","ServerAliveCountMax=4",REMOTE,
-                 "powershell","-NoProfile","-ExecutionPolicy","Bypass","-File",remote_root+"/run.ps1"]
+                 "python", "-B", remote_root+"/worker.py", "--reserve-worker-group", remote_root+"/group.json"]
         before=time.monotonic()
         with (local/"ssh.stdout").open("x") as out,(local/"ssh.stderr").open("x") as err:
-            result=subprocess.run(command,stdout=out,stderr=err,timeout=wall_seconds*len(group["jobs"])+120)
+            result=subprocess.run(command,stdout=out,stderr=err,timeout=wall_seconds*len(group["jobs"])+720)
         write(local/"ssh-execution.json",dict(exit_code=result.returncode,seconds=time.monotonic()-before))
         if result.returncode:
             raise RuntimeError("remote worker group failed; preserve and inspect remote state")
         recovery_started=time.monotonic()
-        exported=subprocess.run(["ssh","-o","BatchMode=yes",REMOTE,"python",remote_root+"/worker.py","--export",remote_root],capture_output=True,text=True,timeout=600)
-        if exported.returncode:
-            raise RuntimeError(exported.stderr)
-        receipt=read_json_text(exported.stdout)
+        reserved = read_json_text((local/"ssh.stdout").read_text())
+        if not reserved.get("complete"):
+            raise RuntimeError("remote reservation completion missing")
+        write(local/"reservation-execution.json", reserved)
+        receipt=reserved["export"]
         before=time.monotonic()
         subprocess.run(["scp","-q",f"{REMOTE}:{remote_root}/results.zip",str(local/"results.zip")],check=True,timeout=600)
         if pin(local/"results.zip")["sha256"] != receipt["zip_sha256"]:
@@ -373,7 +545,8 @@ try {{
             if pin(recovered/name)["sha256"] != digest:
                 raise ValueError("recovered remote file differs")
         write(local/"recovery-verification.json",dict(files=len(files),mismatches=0,download_seconds=time.monotonic()-before,archive=receipt))
-        return time.monotonic()-recovery_started
+        return dict(startup_seconds=reserved["setup_seconds"],
+                    recovery_seconds=reserved["recovery_and_release_seconds"]+time.monotonic()-recovery_started)
 
     staging_seconds=time.monotonic()-staging_started
     started=time.monotonic()
@@ -401,7 +574,9 @@ try {{
         write(path,report)
         reports[name]=pin(path)
     write(root/"group-benchmark.json",dict(mode=mode,jobs=reports,seconds=time.monotonic()-started,
-        staging_seconds=staging_seconds,recovery_seconds=sum(recoveries)))
+        staging_seconds=staging_seconds+sum(r["startup_seconds"] for r in recoveries),
+        reservation_setup_seconds=sum(r["startup_seconds"] for r in recoveries),
+        recovery_seconds=sum(r["recovery_seconds"] for r in recoveries)))
     return pin(root/"group-benchmark.json")
 
 
@@ -449,9 +624,12 @@ def dispatch_qualified(root,binary,configs,choice_path,wall_seconds):
 if __name__ == "__main__":
     parser=argparse.ArgumentParser()
     parser.add_argument("--worker-group",type=Path)
+    parser.add_argument("--reserve-worker-group",type=Path)
     parser.add_argument("--export",type=Path)
     args=parser.parse_args()
-    if args.worker_group:
+    if args.reserve_worker_group:
+        print(json.dumps(reserve_worker_group(args.reserve_worker_group)))
+    elif args.worker_group:
         worker_group(args.worker_group)
     elif args.export:
         export_group(args.export)

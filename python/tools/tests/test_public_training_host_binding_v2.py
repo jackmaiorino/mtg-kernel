@@ -78,6 +78,7 @@ class RemoteHostBindingTests(unittest.TestCase):
                            "CUDA_PATH": self.binding["input_root"]+"/runtime"}
             with patch.dict(os.environ, environment, clear=True), \
                     patch.object(dispatch.platform, "node", return_value="HALEYSPC"), \
+                    patch.object(dispatch, "require_target_context", return_value={}), \
                     patch.object(dispatch, "gpu_uuid", return_value="GPU-H0") as gpu, \
                     patch.object(dispatch.subprocess, "check_output", return_value="1234, GPU-H0\n"), \
                     patch.object(dispatch.subprocess, "Popen", return_value=child):
@@ -94,6 +95,7 @@ class RemoteHostBindingTests(unittest.TestCase):
         placement.pop("remote_binding")
         with patch.dict(os.environ, {}, clear=True), \
                 patch.object(dispatch.platform, "node", return_value="COMPUTEHOST"), \
+                patch.object(dispatch, "require_target_context", return_value={}), \
                 patch.object(dispatch, "gpu_uuid", side_effect=RuntimeError("legacy GPU check reached")):
             with self.assertRaisesRegex(RuntimeError, "legacy GPU check reached"):
                 dispatch.worker(dict(placement=placement))
