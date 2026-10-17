@@ -222,7 +222,7 @@ fn genuine_paid_call_cast_death_opposing_source_removal_and_return_keep_full_nat
         assert_eq!(state.objects.get(elf).zone, Zone::Battlefield);
         assert_eq!(state.objects.get(elf).counters.plus1_plus1, 1);
         assert!(crate::standard_creatures_v1::creature_types(state, elf)
-            .contains(&(card_def::Subtype::Angel as u16)));
+            .is_some_and(|(types, _)| types.contains(&(card_def::Subtype::Angel as u16))));
         assert!(crate::engine::has_effective_keyword(
             state,
             elf,
