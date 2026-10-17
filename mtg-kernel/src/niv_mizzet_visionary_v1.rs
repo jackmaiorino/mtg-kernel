@@ -121,19 +121,23 @@ mod tests {
             Action::ChooseTarget(Target::Player(actor.opponent())),
         )
         .unwrap();
-        let pending = match engine::advance_until_decision(state) {
-            Decision::OrderTriggers { pending, .. } => pending,
-            decision => panic!("expected Archer cast trigger ordering, got {decision:?}"),
-        };
-        let archer_index = pending
-            .iter()
-            .position(|trigger| trigger.source == archer)
-            .expect("Firebrand Archer cast trigger");
-        let mut order: Vec<_> = (0..pending.len())
-            .filter(|index| *index != archer_index)
-            .collect();
-        order.push(archer_index);
-        engine::step(state, Action::OrderTriggers(order)).unwrap();
+        match engine::advance_until_decision(state) {
+            Decision::OrderTriggers { pending, .. } => {
+                let archer_index = pending
+                    .iter()
+                    .position(|trigger| trigger.source == archer)
+                    .expect("Firebrand Archer cast trigger");
+                let mut order: Vec<_> = (0..pending.len())
+                    .filter(|index| *index != archer_index)
+                    .collect();
+                order.push(archer_index);
+                engine::step(state, Action::OrderTriggers(order)).unwrap();
+            }
+            // A singleton is already placed by the native APNAP drain. Niv
+            // triggers on damage, so it adds no second trigger at this cast.
+            Decision::CastSpellOrPass { player, .. } if player == actor => {}
+            decision => panic!("expected native Archer publication, got {decision:?}"),
+        }
         assert!(matches!(
             engine::advance_until_decision(state),
             Decision::CastSpellOrPass { player, .. } if player == actor
@@ -141,6 +145,12 @@ mod tests {
         let archer_trigger = state.stack.last().expect("Archer trigger on stack").clone();
         assert_eq!(archer_trigger.source, archer);
         assert_eq!(archer_trigger.controller, actor);
+        assert_eq!(
+            archer_trigger.kind,
+            crate::state::StackItemKind::TriggeredAbility
+        );
+        assert!(!archer_trigger.is_copy);
+        engine::validated_stack_item_target_spec(&archer_trigger, state).unwrap();
         archer_trigger
     }
 
