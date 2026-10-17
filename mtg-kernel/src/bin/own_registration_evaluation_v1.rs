@@ -4,13 +4,29 @@ fn main() {
         .name("own-registration-evaluation".into())
         .stack_size(16 * 1024 * 1024)
         .spawn(|| -> Result<(), String> {
-            let path = std::env::args()
-                .nth(1)
-                .ok_or("usage: own_registration_evaluation_v1 COMMAND.json")?;
-            let command = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
-            let result =
-                mtg_kernel::expanded_deck_training_v1::own_registration::evaluation::run(command)?;
+            let mut args = std::env::args().skip(1);
+            let first = args
+                .next()
+                .ok_or("usage: own_registration_evaluation_v1 [--saved-rows] COMMAND.json")?;
+            let saved_rows = first == "--saved-rows";
+            let path = if saved_rows {
+                args.next().ok_or("--saved-rows requires COMMAND.json")?
+            } else {
+                first
+            };
+            if args.next().is_some() {
+                return Err("unexpected registration evaluation argument".into());
+            }
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let result = if saved_rows {
+                let request = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                mtg_kernel::expanded_deck_training_v1::own_registration::training::behavior::run(
+                    request,
+                )?
+            } else {
+                let command = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                mtg_kernel::expanded_deck_training_v1::own_registration::evaluation::run(command)?
+            };
             println!("{result}");
             Ok(())
         })
