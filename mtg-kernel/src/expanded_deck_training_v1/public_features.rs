@@ -12,6 +12,7 @@ use crate::sideboard_play_policy_v1::public_inputs::PublicInputPlayPolicyV1;
 
 pub(crate) mod opponent_kind;
 pub mod replay_audit;
+pub mod reuse_qualification;
 pub(crate) mod search_opponent;
 #[cfg(test)]
 mod tests;
