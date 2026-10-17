@@ -41,6 +41,7 @@
 
 pub mod greatwurm_cast_v1;
 pub mod mandatory_cast_cost_v1;
+pub mod muldrotha_v1;
 pub mod omniscience_cast_v1;
 pub mod sphinx_lore_cast_v1;
 use crate::card_def::{
@@ -139,6 +140,8 @@ pub struct EngineState {
     /// by `begin_cast`) but not yet finished being targeted, mode-chosen,
     /// or cost-paid.
     pub pending_cast: Option<PendingCast>,
+    #[serde(default, skip_serializing_if = "muldrotha_v1::StateV1::is_empty")]
+    pub muldrotha_v1: muldrotha_v1::StateV1,
     /// A non-mana ability that has begun activating but isn't fully
     /// targeted/cost-paid yet (battlefield abilities, hand-zone
     /// Cycling/typecycling, or graveyard abilities such as Embalm).
@@ -2196,6 +2199,7 @@ fn validate_physical_spell_cast_origin(
     greatwurm_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     sphinx_lore_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     omniscience_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
+    muldrotha_v1::validate_finalized(state, item, is_pending_placeholder)?;
     match (is_pending_placeholder, source.v4.finalized_cast_binding) {
         (true, None) => {}
         (true, Some(_)) => {
@@ -2337,6 +2341,10 @@ fn validate_physical_spell_cast_origin(
                 && cast_method == CastMethodV4::Flashback
                 && def.flashback.is_some()
                 && def.escape.is_none()
+        }
+        SpellCastRouteV4::MuldrothaGraveyardV1 { .. } => {
+            origin.origin_zone == Zone::Graveyard
+                && muldrotha_v1::validate_contract(state, contract).is_ok()
         }
         SpellCastRouteV4::GraveyardPermissionV1 {
             holder,
@@ -2832,6 +2840,7 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::AdventureExile
         | SpellCastRouteV4::GraveyardPermissionV1 { .. }
         | SpellCastRouteV4::GraveyardAdventure { .. }
+        | SpellCastRouteV4::MuldrothaGraveyardV1 { .. }
         | SpellCastRouteV4::GreatwurmGraveyardV1 { .. }
         | SpellCastRouteV4::SphinxLoreFlashbackV1 { .. } => false,
     };
@@ -8666,7 +8675,8 @@ fn is_castable_now(
             };
             let main_ok = (state.objects.get(id).zone != Zone::Graveyard
                 || graveyard_permission_zone_change_count(player, id, state).is_some()
-                || greatwurm_cast_v1::allowed(state, id, player))
+                || greatwurm_cast_v1::allowed(state, id, player)
+                || muldrotha_v1::allowed(state, id, player))
                 && main_timing_ok
                 && (((normal_ok() || alt_ok())
                     && !viable_printed_spell_modes(def, id, player, state).is_empty())
@@ -8800,6 +8810,8 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
             }
         };
         if castable
+            || muldrotha_v1::allowed(state, id, player)
+                && is_castable_now(player, id, CastMethodV4::Normal, state)
             || has_sphinx_lore_grant && !sphinx_lore_cast_v1::routes(state, id, player).is_empty()
         {
             out.push(id);
@@ -9824,6 +9836,13 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_playable_land()
         })
         .collect();
+    for &id in &state.players[player.index()].graveyard {
+        if card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_playable_land()
+            && muldrotha_v1::allowed(state, id, player)
+        {
+            out.push(id);
+        }
+    }
     // Impulse-drawn lands (Clockwork Percussionist/Experimental
     // Synthesizer/Reckless Impulse can exile a land off the top of the
     // library same as any other card) are still subject to the ordinary
@@ -10080,6 +10099,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         .and_then(|_| ordinary_cleanup_v1::validate(state))
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
         .and_then(|()| effect::vivien_reid_v1::validate_state(state))
+        .and_then(|()| muldrotha_v1::validate_state(state))
         .is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -10425,6 +10445,15 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             }
         }
 
+        match muldrotha_v1::decision(state) {
+            Ok(Some(d)) => return d,
+            Ok(None) => {}
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                continue;
+            }
+        }
         if let Some(pending) = state.engine.pending_land_play.as_ref() {
             if validate_pending_land_play(state, pending).is_err() {
                 state.engine.halted = Some((
@@ -11791,6 +11820,7 @@ pub(crate) fn validate_pending_cast(
     greatwurm_cast_v1::validate_pending(state, pending)?;
     sphinx_lore_cast_v1::validate(state, pending)?;
     omniscience_cast_v1::validate(state, pending)?;
+    muldrotha_v1::validate_pending(state, pending)?;
     let source = state
         .objects
         .try_get(pending.spell)
@@ -11941,6 +11971,9 @@ pub(crate) fn validate_pending_cast(
                     });
             if pending.origin_zone != Zone::Hand
                 && !has_graveyard_permission
+                && !pending.source_contract.spell_cast_origin.is_some_and(|origin|
+                    matches!(origin.route, SpellCastRouteV4::MuldrothaGraveyardV1 { .. })
+                        && muldrotha_v1::validate_contract(state, pending.source_contract).is_ok())
                 && !pending.source_contract.spell_cast_origin.is_some_and(|origin| {
                     matches!(origin.route, SpellCastRouteV4::GreatwurmGraveyardV1 { holder, graveyard_generation }
                         if pending.origin_zone == Zone::Graveyard && holder == pending.controller
@@ -20730,6 +20763,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     ordinary_cleanup_v1::validate(state)?;
     effect::genesis_wave_v1::validate_state(state)?;
     effect::vivien_reid_v1::validate_state(state)?;
+    muldrotha_v1::validate_state(state)?;
     crate::leyline_axe_v1::validate(state)?;
     validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
@@ -20810,6 +20844,17 @@ pub(crate) fn step_without_linked_aura_v1(
                 crate::combat_damage_v1::answer_range(state, upper_half)
             }
             _ => Err("only a combat damage answer may be taken during assignment".to_string()),
+        };
+    }
+    if state
+        .engine
+        .muldrotha_v1
+        .0
+        .is_some_and(|p| p.selected.is_none())
+    {
+        return match action {
+            Action::ChooseEffectOption(index) => muldrotha_v1::answer(state, index),
+            _ => Err("only the original Muldrotha source/type permission may be selected".into()),
         };
     }
     if state.engine.pending_land_play.is_some() && !matches!(&action, Action::ChooseEffectOption(_))
@@ -20920,6 +20965,9 @@ pub(crate) fn step_without_linked_aura_v1(
             if !land_drop_candidates(p, state).contains(&id) {
                 return Err(format!("{id} is not a legal land drop for {p:?}"));
             }
+            if state.objects.get(id).zone == Zone::Graveyard {
+                return muldrotha_v1::begin(state, id, p, true);
+            }
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
             if let Some(excluded_color) = def.as_enters_choose_color_other_than {
                 state.engine.pending_land_play = Some(PendingLandPlay {
@@ -20974,6 +21022,12 @@ pub(crate) fn step_without_linked_aura_v1(
             let p = state.priority_player;
             if !castable_spells(p, state).contains(&id) {
                 return Err(format!("{id} is not castable by {p:?} right now"));
+            }
+            if muldrotha_v1::allowed(state, id, p)
+                && cast_form_timing_ok(card_def::CARD_DEFS[state.objects.get(id).card_def as usize].types,
+                    card_def::CARD_DEFS[state.objects.get(id).card_def as usize].keywords, p, state)
+                && is_castable_now(p, id, CastMethodV4::Normal, state) {
+                return muldrotha_v1::begin(state, id, p, false);
             }
             begin_cast(state, p, id);
             Ok(())
@@ -23161,6 +23215,9 @@ pub(crate) fn validate_pending_land_play(
     pending: &PendingLandPlay,
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, pending.source, pending.controller, true, false)?;
+    if pending.origin_zone == Zone::Graveyard {
+        muldrotha_v1::land_input(state, pending.source, pending.controller)?;
+    }
     let object = state
         .objects
         .try_get(pending.source)
@@ -23169,7 +23226,10 @@ pub(crate) fn validate_pending_land_play(
         || object.zone != pending.origin_zone
         || (object.owner != pending.controller
             && !resolution_cast_v1::permit(state, pending.source).is_some_and(|p| p.land))
-        || !matches!(pending.origin_zone, Zone::Hand | Zone::Exile)
+        || !matches!(
+            pending.origin_zone,
+            Zone::Hand | Zone::Exile | Zone::Graveyard
+        )
     {
         return Err("pending land source incarnation or ownership changed".to_string());
     }
@@ -23326,6 +23386,7 @@ fn play_land(
     owned_resolution_parent: bool,
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
+    let muldrotha_land = muldrotha_v1::land_input(state, id, player)?;
     let next_land_count = state.players[player.index()]
         .lands_played_this_turn
         .checked_add(1)
@@ -23354,6 +23415,7 @@ fn play_land(
             state,
         );
     }
+    muldrotha_v1::record_land(state, muldrotha_land);
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn = next_land_count;
     if resolution_cast_v1::finish_child(state)? {
@@ -23482,9 +23544,9 @@ fn materialize_begin_cast_with_quote_v1(
         && origin_zone == Zone::Exile
         && state.objects.get(spell_id).owner == player
         && state.objects.get(spell_id).v4.on_adventure;
-    let graveyard_adventure = crate::standard_creatures_v1::graveyard_adventure_allowed(
-        state, spell_id, player,
-    )
+    let muldrotha_announcement = muldrotha_v1::announcement(state, spell_id, player);
+    let graveyard_adventure = (muldrotha_announcement.is_none()
+        && crate::standard_creatures_v1::graveyard_adventure_allowed(state, spell_id, player))
     .then(|| {
         crate::standard_creatures_v1::graveyard_permission(state, spell_id)
             .expect("permitted adventure")
@@ -23497,12 +23559,12 @@ fn materialize_begin_cast_with_quote_v1(
     } else {
         None
     };
-    let sphinx_lore_choice = if forced_cast_method.is_none() {
+    let sphinx_lore_choice = if forced_cast_method.is_none() && muldrotha_announcement.is_none() {
         sphinx_lore_cast_v1::seed(state, spell_id, player)
     } else {
         None
     };
-    let greatwurm_choice = if forced_cast_method.is_none() {
+    let greatwurm_choice = if forced_cast_method.is_none() && muldrotha_announcement.is_none() {
         greatwurm_cast_v1::seed(state, spell_id, player)
     } else {
         None
@@ -23515,7 +23577,8 @@ fn materialize_begin_cast_with_quote_v1(
     let cast_method = forced_cast_method.unwrap_or_else(|| {
         if let Some((_, route)) = sphinx_lore_choice {
             sphinx_lore_cast_v1::selected_method(route)
-        } else if graveyard_permission.is_some()
+        } else if muldrotha_announcement.is_some()
+            || graveyard_permission.is_some()
             || graveyard_adventure.is_some()
             || greatwurm_choice.is_some()
         {
@@ -23532,7 +23595,11 @@ fn materialize_begin_cast_with_quote_v1(
     });
     let is_flashback = cast_method == CastMethodV4::Flashback;
     let resolution_permission = resolution_cast_v1::permit(state, spell_id).filter(|p| !p.land);
-    let cast_route = if let Some(choice) = omniscience_choice {
+    let cast_route = if let Some(options_history_index) = muldrotha_announcement {
+        SpellCastRouteV4::MuldrothaGraveyardV1 {
+            options_history_index,
+        }
+    } else if let Some(choice) = omniscience_choice {
         omniscience_cast_v1::origin(choice, player, origin_zone_change_count)
     } else if let Some((_, route)) = sphinx_lore_choice {
         sphinx_lore_cast_v1::selected_origin(route, player, origin_zone_change_count)
@@ -23844,6 +23911,7 @@ fn finalize_owned_cast(
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
     let sphinx_lore_cast_v1 = sphinx_lore_cast_v1::record_finalized(state, &pending)?;
     let omniscience_cast_v1 = omniscience_cast_v1::record_finalized(state, &pending)?;
+    muldrotha_v1::record_cast(state, &pending)?;
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());

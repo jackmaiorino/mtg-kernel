@@ -943,6 +943,9 @@ pub enum SpellCastRouteV4 {
         holder: PlayerId,
         hand_generation: u32,
     },
+    MuldrothaGraveyardV1 {
+        options_history_index: u64,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object

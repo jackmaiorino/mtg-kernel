@@ -1930,6 +1930,8 @@ pub fn observe_v1(
         .map_err(RlContractError)?;
     crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
+    crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -2362,6 +2364,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if !accept_faebloom {
         refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     }
+    crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     if !accept_akroma {
@@ -2959,6 +2963,8 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     if !accept_faebloom {
         refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     }
+    crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     if !accept_akroma {
@@ -4748,6 +4754,8 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             accept_season,
         ),
     ) = (request, accepted_planes);
+    crate::engine::muldrotha_v1::require_legacy(request.state, Some(request.acting_player))
+        .map_err(RlContractError)?;
     crate::effect::vivien_reid_v1::require_legacy(request.state, Some(request.acting_player))
         .map_err(RlContractError)?;
     if !accept_akroma {

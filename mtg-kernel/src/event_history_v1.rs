@@ -330,11 +330,14 @@ pub enum EventKindV1 {
     GenesisWaveFinishedV1,
     PublishedCastIdentityV1,
     VivienReidV1,
+    MuldrothaOptionsV1,
+    MuldrothaSelectedV1,
+    MuldrothaPlayedV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 306;
-const _: () = assert!(EventKindV1::VivienReidV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 309;
+const _: () = assert!(EventKindV1::MuldrothaPlayedV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -740,6 +743,9 @@ impl CommittedEvent {
             Self::GenesisWaveFinishedV1 { .. } => EventKindV1::GenesisWaveFinishedV1,
             Self::PublishedCastIdentityV1 { .. } => EventKindV1::PublishedCastIdentityV1,
             Self::VivienReidV1 { .. } => EventKindV1::VivienReidV1,
+            Self::MuldrothaOptionsV1 { .. } => EventKindV1::MuldrothaOptionsV1,
+            Self::MuldrothaSelectedV1 { .. } => EventKindV1::MuldrothaSelectedV1,
+            Self::MuldrothaPlayedV1 { .. } => EventKindV1::MuldrothaPlayedV1,
         }
     }
 }

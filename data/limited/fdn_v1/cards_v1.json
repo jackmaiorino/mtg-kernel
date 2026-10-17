@@ -8955,6 +8955,43 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Muldrotha, the Gravetide",
+      "mana_cost": "{3}{B}{G}{U}",
+      "mana_value": 6,
+      "colors": [
+        "B",
+        "G",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elemental",
+        "Avatar"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 6,
+      "toughness": 6,
+      "mechanics": [
+        "own_turn_play_permanent_from_own_graveyard",
+        "original_source_incarnation_per_turn_permanent_type_budget",
+        "explicit_source_and_multitype_permission_choice"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MuldrothaTheGravetide.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_muldrotha_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }
