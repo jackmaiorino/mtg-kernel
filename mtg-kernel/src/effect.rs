@@ -4863,6 +4863,7 @@ fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
 
 /// Single-use native authority acquired with the actual public row still live.
 /// Private fields and no serialization/Clone prevent restored or reusable proof.
+/// Also carries an answered Replication Aura-host choice past that row's removal.
 pub(crate) struct PrintedOptionalResumeOwnerV1 {
     pending: EffectContinuation,
     position: usize,
@@ -4878,6 +4879,7 @@ pub(crate) fn acquire_printed_optional_resume_owner(
     };
     if !requires_ferocious_payment_stage(pending)
         && !requires_printed_optional_trigger_stage(state, pending)
+        && !nonland_copy_v1::requires_stage(pending)
     {
         return Ok(None);
     }
