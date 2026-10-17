@@ -2523,7 +2523,7 @@ fn validate_spell_source_contract_fields(
         CastMethodV4::Alternative if def.alt_cost.is_some() => {}
         CastMethodV4::Flashback
             if def.flashback.is_some()
-                || source.spell_cast_origin.is_some_and(|o| {
+                || source.v4.spell_cast_origin.is_some_and(|o| {
                     matches!(o.route, SpellCastRouteV4::SphinxLoreFlashbackV1 { .. })
                 }) => {}
         CastMethodV4::Madness if def.madness_cost.is_some() => {}

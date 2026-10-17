@@ -109,7 +109,7 @@ pub(crate) fn definition(id: u16) -> bool {
                 && d.produces_mana.is_empty()
                 && d.colors == [crate::mana::ManaColor::G]
                 && d.target_spec == card_def::TargetSpec::None
-                && d.keywords == Keywords::empty()
+                && d.keywords == Keywords::NONE
                 && (d.spell_effect)()
                     == Some(EffectOp::MoveObject {
                         object: ObjectRef::ThisSource,

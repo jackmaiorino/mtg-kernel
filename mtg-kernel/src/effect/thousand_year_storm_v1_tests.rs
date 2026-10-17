@@ -846,7 +846,7 @@ fn genuine_paid_kicked_divine_260_slot_copy_matching_keeps_width_and_incarnation
                     object_zone_change_count,
                     keywords,
                     ..
-                } if *object_id == creatures[0] && keywords.contains(Keywords::INDESTRUCTIBLE) => {
+                } if *object_id == creatures[0] && keywords.has(Keywords::INDESTRUCTIBLE) => {
                     Some(*object_zone_change_count)
                 }
                 _ => None,
@@ -1002,7 +1002,10 @@ fn paid_fiery_attachment_retarget_uses_feasible_final_assignment_both_seats() {
             finish(&mut s);
             priority(&mut s, p);
             let before = taps(&s, p);
-            assert!(engine::available_activatable_abilities(p, &s).contains(&(bow, 0)));
+            assert!(
+                matches!(next(&mut s), Decision::CastSpellOrPass { activatable_abilities, .. }
+                if activatable_abilities.contains(&(bow, 0)))
+            );
             action(&mut s, Action::ActivateAbility(bow, 0));
             let d = next(&mut s);
             assert!(

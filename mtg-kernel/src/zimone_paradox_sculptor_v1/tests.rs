@@ -29,7 +29,7 @@ fn quiet(state: &mut GameState, decision: Decision) {
         }
         Decision::ChooseTargets {
             can_finish: true, ..
-        } => Action::FinishTargetSelection,
+        } => Action::FinishEffectSelection,
         other => panic!("native progress: {other:?}"),
     };
     engine::step(state, action).unwrap();
@@ -164,7 +164,7 @@ fn select_trigger(state: &mut GameState, actor: PlayerId, source: ObjectId, targ
                 ..
             }
         ));
-        engine::step(state, Action::FinishTargetSelection).unwrap();
+        engine::step(state, Action::FinishEffectSelection).unwrap();
     }
 }
 
