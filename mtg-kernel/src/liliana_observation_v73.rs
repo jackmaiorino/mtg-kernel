@@ -169,7 +169,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     require_supported(state, None)?;
-    crate::ravenous_observation_v51::validate_state_complete_next_five_v59(state)?;
+    crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
+        state,
+        crate::planeswalker_v1::RecipientScopeV1::LilianaV73,
+    )?;
     crate::elenda_public_v52::capture(state).map_err(|e| e.0)?;
     crate::drake_public_v53::capture_tinybones_compat_v72(state).map_err(|e| e.0)?;
     crate::spinner_public_v54::capture_tinybones_compat_v72(state)?;

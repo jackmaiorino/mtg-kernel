@@ -6178,8 +6178,17 @@ fn can_pay_components(
                     >= i64::from(*required)
             }
             CostComponent::LoyaltyX => crate::planeswalker_v1::loyalty(state, source).is_some(),
-            CostComponent::Loyalty(delta) => crate::planeswalker_v1::loyalty(state, source)
-                .is_some_and(|loyalty| *delta >= 0 || loyalty >= delta.unsigned_abs()),
+            CostComponent::Loyalty(delta) => {
+                crate::planeswalker_v1::loyalty(state, source)
+                    .is_some_and(|loyalty| *delta >= 0 || loyalty >= delta.unsigned_abs())
+                    && crate::planeswalker_v1::quote_loyalty_change_v48(
+                        state,
+                        source,
+                        *delta,
+                        crate::doubling_season_v48::CounterOriginV48::Cost,
+                    )
+                    .is_ok()
+            }
             CostComponent::ExileCraftArtifactMaterial => {
                 !craft_material_candidates(player, source, state, &[]).is_empty()
             }
@@ -6276,7 +6285,7 @@ fn validate_cost_component_choices_v1(
     }) {
         return None;
     }
-    if crate::doubling_season_v48::requires_successor(state) && components.iter().any(|component| {
+    if components.iter().any(|component| {
         matches!(component, CostComponent::Loyalty(delta) if crate::planeswalker_v1::quote_loyalty_change_v48(
             state, source, *delta, crate::doubling_season_v48::CounterOriginV48::Cost).is_err())
     }) {
