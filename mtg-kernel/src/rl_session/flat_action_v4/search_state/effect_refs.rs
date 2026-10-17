@@ -1041,11 +1041,37 @@ fn continuation_conflicts(
     false
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReferenceScopeV68 {
+    Legacy,
+    EndTurn,
+}
+
 pub(super) fn conflicts(
     state: &GameState,
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Legacy)
+}
+pub(super) fn conflicts_end_turn_v68(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::EndTurn)
+}
+fn conflicts_in_scope(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    scope: ReferenceScopeV68,
+) -> bool {
+    if scope == ReferenceScopeV68::EndTurn
+        && crate::engine::time_stop_v1::sampler_conflicts_v68(state, pool).unwrap_or(true)
+    {
+        return true;
+    }
     if crate::engine::ordinary_cleanup_v1::validate(state).is_err()
         || crate::engine::ordinary_cleanup_v1::conflicts(state, pool)
     {
@@ -1162,10 +1188,15 @@ pub(super) fn conflicts(
         ])
         .iter()
         .any(|event| {
-            matches!(
+            if matches!(
                 event,
                 crate::event::CommittedEvent::TimeStopJournalV1 { .. }
-                    | crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+            ) {
+                return scope == ReferenceScopeV68::Legacy;
+            }
+            matches!(
+                event,
+                crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelageMillStartedV1 { .. }

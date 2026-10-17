@@ -837,6 +837,39 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     }
 }
 
+/// Current-reference admission for the V68 whole-object sampler. Factual
+/// original/output worlds remain immutable and are fully replay-validated;
+/// their private former hand/library membership never filters a permutation.
+pub(crate) fn sampler_conflicts_v68(state: &GameState, pool: &[ObjectId]) -> Result<bool, String> {
+    validate(state)?;
+    if state.engine.time_stop_v1.0.as_ref().is_some_and(|owner| {
+        owner.phase == PhaseV1::Discard
+            && state.players[owner.active.index()]
+                .hand
+                .iter()
+                .any(|id| pool.contains(id))
+    }) {
+        return Ok(true);
+    }
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let Some(saved) = journal(event) else {
+            continue;
+        };
+        if !matches!(saved.operation, OperationV1::Dispose { .. }) {
+            continue;
+        }
+        let original = saved.original.restore(state, at)?;
+        // before_cleanup reads precisely these original public virtual IDs.
+        // They cannot enter the ordinary physical noncopy hidden-slot pool.
+        if original.stack.iter().any(|row| {
+            row.kind == StackItemKind::Spell && row.is_copy && pool.contains(&row.source)
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn public_facts_v68(
     state: &GameState,
     viewer: PlayerId,
@@ -1325,6 +1358,18 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                 (
                     "python/tools/limited_end_turn_session_v9.py",
                     include_str!("../../../python/tools/limited_end_turn_session_v9.py"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/flat_action_v4.rs",
+                    include_str!("../rl_session/flat_action_v4.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/flat_action_v4/search_state.rs",
+                    include_str!("../rl_session/flat_action_v4/search_state.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/flat_action_v4/search_state/sampler.rs",
+                    include_str!("../rl_session/flat_action_v4/search_state/sampler.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());

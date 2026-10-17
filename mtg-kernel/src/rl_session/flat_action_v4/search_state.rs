@@ -9,6 +9,15 @@ pub(crate) use key_step::V4SearchActionTokenV1;
 #[cfg(test)]
 pub(super) mod library_tests;
 mod sampler;
+/// Typed native-only successor entry; old V4 playing/search modes remain frozen.
+pub(super) fn redeterminize_end_turn_v68(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_end_turn_v68(state, actor, seed)
+}
+
 #[cfg(test)]
 mod sampler_tests;
 #[cfg(test)]

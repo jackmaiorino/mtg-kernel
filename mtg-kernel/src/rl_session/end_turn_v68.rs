@@ -498,6 +498,45 @@ impl EndTurnSessionV68 {
             families,
         })
     }
+    /// Whole-object convention over current hidden slots, not a posterior or
+    /// history sampler. Factual archives are preserved byte-for-byte. A new
+    /// owner lineage prevents original capabilities from crossing the sample.
+    pub fn sampled_clone_v68(
+        &self,
+        decision: &EndTurnDecisionV68,
+        seed: u64,
+    ) -> Result<Self, RlContractError> {
+        let before = self.validated_current(decision)?;
+        let actor = self
+            .inner
+            .current
+            .as_ref()
+            .ok_or_else(|| RlContractError("V68 sampling has no current decision".into()))?
+            .actor;
+        let mut inner = self.inner.clone();
+        super::flat_action_v4::redeterminize_end_turn_v68(&mut inner.state, actor, seed)
+            .map_err(|error| RlContractError(format!("V68 current-slot sampling:{error:?}")))?;
+        let mut current = inner
+            .current
+            .take()
+            .ok_or_else(|| RlContractError("V68 sampled current decision absent".into()))?;
+        prepare_current(&inner, &mut current).map_err(binding_error)?;
+        inner.flat_action_cache_spare = None;
+        inner.flat_action_cache_spare_v2 = None;
+        inner.current = Some(current);
+        let sampled = Self {
+            inner,
+            owner: std::sync::Arc::new(()),
+            generation: self.generation,
+        };
+        if sampled.fresh_binding()? != before {
+            return Err(RlContractError(
+                "V68 sampled complete public/native binding changed".into(),
+            ));
+        }
+        Ok(sampled)
+    }
+
     pub fn decision_v68(&self) -> Result<EndTurnDecisionV68, RlContractError> {
         let binding = self.fresh_binding()?;
         let actions = binding
@@ -597,6 +636,12 @@ impl EndTurnSessionV68 {
     }
 }
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod sampler_tests;
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
