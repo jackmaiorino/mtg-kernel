@@ -86,6 +86,7 @@ impl Scan<'_> {
             | LilianaZombieV1
             | LilianaSacrificeV1 { .. }
             | FiendArtisanSearchV1 => true,
+            ChandraFlameshaperV74{..}=>true,
             GenesisWaveV1 => !matches!(self.scope, ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha),
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
@@ -383,6 +384,7 @@ impl Scan<'_> {
                     choice,
                 )) || self.bs(cards)
             }
+            ChandraExileGrantV74 { .. } => true,
             CuratorV1 { .. }
             | BlasphemousEdictV1 { .. }
             | LilianaV1 { .. }
@@ -649,6 +651,7 @@ impl Scan<'_> {
                     choice,
                 ))
             }
+            ChandraExileV74 { .. } => true,
             CuratorCardsV1 { .. }
             | BlasphemousEdictV1 { .. }
             | LilianaV1 { .. }
@@ -1203,12 +1206,14 @@ fn conflicts_in_scope(
         EventKindV1::VivienReidV1,
         EventKindV1::TinybonesV72,
         EventKindV1::LilianaDreadhordeV1,
+        EventKindV1::ChandraFlameshaperV74,
     ]) || state.engine.event_log.iter().any(|e| {
         matches!(
             e,
             crate::event::CommittedEvent::VivienReidV1 { .. }
                 | crate::event::CommittedEvent::TinybonesV72 { .. }
                 | crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }
+                | crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
         )
     }) {
         return true;
@@ -1592,6 +1597,7 @@ fn conflicts_in_scope(
             | TinybonesV72 { .. }
             | LilianaDreadhordeV1 { .. }
             | MuldrothaOptionsV1 { .. } | MuldrothaSelectedV1 { .. } | MuldrothaPlayedV1 { .. }
+            | ChandraFlameshaperV74{..}
             | VivienReidV1 { .. }
             | OrdinaryCleanupStageV1 { .. }
             | TimeStopJournalV1 { .. }

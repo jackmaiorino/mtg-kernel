@@ -9090,6 +9090,41 @@
       "sideboard_only": false,
       "complexity": "simple",
       "is_token": true
+    },
+    {
+      "name": "Chandra, Flameshaper",
+      "engine_capability": "partial",
+      "mana_cost": "{5}{R}{R}",
+      "mana_value": 7,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Chandra"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_chandra_flameshaper_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "native_loyalty_plus_two_red_three_top_three_choose_one_play_this_turn",
+        "native_loyalty_copy_creature_copiable_haste_end_step_sacrifice",
+        "native_prepaid_divide_eight_zero_to_eight_creature_planeswalker_targets"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ChandraFlameshaper.java",
+      "is_token": false
     }
   ]
 }
