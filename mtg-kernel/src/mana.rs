@@ -673,7 +673,11 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
 /// distinguish Convoke payment from mana-ability activation.
 /// The existing Alternative-cast interface requires at least one convoker.
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn plan_spell_mana_total_with_convoke_v1(
     pips: &[Pip],
     generic: u32,
@@ -697,7 +701,11 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1(
     pips: &[Pip],
     generic: u32,
