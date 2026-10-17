@@ -625,14 +625,6 @@ impl CallSessionV62 {
             self.inner.physical_decision_count(),
         )
     }
-    #[cfg(all(
-        test,
-        feature = "limited-fdn-fixtures",
-        not(feature = "standard-magezero-fixtures")
-    ))]
-    pub(crate) fn fixture_native_v62(&self) -> FastActorSessionV1 {
-        self.inner.clone()
-    }
 }
 
 #[cfg(all(

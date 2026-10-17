@@ -3983,7 +3983,11 @@ fn program_function_suffix(name: &str) -> String {
     name.to_ascii_lowercase()
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
+        .collect::<String>()
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 /// Stable, gameplay-semantic description of the generated spell target,

@@ -12,7 +12,7 @@ fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
 fn ready(actor: PlayerId, library: &[&str]) -> GameState {
-    let own = vec![id("Island"); 40];
+    let own = [id("Island"); 40];
     let other = library.iter().map(|name| id(name)).collect::<Vec<_>>();
     let decks = if actor == PlayerId::P0 {
         [&own[..], &other[..]]

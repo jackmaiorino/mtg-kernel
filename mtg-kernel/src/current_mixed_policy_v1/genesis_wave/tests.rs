@@ -10,7 +10,7 @@ fn genuine_paid_wave_numeric_full_packet_index_parity_restore_and_foreign_refusa
         let (s, wave, _) = ready(p, "Island");
         let mut pair = Pair::new(s);
         pair.cast(wave, p, 4);
-        pair.to_subset();
+        pair.advance_to_subset();
         let before = pair.own.fixture_state_v69().clone();
         let mut model = GenesisWaveSession::from_genesis_wave(pair.own);
         let FastActorResponseV1::Decision(e) = model.current_response() else {
@@ -91,7 +91,7 @@ fn genuine_paid_wave_numeric_x256_and_independent_hidden_worlds_keep_exact_opera
             );
             let mut pair = Pair::new(s);
             pair.cast(wave, p, 256);
-            pair.to_subset();
+            pair.advance_to_subset();
             let model = GenesisWaveSession::from_genesis_wave(pair.own);
             let FastActorResponseV1::Decision(e) = model.current_response() else {
                 panic!()

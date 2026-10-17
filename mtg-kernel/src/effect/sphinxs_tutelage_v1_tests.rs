@@ -14,7 +14,7 @@ fn id(name: &str) -> u16 {
 }
 
 fn ready(actor: PlayerId, opponent_library: &[&str]) -> GameState {
-    let own = vec![id("Island"); 48];
+    let own = [id("Island"); 48];
     let other = opponent_library
         .iter()
         .map(|name| id(name))

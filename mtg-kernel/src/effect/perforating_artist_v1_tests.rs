@@ -702,10 +702,10 @@ fn genuine_paid_restore_forgery_refusals_and_consumed_row_cleanup_both_seats() {
                     else {
                         unreachable!()
                     };
-                    choice.unpaid = Box::new(EffectOp::LoseLife {
+                    *choice.unpaid = EffectOp::LoseLife {
                         player: PlayerRef::Opponent,
                         amount: 99,
-                    });
+                    };
                 }
                 6 => {
                     let Some(PendingEffectChoice::SelectTargets { legal, .. }) =

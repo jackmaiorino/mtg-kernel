@@ -70,7 +70,7 @@ fn paid_look(p: PlayerId, hidden: &str) -> GameState {
     let mut pair = crate::rl_session::vivien_v70::tests::Pair::new(s);
     pair.cast(v, p);
     pair.act(|a| matches!(a,A::ActivateAbility{source,ability_index:0,..}if source.arena_id==v.0));
-    pair.to_look();
+    pair.advance_to_look();
     pair.own.fixture_state_v70().clone()
 }
 #[test]

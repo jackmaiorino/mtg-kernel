@@ -85,14 +85,6 @@ impl GenesisWaveSession {
     pub(super) fn fixture_state(&self) -> &crate::state::GameState {
         self.inner.fixture_state_v69()
     }
-    #[cfg(all(
-        test,
-        feature = "limited-fdn-fixtures",
-        not(feature = "standard-magezero-fixtures")
-    ))]
-    pub(super) fn fixture_counts(&self) -> (u64, u64) {
-        self.inner.fixture_counts_v69()
-    }
     pub fn snapshot(&self) -> GenesisWaveSnapshot {
         GenesisWaveSnapshot {
             inner: self.inner.snapshot_v69(),

@@ -139,7 +139,7 @@ fn independent_prepaid_wave_human_hidden_worlds_have_same_prompt_and_facts_both_
             let (world, wave, _) = ready(p, hidden);
             let mut pair = crate::rl_session::genesis_wave_v69::tests::Pair::new(world);
             pair.cast(wave, p, 4);
-            pair.to_subset();
+            pair.advance_to_subset();
             let s = HumanGenesisWaveSessionV69 {
                 inner: pair.own,
                 human_seat: p.into(),
