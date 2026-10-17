@@ -1252,6 +1252,13 @@ CUSTODY_SPEC_KEYS = CUSTODY_SPEC_REQUIRED | {"rewrite", "keep", "members", "file
 # member marked remap. Every other kind (records, case files, binaries,
 # checkpoints, parameter objects) is extracted byte for byte.
 REMAPPED_KINDS = ("job", "source", "bank_spec", "import", "explicit")
+# The files a job spec names that its job, SD1's replay or its rebuild reads:
+# all but its working directory and the other paths it names (outputs and
+# logs), which alone a keep prefix may hold.
+JOB_READS = ("binary", "source", "record", "bank_spec", "cases")
+# The remapped inputs a job reads: every path inside one, and inside each
+# remapped member it names in turn, is read too.
+INPUT_KINDS = ("source", "bank_spec", "import")
 
 
 def path_key(path) -> str:
@@ -1668,10 +1675,11 @@ class Remap:
     it, and remapped in turn when that kind is remapped, so that its
     remapped copy is named), then the verified plain files, then a directory
     of extracted members. A pin's SHA-256 must be the sealed bytes' and
-    becomes its new file's. A path that resolves nowhere, or a remapped copy
-    whose final text still names a forbidden root, is a failure. Each change
-    is recorded (from, to and the SHA-256 of the bytes it names).
-    identity() gives a member's identity with paths aside."""
+    becomes its new file's. A path that resolves nowhere, a kept path that a
+    job reads (reads()), or a remapped copy whose final text still names a
+    forbidden root, is a failure. Each change is recorded (from, to and the
+    SHA-256 of the bytes it names). identity() gives a member's identity with
+    paths aside."""
 
     def __init__(self, run):
         self.run, self.out_dir, self.failures = run, run.out_dir, run.failures
@@ -1682,7 +1690,7 @@ class Remap:
         self.keep = [norm_key(k) for k in run.spec.get("keep", [])]
         self.forbidden = run.spec["forbidden"]
         self.done, self.active, self.notes, self.parsed = {}, set(), {}, {}
-        self.ids, self.id_active = {}, set()
+        self.ids, self.id_active, self.refused = {}, set(), set()
 
     def rewritten(self, token: str) -> str | None:
         """``token`` after the longest rewrite prefix it lies under, or None."""
@@ -1695,6 +1703,13 @@ class Remap:
 
     def kept(self, key: str) -> bool:
         return any(under(key, k) for k in self.keep)
+
+    def reads(self, member: str, kind: str) -> bool:
+        """Whether a job reads the file a path inside ``member`` names, as
+        ``kind``: a job spec's inputs (JOB_READS), and every path inside an
+        input (INPUT_KINDS), through each remapped member it names in turn."""
+        own = self.run.members[member]["kind"]
+        return own in INPUT_KINDS or (own == "job" and kind in JOB_READS)
 
     def locate(self, token: str, pinned: bool):
         """Where one absolute path resolves: ("kept", None) as it is,
@@ -1743,6 +1758,11 @@ class Remap:
         place, value = where
         if place == "kept":
             self.notes[member]["kept"].append({"from": token, "to": value or token})
+            if self.reads(member, kind) and (member, token) not in self.refused:
+                self.refused.add((member, token))
+                self.failures.append(f"{member}: {token} is kept" + (f" as {value}" if value else "")
+                                     + ", but a job reads it (a keep holds only outputs, logs and working "
+                                     "directories)")
             return {"place": place, "to": value, "sealed": None, "sha256": None}
         if place == "file":
             return {"place": place, "to": value["path"], "sealed": value["sha256"], "sha256": value["sha256"]}
@@ -2409,7 +2429,11 @@ def custody(spec: dict, out_dir: Path, spec_pin: dict | None = None) -> dict:
                   root, with a keep prefix there)
       keep        optional absolute prefixes, none under a forbidden root: a
                   path under one, as written or as rewritten, is kept (never
-                  resolved or read)
+                  resolved or read). Only a job's outputs, logs and working
+                  directory may be: a kept path among a job spec's inputs (its
+                  binary, source, record, bank spec, opponents and case file),
+                  or anywhere inside an input it names, through each remapped
+                  member in turn, is a failure
       members     optional further sealed members [{role, member, sha256} or
                   {role, original: PIN}, optional remap: true]
       files       optional [{role, path, sha256}]: further plain files read

@@ -1171,37 +1171,43 @@ class Custody(Temp):
     def seal(self, member: str, original: str, data: bytes):
         self.sealed[member] = (original, data)
 
+    def seal_json(self, member: str, original: str, value: dict) -> bytes:
+        data = json.dumps(self.edits.get(member, lambda v: v)(value)).encode()
+        self.seal(member, original, data)
+        return data
+
     def build(self, name="screen", remote_parameters=b"parameters", desk_environment=None, scheduled=None,
-              analysis_binds=True):
+              analysis_binds=True, edits=None):
         """The evidence under ROOT/NAME. ``remote_parameters`` are the bytes computehost's import descriptor
         pins; ``desk_environment`` adds to r1's desktop job spec's environment; ``scheduled`` replaces the
-        frozen schedules' cases; ``analysis_binds`` False leaves the index out of ANALYSIS-SOURCES-001."""
+        frozen schedules' cases; ``analysis_binds`` False leaves the index out of ANALYSIS-SOURCES-001;
+        ``edits`` maps a sealed import descriptor, source or bank spec to a function changing its JSON."""
         self.base = base = self.root / name
-        self.sealed = {}
+        self.sealed, self.edits = {}, edits or {}
         for host in ("desk", "remote"):
             local = f"{HOT}/inputs-001/{host}"
             runtime = local if host == "desk" else REMOTE
             parameters = b"parameters" if host == "desk" else remote_parameters
             par = digest(parameters)
             self.seal(f"inputs/{host}/objects/{par}.bin", f"{local}/objects/{par}.bin", parameters)
-            imported = json.dumps({"schema": "import",
-                                   "parameters": as_pin(f"{runtime}/objects/{par}.bin", parameters)}).encode()
-            self.seal(f"inputs/{host}/metadata/import.json", f"{local}/metadata/import.json", imported)
+            imported = self.seal_json(f"inputs/{host}/metadata/import.json", f"{local}/metadata/import.json",
+                                      {"schema": "import",
+                                       "parameters": as_pin(f"{runtime}/objects/{par}.bin", parameters)})
             for model, data in MODELS.items():
                 ck = digest(data)
                 self.seal(f"inputs/{host}/objects/{ck}.json", f"{local}/objects/{ck}.json", data)
                 source = {"checkpoint": as_pin(f"{runtime}/objects/{ck}.json", data),
                           "play_import": as_pin(f"{runtime}/metadata/import.json", imported),
                           "feature_transfer": {"expected_feature_contract_digest": "c"}}
-                self.seal(f"inputs/{host}/sources/{model}-source.json", f"{local}/sources/{model}-source.json",
-                          json.dumps(source).encode())
+                self.seal_json(f"inputs/{host}/sources/{model}-source.json", f"{local}/sources/{model}-source.json",
+                               source)
             for lineage in common.LINEAGES:
                 games = f'{{"games":"{lineage}"}}\n'.encode()
                 self.seal(f"inputs/{host}/frozen/games-{lineage}.jsonl", f"{local}/frozen/games-{lineage}.jsonl",
                           games)
                 bank_spec = {"lineage": lineage, "games": as_pin(f"{runtime}/frozen/games-{lineage}.jsonl", games)}
-                self.seal(f"inputs/{host}/frozen/bank-spec-{lineage}.json", f"{local}/frozen/bank-spec-{lineage}.json",
-                          json.dumps(bank_spec).encode())
+                self.seal_json(f"inputs/{host}/frozen/bank-spec-{lineage}.json",
+                               f"{local}/frozen/bank-spec-{lineage}.json", bank_spec)
                 self.seal(f"inputs/{host}/cases/{lineage}-cases.json", f"{local}/cases/{lineage}-cases.json",
                           f"cases {lineage}".encode())
             self.seal(f"inputs/{host}/bin/regret.exe", f"{local}/bin/regret.exe", b"binary")
@@ -1506,6 +1512,34 @@ class Custody(Temp):
         self.assertNotIn("bank_spec inputs", failures)
         self.assertNotIn("r1-source", out["lists"])
         self.assertTrue(out["inputs"]["r2"]["one_input_set"])
+        self.assertFalse(out["pass"])
+
+    def test_a_kept_path_a_job_reads_is_a_failure(self):
+        """A keep holds only outputs, logs and working directories. Any kept path a job reads is listed: among a
+        job spec's inputs, and anywhere inside an input it names, through each remapped member in turn."""
+        scratch, ck = f"{HOT}/formal/scratch", digest(MODELS["r2"])
+        desk_job = f"formal/{self.CASES['r1'][0]}-search-v1/command.json"
+
+        def parameters_kept(descriptor):
+            return {**descriptor, "parameters": as_pin(f"{self.unsealed}/parameters.bin", b"p")}
+        self.build("kept", desk_environment={"BUDGET_CASES": f"{scratch}/cases.json"}, edits={
+            # r2's source pins its checkpoint under the hot root's scratch, which the rules keep in SD1's root.
+            "inputs/desk/sources/r2-source.json":
+                lambda source: {**source, "checkpoint": as_pin(f"{scratch}/{ck}.json", MODELS["r2"])},
+            # Each host's import descriptor, which its sources name, pins its parameters under the keep prefix.
+            "inputs/desk/metadata/import.json": parameters_kept,
+            "inputs/remote/metadata/import.json": parameters_kept})
+        out = sd1.custody(self.spec(), self.out_dir)
+        reads = ", but a job reads it (a keep holds only outputs, logs and working directories)"
+        self.assertEqual(sorted(out["failures"]), sorted([
+            f"inputs/desk/sources/r2-source.json: {scratch}/{ck}.json is kept as "
+            f"{self.unsealed}/formal-scratch/{ck}.json" + reads,
+            f"inputs/desk/metadata/import.json: {self.unsealed}/parameters.bin is kept" + reads,
+            f"inputs/remote/metadata/import.json: {self.unsealed}/parameters.bin is kept" + reads,
+            f"{desk_job}: {scratch}/cases.json is kept as {self.unsealed}/formal-scratch/cases.json" + reads]))
+        # The job's trace, an output, stays kept.
+        self.assertEqual(json.loads((self.out_dir / "remapped" / desk_job).read_text(encoding="utf-8"))
+                         ["environment"]["TRACE"], f"{self.unsealed}/formal-scratch/{self.CASES['r1'][0]}")
         self.assertFalse(out["pass"])
 
     def test_an_unsealed_path_is_kept_only_when_rewritten_into_sd1s_root(self):
