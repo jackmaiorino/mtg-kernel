@@ -194,6 +194,7 @@ pub fn validate(v: &FactsV70) -> Result<(), String> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActivationCostV70 {
+    #[serde(deserialize_with = "strict_stable")]
     pub source: crate::rl::CardStableRefV1,
     pub ability_index: u8,
     pub before: u32,
@@ -290,5 +291,11 @@ fn strict_current<'de, D: serde::Deserializer<'de>>(
 fn strict_optional_reference<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> Result<Option<public::ReferenceV1>, D::Error> {
+    canonical(d)
+}
+
+fn strict_stable<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<crate::rl::CardStableRefV1, D::Error> {
     canonical(d)
 }
