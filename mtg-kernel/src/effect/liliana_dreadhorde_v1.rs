@@ -535,7 +535,7 @@ pub struct ChoiceV1 {
     active: PlayerId,
     controller: PlayerId,
     phase: u8,
-    rosters: [Vec<(EffectObjectBinding, Vec<CardType>)>; 2],
+    rosters: SceneV1,
     sacrificed: [Vec<EffectObjectBinding>; 2],
     kept: Vec<(CardType, EffectObjectBinding)>,
     graveyard: [Vec<EffectObjectBinding>; 2],
@@ -562,7 +562,8 @@ fn stages(c: &ChoiceV1) -> Vec<Stage> {
     v.extend([Stage::Order(c.active), Stage::Order(c.active.opponent())]);
     v
 }
-fn scene(state: &GameState) -> Result<[Vec<(EffectObjectBinding, Vec<CardType>)>; 2], String> {
+type SceneV1 = [Vec<(EffectObjectBinding, Vec<CardType>)>; 2];
+fn scene(state: &GameState) -> Result<SceneV1, String> {
     let mut result = [vec![], vec![]];
     for player in [PlayerId::P0, PlayerId::P1] {
         let mut seen = std::collections::BTreeSet::new();
