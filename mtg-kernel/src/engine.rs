@@ -22946,7 +22946,10 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
         });
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
-        if another_observes_attacks
+        if cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) || another_observes_attacks
             || trigger::triggers_for(object.card_def).iter().any(|def| {
                 matches!(
                     def.condition,
