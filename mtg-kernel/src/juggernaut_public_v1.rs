@@ -252,8 +252,7 @@ fn combat_rows_for_scope(
                     | crate::rl::CommonProjectionScopeV42::LilianaV73
                     | crate::rl::CommonProjectionScopeV42::ChandraV74
                     | crate::rl::CommonProjectionScopeV42::KaitoV75
-            )
-                && crate::rules_meaning_phoenix_v56::selected_definition(def, reference.card_db_id)
+            ) && crate::rules_meaning_phoenix_v56::selected_definition(def, reference.card_db_id)
             {
                 if phoenix.is_none() {
                     phoenix = Some(crate::phoenix_public_v56::capture(state)?);
