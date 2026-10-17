@@ -1442,6 +1442,14 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("../engine/tinybones_v72.rs"),
                 ),
                 (
+                    "mtg-kernel/src/rules_meaning_tinybones_v72.rs",
+                    include_str!("../rules_meaning_tinybones_v72.rs"),
+                ),
+                (
+                    "mtg-kernel/src/tinybones_public_v72.rs",
+                    include_str!("../tinybones_public_v72.rs"),
+                ),
+                (
                     "mtg-kernel/src/current_mixed_policy_v1/canonical_semantic_booleans.rs",
                     include_str!("../current_mixed_policy_v1/canonical_semantic_booleans.rs"),
                 ),

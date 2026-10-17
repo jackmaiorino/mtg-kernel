@@ -196,7 +196,7 @@ fn active_source(state: &GameState, player: PlayerId) -> Option<AbilitySourceCon
 /// An independently authorized foreign stashed spell may use the current
 /// controller's actual Tinybones on another turn as well. The stash issuer is
 /// deliberately absent: any current printed source grants the static ability.
-pub(super) fn mana_grant(
+pub(crate) fn mana_grant(
     state: &GameState,
     card: ObjectId,
     controller: PlayerId,
@@ -797,7 +797,7 @@ pub(super) fn countered(state: &mut GameState, item: &StackItem) -> Result<(), S
     }
     Ok(())
 }
-pub(super) fn play_allowed(state: &GameState, card: ObjectId, actor: PlayerId) -> bool {
+pub(crate) fn play_allowed(state: &GameState, card: ObjectId, actor: PlayerId) -> bool {
     actor == state.active_player
         && state.objects.try_get(card).is_some_and(|o| {
             o.zone == Zone::Exile

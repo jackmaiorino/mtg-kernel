@@ -831,3 +831,6 @@ pub mod vivien_candidates_v70;
 pub mod vivien_observation_v70;
 
 pub mod limited_vivien_session_v11;
+
+pub mod rules_meaning_tinybones_v72;
+pub mod tinybones_public_v72;
