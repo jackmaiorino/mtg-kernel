@@ -828,6 +828,8 @@ fn order_label(
     action: &ActionSemanticV1,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
+    let _ = trigger_order;
     if let ActionSemanticV1::OrderTriggers {
         actor,
         pending_sources,

@@ -12134,6 +12134,7 @@ pub(crate) fn stack_item_public_vivien_v70(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stack_public_conqueror_v49_fake_v50(
     state: &GameState,
     acting_player: PlayerId,

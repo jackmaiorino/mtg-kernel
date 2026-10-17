@@ -48,6 +48,8 @@ pub enum RemovalV1 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+// Historical native records retain their original by-value source contracts.
+#[allow(clippy::large_enum_variant)]
 pub enum JournalV1 {
     CombatInput {
         world: Box<GameState>,

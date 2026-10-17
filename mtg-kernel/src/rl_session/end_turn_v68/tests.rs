@@ -242,6 +242,7 @@ fn genuine_paid_time_stop_cleanup_discard_complete_context_native_parity_and_res
             .common
             .common
             .projection
+            .surface
             .engine_context
             .pending_discard
             .as_ref()

@@ -23,6 +23,8 @@ pub(super) mod fiery_printing;
 pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
+#[path = "ordinary_removal_printing.rs"]
+mod ordinary_removal_printing;
 #[path = "rallier_bloom_printing.rs"]
 pub(super) mod rallier_bloom_printing;
 #[path = "soulstone_printing.rs"]
@@ -357,6 +359,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     }
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
+    let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let think_twice = d.name == "Think Twice"
         && !d.is_token
         && !d.is_land
@@ -417,7 +420,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.activated_abilities.is_empty()
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
-        && d.mode2.is_none()
+        && (d.mode2.is_none() || (ordinary_removal.is_some() && d.name == "Abrade"))
         && d.mode3.is_none()
         && d.additional_modes.is_empty()
         && (d.flashback.is_none() || think_twice)
@@ -470,6 +473,14 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && crate::trigger::triggers_for(id).is_empty())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    if let Some(roots) = ordinary_removal {
+        return Ok(json!({"card_id":id,"primitive_printing":{
+            "cost":d.cost,"types":d.types.iter().map(|v|*v as u8).collect::<Vec<_>>(),
+            "subtypes":[],"supertypes":[],"colors":d.colors,"power":d.power,
+            "toughness":d.toughness,"keywords":d.keywords.0,"mana_value":d.mana_value,
+            "token":false,"ordered_cast_roots":roots
+        }}));
     }
     if think_twice {
         return Ok(json!({"card_id":id,"primitive_printing":{
