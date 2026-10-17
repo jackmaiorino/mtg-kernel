@@ -299,6 +299,14 @@ fn paid_raid_uses_original_source_lki_after_its_own_death_return_both_seats() {
             chose_raid_target,
             "Raid selects the actual MV-5 card at power 5"
         );
+        // ChooseTarget records the native pending trigger's answer. Advance
+        // through its real publication before inspecting the original trigger row.
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == actor
+        ));
+        assert!(state.engine.pending_triggers.is_empty());
+        assert!(state.engine.halted.is_none());
         assert!(state.stack.last().is_some_and(|item| {
             item.inline_effect
                 .as_ref()
@@ -313,6 +321,11 @@ fn paid_raid_uses_original_source_lki_after_its_own_death_return_both_seats() {
                     .is_some_and(|effect| matches!(effect, EffectOp::AleshaRaidReturn { .. }))
             })
             .unwrap();
+        let raid = &state.stack[raid_index];
+        assert_eq!(raid.kind, crate::state::StackItemKind::TriggeredAbility);
+        assert_eq!((raid.source, raid.controller), (alesha, actor));
+        assert_eq!(raid.targets, [Target::Object(trainer)]);
+        engine::validated_stack_item_target_spec(raid, &state).unwrap();
         let original_effect = state.stack[raid_index].inline_effect.clone().unwrap();
         let captured_power = match original_effect {
             EffectOp::AleshaRaidReturn { source_power_lki } => source_power_lki,
