@@ -15295,7 +15295,14 @@ fn triggered_stack_item_expected_target_spec(
             }
         };
     if effect::curator_v1::selected(state, item) {
-        effect::curator_v1::validate_trigger(state, item)?;
+        effect::curator_v1::validate_item(state, item)?;
+        if state
+            .stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            effect::curator_v1::validate_trigger(state, item)?;
+        }
         return Ok(None);
     }
     if event::copied_token_item_selected_v1(state, item) {

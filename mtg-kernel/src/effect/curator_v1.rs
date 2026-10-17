@@ -386,6 +386,9 @@ fn validate_origin(
     }
     Ok(entry_history_index)
 }
+pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<u64, String> {
+    validate_origin(state, item, false)
+}
 pub(crate) fn validate_trigger(state: &GameState, item: &StackItem) -> Result<u64, String> {
     validate_origin(state, item, true)
 }
