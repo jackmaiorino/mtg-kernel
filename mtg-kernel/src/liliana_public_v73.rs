@@ -166,3 +166,108 @@ pub fn validate_current(s: &GameState, v: PlayerId, f: &FactsV73) -> Result<(), 
     }
     Ok(())
 }
+
+/// Supplemental shape and printed-meaning checks. Native recapture remains the
+/// authority for complete history, original scenes and current legal actions.
+pub fn validate(f: &FactsV73) -> Result<(), String> {
+    crate::rules_meaning_liliana_v73::validate(&f.meaning)?;
+    if f.schema != SCHEMA
+        || f.producer_sha256 != producer_sha256()
+        || f.complete_ordinary_observation
+        || f.owning_consumer_admitted
+    {
+        return Err("V73 native facts identity changed".into());
+    }
+    for (i, a) in f.activations.iter().enumerate() {
+        if usize::try_from(a.occurrence).ok() != Some(i)
+            || a.ability_index >= 3
+            || a.source.original_source.identity != (public::IdentityV1::Known { card_id: 491 })
+            || a.source.original_source.zone != crate::state::Zone::Battlefield
+        {
+            return Err("V73 original paid activation role changed".into());
+        }
+        let after = match a.ability_index {
+            0 => a.loyalty_before.checked_add(1),
+            1 => a.loyalty_before.checked_sub(4),
+            2 => a.loyalty_before.checked_sub(9),
+            _ => None,
+        };
+        if after != Some(a.loyalty_after) {
+            return Err("V73 original paid loyalty changed".into());
+        }
+    }
+    Ok(())
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivationCostV73 {
+    #[serde(deserialize_with = "strict")]
+    pub source: crate::rl::CardStableRefV1,
+    pub ability_index: u8,
+    pub before: u32,
+    pub after: u32,
+    pub paid_before_publication: bool,
+    pub countering_refunds_cost: bool,
+}
+pub(crate) fn activation_cost(
+    f: &FactsV73,
+    a: &crate::rl::ActionSemanticV1,
+) -> Result<Option<ActivationCostV73>, String> {
+    let crate::rl::ActionSemanticV1::ActivateAbility {
+        actor,
+        source,
+        ability_index,
+        granted_ability,
+    } = a
+    else {
+        return Ok(None);
+    };
+    if source.card_db_id != 491 {
+        return Ok(None);
+    }
+    if granted_ability.is_some()
+        || *actor != source.controller
+        || source.zone != crate::state::Zone::Battlefield
+    {
+        return Err("V73 activation changed its original source/grant".into());
+    }
+    let c = f
+        .battlefield
+        .iter()
+        .flatten()
+        .find(|c| {
+            c.card.object == source.arena_id
+                && c.card.generation == source.zone_change_count
+                && c.card.owner == source.owner
+                && c.card.controller == source.controller
+                && c.card.zone == source.zone
+        })
+        .ok_or("V73 loyalty candidate has no exact current permanent")?;
+    if !c.form.printed_abilities_active
+        || c.card.identity != (public::IdentityV1::Known { card_id: 491 })
+    {
+        return Err("V73 loyalty printed ability inactive".into());
+    }
+    let before = c.counters.loyalty;
+    let after = match ability_index {
+        0 => before.checked_add(1),
+        1 => before.checked_sub(4),
+        2 => before.checked_sub(9),
+        _ => None,
+    }
+    .ok_or("V73 loyalty quote exceeds native u32")?;
+    Ok(Some(ActivationCostV73 {
+        source: source.clone(),
+        ability_index: *ability_index,
+        before,
+        after,
+        paid_before_publication: true,
+        countering_refunds_cost: false,
+    }))
+}
+pub(crate) fn choice_contexts(f: &FactsV73) -> Vec<SelectionV73> {
+    f.resolutions
+        .iter()
+        .flat_map(|r| r.selections.iter().filter(|s| s.current).cloned())
+        .collect()
+}

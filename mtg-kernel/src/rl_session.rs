@@ -470,6 +470,37 @@ pub(crate) fn tinybones_candidates_v72(
         crate::rl::core_policy_action_candidates_tinybones_v72(origin, state)
     }
 }
+pub(crate) fn liliana_candidates_v73(
+    origin: &PolicyDecisionV5,
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    crate::liliana_observation_v73::validate_state(state).map_err(RlContractError)?;
+    #[cfg(feature = "limited-fdn-fixtures")]
+    if let Some((player, pending, prefix)) = surface
+        .hunter_order_parts_v45(state)
+        .map_err(RlContractError)?
+    {
+        return crate::rl::hunter_trigger_order_candidates_v45(player, pending, prefix, state);
+    }
+    if let Some(candidates) =
+        crate::divine_actions_v44::candidates_liliana_v73(origin, state, surface)?
+    {
+        return Ok(candidates);
+    }
+    if matches!(
+        origin,
+        PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEntryColorV36 { .. }
+        ))
+    ) {
+        banner_v36::actual_candidates(origin, state)
+    } else if inspiration_v37::is_mill(state) {
+        inspiration_v37::actual_candidates(origin, state)
+    } else {
+        crate::rl::core_policy_action_candidates_liliana_v73(origin, state)
+    }
+}
 
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
@@ -2907,6 +2938,7 @@ fn flat_validate_origin_decision_common_scoped_v42(
                     | crate::rl::CommonProjectionScopeV42::VivienV70
                     | crate::rl::CommonProjectionScopeV42::MuldrothaV71
                     | crate::rl::CommonProjectionScopeV42::TinybonesV72
+                    | crate::rl::CommonProjectionScopeV42::LilianaV73
             ) {
                 return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
             }
@@ -3845,6 +3877,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                     | FlatActionContractModeV1::VivienV70
                     | FlatActionContractModeV1::MuldrothaV71
                     | FlatActionContractModeV1::TinybonesV72
+                    | FlatActionContractModeV1::LilianaV73
             ))
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -3890,6 +3923,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         )
         && session
             .surface
@@ -5009,6 +5043,7 @@ fn flat_validate_expected_decision_numeric_domain(
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         )
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
@@ -5035,7 +5070,7 @@ fn flat_validate_expected_decision_numeric_domain(
                 | FlatActionContractModeV1::RavenousV51
                 | FlatActionContractModeV1::ElendaV52 | FlatActionContractModeV1::PreparedV57 | FlatActionContractModeV1::NextFiveV59 | FlatActionContractModeV1::GraveyardReturnV61 | FlatActionContractModeV1::CallV62 | FlatActionContractModeV1::EndTurnV68 | FlatActionContractModeV1::GenesisWaveV69 | FlatActionContractModeV1::VivienV70
 | FlatActionContractModeV1::MuldrothaV71
-                | FlatActionContractModeV1::TinybonesV72),
+                | FlatActionContractModeV1::TinybonesV72 | FlatActionContractModeV1::LilianaV73),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
@@ -5188,6 +5223,7 @@ enum FlatActionContractModeV1 {
     VivienV70,
     MuldrothaV71,
     TinybonesV72,
+    LilianaV73,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7914,6 +7950,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) && crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             &snapshot.0.state,
             snapshot.0.current.as_ref().map(|c| c.actor),
@@ -7931,12 +7968,17 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) && crate::graveyard_return_public_v61::require_legacy_visible(
             &snapshot.0.state,
             snapshot.0.current.as_ref().map(|c| c.actor),
         )
         .is_err()
         {
+            return;
+        }
+        if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+            let _ = self.liliana_restore_v73(snapshot);
             return;
         }
         if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
@@ -7983,6 +8025,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             *self = snapshot.0.clone();
         }
@@ -8050,6 +8093,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
                 &self.state,
@@ -8066,6 +8110,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             crate::graveyard_return_public_v61::require_legacy_visible(
                 &self.state,
@@ -8083,6 +8128,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             crate::next_five_public_v59::require_legacy_visible(
                 &self.state,
@@ -8103,6 +8149,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             let actor = self.current.as_ref().map(|current| current.actor);
             crate::elenda_public_v52::require_legacy_visible(&self.state, actor).map_err(
@@ -8122,8 +8169,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -8170,8 +8220,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -8224,8 +8277,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -8273,6 +8329,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             crate::doubling_season_v48::require_legacy_visible(
                 &self.state,
@@ -8315,6 +8372,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::VivienV70
                     | FlatActionContractModeV1::MuldrothaV71
                     | FlatActionContractModeV1::TinybonesV72
+                    | FlatActionContractModeV1::LilianaV73
             ) {
                 ravenous_v51::prepare_current(self, &mut rederived)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
@@ -8500,6 +8558,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             if let Err(error) = crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
                 &self.state,
@@ -8526,6 +8585,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             if let Err(error) =
                 crate::graveyard_return_public_v61::require_legacy_visible(&self.state, None)
@@ -8552,6 +8612,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             if let Err(error) =
                 crate::next_five_public_v59::require_legacy_visible(&self.state, None)
@@ -8581,6 +8642,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             // Before advancement the priority player need not be the actual
             // chooser (for example a foreign-owned Aura's host choice). Only
@@ -8613,8 +8675,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -8671,8 +8736,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -8733,8 +8801,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -8793,6 +8864,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) && crate::doubling_season_v48::require_legacy_visible(
             &self.state,
             self.state.priority_player,
@@ -8823,8 +8895,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -8886,8 +8961,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -8961,6 +9039,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::VivienV70
                     | FlatActionContractModeV1::MuldrothaV71
                     | FlatActionContractModeV1::TinybonesV72
+                    | FlatActionContractModeV1::LilianaV73
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43
                 && crate::faebloom_observation_v43::validate_state(&self.state).is_err())
@@ -8999,6 +9078,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::VivienV70
                     | FlatActionContractModeV1::MuldrothaV71
                     | FlatActionContractModeV1::TinybonesV72
+                    | FlatActionContractModeV1::LilianaV73
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
                 && crate::ajani_observation_v42::validate_state(&self.state).is_err())
@@ -9040,6 +9120,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::VivienV70
                     | FlatActionContractModeV1::MuldrothaV71
                     | FlatActionContractModeV1::TinybonesV72
+                    | FlatActionContractModeV1::LilianaV73
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
                 && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
@@ -9084,8 +9165,11 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::VivienV70
                     | FlatActionContractModeV1::MuldrothaV71
                     | FlatActionContractModeV1::TinybonesV72
+                    | FlatActionContractModeV1::LilianaV73
             ) {
-                if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+                if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                    crate::liliana_observation_v73::validate_state(&self.state)
+                } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                     crate::tinybones_observation_v72::validate_state(&self.state)
                 } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                     crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -9260,6 +9344,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::VivienV70
                     | FlatActionContractModeV1::MuldrothaV71
                     | FlatActionContractModeV1::TinybonesV72
+                    | FlatActionContractModeV1::LilianaV73
             )
         {
             self.current = None;
@@ -9336,6 +9421,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::VivienV70
                     | FlatActionContractModeV1::MuldrothaV71
                     | FlatActionContractModeV1::TinybonesV72
+                    | FlatActionContractModeV1::LilianaV73
             )
         {
             self.terminal = Some(halted_terminal(
@@ -9399,6 +9485,7 @@ impl FastActorSessionV1 {
                             | FlatActionContractModeV1::VivienV70
                             | FlatActionContractModeV1::MuldrothaV71
                             | FlatActionContractModeV1::TinybonesV72
+                            | FlatActionContractModeV1::LilianaV73
                     ) =>
                 {
                     substeps
@@ -9471,6 +9558,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
             if let Err(error) =
                 crate::elenda_public_v52::require_legacy_visible(&self.state, Some(actor))
@@ -9500,8 +9588,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::VivienV70
                 | FlatActionContractModeV1::MuldrothaV71
                 | FlatActionContractModeV1::TinybonesV72
+                | FlatActionContractModeV1::LilianaV73
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+                crate::liliana_observation_v73::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
                 crate::muldrotha_observation_v71::validate_state(&self.state)
@@ -9538,7 +9629,9 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+            liliana_candidates_v73(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
             tinybones_candidates_v72(&surfaced, &self.state, &self.surface)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
             muldrotha_candidates_v71(&surfaced, &self.state, &self.surface)
@@ -9872,7 +9965,8 @@ impl FastActorSessionV1 {
             | FlatActionContractModeV1::GenesisWaveV69
             | FlatActionContractModeV1::VivienV70
             | FlatActionContractModeV1::MuldrothaV71
-            | FlatActionContractModeV1::TinybonesV72 => {
+            | FlatActionContractModeV1::TinybonesV72
+            | FlatActionContractModeV1::LilianaV73 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
                 if let Err(error) = ravenous_v51::prepare_current(self, &mut current) {
@@ -20123,3 +20217,6 @@ pub(crate) mod muldrotha_v71;
 pub use muldrotha_v71::{MuldrothaDecisionV71, MuldrothaSessionV71, MuldrothaSnapshotV71};
 pub(crate) mod tinybones_v72;
 pub use tinybones_v72::{TinybonesDecisionV72, TinybonesSessionV72, TinybonesSnapshotV72};
+
+pub(crate) mod liliana_v73;
+pub use liliana_v73::{LilianaDecisionV73, LilianaSessionV73, LilianaSnapshotV73};

@@ -70,6 +70,7 @@ pub enum Source {
     VivienV70,
     MuldrothaV71,
     TinybonesV72,
+    LilianaV73,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -368,6 +369,12 @@ pub fn feature_identity() -> String {
             include_str!("tinybones_candidates_v72.rs"),
             include_str!("rl_session/tinybones_v72.rs"),
             include_str!("current_mixed_policy_v1/tinybones.rs"),
+            include_str!("current_mixed_policy_v1/liliana.rs"),
+            include_str!("rules_meaning_liliana_v73.rs"),
+            include_str!("liliana_public_v73.rs"),
+            include_str!("liliana_observation_v73.rs"),
+            include_str!("liliana_candidates_v73.rs"),
+            include_str!("rl_session/liliana_v73.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
@@ -559,3 +566,6 @@ mod muldrotha;
 pub use muldrotha::{MuldrothaDecision, MuldrothaSession, MuldrothaSnapshot};
 mod tinybones;
 pub use tinybones::{TinybonesDecision, TinybonesSession, TinybonesSnapshot};
+
+mod liliana;
+pub use liliana::{LilianaDecision, LilianaSession, LilianaSnapshot};
