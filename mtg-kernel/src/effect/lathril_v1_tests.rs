@@ -49,6 +49,12 @@ fn finish(state: &mut GameState) {
     for _ in 0..64 {
         let decision = engine::advance_until_decision(state);
         assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
+        // The native legend SBA follows the paid copy's resolution even when
+        // its spell has left an empty stack. Answer before requiring priority.
+        if matches!(&decision, Decision::ChooseLegendPermanent { .. }) {
+            respond(state, decision);
+            continue;
+        }
         if state.stack.is_empty()
             && state.engine.pending_triggers.is_empty()
             && state.engine.pending_effect.is_none()
@@ -234,7 +240,8 @@ fn paid_ten_other_elf_cost_selection_restore_and_readonly_forgeries_both_seats()
         assert!(elves
             .iter()
             .all(|&elf| state.objects.get(elf).summoning_sick));
-        let other = put(&mut state, actor, "Bear Cub", Zone::Battlefield);
+        let other = put(&mut state, actor, "Axgard Cavalry", Zone::Battlefield);
+        assert!(!engine::has_effective_subtype(&state, other, Subtype::Elf));
         let mut tapped_source = state.clone();
         tapped_source.objects.get_mut(source).tapped = true; // explicit cost permission primitive
         assert!(engine::step(&mut tapped_source, Action::ActivateAbility(source, 0)).is_err());
@@ -807,7 +814,16 @@ fn native_final_packet_prevention_season_suppression_noncombat_and_width_both_se
             }
             if mode == 3 {
                 // Explicit native suppression primitive, not a paid Tidebinder claim.
-                let suppressor = put(&mut state, actor.opponent(), "Bear Cub", Zone::Battlefield);
+                let suppressor = put(
+                    &mut state,
+                    actor.opponent(),
+                    "Axgard Cavalry",
+                    Zone::Battlefield,
+                );
+                assert_eq!(
+                    engine::checked_effective_pt(&state, suppressor).unwrap(),
+                    (2, 2)
+                );
                 let link = crate::state::ObjectLinkV4 {
                     object: suppressor,
                     zone_change_count: state.objects.get(suppressor).zone_change_count,
@@ -892,7 +908,10 @@ fn paid_self_reflection_copy_uses_its_own_original_combat_source_both_seats() {
             Some(Target::Object(source)),
             6,
         );
+        let mut restored = restore(&state);
         finish(&mut state);
+        finish(&mut restored);
+        assert_eq!(state, restored);
         let copy = state
             .objects
             .iter()

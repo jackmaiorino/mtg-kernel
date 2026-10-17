@@ -351,10 +351,10 @@ fn paid_raid_uses_original_source_lki_after_its_own_death_return_both_seats() {
         }
         assert_eq!(engine::effective_power(&state, alesha), 3);
 
-        // Murder kills independently of Alesha's current toughness. The
+        // Hero's Downfall kills independently of Alesha's current toughness. The
         // committed Alesha departure receipt freezes the actual power 3.
-        let murder = put(&mut state, actor.opponent(), "Murder", Zone::Hand);
-        announce_paid_cast(&mut state, actor.opponent(), murder, Some(alesha));
+        let downfall = put(&mut state, actor.opponent(), "Hero's Downfall", Zone::Hand);
+        announce_paid_cast(&mut state, actor.opponent(), downfall, Some(alesha));
         resolve_top_spell(&mut state, actor.opponent(), actor);
         assert_eq!(state.objects.get(alesha).zone, Zone::Graveyard);
         assert!(state.engine.event_history.iter().any(|event| {
