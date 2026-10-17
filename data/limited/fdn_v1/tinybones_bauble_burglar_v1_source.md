@@ -22,34 +22,54 @@ stash cards and retains actual restricted-mana and Phyrexian-life choices.
 Its 3B plus tap ability makes each opponent discard one card, only at
 sorcery timing, with ordinary tap sickness and paid stack responses.
 
-The first unregistered prerequisite adds sparse native stash storage.
-Zero preserves predecessor counter serialization and hashing. Generic
-counter transfer, replacement, departure LKI, counter tests and Greatwurm's
-all-kind payment roster include this distinct kind. Existing public
-seventeen-counter shapes explicitly refuse nonzero stash rather than
-silently dropping it. No predecessor DTO, printed CardDef field, existing
-enum ordinal or frozen sample payload is changed.
+Native source now registers CardID490 as Partial, after actual Muldrotha489.
+The definition closure checks the complete printed CardDef and activated recipe.
+Actual shared discard captures the original physical Hand incarnation and all
+opposing active Tinybones observers before Madness/replacement. Native pending
+triggers and exact published rows retain source/controller/capture indices.
+Lexical native resolution alone may exile the still-original graveyard card;
+its move receipt and positive stash counter are retained. Source departure does
+not remove an already captured trigger. Time Stop disposal remains separately
+owned. Current play grants use any currently active Tinybones, not the issuer.
 
-Native discard occurrence ownership, stashing resolution, continuous
-play/mana permission, actual ID490 registration and paid printing fixtures
-are still being authored. This preparation is not a registered printing or
-an implementation-completeness claim. All Rust checks and execution are
-UNRUN. V72 is reserved for a later distinct complete consumer; no Full,
-owning, model, sampler, Human or transport admission is granted.
+Sparse stash storage preserves zero-counter predecessor serialization and hash
+bytes. Native transfer, placement, LKI and Greatwurm include this eighteenth
+native kind. Existing seventeen-counter DTOs refuse nonzero stash. This is not
+an extension of their public schemas. One appended effect, trigger condition,
+cast route and EventHistory kind preserve every predecessor enum prefix and
+all frozen 237 sample bytes. New typed journal data is native history only. Its new typed sample remains
+unharvested; the predecessor samples are not fabricated or retagged.
 
+Mana matching is private and separate from cast permission and original cost
+construction. Original pips/reductions, Convoke colors, Phyrexian life and
+restricted mana remain native. Exile-to-Stack resets counters while preserving
+actual counter LKI; the native illegal-announcement reversal restores stash at
+its new physical generation. The labelled solver primitive is not a paid test.
 
-The native prerequisite now separates actual mana matching from mana cost
-construction. An ephemeral definition-owned source/card grant changes which
-floating or produced mana can pay a pip. Generic reductions still operate on
-the original generic requirement; Convoke still uses the creature's original
-colors; Phyrexian life branches and restricted mana eligibility remain native.
-The grant itself does not authorize a cast and is never serialized. Own-turn
-play permission and any-type mana matching remain distinct printed predicates.
+A foreign Adventure resolves with a generation-bound receipt of its actual
+finalized cast and Stack-to-Exile move. Its actual caster, rather than physical
+owner, retains the normal-cost permanent-face permission independently of
+Tinybones. Ordinary owner-Adventure bytes remain unchanged. Illegal native
+announcement reversal rebinds that same permission; virtual copies grant none.
 
-A stash-bearing card's native cast announcement records its original counter
-LKI and resets counters on its new Stack incarnation. An illegal cast returning
-to the original Exile zone restores those original counters. Ordinary casts
-with no stash use their unchanged bookkeeping. The new mana-matching regression
-is explicitly a solver primitive, not evidence of a genuinely paid Tinybones
-printing. Card490 remains unregistered pending complete discard/trigger/play
-ownership and genuine paid fixture coverage. All Rust checks remain UNRUN.
+Twelve new source-native groups cover paid cast/activation, sickness and sorcery
+checks, zero-card discard, real opponent selection, APNAP/Madness additional
+cost discard, Progenitus replacement, source removal, another current issuer,
+foreign land quota, paid suppression/control response, original-incarnation
+NoOp, independent exile permission, native reversal, original-pip any-type
+payment, Counterspell, restore/replay, receipt forgery and independent initial
+hidden worlds. Native zone-move/reversal/permission operands are explicitly
+labelled primitives. Independent privacy evidence compares permitted public
+outcomes and old-consumer refusal, not an invented complete V72 DTO.
+
+Actual Tinybones child source bytes are included in the two native semantic
+source rosters and appended to 101 direct engine producer arrays with original
+ordered prefixes, duplicates and flat/path-source framing preserved.
+
+All Rust compilation, tests and runtime qualification are UNRUN. Native source
+and source fixtures are not measured execution evidence. The printing remains
+Partial. V72 is reserved for a later complete typed consumer; no Full, owning,
+numeric model, sampler, Human or transport admission is granted. Frozen V88
+catalog/profile literals are unchanged; a new actual export is required before
+any future profile binding. Integration must preserve root's later compiler and
+closed numeric repairs by normal composition.

@@ -162,6 +162,7 @@ pub fn producer_sha256_v2() -> String {
             "genesis-wave-native-source/v1",
             crate::effect::genesis_wave_v1::source_sha256_v1(),
         ),
+        include_str!("engine/tinybones_v72.rs"),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

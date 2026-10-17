@@ -2060,6 +2060,9 @@ pub enum CommittedEvent {
     MuldrothaPlayedV1 {
         played: crate::engine::muldrotha_v1::PlayedV1,
     },
+    TinybonesV72 {
+        journal: Box<crate::engine::tinybones_v72::JournalV72>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -138,6 +138,7 @@ pub fn producer_sha256() -> String {
             include_str!("event_history_v1.rs"),
             crate::engine::time_stop_v1::source_sha256_v1(),
             crate::effect::genesis_wave_v1::source_sha256_v1(),
+            include_str!("engine/tinybones_v72.rs"),
         ] {
             hash.update((source.len() as u64).to_le_bytes());
             hash.update(source.as_bytes());

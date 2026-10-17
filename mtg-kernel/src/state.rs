@@ -955,6 +955,9 @@ pub enum SpellCastRouteV4 {
     MuldrothaGraveyardV1 {
         options_history_index: u64,
     },
+    TinybonesExileV72 {
+        play_history_index: u64,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
