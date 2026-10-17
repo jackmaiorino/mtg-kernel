@@ -47,3 +47,29 @@ pub(crate) fn published_source_boundary(
     }
     (s, id, original)
 }
+
+pub(crate) fn observer_boundary_ready(p: PlayerId) -> GameState {
+    let (mut s, id) = owning_ready(p, false, "Island");
+    activate(&mut s, p, id, 0);
+    finish(&mut s);
+    let token = *s.players[p.index()]
+        .battlefield
+        .iter()
+        .find(|o| token_definition(s.objects.get(**o).card_def))
+        .unwrap();
+    let elf = put(&mut s, p, "Llanowar Elves", Zone::Battlefield);
+    let generation = s.objects.get(id).zone_change_count;
+    // Existing native incarnation-type and simultaneous-departure boundaries.
+    crate::standard_cards_v1::restore_source_type_crew_input(&mut s, vec![(id, generation)]);
+    event::propose_and_commit_batch(
+        &mut s,
+        [id, token, elf]
+            .into_iter()
+            .map(|o| event::ProposedEvent::zone_change(o, Zone::Graveyard))
+            .collect(),
+    );
+    let _ = next(&mut s);
+    put(&mut s, p, NAME, Zone::Hand);
+    priority(&mut s, p.opponent());
+    s
+}

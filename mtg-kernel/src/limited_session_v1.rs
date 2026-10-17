@@ -68,6 +68,13 @@ impl CustomDeckV1 {
     pub(crate) fn resolve_tinybones_v72(&self) -> Result<Vec<u16>, String> {
         self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::TinybonesV72)
     }
+    pub(crate) fn resolve_liliana_v73(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::LilianaV73)
+    }
+    pub(crate) fn resolve_chandra_v74(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::ChandraV74)
+    }
+
     fn resolve_for_scope(
         &self,
         scope: crate::rl::CommonProjectionScopeV42,

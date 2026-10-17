@@ -161,6 +161,21 @@ pub fn producer_sha256() -> String {
             include_str!("rl_session/tinybones_v72.rs"),
             include_str!("rules_meaning_tinybones_v72.rs"),
             include_str!("engine/tinybones_v72.rs"),
+            include_str!("human_bo3_v1/tinybones_v72.rs"),
+            include_str!("human_bo3_v1/limited_tinybones_v13.rs"),
+            include_str!("limited_tinybones_session_v13.rs"),
+            include_str!("bin/kernel_limited_tinybones_env_v13.rs"),
+            include_str!("../../python/tools/limited_tinybones_session_v13.py"),
+            include_str!("human_bo3_v1/liliana_v73.rs"),
+            include_str!("human_bo3_v1/limited_liliana_v14.rs"),
+            include_str!("limited_liliana_session_v14.rs"),
+            include_str!("bin/kernel_limited_liliana_env_v14.rs"),
+            include_str!("../../python/tools/limited_liliana_session_v14.py"),
+            include_str!("human_bo3_v1/chandra_v74.rs"),
+            include_str!("human_bo3_v1/limited_chandra_v15.rs"),
+            include_str!("limited_chandra_session_v15.rs"),
+            include_str!("bin/kernel_limited_chandra_env_v15.rs"),
+            include_str!("../../python/tools/limited_chandra_session_v15.py"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

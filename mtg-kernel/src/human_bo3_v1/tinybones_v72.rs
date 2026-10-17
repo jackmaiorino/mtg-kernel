@@ -579,12 +579,12 @@ record!(HumanTinybonesFactsV72 {viewer:PlayerSeatV1,active_player:PlayerSeatV1,t
 record!(HumanTinybonesActionV72 {triggers:Vec<HumanTinybonesTriggerV72>,plays:Vec<HumanTinybonesPlayV72>});
 /// This map exists only for one prompt. Its keys never leave the backend.
 #[derive(Default)]
-struct Incarnations {
+pub(super) struct Incarnations {
     objects: BTreeMap<u32, u32>,
     incarnations: BTreeMap<(u32, u32), u32>,
 }
 impl Incarnations {
-    fn relation(
+    pub(super) fn relation(
         &mut self,
         r: &crate::tinybones_public_v72::IncarnationV72,
     ) -> Result<HumanTinybonesRelationV72, Error> {
@@ -605,10 +605,10 @@ impl Incarnations {
         })
     }
 }
-fn tinybones_facts(
+pub(super) fn tinybones_facts_with_roles(
     v: &crate::tinybones_public_v72::FactsV72,
     h: &mut Handles,
-) -> Result<HumanTinybonesFactsV72, Error> {
+) -> Result<(HumanTinybonesFactsV72, Incarnations), Error> {
     crate::tinybones_public_v72::validate(v).map_err(|_| Error::InvalidVisibleReference)?;
     let mut roles = Incarnations::default();
     let authorized_printings = v
@@ -725,19 +725,28 @@ fn tinybones_facts(
             })
         })
         .collect::<Result<_, Error>>()?;
-    Ok(HumanTinybonesFactsV72 {
-        viewer: v.viewer,
-        active_player: v.active_player,
-        turn_key: v.turn_key,
-        meaning: v.meaning.clone(),
-        authorized_printings,
-        battlefield,
-        discards,
-        triggers,
-        stash,
-        plays,
-        activations,
-    })
+    Ok((
+        HumanTinybonesFactsV72 {
+            viewer: v.viewer,
+            active_player: v.active_player,
+            turn_key: v.turn_key,
+            meaning: v.meaning.clone(),
+            authorized_printings,
+            battlefield,
+            discards,
+            triggers,
+            stash,
+            plays,
+            activations,
+        },
+        roles,
+    ))
+}
+fn tinybones_facts(
+    v: &crate::tinybones_public_v72::FactsV72,
+    h: &mut Handles,
+) -> Result<HumanTinybonesFactsV72, Error> {
+    tinybones_facts_with_roles(v, h).map(|(f, _)| f)
 }
 #[cfg(all(
     test,
