@@ -546,7 +546,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                 let closed=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingFinishedV1]).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingFinishedV1 {stack_item_id} if *stack_item_id==item.v4.stack_item_id)).count();
                 match removals.as_slice() {
-                    [] if live.as_slice()==[item.as_ref()] && closed==0=>{},
+                    [] if closed==0 && (live.as_slice()==[item.as_ref()] || live.is_empty() && crate::engine::time_stop_v1::disposed(state,item)?)=>{},
                     [(removed_at,original,outcome)] if *removed_at>at && *original==item.as_ref() && live.is_empty() && closed==1=> {
                         let finished_at=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingFinishedV1]).iter().position(|event|matches!(event,
                             CommittedEvent::BanishingFinishedV1 {stack_item_id} if *stack_item_id==item.v4.stack_item_id)).expect("one finish");

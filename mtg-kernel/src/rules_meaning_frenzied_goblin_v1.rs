@@ -124,6 +124,10 @@ pub fn producer_sha256() -> String {
                 include_str!("standard_spell_copy.rs"),
             ),
             ("event_history_v1.rs", include_str!("event_history_v1.rs")),
+            (
+                "time-stop-native-semantic-source/v1",
+                crate::engine::time_stop_v1::source_sha256_v1(),
+            ),
         ] {
             h.update([0]);
             h.update(path.as_bytes());

@@ -95,6 +95,14 @@ pub(super) fn census_hidden_source_conflicts_v1(
             .is_some_and(|pending| stack(&pending.resolving_item))
 }
 mod search_state;
+pub(super) fn redeterminize_end_turn_v68(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_end_turn_v68(state, actor, seed)
+}
+
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 pub(crate) use search_state::V4SearchActionTokenV1;

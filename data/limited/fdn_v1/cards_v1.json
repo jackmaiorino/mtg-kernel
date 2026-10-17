@@ -8861,6 +8861,35 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Time Stop",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "end_the_turn_exile_all_stack_objects_skip_to_cleanup",
+        "cleanup_discard_then_expiration_sba_trigger_priority_repeat"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TimeStop.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_time_stop_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

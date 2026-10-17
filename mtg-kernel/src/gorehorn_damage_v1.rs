@@ -832,9 +832,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 if !matches!(
                     (
                         live,
-                        closed.len() + crystal::completed_count(state, p.item.v4.stack_item_id)
+                        closed.len() + crystal::completed_count(state, p.item.v4.stack_item_id),
+                        crate::engine::time_stop_v1::disposed(state, &p.item)?
                     ),
-                    (1, 0) | (0, 1)
+                    (1, 0, false) | (0, 1, false) | (0, 0, true)
                 ) {
                     return Err("Gorehorn owner erased or reintroduced".into());
                 }

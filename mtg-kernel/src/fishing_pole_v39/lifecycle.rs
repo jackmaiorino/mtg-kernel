@@ -985,7 +985,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     .collect::<Vec<_>>();
                 if removed.is_empty() && complete.is_empty() {
                     if rows(state).any(|(_,row)|matches!(row,JournalV39::OriginalRemoval {origin: saved,..} if saved==origin)) {return Err("Fishing actual removal lost mandatory operation/closure".into());}
-                    if live.as_slice() != [item.as_ref()] {
+                    let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+                    if (!disposed && live.as_slice() != [item.as_ref()])
+                        || (disposed && !live.is_empty())
+                    {
                         return Err("Fishing published mandatory row erased/rewritten".into());
                     }
                     continue;

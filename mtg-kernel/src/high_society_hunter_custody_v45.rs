@@ -654,6 +654,13 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                 return Err("Hunter pending continuation changed or disappeared".into());
             }
         }
+        let disposed = crate::engine::time_stop_v1::disposed(state, original)?;
+        if disposed {
+            if !live.is_empty() || !removed.is_empty() || owner.is_some() {
+                return Err("Hunter disposed publication has another owner/removal".into());
+            }
+            continue;
+        }
         let authentic = match (live.as_slice(), owner.filter(|o| o.publication == *pub_at)) {
             ([live], None) => unstarted(live) == **original,
             ([], Some(loan)) => unstarted(&loan.original) == **original,

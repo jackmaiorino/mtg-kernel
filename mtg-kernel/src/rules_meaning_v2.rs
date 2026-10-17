@@ -154,6 +154,10 @@ pub fn producer_sha256_v2() -> String {
             include_str!("standard_spell_copy.rs"),
         ),
         ("event_history_v1.rs", include_str!("event_history_v1.rs")),
+        (
+            "time-stop-native-semantic-source/v1",
+            crate::engine::time_stop_v1::source_sha256_v1(),
+        ),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

@@ -250,6 +250,11 @@ pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameStat
         .map(|pending| (pending.original.as_ref(), &pending.operation))
 }
 
+/// Only the new end-turn borrow compares the same original-world framing.
+pub(crate) fn original_sha256_for_end_turn_v1(state: &GameState) -> String {
+    original_sha256(state)
+}
+
 /// An opaque input for speculative Panda verification. It cannot install a
 /// runtime in a restored game; the only installer below borrows a local replay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,6 +272,57 @@ pub(crate) fn capture_panda_replay_borrow_v1(state: &GameState) -> PandaReplayBo
     PandaReplayBorrowV1 {
         runner: state.engine.linked_aura_operation_v1.runtime.clone(),
     }
+}
+
+/// Opaque data from the actual enclosing operation, usable only in a
+/// disposable end-turn journal replay. It never restores a world's runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndTurnReplayBorrowV1 {
+    runner: Option<Box<RunnerV1>>,
+}
+impl Hash for EndTurnReplayBorrowV1 {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        serde_json::to_vec(self)
+            .expect("native end-turn replay input serializes")
+            .hash(h);
+    }
+}
+pub(crate) fn capture_end_turn_replay_borrow_v1(state: &GameState) -> EndTurnReplayBorrowV1 {
+    EndTurnReplayBorrowV1 {
+        runner: state.engine.linked_aura_operation_v1.runtime.clone(),
+    }
+}
+pub(crate) fn with_end_turn_replay_borrow_v1<T>(
+    replay: &mut GameState,
+    input: &EndTurnReplayBorrowV1,
+    expected_operation: &OperationV1,
+    run: impl FnOnce(&mut GameState) -> Result<T, String>,
+) -> Result<T, String> {
+    if locally_owned(replay) || has_pending(replay) {
+        return Err("end-turn verification cannot acquire an actual public checkpoint".into());
+    }
+    if let Some(runner) = &input.runner {
+        if &runner.operation != expected_operation
+            || runner.checkpoint.is_some()
+            || runner.batch_depth != 0
+            || !runner.deferred_departures.is_empty()
+            || runner.active_fake_aura_entry_v50.is_some()
+        {
+            return Err("end-turn replay changed its enclosing native operation".into());
+        }
+        crate::engine::time_stop_v1::validate_enclosing_input(
+            replay,
+            &runner.original_stack,
+            runner.original_history_len,
+            &runner.original_sha256,
+        )?;
+    }
+    replay.engine.linked_aura_operation_v1.runtime = input.runner.clone();
+    let result = run(replay);
+    // Even an error cannot export the replay's synchronous owner.
+    replay.engine.linked_aura_operation_v1.runtime = None;
+    result
 }
 /// Ordinary V49 keeps its frozen world payload and old non-Drake bytes.
 /// Only an actual synchronous Drake-owning operation needs this sidecar data.

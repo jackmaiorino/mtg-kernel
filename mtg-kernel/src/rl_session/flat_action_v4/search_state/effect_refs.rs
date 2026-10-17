@@ -1041,11 +1041,42 @@ fn continuation_conflicts(
     false
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReferenceScopeV68 {
+    Legacy,
+    EndTurn,
+}
+
 pub(super) fn conflicts(
     state: &GameState,
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Legacy)
+}
+pub(super) fn conflicts_end_turn_v68(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::EndTurn)
+}
+fn conflicts_in_scope(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    scope: ReferenceScopeV68,
+) -> bool {
+    if scope == ReferenceScopeV68::EndTurn
+        && crate::engine::time_stop_v1::sampler_conflicts_v68(state, pool).unwrap_or(true)
+    {
+        return true;
+    }
+    if crate::engine::ordinary_cleanup_v1::validate(state).is_err()
+        || crate::engine::ordinary_cleanup_v1::conflicts(state, pool)
+    {
+        return true;
+    }
     // Retained original-world mechanisms require their qualified sampler.
     if crate::drake_hatcher_v1::custody::relevant(state)
         || state.engine.event_history.iter().any(|e| {
@@ -1080,6 +1111,7 @@ pub(super) fn conflicts(
         .engine
         .event_history
         .scan_for_v1(&[
+            EventKindV1::TimeStopJournalV1,
             EventKindV1::SphinxsTutelageDrawV1,
             EventKindV1::SphinxsTutelageCollectedV1,
             EventKindV1::SphinxsTutelagePublishedV1,
@@ -1156,6 +1188,12 @@ pub(super) fn conflicts(
         ])
         .iter()
         .any(|event| {
+            if matches!(
+                event,
+                crate::event::CommittedEvent::TimeStopJournalV1 { .. }
+            ) {
+                return scope == ReferenceScopeV68::Legacy;
+            }
             matches!(
                 event,
                 crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
@@ -1386,7 +1424,9 @@ pub(super) fn conflicts(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            SphinxsTutelageDrawV1 { .. }
+            OrdinaryCleanupStageV1 { .. }
+            | TimeStopJournalV1 { .. }
+            | SphinxsTutelageDrawV1 { .. }
             | SphinxsTutelageCollectedV1 { .. }
             | SphinxsTutelagePublishedV1 { .. }
             | SphinxsTutelageMillStartedV1 { .. }
@@ -1665,6 +1705,261 @@ pub(super) fn conflicts(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn paid_time_stop_private_journal_refuses_hidden_slot_sampling_both_seats() {
+        use crate::{
+            engine::{self, Action, Decision},
+            ids::PlayerId,
+            policy_observation_v6::tests::put,
+            state::{GameState, Step, Zone},
+        };
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let island = crate::card_def::card_id_by_name("Island").unwrap();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[island; 40],
+                &[island; 40],
+                crate::rl::card_name,
+                110_486,
+                actor,
+            );
+            state.step = Step::Main1;
+            let pool = state.players[actor.opponent().index()].library.clone();
+            assert!(!conflicts(&state, &pool, None));
+            let lands = (0..6)
+                .map(|_| put(&mut state, actor, "Island", Zone::Battlefield))
+                .collect::<Vec<_>>();
+            let spell = put(&mut state, actor, "Time Stop", Zone::Hand);
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass{castable_spells,..} if castable_spells.contains(&spell))
+            );
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+            );
+            assert!(state.engine.pending_cast.is_none());
+            assert!(lands.iter().all(|id| state.objects.get(*id).tapped));
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            assert!(state.stack.iter().any(|row| row.source == spell));
+            for _ in 0..16 {
+                let d = engine::advance_until_decision(&mut state);
+                assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
+                if state.objects.get(spell).zone == Zone::Exile
+                    && state.engine.time_stop_v1.is_empty()
+                {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.objects.get(spell).zone, Zone::Exile);
+            assert!(state
+                .engine
+                .event_history
+                .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1]));
+            assert!(conflicts(&state, &pool, None));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(state, restored);
+            assert!(conflicts(&restored, &pool, None));
+        }
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn paid_ordinary_cleanup_keeps_lawful_current_slot_sampling_restore_and_forgery_guards_both_seats(
+    ) {
+        use crate::engine::{self, Action, Decision};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = crate::extra_turn_v1::tests::ready(actor);
+            let land = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let target = put(&mut state, actor, "Axgard Cavalry", Zone::Battlefield);
+            for _ in 0..9 {
+                put(&mut state, actor, "Forest", Zone::Hand);
+            }
+            put(&mut state, actor.opponent(), "Island", Zone::Hand);
+            let spell = put(&mut state, actor, "Giant Growth", Zone::Hand);
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&spell))
+            );
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(target)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            assert!(state.objects.get(land).tapped);
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            assert!(state.engine.pending_cast.is_none());
+            assert!(state
+                .stack
+                .iter()
+                .any(|row| row.source == spell && row.controller == actor));
+            let mut issued = None;
+            for _ in 0..200 {
+                let decision = engine::advance_until_decision(&mut state);
+                assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+                if let Decision::Discard {
+                    player,
+                    count,
+                    choices,
+                } = decision
+                {
+                    assert_eq!(player, actor);
+                    assert_eq!(count, 2);
+                    assert_eq!(choices.len(), 9);
+                    issued = Some(choices);
+                    break;
+                }
+                crate::graveyard_return_public_v61::tests::quiet(&mut state, decision);
+            }
+            let choices = issued.expect("actual ordinary cleanup discard");
+            assert_eq!(
+                engine::checked_effective_pt(&state, target).unwrap(),
+                (5, 5)
+            );
+            assert!(!state.engine.ordinary_cleanup_v1.is_empty());
+            assert!(state.engine.time_stop_v1.is_empty());
+            assert!(!state
+                .engine
+                .event_history
+                .has_any(&[EventKindV1::TimeStopJournalV1]));
+            let original_hand = state.players[actor.index()].hand.clone();
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(state, restored);
+            let pool = state.players[actor.opponent().index()].library.clone();
+            assert!(!conflicts(&state, &pool, None));
+            assert!(conflicts(&state, &original_hand, None));
+            let mut sampled = restored.clone();
+            super::super::sampler::redeterminize(&mut sampled, actor, 110_514).unwrap();
+            assert_eq!(
+                sampled.engine.ordinary_cleanup_v1,
+                state.engine.ordinary_cleanup_v1
+            );
+            assert_eq!(sampled.players[actor.index()].hand, original_hand);
+            engine::ordinary_cleanup_v1::validate(&sampled).unwrap();
+            assert_eq!(
+                crate::rl::observe_v1(&state, actor, 0).unwrap(),
+                crate::rl::observe_v1(&sampled, actor, 0).unwrap()
+            );
+            // All active fields affect state identity. Each isolated edit is
+            // rejected before native discard writes, including after warming
+            // the existing read-only validation frame on the genuine world.
+            crate::drake_hatcher_v1::custody::with_observation_replay_keys(&state, |original| {
+                crate::drake_hatcher_v1::custody::validate(original).unwrap();
+                for edit in 0..6 {
+                    let mut value = serde_json::to_value(original).unwrap();
+                    match edit {
+                        0 => value["engine"]["ordinary_cleanup_v1"] = serde_json::Value::Null,
+                        1 => value["engine"]["ordinary_cleanup_v1"]["phase"] = "Priority".into(),
+                        2 => {
+                            value["engine"]["ordinary_cleanup_v1"]["turn"] =
+                                original.turn_key_v1().checked_add(1).unwrap().into()
+                        }
+                        3 => value["engine"]["ordinary_cleanup_v1"]["hand"][0][1] = u32::MAX.into(),
+                        4 => value["engine"]["pending_discard"]["count"] = 1.into(),
+                        _ => {
+                            let index = value["engine"]["ordinary_cleanup_v1"]["stage_index"]
+                                .as_u64()
+                                .unwrap() as usize;
+                            value["engine"]["event_history"][index]["OrdinaryCleanupStageV1"]
+                                ["stage"]["phase"] = "Priority".into();
+                        }
+                    }
+                    let mut forged: GameState = serde_json::from_value(value).unwrap();
+                    assert_ne!(forged.state_hash(), original.state_hash());
+                    let before = forged.clone();
+                    assert!(
+                        engine::step(&mut forged, Action::Discard(choices[..2].to_vec())).is_err()
+                    );
+                    assert_eq!(forged, before);
+                }
+            });
+            // The actual discard has completed but the actual Growth has not
+            // expired. A forged terminal suffix cannot suppress that next
+            // mandatory native operation by erasing the transient owner.
+            let mut expiration = state.clone();
+            engine::step(&mut expiration, Action::Discard(choices[..2].to_vec())).unwrap();
+            assert_eq!(
+                engine::checked_effective_pt(&expiration, target).unwrap(),
+                (5, 5)
+            );
+            let expiration_value = serde_json::to_value(&expiration).unwrap();
+            assert_eq!(
+                expiration_value["engine"]["ordinary_cleanup_v1"]["phase"],
+                "Expiration"
+            );
+            for terminal in ["Finished", "GameOver"] {
+                let mut value = expiration_value.clone();
+                let index = value["engine"]["ordinary_cleanup_v1"]["stage_index"]
+                    .as_u64()
+                    .unwrap() as usize;
+                let mut suffix = value["engine"]["event_history"][index].clone();
+                suffix["OrdinaryCleanupStageV1"]["stage"]["phase"] = terminal.into();
+                value["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(suffix);
+                value["engine"]["ordinary_cleanup_v1"] = serde_json::Value::Null;
+                let forged: GameState = serde_json::from_value(value).unwrap();
+                let restored_forged: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+                assert_eq!(forged, restored_forged);
+                for mut branch in [forged, restored_forged] {
+                    assert_eq!(
+                        engine::checked_effective_pt(&branch, target).unwrap(),
+                        (5, 5)
+                    );
+                    assert!(engine::ordinary_cleanup_v1::validate(&branch).is_err());
+                    assert!(conflicts(&branch, &pool, None));
+                    let before = branch.clone();
+                    assert!(engine::step(&mut branch, Action::Pass).is_err());
+                    assert_eq!(branch, before);
+                    assert!(
+                        super::super::sampler::redeterminize(&mut branch, actor, 110_516).is_err()
+                    );
+                    assert_eq!(branch, before);
+                }
+            }
+            let mut replay = restored;
+            for branch in [&mut state, &mut replay, &mut sampled] {
+                engine::step(branch, Action::Discard(choices[..2].to_vec())).unwrap();
+                for _ in 0..48 {
+                    let decision = engine::advance_until_decision(branch);
+                    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+                    if branch.active_player != actor {
+                        break;
+                    }
+                    crate::graveyard_return_public_v61::tests::quiet(branch, decision);
+                }
+                assert_eq!(branch.active_player, actor.opponent());
+                assert!(branch.engine.ordinary_cleanup_v1.is_empty());
+                assert!(branch.engine.time_stop_v1.is_empty());
+                assert_eq!(
+                    engine::checked_effective_pt(branch, target).unwrap(),
+                    (2, 2)
+                );
+                assert_eq!(branch.players[actor.index()].hand.len(), 7);
+                let pool = branch.players[actor.index()].library.clone();
+                assert!(!conflicts(branch, &pool, None));
+                let mut again = branch.clone();
+                super::super::sampler::redeterminize(&mut again, actor.opponent(), 110_515)
+                    .unwrap();
+                engine::ordinary_cleanup_v1::validate(&again).unwrap();
+            }
+            assert_eq!(state, replay);
+        }
+    }
+
     use super::*;
     use crate::ids::PlayerId;
     use crate::policy_observation_v6::tests::{put, ready_state};

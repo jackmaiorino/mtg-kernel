@@ -115,6 +115,22 @@ pub(crate) fn candidates_call_v62(
         true,
     )
 }
+pub(crate) fn candidates_end_turn_v68(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::end_turn_observation_v68::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_end_turn_v68(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
 fn candidates_current_scope(
     origin: &PolicyDecisionV5,
     state: &GameState,
@@ -123,6 +139,48 @@ fn candidates_current_scope(
     accept_next_five: bool,
     accept_graveyard_return: bool,
     accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        None,
+    )
+}
+fn candidates_current_scope_end_turn_v68(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::EndTurnV68),
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn candidates_current_scope_inner_v68(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+    selected_scope: Option<crate::rl::CommonProjectionScopeV42>,
 ) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
     let (accept_hunter, accept_panda, accept_conqueror, accept_fake) = capabilities;
 
@@ -138,7 +196,9 @@ fn candidates_current_scope(
     if context.is_none() && !priority_offer {
         return Ok(None);
     }
-    let candidates = if accept_call {
+    let candidates = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::EndTurnV68) {
+        crate::rl_variable_cast_v1::candidates_end_turn_v68(state, surface, origin)?
+    } else if accept_call {
         crate::rl_variable_cast_v1::candidates_call_v62(state, surface, origin)?
     } else if accept_graveyard_return {
         crate::rl_variable_cast_v1::candidates_graveyard_return_v61(state, surface, origin)?

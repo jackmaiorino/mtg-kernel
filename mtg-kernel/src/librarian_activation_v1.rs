@@ -369,6 +369,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .collect();
         match (finishes.as_slice(), live.as_slice(), operations.as_slice()) {
             ([], [live], []) if **live == **item && removals.is_empty() => {}
+            ([], [], [])
+                if removals.is_empty() && crate::engine::time_stop_v1::disposed(state, item)? => {}
             ([finished], [], [(operation_index, original, operation)])
                 if index < *operation_index
                     && *operation_index < *finished

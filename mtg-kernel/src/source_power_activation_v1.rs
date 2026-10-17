@@ -335,9 +335,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|candidate| candidate.v4.stack_item_id == id)
             .collect::<Vec<_>>();
-        match (finishes, live.as_slice()) {
-            (0, [candidate]) => validate_item(state, candidate)?,
-            (1, []) => {}
+        let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+        match (finishes, live.as_slice(), disposed) {
+            (0, [candidate], false) => validate_item(state, candidate)?,
+            (1, [], false) => {}
+            (0, [], true) => {}
             _ => return Err("source-power activation ownership was erased or replayed".into()),
         }
     }

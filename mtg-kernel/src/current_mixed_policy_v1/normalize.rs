@@ -95,17 +95,27 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
             }
         }
         Value::Object(values) => {
-            if source == Source::CallV62 && super::call::typed_meaning(values, covered)? {
+            if source == Source::EndTurnV68 && super::end_turn::typed_meaning(values, covered)? {
                 return Ok(());
             }
-            if matches!(source, Source::GraveyardReturnV61 | Source::CallV62)
-                && super::graveyard_return::typed_meaning(values, covered)?
+            if matches!(source, Source::CallV62 | Source::EndTurnV68)
+                && super::call::typed_meaning(values, covered)?
             {
                 return Ok(());
             }
             if matches!(
                 source,
-                Source::NextFiveV59 | Source::GraveyardReturnV61 | Source::CallV62
+                Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68
+            ) && super::graveyard_return::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::NextFiveV59
+                    | Source::GraveyardReturnV61
+                    | Source::CallV62
+                    | Source::EndTurnV68
             ) && super::next_five::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -116,6 +126,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::NextFiveV59
                     | Source::GraveyardReturnV61
                     | Source::CallV62
+                    | Source::EndTurnV68
             ) && super::prepared::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -278,7 +289,10 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::NumericNormalizeInclusive,
     );
-    if matches!(source, Source::GraveyardReturnV61 | Source::CallV62) {
+    if matches!(
+        source,
+        Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68
+    ) {
         let observation = state
             .get_mut("observation")
             .ok_or_else(|| Error::UnsupportedOperand("graveyard_return_observation".into()))?;
@@ -291,11 +305,18 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     super::fishing_public_operands::prepare(&mut state)?;
     if matches!(
         source,
-        Source::PreparedV57 | Source::NextFiveV59 | Source::GraveyardReturnV61 | Source::CallV62
+        Source::PreparedV57
+            | Source::NextFiveV59
+            | Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
     ) {
         super::prepared::references(&mut state)?;
     }
-    if matches!(source, Source::GraveyardReturnV61 | Source::CallV62) {
+    if matches!(
+        source,
+        Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68
+    ) {
         // V61 actions carry the complete typed candidate annotations, including
         // their public references, in addition to the ordinary action semantic.
         for action in &mut actions {
@@ -311,17 +332,24 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     }
     let mut meanings = Vec::new();
     for id in cards.difference(&covered) {
-        if source == Source::CallV62 && super::call::printing(*id)?.is_some() {
+        if source == Source::EndTurnV68 && super::end_turn::printing(*id)?.is_some() {
             continue;
         }
-        if matches!(source, Source::GraveyardReturnV61 | Source::CallV62)
-            && super::graveyard_return::printing(*id)?.is_some()
+        if matches!(source, Source::CallV62 | Source::EndTurnV68)
+            && super::call::printing(*id)?.is_some()
         {
             continue;
         }
         if matches!(
             source,
-            Source::NextFiveV59 | Source::GraveyardReturnV61 | Source::CallV62
+            Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68
+        ) && super::graveyard_return::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::NextFiveV59 | Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68
         ) && super::next_five::printing(*id)?.is_some()
         {
             continue;
@@ -332,6 +360,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::NextFiveV59
                 | Source::GraveyardReturnV61
                 | Source::CallV62
+                | Source::EndTurnV68
         ) && super::prepared::printing(*id)?.is_some()
         {
             continue;
@@ -354,7 +383,11 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     // for an actually actor-authorized referenced printing.
     if matches!(
         source,
-        Source::PreparedV57 | Source::NextFiveV59 | Source::GraveyardReturnV61 | Source::CallV62
+        Source::PreparedV57
+            | Source::NextFiveV59
+            | Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
     ) {
         for id in &cards {
             if let Some(printing) = super::prepared::printing(*id)? {
@@ -364,7 +397,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     }
     if matches!(
         source,
-        Source::NextFiveV59 | Source::GraveyardReturnV61 | Source::CallV62
+        Source::NextFiveV59 | Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68
     ) {
         for id in &cards {
             if let Some(printing) = super::next_five::printing(*id)? {
@@ -372,16 +405,26 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             }
         }
     }
-    if matches!(source, Source::GraveyardReturnV61 | Source::CallV62) {
+    if matches!(
+        source,
+        Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68
+    ) {
         for id in &cards {
             if let Some(printing) = super::graveyard_return::printing(*id)? {
                 meanings.push(printing);
             }
         }
     }
-    if source == Source::CallV62 {
+    if matches!(source, Source::CallV62 | Source::EndTurnV68) {
         for id in &cards {
             if let Some(printing) = super::call::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
+    if source == Source::EndTurnV68 {
+        for id in &cards {
+            if let Some(printing) = super::end_turn::printing(*id)? {
                 meanings.push(printing);
             }
         }

@@ -3,10 +3,23 @@ use super::*;
 use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, SplitMix64, StackItem};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SamplingScopeV68 {
+    Legacy,
+    EndTurn,
+}
 fn conflicts(
     state: &GameState,
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, SamplingScopeV68::Legacy)
+}
+fn conflicts_in_scope(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    scope: SamplingScopeV68,
 ) -> bool {
     if crate::bloodthirsty_conqueror_v49::has_history(state)
         || crate::soul_counters_v1::has_history(state)
@@ -76,7 +89,10 @@ fn conflicts(
     }) {
         return true;
     }
-    if super::effect_refs::conflicts(state, pool, plan) {
+    if match scope {
+        SamplingScopeV68::Legacy => super::effect_refs::conflicts(state, pool, plan),
+        SamplingScopeV68::EndTurn => super::effect_refs::conflicts_end_turn_v68(state, pool, plan),
+    } {
         return true;
     }
     let same = |id: ObjectId, generation: u32| {
@@ -269,7 +285,7 @@ pub(super) fn redeterminize_with_library_plan(
     seed: u64,
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> Result<(), Error> {
-    redeterminize_with_library_plan_inner(state, actor, seed, plan, false)
+    redeterminize_with_library_plan_inner(state, actor, seed, plan, false, SamplingScopeV68::Legacy)
 }
 pub(super) fn redeterminize_with_library_plan_classified(
     state: &mut GameState,
@@ -277,7 +293,18 @@ pub(super) fn redeterminize_with_library_plan_classified(
     seed: u64,
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> Result<(), Error> {
-    redeterminize_with_library_plan_inner(state, actor, seed, plan, true)
+    redeterminize_with_library_plan_inner(state, actor, seed, plan, true, SamplingScopeV68::Legacy)
+}
+pub(super) fn redeterminize_end_turn_v68(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    // Validate all new factual journals before either owner's first permutation.
+    if crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true) {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::EndTurn)
 }
 fn redeterminize_with_library_plan_inner(
     state: &mut GameState,
@@ -285,6 +312,7 @@ fn redeterminize_with_library_plan_inner(
     seed: u64,
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     classified: bool,
+    scope: SamplingScopeV68,
 ) -> Result<(), Error> {
     // Refuse before even the first hidden-owner permutation, including empty pools.
     if crate::bloodthirsty_conqueror_v49::has_history(state)
@@ -354,7 +382,10 @@ fn redeterminize_with_library_plan_inner(
         if pool.windows(2).any(|x| x[0] == x[1]) {
             return Err(Error::HiddenStateContract);
         }
-        if conflicts(state, &pool, plan) {
+        if match scope {
+            SamplingScopeV68::Legacy => conflicts(state, &pool, plan),
+            SamplingScopeV68::EndTurn => conflicts_in_scope(state, &pool, plan, scope),
+        } {
             return Err(if classified {
                 Error::HiddenReferenceConflict
             } else {

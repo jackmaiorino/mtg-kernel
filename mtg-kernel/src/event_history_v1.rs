@@ -324,11 +324,13 @@ pub enum EventKindV1 {
     ConquerorJournalV59,
     FiendishPandaWideGainCaptureV59,
     ThousandYearStormV1,
+    TimeStopJournalV1,
+    OrdinaryCleanupStageV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 300;
-const _: () = assert!(EventKindV1::ThousandYearStormV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 302;
+const _: () = assert!(EventKindV1::OrdinaryCleanupStageV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -728,6 +730,8 @@ impl CommittedEvent {
                 EventKindV1::FiendishPandaWideGainCaptureV59
             }
             Self::ThousandYearStormV1 { .. } => EventKindV1::ThousandYearStormV1,
+            Self::TimeStopJournalV1 { .. } => EventKindV1::TimeStopJournalV1,
+            Self::OrdinaryCleanupStageV1 { .. } => EventKindV1::OrdinaryCleanupStageV1,
         }
     }
 }

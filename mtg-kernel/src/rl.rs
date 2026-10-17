@@ -624,6 +624,7 @@ pub enum DiscardResumeSemanticV2 {
     FinishActivation,
     FinishSpellResolution,
     FinishOptionalCost,
+    TimeStopCleanupV68,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1907,6 +1908,7 @@ pub fn observe_v1(
         .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -2034,6 +2036,7 @@ enum ObservationTextModeV2 {
     NextFiveV59Artifact,
     GraveyardReturnV61Artifact,
     CallV62Artifact,
+    EndTurnV68Artifact,
 }
 
 impl ObservationTextModeV2 {
@@ -2043,6 +2046,7 @@ impl ObservationTextModeV2 {
             Self::NextFiveV59Artifact => Some(CommonProjectionScopeV42::NextFiveV59),
             Self::GraveyardReturnV61Artifact => Some(CommonProjectionScopeV42::GraveyardReturnV61),
             Self::CallV62Artifact => Some(CommonProjectionScopeV42::CallV62),
+            Self::EndTurnV68Artifact => Some(CommonProjectionScopeV42::EndTurnV68),
             _ => None,
         }
     }
@@ -2054,7 +2058,8 @@ impl ObservationTextModeV2 {
             | Self::PreparedV57Artifact
             | Self::NextFiveV59Artifact
             | Self::GraveyardReturnV61Artifact
-            | ObservationTextModeV2::CallV62Artifact => KERNEL_VERSION.to_string(),
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact => KERNEL_VERSION.to_string(),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2066,7 +2071,8 @@ impl ObservationTextModeV2 {
             | Self::PreparedV57Artifact
             | Self::NextFiveV59Artifact
             | Self::GraveyardReturnV61Artifact
-            | ObservationTextModeV2::CallV62Artifact => card_name(card_id),
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact => card_name(card_id),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2227,11 +2233,18 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::EndTurnV68Artifact {
+        crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
+
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
-    if text_mode != ObservationTextModeV2::CallV62Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::CallV62Artifact | ObservationTextModeV2::EndTurnV68Artifact
+    ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
             Some(acting_player),
@@ -2240,7 +2253,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     }
     if !matches!(
         text_mode,
-        ObservationTextModeV2::GraveyardReturnV61Artifact | ObservationTextModeV2::CallV62Artifact
+        ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2250,6 +2265,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
             | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2262,6 +2278,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
             | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2693,6 +2710,7 @@ fn public_restricted_mana_v1(
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -3682,6 +3700,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     NextFiveV59,
     GraveyardReturnV61,
     CallV62,
+    EndTurnV68,
 }
 
 /// Classification of a caller-declared mainboard, never cast permission or a
@@ -3712,15 +3731,24 @@ pub(crate) fn require_declared_cards_for_scope(
                 CommonProjectionScopeV42::NextFiveV59
                     | CommonProjectionScopeV42::GraveyardReturnV61
                     | CommonProjectionScopeV42::CallV62
+                    | CommonProjectionScopeV42::EndTurnV68
             ))
             || (graveyard
                 && !matches!(
                     scope,
                     CommonProjectionScopeV42::GraveyardReturnV61
                         | CommonProjectionScopeV42::CallV62
+                        | CommonProjectionScopeV42::EndTurnV68
                 ))
-            || (id == 459 && scope != CommonProjectionScopeV42::CallV62)
+            || (id == 459
+                && !matches!(
+                    scope,
+                    CommonProjectionScopeV42::CallV62 | CommonProjectionScopeV42::EndTurnV68
+                ))
             || (scope == CommonProjectionScopeV42::CallV62 && id >= 460)
+            || (scope == CommonProjectionScopeV42::EndTurnV68
+                && id >= 460
+                && !crate::engine::time_stop_v1::definition(id))
         {
             return Err("declared mainboard requires its distinct complete consumer".into());
         }
@@ -3882,6 +3910,9 @@ fn common_family_observation_storage_with_proof(
             crate::graveyard_return_observation_v61::validate_state(state)
         }
         CommonProjectionScopeV42::CallV62 => crate::call_observation_v62::validate_state(state),
+        CommonProjectionScopeV42::EndTurnV68 => {
+            crate::end_turn_observation_v68::validate_state(state)
+        }
         CommonProjectionScopeV42::PreparedV57 => {
             crate::prepared_observation_v57::validate_state(state)
         }
@@ -3914,6 +3945,7 @@ fn common_family_observation_storage_with_proof(
             | CommonProjectionScopeV42::NextFiveV59
             | CommonProjectionScopeV42::GraveyardReturnV61
             | CommonProjectionScopeV42::CallV62
+            | CommonProjectionScopeV42::EndTurnV68
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -3925,7 +3957,9 @@ fn common_family_observation_storage_with_proof(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: if scope == CommonProjectionScopeV42::CallV62 {
+                text_mode: if scope == CommonProjectionScopeV42::EndTurnV68 {
+                    ObservationTextModeV2::EndTurnV68Artifact
+                } else if scope == CommonProjectionScopeV42::CallV62 {
                     ObservationTextModeV2::CallV62Artifact
                 } else if scope == CommonProjectionScopeV42::GraveyardReturnV61 {
                     ObservationTextModeV2::GraveyardReturnV61Artifact
@@ -3958,6 +3992,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
                             | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
                     ),
                     matches!(
                         scope,
@@ -3972,6 +4007,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
                             | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
                     ),
                     matches!(
                         scope,
@@ -3985,6 +4021,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
                             | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
                     ),
                     matches!(
                         scope,
@@ -3997,6 +4034,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
                             | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
                     ),
                     matches!(
                         scope,
@@ -4008,6 +4046,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
                             | CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
                     ),
                 ),
                 matches!(
@@ -4019,6 +4058,7 @@ fn common_family_observation_storage_with_proof(
                         | CommonProjectionScopeV42::NextFiveV59
                         | CommonProjectionScopeV42::GraveyardReturnV61
                         | CommonProjectionScopeV42::CallV62
+                        | CommonProjectionScopeV42::EndTurnV68
                 ),
             ),
         ),
@@ -4042,6 +4082,7 @@ fn common_family_observation_storage_with_proof(
                 | CommonProjectionScopeV42::NextFiveV59
                 | CommonProjectionScopeV42::GraveyardReturnV61
                 | CommonProjectionScopeV42::CallV62
+                | CommonProjectionScopeV42::EndTurnV68
         ),
         conqueror_proof,
     )
@@ -4590,7 +4631,10 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         proof.require_state(request.0.state)?;
     }
 
-    if request.0.text_mode != ObservationTextModeV2::CallV62Artifact {
+    if !matches!(
+        request.0.text_mode,
+        ObservationTextModeV2::CallV62Artifact | ObservationTextModeV2::EndTurnV68Artifact
+    ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             request.0.state,
             Some(request.0.acting_player),
@@ -4599,7 +4643,9 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     }
     if !matches!(
         request.0.text_mode,
-        ObservationTextModeV2::GraveyardReturnV61Artifact | ObservationTextModeV2::CallV62Artifact
+        ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(
             request.0.state,
@@ -4612,6 +4658,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
             | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(
             request.0.state,
@@ -5175,11 +5222,18 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         proof.require_state(state)?;
     }
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::EndTurnV68Artifact {
+        crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
+
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
-    if text_mode != ObservationTextModeV2::CallV62Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::CallV62Artifact | ObservationTextModeV2::EndTurnV68Artifact
+    ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
             Some(acting_player),
@@ -5188,7 +5242,9 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     }
     if !matches!(
         text_mode,
-        ObservationTextModeV2::GraveyardReturnV61Artifact | ObservationTextModeV2::CallV62Artifact
+        ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5198,6 +5254,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
             | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5210,6 +5267,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
             | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5489,6 +5547,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                                     | ObservationTextModeV2::NextFiveV59Artifact
                                     | ObservationTextModeV2::GraveyardReturnV61Artifact
                                     | ObservationTextModeV2::CallV62Artifact
+                                    | ObservationTextModeV2::EndTurnV68Artifact
                             ) && crate::ravenous_amulet_v1::definition(object.card_def)
                             {
                                 return Err(RlContractError(
@@ -5866,7 +5925,10 @@ fn core_policy_action_candidates_next_five_scoped_v59(
     accept_fake: bool,
     scope: CommonProjectionScopeV42,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    if scope != CommonProjectionScopeV42::CallV62 {
+    if !matches!(
+        scope,
+        CommonProjectionScopeV42::CallV62 | CommonProjectionScopeV42::EndTurnV68
+    ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
             decision.actor(state),
@@ -5875,7 +5937,9 @@ fn core_policy_action_candidates_next_five_scoped_v59(
     }
     if !matches!(
         scope,
-        CommonProjectionScopeV42::GraveyardReturnV61 | CommonProjectionScopeV42::CallV62
+        CommonProjectionScopeV42::GraveyardReturnV61
+            | CommonProjectionScopeV42::CallV62
+            | CommonProjectionScopeV42::EndTurnV68
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
@@ -5885,6 +5949,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
         CommonProjectionScopeV42::NextFiveV59
             | CommonProjectionScopeV42::GraveyardReturnV61
             | CommonProjectionScopeV42::CallV62
+            | CommonProjectionScopeV42::EndTurnV68
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
@@ -5918,6 +5983,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
             CommonProjectionScopeV42::NextFiveV59
                 | CommonProjectionScopeV42::GraveyardReturnV61
                 | CommonProjectionScopeV42::CallV62
+                | CommonProjectionScopeV42::EndTurnV68
         ) {
             return Err(RlContractError(
                 "full-range cast X requires its current successor".into(),
@@ -9297,6 +9363,7 @@ fn public_card_v2(
                 | ObservationTextModeV2::NextFiveV59Artifact
                 | ObservationTextModeV2::GraveyardReturnV61Artifact
                 | ObservationTextModeV2::CallV62Artifact
+                | ObservationTextModeV2::EndTurnV68Artifact
         ) && object.zone == Zone::Battlefield)
     {
         return Err(RlContractError(
@@ -9419,6 +9486,22 @@ pub(crate) fn core_policy_action_candidates_call_v62(
     )
 }
 
+pub(crate) fn core_policy_action_candidates_end_turn_v68(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::end_turn_observation_v68::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::EndTurnV68,
+    )
+}
+
 fn public_card_v2_non_soul_fields(
     state: &GameState,
     id: ObjectId,
@@ -9430,6 +9513,7 @@ fn public_card_v2_non_soul_fields(
             | ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
             | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
@@ -9437,7 +9521,10 @@ fn public_card_v2_non_soul_fields(
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
-    if text_mode == ObservationTextModeV2::CallV62Artifact {
+    if matches!(
+        text_mode,
+        ObservationTextModeV2::CallV62Artifact | ObservationTextModeV2::EndTurnV68Artifact
+    ) {
         crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)
             .map_err(RlContractError)?;
     } else if text_mode == ObservationTextModeV2::GraveyardReturnV61Artifact {
@@ -9457,6 +9544,7 @@ fn public_card_v2_non_soul_fields(
                 | ObservationTextModeV2::NextFiveV59Artifact
                 | ObservationTextModeV2::GraveyardReturnV61Artifact
                 | ObservationTextModeV2::CallV62Artifact
+                | ObservationTextModeV2::EndTurnV68Artifact
         ) && (object.v4.face_index == 1
             || card_effective_identity_v1(state, id).is_some()
             || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
@@ -9588,6 +9676,7 @@ fn private_card(
             | ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
             | ObservationTextModeV2::CallV62Artifact
+            | ObservationTextModeV2::EndTurnV68Artifact
     ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
@@ -10746,7 +10835,13 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
             .engine
             .pending_discard
             .as_ref()
-            .map(|p| pending_discard_semantic_v2(state, acting_player, p))
+            .map(|p| {
+                if prepared_scope == Some(CommonProjectionScopeV42::EndTurnV68) {
+                    pending_discard_semantic_end_turn_v68(state, acting_player, p)
+                } else {
+                    pending_discard_semantic_v2(state, acting_player, p)
+                }
+            })
             .transpose()?,
         pending_optional_cost: state
             .engine
@@ -10820,6 +10915,9 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     }
                     Some(CommonProjectionScopeV42::CallV62) => {
                         crate::call_observation_v62::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::EndTurnV68) => {
+                        crate::end_turn_observation_v68::pending_source_reference(state, p)?
                     }
                     Some(CommonProjectionScopeV42::GraveyardReturnV61) => {
                         crate::graveyard_return_observation_v61::pending_source_reference(state, p)?
@@ -11458,6 +11556,23 @@ pub(crate) fn public_granted_ability(
     })
 }
 
+fn pending_discard_semantic_end_turn_v68(
+    state: &GameState,
+    actor: PlayerId,
+    p: &engine::PendingDiscard,
+) -> Result<PendingDiscardSemanticV2> {
+    if p.resume != engine::DiscardResume::TimeStopCleanupV1 {
+        return pending_discard_semantic_v2(state, actor, p);
+    }
+    engine::time_stop_v1::validate_discard(state, p).map_err(RlContractError)?;
+    Ok(PendingDiscardSemanticV2 {
+        player: p.player.into(),
+        count: p.count,
+        resume_stage: DiscardResumeSemanticV2::TimeStopCleanupV68,
+        resume_source: None,
+    })
+}
+
 fn pending_discard_semantic_v2(
     state: &GameState,
     acting_player: PlayerId,
@@ -11466,6 +11581,11 @@ fn pending_discard_semantic_v2(
     engine::validate_pending_discard_binding(state, p)
         .map_err(|(_, error)| RlContractError(format!("invalid pending discard: {error}")))?;
     let (resume_stage, resume_source) = match &p.resume {
+        engine::DiscardResume::TimeStopCleanupV1 => {
+            return Err(RlContractError(
+                "Time Stop cleanup is outside this frozen discard protocol".into(),
+            ))
+        }
         // The resolving ability itself stays on the public stack.
         engine::DiscardResume::None
         | engine::DiscardResume::FinishAbilityResolution { .. }
@@ -11751,6 +11871,27 @@ fn stack_item_public_v1(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn stack_item_public_end_turn_v68(
+    state: &GameState,
+    viewer: PlayerId,
+    position: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    stack_item_public_conqueror_v49_fake_v50(
+        state,
+        viewer,
+        position,
+        item,
+        true,
+        (true, true, true, true),
+        (true, true),
+        true,
+        Some(CommonProjectionScopeV42::EndTurnV68),
+        None,
+    )
+}
+
 fn stack_public_conqueror_v49_fake_v50(
     state: &GameState,
     acting_player: PlayerId,
@@ -12173,6 +12314,9 @@ fn stack_source_ref_conqueror_v49_fake_v50(
         }
         Some(CommonProjectionScopeV42::CallV62) => {
             crate::call_observation_v62::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::EndTurnV68) => {
+            crate::end_turn_observation_v68::stack_source_reference(state, item)?
         }
         Some(CommonProjectionScopeV42::GraveyardReturnV61) => {
             crate::graveyard_return_observation_v61::stack_source_reference(state, item)?
