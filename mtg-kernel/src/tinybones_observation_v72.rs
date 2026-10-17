@@ -121,6 +121,8 @@ pub fn producer_sha256() -> String {
             include_str!("engine/tinybones_v72.rs"),
             include_str!("tinybones_public_v72.rs"),
             include_str!("rl_session/tinybones_v72.rs"),
+            include_str!("current_mixed_policy_v1/tinybones.rs"),
+            include_str!("current_mixed_policy_v1/normalize.rs"),
             include_str!("rules_meaning_tinybones_v72.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
@@ -686,7 +688,7 @@ pub fn validate_artifact(value: &TinybonesObservationV72) -> Result<(), RlContra
                 || complete.card.zone != base.stable.zone
                 || serde_json::to_value(&complete.card.identity)
                     .map_err(|e| RlContractError(e.to_string()))?
-                    != serde_json::to_value(&card.reference.identity)
+                    != serde_json::to_value(card.reference.identity)
                         .map_err(|e| RlContractError(e.to_string()))?
             {
                 return Err(RlContractError(

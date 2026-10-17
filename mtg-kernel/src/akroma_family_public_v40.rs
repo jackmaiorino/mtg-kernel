@@ -1,9 +1,9 @@
 //! V40 family parts. No predecessor observation or model identity is exported by this union.
 // Failure-only fixture diagnostics. Fixed source labels never include errors,
 // worlds, decisions, journals or operands. Every original error is unchanged.
-pub(crate) fn diagnose_observation_error<E>(stage: &'static str, error: E) -> E {
+pub(crate) fn diagnose_observation_error<E: std::fmt::Debug>(stage: &'static str, error: E) -> E {
     #[cfg(test)]
-    eprintln!("complete observation validation failed at {stage}");
+    eprintln!("complete observation validation failed at {stage}: {error:?}");
     #[cfg(not(test))]
     let _ = stage;
     error

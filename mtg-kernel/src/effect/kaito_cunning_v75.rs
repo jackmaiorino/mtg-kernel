@@ -1528,7 +1528,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let JournalV75::Published { item, .. } = at(state, *publication)? else {
                     return Err("Kaito evasion publication absent".into());
                 };
-                if target.is_some() != !item.targets.is_empty()
+                if target.is_some() == item.targets.is_empty()
                     || timestamp.is_some_and(|t| t >= state.engine.next_effect_timestamp)
                 {
                     return Err(
@@ -1691,6 +1691,542 @@ pub(crate) fn validate_publication(state: &GameState, item: &StackItem) -> Resul
     published(state, item).map(|_| ())
 }
 
+/// Read-only projection after unchanged native journal and continuation validation.
+/// Maps private journal links to role-specific public ordinals, never raw offsets.
+pub(crate) fn public_facts_v75(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::kaito_public_v75::FactsV75, String> {
+    use crate::{kaito_public_v75::*, optional_trigger_public_v1 as public};
+    use std::collections::BTreeMap;
+    validate_state(state)?;
+    validate_pending(state)?;
+    crate::effect::validate_pending_effect_choice(state)?;
+    for item in &state.stack {
+        crate::engine::validated_stack_item_target_spec(item, state)?;
+    }
+    fn ord(n: usize) -> Result<u32, String> {
+        u32::try_from(n).map_err(|_| "V75 occurrence exceeds u32".into())
+    }
+    fn incarnation(c: AbilitySourceContractV4) -> IncarnationV75 {
+        IncarnationV75 {
+            object: c.source.0,
+            generation: c.zone_change_count,
+            owner: c.owner.into(),
+            controller: c.controller.into(),
+            zone: c.zone,
+        }
+    }
+    fn original_current(
+        state: &GameState,
+        c: &IncarnationV75,
+        v: PlayerId,
+    ) -> Option<public::ReferenceV1> {
+        state
+            .objects
+            .try_get(ObjectId(c.object))
+            .filter(|o| o.zone == c.zone && o.zone_change_count == c.generation)
+            .and_then(|_| public::reference(state, ObjectId(c.object), Some(v)))
+    }
+    fn root(
+        state: &GameState,
+        c: AbilitySourceContractV4,
+        v: PlayerId,
+    ) -> Result<public::RootV1, String> {
+        let mut r = public::root(state, c, Some(v))?;
+        r.original_source.identity = public::IdentityV1::Known {
+            card_id: c.card_def,
+        };
+        Ok(r)
+    }
+    fn stage(state: &GameState, item: &StackItem) -> Result<StageV75, String> {
+        if crate::engine::time_stop_v1::disposed(state, item)? {
+            return Ok(StageV75::Disposed);
+        }
+        for (_, j) in rows(state) {
+            match j {
+                JournalV75::Finished { item: r } if r.v4.stack_item_id == item.v4.stack_item_id => {
+                    return Ok(StageV75::Resolved)
+                }
+                JournalV75::NotResolved { item: r, countered }
+                    if r.v4.stack_item_id == item.v4.stack_item_id =>
+                {
+                    return Ok(if *countered {
+                        StageV75::Countered
+                    } else {
+                        StageV75::Fizzled
+                    })
+                }
+                _ => {}
+            }
+        }
+        if state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| p.resolving_item.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            return Ok(if state.engine.pending_discard.is_some() {
+                StageV75::WaitingDiscard
+            } else {
+                StageV75::Resolving
+            });
+        }
+        if state.stack.iter().any(|r| r == item) {
+            return Ok(StageV75::Published);
+        }
+        Err("V75 original publication lacks authentic live or terminal role".into())
+    }
+    let mut f = FactsV75 {
+        schema: SCHEMA.into(),
+        producer_sha256: producer_sha256(),
+        viewer: viewer.into(),
+        active_player: state.active_player.into(),
+        turn_key: state.turn_key_v1(),
+        meaning: crate::rules_meaning_kaito_v75::printed_meaning()?,
+        authorized_printings: vec![],
+        battlefield: [vec![], vec![]],
+        activations: vec![],
+        combats: vec![],
+        emblems: vec![],
+        casts: vec![],
+        triggers: vec![],
+        ninja_batches: vec![],
+        complete_ordinary_observation: false,
+        owning_consumer_admitted: false,
+    };
+    // Printing discovery stays a separate stable arena scan. Complete current
+    // battlefield rows follow the native per-seat membership order.
+    for (id, _) in state.objects.iter() {
+        if let Some(r) = public::reference(state, id, Some(viewer)) {
+            if matches!(r.identity, public::IdentityV1::Known { card_id: 494 | 495 }) {
+                f.authorized_printings.push(r);
+            }
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for seat in [PlayerId::P0, PlayerId::P1] {
+        for &id in &state.players[seat.index()].battlefield {
+            let o = state
+                .objects
+                .try_get(id)
+                .ok_or("V75 battlefield member absent")?;
+            if o.zone != Zone::Battlefield || o.controller != seat || !seen.insert(id.0) {
+                return Err("V75 battlefield membership changed".into());
+            }
+            f.battlefield[seat.index()].push(CurrentV75 {
+                card: public::reference(state, id, Some(viewer))
+                    .ok_or("V75 battlefield reference absent")?,
+                is_token: o.v4.is_token,
+                tapped: o.tapped,
+                summoning_sick: o.summoning_sick,
+                marked_damage: o.damage,
+                counters: crate::tinybones_public_v72::counters(state, id)?,
+                form: public::checked_form(state, id)?,
+            });
+        }
+    }
+    if state
+        .objects
+        .iter()
+        .any(|(id, o)| o.zone == Zone::Battlefield && !seen.contains(&id.0))
+    {
+        return Err("V75 battlefield roster incomplete".into());
+    }
+    // Native held rows can wait behind legend SBAs or a resolution parent.
+    // Reuse the established complete traversal instead of one storage vector.
+    let held = public::held(state);
+    let mut held_origins = std::collections::BTreeSet::new();
+    for row in &held {
+        if !recipe(&row.effect) {
+            continue;
+        }
+        let EffectOp::KaitoCunningV75 {
+            kind: 3 | 4,
+            origin: Some(index),
+        } = &row.effect
+        else {
+            return Err("V75 held Kaito root is not an actual captured trigger".into());
+        };
+        let mut expected = trigger(state, *index)?;
+        expected.placement_ordered = row.placement_ordered;
+        if **row != expected
+            || !held_origins.insert(*index)
+            || !rows(state).any(|(_, j)| matches!(j,JournalV75::Collected{origin}if origin==index))
+            || rows(state)
+                .any(|(_, j)| matches!(j,JournalV75::TriggerPublished{origin,..}if origin==index))
+        {
+            return Err("V75 held trigger changed, duplicated or also published".into());
+        }
+    }
+    let mut publications = BTreeMap::new();
+    let mut combats = BTreeMap::new();
+    let mut emblems = BTreeMap::new();
+    let mut casts = BTreeMap::new();
+    let mut actual_casts = BTreeMap::new();
+    for (at, j) in rows(state) {
+        let JournalV75::Published { input, item } = j else {
+            continue;
+        };
+        let occurrence = ord(f.activations.len())?;
+        publications.insert(at as u64, PublicationV75::Activation(occurrence));
+        let mut targets = vec![];
+        for (i, c) in item.v4.target_contracts.iter().enumerate() {
+            let crate::state::StackTargetContractV4::Object {
+                object,
+                owner,
+                controller,
+                zone,
+                zone_change_count,
+                ..
+            } = *c
+            else {
+                return Err("V75 loyalty target not object".into());
+            };
+            let original = IncarnationV75 {
+                object: object.0,
+                generation: zone_change_count,
+                owner: owner.into(),
+                controller: controller.into(),
+                zone,
+            };
+            targets.push(TargetV75 {
+                current_original: original_current(state, &original, viewer),
+                legal_now: crate::engine::target_contract_matches_live(state, c.target(), *c)
+                    && crate::engine::effect_target_is_legal_from_ability_source(
+                        state,
+                        input.source,
+                        item.controller,
+                        input.pending.target_spec,
+                        &item.targets,
+                        i,
+                    ),
+                original,
+            });
+        }
+        let mut evasion = None;
+        let mut evasion_at = None;
+        for (e, j) in rows(state) {
+            if let JournalV75::Evasion {
+                publication,
+                target,
+                timestamp,
+            } = j
+            {
+                if *publication == at as u64 {
+                    let original = if let Some(b) = target {
+                        let t = targets
+                            .first()
+                            .ok_or("V75 native evasion original target absent")?;
+                        if t.original.object != b.object.0
+                            || t.original.generation != b.expected_zone_change_count
+                        {
+                            return Err("V75 evasion original incarnation changed".into());
+                        }
+                        Some(t.original.clone())
+                    } else {
+                        None
+                    };
+                    let active_on_original=target.zip(*timestamp).is_some_and(|(b,stamp)|state.objects.try_get(b.object).is_some_and(|o|o.zone==b.expected_zone&&o.zone_change_count==b.expected_zone_change_count)&&state.engine.until_end_of_turn.iter().any(|e|matches!(e,UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1{object_id,object_zone_change_count,timestamp,..}if *object_id==b.object&&*object_zone_change_count==b.expected_zone_change_count&&*timestamp==stamp)));
+                    evasion = Some(EvasionV75 {
+                        target: original,
+                        active_on_original,
+                    });
+                    evasion_at = Some(e);
+                }
+            }
+        }
+        let mut discard = None;
+        let mut end = state.engine.event_history.len();
+        for (e, j) in rows(state) {
+            match j {
+                JournalV75::DiscardInput {
+                    publication,
+                    pending,
+                    chosen,
+                    ..
+                } if *publication == at as u64 => {
+                    end = end.min(e);
+                    let private_chosen = if viewer == item.controller {
+                        Some(
+                            chosen
+                                .iter()
+                                .map(|b| IncarnationV75 {
+                                    object: b.object.0,
+                                    generation: b.expected_zone_change_count,
+                                    owner: pending.player.into(),
+                                    controller: pending.player.into(),
+                                    zone: b.expected_zone,
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    };
+                    discard = Some(DiscardV75 {
+                        count: pending.count,
+                        answered: true,
+                        private_choices: None,
+                        private_chosen,
+                    });
+                }
+                JournalV75::Finished { item: r } | JournalV75::NotResolved { item: r, .. }
+                    if r.v4.stack_item_id == item.v4.stack_item_id =>
+                {
+                    end = end.min(e);
+                }
+                _ => {}
+            }
+        }
+        let pending = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| p.resolving_item.v4.stack_item_id == item.v4.stack_item_id);
+        if pending {
+            if let Some(d) = &state.engine.pending_discard {
+                crate::engine::validate_pending_discard_binding(state, d).map_err(|(_, e)| e)?;
+                let private_choices = if viewer == d.player {
+                    Some(
+                        state.players[d.player.index()]
+                            .hand
+                            .iter()
+                            .map(|id| {
+                                public::reference(state, *id, Some(viewer))
+                                    .ok_or("V75 own discard choice not visible")
+                            })
+                            .collect::<Result<_, _>>()?,
+                    )
+                } else {
+                    None
+                };
+                discard = Some(DiscardV75 {
+                    count: d.count,
+                    answered: false,
+                    private_choices,
+                    private_chosen: None,
+                });
+            }
+        }
+        let draw = if let Some(start) = evasion_at {
+            let draws = state.engine.event_history[start + 1..end]
+                .iter()
+                .filter_map(|e| match e {
+                    E::Draw { player, object } if *player == item.controller => {
+                        Some(object.is_some())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            match draws.as_slice() {
+                [] => DrawV75::NotReached,
+                [true] => DrawV75::Drawn,
+                [false] => DrawV75::EmptyLibrary,
+                _ => return Err("V75 original draw interval ambiguous".into()),
+            }
+        } else {
+            DrawV75::NotReached
+        };
+        f.activations.push(ActivationV75 {
+            occurrence,
+            source: root(state, input.source, viewer)?,
+            original_turn: input.turn,
+            ability_index: input.pending.ability_index,
+            loyalty_before: input.before,
+            loyalty_after: input.after,
+            targets,
+            stage: stage(state, item)?,
+            draw,
+            discard,
+            evasion,
+        });
+    }
+    for (at, j) in rows(state) {
+        if let JournalV75::Combat { capture } = j {
+            combat(state, at as u64)?;
+            let occurrence = ord(f.combats.len())?;
+            combats.insert(at as u64, occurrence);
+            let original_creature = incarnation(capture.creature);
+            f.combats.push(CombatV75 {
+                occurrence,
+                observer: root(state, capture.source, viewer)?,
+                current_original_creature: original_current(state, &original_creature, viewer),
+                original_creature,
+                damaged_player: capture.player.into(),
+                final_damage: capture.amount,
+            });
+        }
+    }
+    for (at, j) in rows(state) {
+        if let JournalV75::Emblem {
+            publication,
+            controller,
+            ..
+        } = j
+        {
+            let Some(PublicationV75::Activation(activation)) =
+                publications.get(publication).copied()
+            else {
+                return Err("V75 emblem original activation absent".into());
+            };
+            let occurrence = ord(f.emblems.len())?;
+            emblems.insert(at as u64, occurrence);
+            f.emblems.push(EmblemV75 {
+                occurrence,
+                activation,
+                controller: (*controller).into(),
+            });
+        }
+    }
+    for (at, j) in rows(state) {
+        if let JournalV75::Cast {
+            emblem,
+            cast,
+            spell,
+        } = j
+        {
+            origin(state, at as u64)?;
+            let source = spell
+                .v4
+                .source_contract
+                .ok_or("V75 original cast source absent")?;
+            let original_spell = IncarnationV75 {
+                object: source.source.0,
+                generation: source.zone_change_count,
+                owner: source.owner.into(),
+                controller: source.controller.into(),
+                zone: source.zone,
+            };
+            let occurrence = ord(f.casts.len())?;
+            casts.insert(at as u64, occurrence);
+            let next = ord(actual_casts.len())?;
+            let actual_cast = *actual_casts.entry(*cast).or_insert(next);
+            f.casts.push(CastV75 {
+                occurrence,
+                emblem: *emblems.get(emblem).ok_or("V75 cast emblem absent")?,
+                actual_cast,
+                current_original_spell: original_current(state, &original_spell, viewer),
+                original_spell,
+                x_value: spell.v4.x_value,
+                kicked: spell.kicked,
+                cast_method: source.cast_method,
+            });
+        }
+    }
+    for (at, j) in rows(state) {
+        let (origin_kind, source) = match j {
+            JournalV75::Combat { capture } => (
+                OriginV75::Combat(
+                    *combats
+                        .get(&(at as u64))
+                        .ok_or("V75 combat ordinal absent")?,
+                ),
+                capture.source,
+            ),
+            JournalV75::Cast { .. } => (
+                OriginV75::EmblemCast(*casts.get(&(at as u64)).ok_or("V75 cast ordinal absent")?),
+                origin(state, at as u64)?.1,
+            ),
+            _ => continue,
+        };
+        let publication = rows(state).find_map(|(p, j)| match j {
+            JournalV75::TriggerPublished { origin, item } if *origin == at as u64 => {
+                Some((p, item))
+            }
+            _ => None,
+        });
+        let (stage, position) = if let Some((_, item)) = publication {
+            let stage = stage(state, item)?;
+            let pos = if stage == StageV75::Published {
+                Some(ord(state
+                    .stack
+                    .iter()
+                    .position(|r| r == item.as_ref())
+                    .ok_or("V75 live trigger position absent")?)?)
+            } else {
+                None
+            };
+            (stage, pos)
+        } else {
+            let expected = trigger(state, at as u64)?;
+            if let Some(pos) = held.iter().copied().position(|t| {
+                let mut expected = expected.clone();
+                expected.placement_ordered = t.placement_ordered;
+                t == &expected
+            }) {
+                (StageV75::Held, Some(ord(pos)?))
+            } else if rows(state)
+                .any(|(_, j)| matches!(j,JournalV75::Collected{origin}if *origin==at as u64))
+            {
+                return Err("V75 collected trigger has no authentic held/publication role".into());
+            } else {
+                (StageV75::Captured, None)
+            }
+        };
+        let occurrence = ord(f.triggers.len())?;
+        if let Some((p, _)) = publication {
+            publications.insert(p as u64, PublicationV75::Trigger(occurrence));
+        }
+        f.triggers.push(TriggerV75 {
+            occurrence,
+            origin: origin_kind,
+            source: root(state, source, viewer)?,
+            stage,
+            native_position: position,
+        });
+    }
+    for (_, j) in rows(state) {
+        let JournalV75::TokenFinished { input, history_end } = j else {
+            continue;
+        };
+        let JournalV75::TokenInput { publication, item } = at(state, *input)? else {
+            return Err("V75 Ninja input absent".into());
+        };
+        let mut created = vec![];
+        for e in &state.engine.event_history[*input as usize + 1..*history_end as usize] {
+            if let E::CreateToken {
+                object,
+                token_def,
+                controller,
+                ..
+            } = e
+            {
+                let original = public::ReferenceV1 {
+                    object: object.0,
+                    generation: 0,
+                    owner: (*controller).into(),
+                    controller: (*controller).into(),
+                    zone: Zone::Battlefield,
+                    identity: public::IdentityV1::Known {
+                        card_id: *token_def,
+                    },
+                };
+                let c = IncarnationV75 {
+                    object: object.0,
+                    generation: 0,
+                    owner: (*controller).into(),
+                    controller: (*controller).into(),
+                    zone: Zone::Battlefield,
+                };
+                created.push(NinjaV75 {
+                    original,
+                    current_original: original_current(state, &c, viewer),
+                });
+            }
+        }
+        f.ninja_batches.push(NinjaBatchV75 {
+            occurrence: ord(f.ninja_batches.len())?,
+            publication: *publications
+                .get(publication)
+                .ok_or("V75 Ninja publication ordinal absent")?,
+            controller: item.controller.into(),
+            created,
+        });
+    }
+    crate::kaito_public_v75::validate(&f)?;
+    Ok(f)
+}
+
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
@@ -1698,3 +2234,11 @@ pub(crate) fn validate_publication(state: &GameState, item: &StackItem) -> Resul
 ))]
 #[path = "kaito_cunning_v75_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "kaito_cunning_public_v75_tests.rs"]
+mod public_tests;
