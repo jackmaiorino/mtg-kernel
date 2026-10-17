@@ -1213,4 +1213,4 @@ pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Res
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "liliana_dreadhorde_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

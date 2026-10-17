@@ -53,3 +53,43 @@ the real current draws; a paid-publication clone now also checks a labelled
 native concealment boundary. The authenticated original source stays Known491
 while the current source reference remains face down. Pinned formatting, static
 source checks and diff checks pass for the repair. All Rust remains unrun.
+
+The next source checkpoint normally composes root7a7fc61 and the actual committed
+Tinybones sealed owner5f48a1f. It adds distinct complete Liliana observation and
+candidate schemas, a private original native pair/index map, and a sealed V73
+session/decision/snapshot owner. An explicit append-only V73 common scope opts
+into the actual eighteen-counter compatibility machinery and genuine Liliana
+CardSelection continuation. Earlier consumers retain Liliana refusal; Chandra,
+Kaito and other unsupported later families still refuse. No old observation is
+relabelled V73, and no public packet contains native executable pairs or worlds.
+
+Every issued step rechecks the complete current packet, native candidate pairs,
+original menu map, source incarnation, cost and permission annotations. Opaque
+snapshots preserve the owner and authenticate the original menu before restore
+rebinding; stale/foreign decisions and changed packets fail before mutation.
+The private issued-origin borrow follows the actual V72 API, avoiding a second
+native advance that would append a real Drake receipt. Public candidates retain
+actual native selected counts and target contracts. Typed Liliana annotations
+supply all current original-scene choices and exact +1/-4/-9 loyalty quotes.
+The complete public roster retains native-width eighteen counters/current forms.
+
+Seven new genuine paid both-seat source groups compare against an independent
+native session, covering all three roots, Season's exact Zombie outcomes, APNAP
+all-choice-before-batch ordering, current death-draw inventory, the artifact
+creature keeper union, source departure/reentry/concealment, the zero-loyalty
+observer boundary, wide current counters, original action mapping, opaque
+restore, stale/foreign/forged bindings, callback refusal/unwind atomicity, and
+independently paid private-world public equality. The original eight native
+fixture bodies remain unchanged. Including the four read-only groups, all
+nineteen Liliana source groups remain UNCOMPILED and UNRUN.
+
+Observed checks:112 deck/metadata and frozen booster Python cases pass using
+unittest. Both canonical flat-policy generators --check pass. Pinned Rust1.94.1
+edition2021 formatting, diff checks and static prefix checks pass. Time Stop's
+existing130 source inputs and Genesis Wave's74 retain exact order; each gains
+three actual semantic children. Registry/event source schemas are unchanged.
+An initial pytest invocation found no installed pytest; the repository's actual
+unittest cases then ran successfully without an environment change. This is a
+source checkpoint, not Rust runtime, model, sampler, transport or Full admission.
+Actual V72 numeric690a5cc is now available for the next checkpoint. Tinybones
+Human/V13 is still a dependency for the distinct Liliana Human/V14 adapters.

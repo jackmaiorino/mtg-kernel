@@ -628,3 +628,6 @@ fn paid_short_creature_rosters_and_missing_permanent_types_both_seats() {
         validate_state(&restore(&s)).unwrap();
     }
 }
+
+#[path = "liliana_owner_v73_tests.rs"]
+pub(crate) mod owner_v73_tests;

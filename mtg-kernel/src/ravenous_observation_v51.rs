@@ -617,6 +617,25 @@ pub(crate) fn observe_parts_complete_tinybones_v72(
         crate::rl::CommonProjectionScopeV42::TinybonesV72,
     )
 }
+pub(crate) fn observe_parts_complete_liliana_v73(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::LilianaV73,
+    )
+}
+
 fn observe_parts_complete_current_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -706,6 +725,10 @@ fn observe_parts_complete_current_scope_using_family_builder(
             crate::muldrotha_observation_v71::COMMON_SCHEMA,
             crate::muldrotha_observation_v71::producer_sha256(),
         ),
+        crate::rl::CommonProjectionScopeV42::LilianaV73 => (
+            crate::liliana_observation_v73::COMMON_SCHEMA,
+            crate::liliana_observation_v73::producer_sha256(),
+        ),
         crate::rl::CommonProjectionScopeV42::TinybonesV72 => (
             crate::tinybones_observation_v72::COMMON_SCHEMA,
             crate::tinybones_observation_v72::producer_sha256(),
@@ -788,6 +811,7 @@ fn observe_parts_complete_current_scope_using_family_builder(
             scope,
             crate::rl::CommonProjectionScopeV42::NextFiveV59
                 | crate::rl::CommonProjectionScopeV42::TinybonesV72
+                | crate::rl::CommonProjectionScopeV42::LilianaV73
         ) {
             crate::panda_public_v47::capture_ordinary_for_next_five(state)
         } else {
@@ -800,6 +824,7 @@ fn observe_parts_complete_current_scope_using_family_builder(
             scope,
             crate::rl::CommonProjectionScopeV42::NextFiveV59
                 | crate::rl::CommonProjectionScopeV42::TinybonesV72
+                | crate::rl::CommonProjectionScopeV42::LilianaV73
         ) {
             crate::conqueror_public_v49::capture_ordinary_for_next_five(state)
         } else {
@@ -938,6 +963,13 @@ impl RavenousObservationV51 {
             &crate::tinybones_observation_v72::producer_sha256(),
         )
     }
+    pub(crate) fn validate_liliana_compatibility_v73(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::liliana_observation_v73::COMMON_SCHEMA,
+            &crate::liliana_observation_v73::producer_sha256(),
+        )
+    }
+
     fn validate_artifact_identity(
         &self,
         schema: &str,
