@@ -8368,7 +8368,8 @@ fn maximum_payable_x(
         crate::rules_meaning_next_five_v59::FamilyV59::Goblin,
         pending.source_contract.card_def,
         def,
-    ) {
+    ) || effect::genesis_wave_v1::definition(pending.source_contract.card_def)
+    {
         maximum_monotone_x_v59(u16::MAX, payable)
     } else {
         // Retain the frozen query domain and descending order for other roots.
@@ -10077,6 +10078,7 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if time_stop_v1::validate(state)
         .and_then(|_| ordinary_cleanup_v1::validate(state))
+        .and_then(|()| effect::genesis_wave_v1::validate_state(state))
         .is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -11801,6 +11803,7 @@ pub(crate) fn validate_pending_cast(
             pending.source_contract.card_def,
             def,
         )
+        && !effect::genesis_wave_v1::definition(pending.source_contract.card_def)
     {
         return Err("wide cast X requires the exact Goblin recipe".into());
     }
@@ -16502,7 +16505,13 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
         return Ok(());
     }
     let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
-    apply_spell_departure(state, departure)
+    let genesis_terminal = effect::genesis_wave_v1::prepare_terminal(state, item)?;
+    let destination = match departure {
+        SpellDeparture::Move { to_zone, .. } => Some(to_zone),
+        SpellDeparture::Cease { .. } => None,
+    };
+    apply_spell_departure(state, departure)?;
+    effect::genesis_wave_v1::finish_terminal(state, genesis_terminal, destination)
 }
 
 /// A spell countered by the rules for having no legal targets performs none
@@ -20714,6 +20723,7 @@ fn action_matches_pending_activation_stage(
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     time_stop_v1::validate(state)?;
     ordinary_cleanup_v1::validate(state)?;
+    effect::genesis_wave_v1::validate_state(state)?;
     crate::leyline_axe_v1::validate(state)?;
     validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;

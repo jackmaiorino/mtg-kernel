@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 487);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 488);
         assert_eq!(
             partials,
             [
@@ -9045,6 +9045,7 @@ mod tests {
                 (484, "Imprisoned in the Moon"),
                 (485, "Thousand-Year Storm"),
                 (486, "Time Stop"),
+                (487, "Genesis Wave"),
             ]
         );
         let mut playable = Vec::new();

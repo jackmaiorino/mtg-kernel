@@ -114,6 +114,10 @@ pub fn source_sha256() -> String {
             "time-stop-native-semantic-source/v1",
             crate::engine::time_stop_v1::source_sha256_v1(),
         ),
+        (
+            "genesis-wave-native-source/v1",
+            crate::effect::genesis_wave_v1::source_sha256_v1(),
+        ),
     ] {
         hash.update(path.as_bytes());
         hash.update([0]);

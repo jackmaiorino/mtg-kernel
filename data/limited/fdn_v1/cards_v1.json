@@ -8890,6 +8890,36 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Genesis Wave",
+      "mana_cost": "{X}{G}{G}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "reveal_top_paid_x_u16",
+        "optional_any_permanent_mana_value_at_most_x",
+        "simultaneous_entry_then_remaining_graveyard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GenesisWave.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_genesis_wave_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

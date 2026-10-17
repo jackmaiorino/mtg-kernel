@@ -185,6 +185,7 @@ pub fn producer_sha256() -> String {
             include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
             crate::engine::time_stop_v1::source_sha256_v1(),
+            crate::effect::genesis_wave_v1::source_sha256_v1(),
         ] {
             h.update((s.len() as u64).to_le_bytes());
             h.update(s.as_bytes());

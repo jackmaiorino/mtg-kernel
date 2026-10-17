@@ -97,6 +97,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         }
         EffectOp::BindThousandYearStormV1
         | EffectOp::ThousandYearStormCaptureV1 { .. }
+        | EffectOp::GenesisWaveV1
         | EffectOp::FiendArtisanSearchV1
         | EffectOp::BindSphinxLoreV1
         | EffectOp::SphinxLoreV1 { .. }
