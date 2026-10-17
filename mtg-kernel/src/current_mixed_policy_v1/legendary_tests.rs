@@ -80,7 +80,8 @@ impl Owner {
             Source::VivienV70
             | Source::MuldrothaV71
             | Source::TinybonesV72
-            | Source::LilianaV73 => {
+            | Source::LilianaV73
+            | Source::ChandraV74 => {
                 unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
             }
         }
@@ -182,7 +183,8 @@ impl Harness {
             Source::VivienV70
             | Source::MuldrothaV71
             | Source::TinybonesV72
-            | Source::LilianaV73 => {
+            | Source::LilianaV73
+            | Source::ChandraV74 => {
                 unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
             }
         };
@@ -226,7 +228,8 @@ impl Harness {
             Source::VivienV70
             | Source::MuldrothaV71
             | Source::TinybonesV72
-            | Source::LilianaV73 => {
+            | Source::LilianaV73
+            | Source::ChandraV74 => {
                 unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
             }
         }
@@ -317,7 +320,8 @@ impl Harness {
             Source::VivienV70
             | Source::MuldrothaV71
             | Source::TinybonesV72
-            | Source::LilianaV73 => {
+            | Source::LilianaV73
+            | Source::ChandraV74 => {
                 unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
             }
         };

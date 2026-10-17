@@ -1558,6 +1558,22 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/current_mixed_policy_v1/liliana.rs",
                     include_str!("../current_mixed_policy_v1/liliana.rs"),
                 ),
+                (
+                    "mtg-kernel/src/chandra_observation_v74.rs",
+                    include_str!("../chandra_observation_v74.rs"),
+                ),
+                (
+                    "mtg-kernel/src/chandra_candidates_v74.rs",
+                    include_str!("../chandra_candidates_v74.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/chandra_v74.rs",
+                    include_str!("../rl_session/chandra_v74.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/chandra.rs",
+                    include_str!("../current_mixed_policy_v1/chandra.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

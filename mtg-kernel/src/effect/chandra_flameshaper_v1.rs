@@ -1622,4 +1622,4 @@ fn has_pending_exile(state: &GameState) -> bool {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "chandra_flameshaper_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -819,3 +819,6 @@ fn genuine_paid_liliana_zombie_copy_uses_distinct_native_permit_and_raw_partial_
         validate_state(&s).unwrap();
     }
 }
+
+#[path = "chandra_owner_v74_tests.rs"]
+pub(crate) mod owner_v74_tests;

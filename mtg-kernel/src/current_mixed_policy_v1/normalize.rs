@@ -95,17 +95,27 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
             }
         }
         Value::Object(values) => {
-            if source == Source::LilianaV73 && super::liliana::typed_meaning(values, covered)? {
+            if source == Source::ChandraV74 && super::chandra::typed_meaning(values, covered)? {
                 return Ok(());
             }
-            if matches!(source, Source::TinybonesV72 | Source::LilianaV73)
-                && super::tinybones::typed_meaning(values, covered)?
+            if matches!(source, Source::LilianaV73 | Source::ChandraV74)
+                && super::liliana::typed_meaning(values, covered)?
             {
                 return Ok(());
             }
             if matches!(
                 source,
-                Source::MuldrothaV71 | Source::TinybonesV72 | Source::LilianaV73
+                Source::TinybonesV72 | Source::LilianaV73 | Source::ChandraV74
+            ) && super::tinybones::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
             ) && super::muldrotha::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -116,6 +126,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::MuldrothaV71
                     | Source::TinybonesV72
                     | Source::LilianaV73
+                    | Source::ChandraV74
             ) && super::vivien::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -127,6 +138,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::MuldrothaV71
                     | Source::TinybonesV72
                     | Source::LilianaV73
+                    | Source::ChandraV74
             ) && super::genesis_wave::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -139,6 +151,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::MuldrothaV71
                     | Source::TinybonesV72
                     | Source::LilianaV73
+                    | Source::ChandraV74
             ) && super::end_turn::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -152,6 +165,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::MuldrothaV71
                     | Source::TinybonesV72
                     | Source::LilianaV73
+                    | Source::ChandraV74
             ) && super::call::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -166,6 +180,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::MuldrothaV71
                     | Source::TinybonesV72
                     | Source::LilianaV73
+                    | Source::ChandraV74
             ) && super::graveyard_return::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -181,6 +196,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::MuldrothaV71
                     | Source::TinybonesV72
                     | Source::LilianaV73
+                    | Source::ChandraV74
             ) && super::next_five::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -197,6 +213,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::MuldrothaV71
                     | Source::TinybonesV72
                     | Source::LilianaV73
+                    | Source::ChandraV74
             ) && super::prepared::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -369,6 +386,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         let observation = state
             .get_mut("observation")
@@ -392,6 +410,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         super::prepared::references(&mut state)?;
     }
@@ -405,6 +424,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         // V61 actions carry the complete typed candidate annotations, including
         // their public references, in addition to the ordinary action semantic.
@@ -421,24 +441,35 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     }
     let mut meanings = Vec::new();
     for id in cards.difference(&covered) {
-        if source == Source::LilianaV73 && super::liliana::printing(*id)?.is_some() {
+        if source == Source::ChandraV74 && super::chandra::printing(*id)?.is_some() {
             continue;
         }
-        if matches!(source, Source::TinybonesV72 | Source::LilianaV73)
-            && super::tinybones::printing(*id)?.is_some()
+        if matches!(source, Source::LilianaV73 | Source::ChandraV74)
+            && super::liliana::printing(*id)?.is_some()
         {
             continue;
         }
         if matches!(
             source,
-            Source::MuldrothaV71 | Source::TinybonesV72 | Source::LilianaV73
+            Source::TinybonesV72 | Source::LilianaV73 | Source::ChandraV74
+        ) && super::tinybones::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::MuldrothaV71 | Source::TinybonesV72 | Source::LilianaV73 | Source::ChandraV74
         ) && super::muldrotha::printing(*id)?.is_some()
         {
             continue;
         }
         if matches!(
             source,
-            Source::VivienV70 | Source::MuldrothaV71 | Source::TinybonesV72 | Source::LilianaV73
+            Source::VivienV70
+                | Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
         ) && super::vivien::printing(*id)?.is_some()
         {
             continue;
@@ -450,6 +481,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::MuldrothaV71
                 | Source::TinybonesV72
                 | Source::LilianaV73
+                | Source::ChandraV74
         ) && super::genesis_wave::printing(*id)?.is_some()
         {
             continue;
@@ -462,6 +494,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::MuldrothaV71
                 | Source::TinybonesV72
                 | Source::LilianaV73
+                | Source::ChandraV74
         ) && super::end_turn::printing(*id)?.is_some()
         {
             continue;
@@ -475,6 +508,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::MuldrothaV71
                 | Source::TinybonesV72
                 | Source::LilianaV73
+                | Source::ChandraV74
         ) && super::call::printing(*id)?.is_some()
         {
             continue;
@@ -489,6 +523,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::MuldrothaV71
                 | Source::TinybonesV72
                 | Source::LilianaV73
+                | Source::ChandraV74
         ) && super::graveyard_return::printing(*id)?.is_some()
         {
             continue;
@@ -504,6 +539,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::MuldrothaV71
                 | Source::TinybonesV72
                 | Source::LilianaV73
+                | Source::ChandraV74
         ) && super::next_five::printing(*id)?.is_some()
         {
             continue;
@@ -520,6 +556,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::MuldrothaV71
                 | Source::TinybonesV72
                 | Source::LilianaV73
+                | Source::ChandraV74
         ) && super::prepared::printing(*id)?.is_some()
         {
             continue;
@@ -552,6 +589,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         for id in &cards {
             if let Some(printing) = super::prepared::printing(*id)? {
@@ -570,6 +608,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         for id in &cards {
             if let Some(printing) = super::next_five::printing(*id)? {
@@ -587,6 +626,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         for id in &cards {
             if let Some(printing) = super::graveyard_return::printing(*id)? {
@@ -603,6 +643,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         for id in &cards {
             if let Some(printing) = super::call::printing(*id)? {
@@ -617,6 +658,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         for id in &cards {
             if let Some(printing) = super::genesis_wave::printing(*id)? {
@@ -632,6 +674,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::MuldrothaV71
             | Source::TinybonesV72
             | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         for id in &cards {
             if let Some(printing) = super::end_turn::printing(*id)? {
@@ -648,7 +691,11 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     }
     if matches!(
         source,
-        Source::VivienV70 | Source::MuldrothaV71 | Source::TinybonesV72 | Source::LilianaV73
+        Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
     ) {
         for id in &cards {
             if let Some(p) = super::vivien::printing(*id)? {
@@ -658,7 +705,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     }
     if matches!(
         source,
-        Source::MuldrothaV71 | Source::TinybonesV72 | Source::LilianaV73
+        Source::MuldrothaV71 | Source::TinybonesV72 | Source::LilianaV73 | Source::ChandraV74
     ) {
         for id in &cards {
             if let Some(p) = super::muldrotha::printing(*id)? {
@@ -666,17 +713,27 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             }
         }
     }
-    if matches!(source, Source::TinybonesV72 | Source::LilianaV73) {
+    if matches!(
+        source,
+        Source::TinybonesV72 | Source::LilianaV73 | Source::ChandraV74
+    ) {
         for id in &cards {
             if let Some(printed) = super::tinybones::printing(*id)? {
                 meanings.push(printed);
             }
         }
     }
-    if source == Source::LilianaV73 {
+    if matches!(source, Source::LilianaV73 | Source::ChandraV74) {
         for id in &cards {
             if let Some(printed) = super::liliana::printing(*id)? {
                 meanings.push(printed);
+            }
+        }
+    }
+    if source == Source::ChandraV74 {
+        for id in &cards {
+            if let Some(p) = super::chandra::printing(*id)? {
+                meanings.push(p);
             }
         }
     }

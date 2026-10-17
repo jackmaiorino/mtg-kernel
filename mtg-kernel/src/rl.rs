@@ -2056,6 +2056,7 @@ enum ObservationTextModeV2 {
     MuldrothaV71Artifact,
     TinybonesV72Artifact,
     LilianaV73Artifact,
+    ChandraV74Artifact,
 }
 
 impl ObservationTextModeV2 {
@@ -2070,6 +2071,7 @@ impl ObservationTextModeV2 {
             Self::MuldrothaV71Artifact => Some(CommonProjectionScopeV42::MuldrothaV71),
             Self::TinybonesV72Artifact => Some(CommonProjectionScopeV42::TinybonesV72),
             Self::LilianaV73Artifact => Some(CommonProjectionScopeV42::LilianaV73),
+            Self::ChandraV74Artifact => Some(CommonProjectionScopeV42::ChandraV74),
             Self::GenesisWaveV69Artifact => Some(CommonProjectionScopeV42::GenesisWaveV69),
             _ => None,
         }
@@ -2088,7 +2090,8 @@ impl ObservationTextModeV2 {
             | ObservationTextModeV2::VivienV70Artifact
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
-            | ObservationTextModeV2::LilianaV73Artifact => KERNEL_VERSION.to_string(),
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact => KERNEL_VERSION.to_string(),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2106,7 +2109,8 @@ impl ObservationTextModeV2 {
             | ObservationTextModeV2::VivienV70Artifact
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
-            | ObservationTextModeV2::LilianaV73Artifact => card_name(card_id),
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact => card_name(card_id),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2262,6 +2266,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
     }
@@ -2280,6 +2285,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
@@ -2290,6 +2296,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2307,6 +2314,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
@@ -2324,6 +2332,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2339,6 +2348,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2357,6 +2367,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2421,19 +2432,26 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if !accept_faebloom {
         refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     }
-    if text_mode != ObservationTextModeV2::LilianaV73Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::LilianaV73Artifact | ObservationTextModeV2::ChandraV74Artifact
+    ) {
         crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
     if !matches!(
         text_mode,
-        ObservationTextModeV2::TinybonesV72Artifact | ObservationTextModeV2::LilianaV73Artifact
+        ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
-    crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
-        .map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::ChandraV74Artifact {
+        crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
     crate::effect::kaito_cunning_v75::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     if !matches!(
@@ -2441,6 +2459,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2451,6 +2470,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -3050,19 +3070,26 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     if !accept_faebloom {
         refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     }
-    if text_mode != ObservationTextModeV2::LilianaV73Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::LilianaV73Artifact | ObservationTextModeV2::ChandraV74Artifact
+    ) {
         crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
     if !matches!(
         text_mode,
-        ObservationTextModeV2::TinybonesV72Artifact | ObservationTextModeV2::LilianaV73Artifact
+        ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
-    crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
-        .map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::ChandraV74Artifact {
+        crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
     crate::effect::kaito_cunning_v75::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     if !matches!(
@@ -3070,6 +3097,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
         ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -3080,6 +3108,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -3853,6 +3882,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     MuldrothaV71,
     TinybonesV72,
     LilianaV73,
+    ChandraV74,
 }
 
 /// Classification of a caller-declared mainboard, never cast permission or a
@@ -3889,6 +3919,7 @@ pub(crate) fn require_declared_cards_for_scope(
                     | CommonProjectionScopeV42::MuldrothaV71
                     | CommonProjectionScopeV42::TinybonesV72
                     | CommonProjectionScopeV42::LilianaV73
+                    | CommonProjectionScopeV42::ChandraV74
             ))
             || (graveyard
                 && !matches!(
@@ -3901,6 +3932,7 @@ pub(crate) fn require_declared_cards_for_scope(
                         | CommonProjectionScopeV42::MuldrothaV71
                         | CommonProjectionScopeV42::TinybonesV72
                         | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
                 ))
             || (id == 459
                 && !matches!(
@@ -3912,6 +3944,7 @@ pub(crate) fn require_declared_cards_for_scope(
                         | CommonProjectionScopeV42::MuldrothaV71
                         | CommonProjectionScopeV42::TinybonesV72
                         | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
                 ))
             || (scope == CommonProjectionScopeV42::CallV62 && id >= 460)
             || (scope == CommonProjectionScopeV42::MuldrothaV71
@@ -3929,6 +3962,16 @@ pub(crate) fn require_declared_cards_for_scope(
                 && !crate::engine::tinybones_v72::definition(id)
                 && !crate::effect::liliana_dreadhorde_v1::definition(id)
                 && !crate::effect::liliana_dreadhorde_v1::token_definition(id))
+            || (scope == CommonProjectionScopeV42::ChandraV74
+                && id >= 460
+                && !crate::engine::time_stop_v1::definition(id)
+                && !crate::effect::genesis_wave_v1::definition(id)
+                && !crate::effect::vivien_reid_v1::definition(id)
+                && !crate::engine::muldrotha_v1::definition(id)
+                && !crate::engine::tinybones_v72::definition(id)
+                && !crate::effect::liliana_dreadhorde_v1::definition(id)
+                && !crate::effect::liliana_dreadhorde_v1::token_definition(id)
+                && !crate::effect::chandra_flameshaper_v1::definition(id))
             || (scope == CommonProjectionScopeV42::TinybonesV72
                 && id >= 460
                 && !crate::engine::time_stop_v1::definition(id)
@@ -4082,6 +4125,7 @@ fn common_family_observation_storage_with_proof(
         CommonProjectionScopeV42::NextFiveV59
             | CommonProjectionScopeV42::TinybonesV72
             | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
     ) {
         crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
     }
@@ -4123,6 +4167,9 @@ fn common_family_observation_storage_with_proof(
         }
         CommonProjectionScopeV42::LilianaV73 => {
             crate::liliana_observation_v73::validate_state(state)
+        }
+        CommonProjectionScopeV42::ChandraV74 => {
+            crate::chandra_observation_v74::validate_state(state)
         }
         CommonProjectionScopeV42::GenesisWaveV69 => {
             crate::genesis_wave_observation_v69::validate_state(state)
@@ -4168,6 +4215,7 @@ fn common_family_observation_storage_with_proof(
             | CommonProjectionScopeV42::MuldrothaV71
             | CommonProjectionScopeV42::TinybonesV72
             | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -4179,7 +4227,9 @@ fn common_family_observation_storage_with_proof(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: if scope == CommonProjectionScopeV42::LilianaV73 {
+                text_mode: if scope == CommonProjectionScopeV42::ChandraV74 {
+                    ObservationTextModeV2::ChandraV74Artifact
+                } else if scope == CommonProjectionScopeV42::LilianaV73 {
                     ObservationTextModeV2::LilianaV73Artifact
                 } else if scope == CommonProjectionScopeV42::TinybonesV72 {
                     ObservationTextModeV2::TinybonesV72Artifact
@@ -4200,6 +4250,7 @@ fn common_family_observation_storage_with_proof(
                     CommonProjectionScopeV42::NextFiveV59
                         | CommonProjectionScopeV42::TinybonesV72
                         | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
                 ) {
                     ObservationTextModeV2::NextFiveV59Artifact
                 } else if scope == CommonProjectionScopeV42::PreparedV57 {
@@ -4235,6 +4286,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::MuldrothaV71
                             | CommonProjectionScopeV42::TinybonesV72
                             | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
                     ),
                     matches!(
                         scope,
@@ -4255,6 +4307,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::MuldrothaV71
                             | CommonProjectionScopeV42::TinybonesV72
                             | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
                     ),
                     matches!(
                         scope,
@@ -4274,6 +4327,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::MuldrothaV71
                             | CommonProjectionScopeV42::TinybonesV72
                             | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
                     ),
                     matches!(
                         scope,
@@ -4292,6 +4346,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::MuldrothaV71
                             | CommonProjectionScopeV42::TinybonesV72
                             | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
                     ),
                     matches!(
                         scope,
@@ -4309,6 +4364,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::MuldrothaV71
                             | CommonProjectionScopeV42::TinybonesV72
                             | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
                     ),
                 ),
                 matches!(
@@ -4326,6 +4382,7 @@ fn common_family_observation_storage_with_proof(
                         | CommonProjectionScopeV42::MuldrothaV71
                         | CommonProjectionScopeV42::TinybonesV72
                         | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
                 ),
             ),
         ),
@@ -4355,6 +4412,7 @@ fn common_family_observation_storage_with_proof(
                 | CommonProjectionScopeV42::MuldrothaV71
                 | CommonProjectionScopeV42::TinybonesV72
                 | CommonProjectionScopeV42::LilianaV73
+                | CommonProjectionScopeV42::ChandraV74
         ),
         conqueror_proof,
     )
@@ -4912,6 +4970,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             request.0.state,
@@ -4929,6 +4988,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(
             request.0.state,
@@ -4947,6 +5007,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(
             request.0.state,
@@ -4986,7 +5047,10 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             accept_season,
         ),
     ) = (request, accepted_planes);
-    if request.text_mode != ObservationTextModeV2::LilianaV73Artifact {
+    if !matches!(
+        request.text_mode,
+        ObservationTextModeV2::LilianaV73Artifact | ObservationTextModeV2::ChandraV74Artifact
+    ) {
         crate::effect::liliana_dreadhorde_v1::require_legacy(
             request.state,
             Some(request.acting_player),
@@ -4995,16 +5059,20 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     }
     if !matches!(
         request.text_mode,
-        ObservationTextModeV2::TinybonesV72Artifact | ObservationTextModeV2::LilianaV73Artifact
+        ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::engine::tinybones_v72::require_legacy(request.state, Some(request.acting_player))
             .map_err(RlContractError)?;
     }
-    crate::effect::chandra_flameshaper_v1::require_legacy(
-        request.state,
-        Some(request.acting_player),
-    )
-    .map_err(RlContractError)?;
+    if request.text_mode != ObservationTextModeV2::ChandraV74Artifact {
+        crate::effect::chandra_flameshaper_v1::require_legacy(
+            request.state,
+            Some(request.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
     crate::effect::kaito_cunning_v75::require_legacy(request.state, Some(request.acting_player))
         .map_err(RlContractError)?;
     if !matches!(
@@ -5012,6 +5080,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::engine::muldrotha_v1::require_legacy(request.state, Some(request.acting_player))
             .map_err(RlContractError)?;
@@ -5022,6 +5091,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::effect::vivien_reid_v1::require_legacy(request.state, Some(request.acting_player))
             .map_err(RlContractError)?;
@@ -5558,6 +5628,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
@@ -5568,6 +5639,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5585,6 +5657,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
@@ -5602,6 +5675,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5617,6 +5691,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5635,6 +5710,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5920,6 +5996,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                                     | ObservationTextModeV2::MuldrothaV71Artifact
                                     | ObservationTextModeV2::TinybonesV72Artifact
                                     | ObservationTextModeV2::LilianaV73Artifact
+                                    | ObservationTextModeV2::ChandraV74Artifact
                             ) && crate::ravenous_amulet_v1::definition(object.card_def)
                             {
                                 return Err(RlContractError(
@@ -6306,6 +6383,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
             | CommonProjectionScopeV42::MuldrothaV71
             | CommonProjectionScopeV42::TinybonesV72
             | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
     ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
@@ -6323,6 +6401,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
             | CommonProjectionScopeV42::MuldrothaV71
             | CommonProjectionScopeV42::TinybonesV72
             | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
@@ -6338,6 +6417,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
             | CommonProjectionScopeV42::MuldrothaV71
             | CommonProjectionScopeV42::TinybonesV72
             | CommonProjectionScopeV42::LilianaV73
+            | CommonProjectionScopeV42::ChandraV74
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
@@ -6377,6 +6457,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
                 | CommonProjectionScopeV42::MuldrothaV71
                 | CommonProjectionScopeV42::TinybonesV72
                 | CommonProjectionScopeV42::LilianaV73
+                | CommonProjectionScopeV42::ChandraV74
         ) {
             return Err(RlContractError(
                 "full-range cast X requires its current successor".into(),
@@ -9771,6 +9852,7 @@ fn public_card_v2(
                 | ObservationTextModeV2::MuldrothaV71Artifact
                 | ObservationTextModeV2::TinybonesV72Artifact
                 | ObservationTextModeV2::LilianaV73Artifact
+                | ObservationTextModeV2::ChandraV74Artifact
         ) && object.zone == Zone::Battlefield)
     {
         return Err(RlContractError(
@@ -9989,6 +10071,21 @@ pub(crate) fn core_policy_action_candidates_liliana_v73(
         CommonProjectionScopeV42::LilianaV73,
     )
 }
+pub(crate) fn core_policy_action_candidates_chandra_v74(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::chandra_observation_v74::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::ChandraV74,
+    )
+}
 
 fn public_card_v2_non_soul_fields(
     state: &GameState,
@@ -10007,6 +10104,7 @@ fn public_card_v2_non_soul_fields(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
@@ -10016,7 +10114,9 @@ fn public_card_v2_non_soul_fields(
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     if matches!(
         text_mode,
-        ObservationTextModeV2::TinybonesV72Artifact | ObservationTextModeV2::LilianaV73Artifact
+        ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::tinybones_public_v72::counters(state, id).map_err(RlContractError)?;
     } else if matches!(
@@ -10028,6 +10128,7 @@ fn public_card_v2_non_soul_fields(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)
             .map_err(RlContractError)?;
@@ -10054,6 +10155,7 @@ fn public_card_v2_non_soul_fields(
                 | ObservationTextModeV2::MuldrothaV71Artifact
                 | ObservationTextModeV2::TinybonesV72Artifact
                 | ObservationTextModeV2::LilianaV73Artifact
+                | ObservationTextModeV2::ChandraV74Artifact
         ) && (object.v4.face_index == 1
             || card_effective_identity_v1(state, id).is_some()
             || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
@@ -10191,6 +10293,7 @@ fn private_card(
             | ObservationTextModeV2::MuldrothaV71Artifact
             | ObservationTextModeV2::TinybonesV72Artifact
             | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
     ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
@@ -11359,6 +11462,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                             | CommonProjectionScopeV42::MuldrothaV71
                             | CommonProjectionScopeV42::TinybonesV72
                             | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
                     )
                 ) {
                     pending_discard_semantic_end_turn_v68(state, acting_player, p)
@@ -11449,6 +11553,9 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     Some(CommonProjectionScopeV42::LilianaV73) => {
                         crate::liliana_observation_v73::pending_source_reference(state, p)?
                     }
+                    Some(CommonProjectionScopeV42::ChandraV74) => {
+                        crate::chandra_observation_v74::pending_source_reference(state, p)?
+                    }
                     Some(CommonProjectionScopeV42::VivienV70) => {
                         crate::vivien_observation_v70::pending_source_reference(state, p)?
                     }
@@ -11481,6 +11588,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                                 CommonProjectionScopeV42::NextFiveV59
                                     | CommonProjectionScopeV42::TinybonesV72
                                     | CommonProjectionScopeV42::LilianaV73
+                                    | CommonProjectionScopeV42::ChandraV74
                             )
                         ) {
                             crate::conqueror_public_v49::pending_source_reference_for_next_five(
@@ -11500,6 +11608,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                             CommonProjectionScopeV42::NextFiveV59
                                 | CommonProjectionScopeV42::TinybonesV72
                                 | CommonProjectionScopeV42::LilianaV73
+                                | CommonProjectionScopeV42::ChandraV74
                         )
                     ) {
                         crate::panda_public_v47::pending_source_reference_for_next_five(state, p)?
@@ -11825,7 +11934,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         ordered: *ordered,
                         purpose: match purpose {
                             crate::effect::EffectTargetSelectionPurpose::LilianaV1 { .. } => {
-                                if prepared_scope != Some(CommonProjectionScopeV42::LilianaV73) { return Err(RlContractError("Liliana sacrifice choice requires a complete V73 consumer".into())); }
+                                if !matches!(prepared_scope, Some(CommonProjectionScopeV42::LilianaV73 | CommonProjectionScopeV42::ChandraV74)) { return Err(RlContractError("Liliana sacrifice choice requires a complete V73 consumer".into())); }
                                 TargetSelectionPurposeV4::CardSelection
                             },
                             crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. } => return Err(RlContractError("Progenitus mill ordering needs a complete successor".into())),
@@ -11896,10 +12005,10 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             },
                             crate::effect::EffectTargetSelectionPurpose::GenesisWaveCardsV1 { choice } => {
                                 if !matches!(prepared_scope,Some(CommonProjectionScopeV42::GenesisWaveV69|CommonProjectionScopeV42::VivienV70
-|CommonProjectionScopeV42::MuldrothaV71|CommonProjectionScopeV42::TinybonesV72|CommonProjectionScopeV42::LilianaV73)) {return Err(RlContractError("Genesis Wave requires its distinct complete consumer".into()));}
+|CommonProjectionScopeV42::MuldrothaV71|CommonProjectionScopeV42::TinybonesV72|CommonProjectionScopeV42::LilianaV73|CommonProjectionScopeV42::ChandraV74)) {return Err(RlContractError("Genesis Wave requires its distinct complete consumer".into()));}
                                 crate::effect::genesis_wave_v1::selection_purpose_v69(choice)
                             },
-                            crate::effect::EffectTargetSelectionPurpose::ChandraExileV74{..}=>return Err(RlContractError("Chandra requires its complete V74 consumer".into())),
+                            crate::effect::EffectTargetSelectionPurpose::ChandraExileV74{..}=>{if prepared_scope != Some(CommonProjectionScopeV42::ChandraV74) {return Err(RlContractError("Chandra requires its complete V74 consumer".into()));} TargetSelectionPurposeV4::CardSelection},
                             crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
@@ -12602,6 +12711,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
                 CommonProjectionScopeV42::NextFiveV59
                     | CommonProjectionScopeV42::TinybonesV72
                     | CommonProjectionScopeV42::LilianaV73
+                    | CommonProjectionScopeV42::ChandraV74
             )
         ) {
             crate::panda_public_v47::original_target_reference_for_next_five(state, item)?
@@ -12975,6 +13085,9 @@ fn stack_source_ref_conqueror_v49_fake_v50(
         Some(CommonProjectionScopeV42::LilianaV73) => {
             crate::liliana_observation_v73::stack_source_reference(state, item)?
         }
+        Some(CommonProjectionScopeV42::ChandraV74) => {
+            crate::chandra_observation_v74::stack_source_reference(state, item)?
+        }
         Some(CommonProjectionScopeV42::VivienV70) => {
             crate::vivien_observation_v70::stack_source_reference(state, item)?
         }
@@ -13017,6 +13130,7 @@ fn stack_source_ref_conqueror_v49_fake_v50(
                     CommonProjectionScopeV42::NextFiveV59
                         | CommonProjectionScopeV42::TinybonesV72
                         | CommonProjectionScopeV42::LilianaV73
+                        | CommonProjectionScopeV42::ChandraV74
                 )
             ) {
                 crate::conqueror_public_v49::stack_source_reference_for_next_five(state, item)?
@@ -13036,6 +13150,7 @@ fn stack_source_ref_conqueror_v49_fake_v50(
                 CommonProjectionScopeV42::NextFiveV59
                     | CommonProjectionScopeV42::TinybonesV72
                     | CommonProjectionScopeV42::LilianaV73
+                    | CommonProjectionScopeV42::ChandraV74
             )
         ) {
             crate::panda_public_v47::stack_source_reference_for_next_five(state, item)?
