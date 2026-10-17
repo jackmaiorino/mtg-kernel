@@ -139,6 +139,24 @@ fn cast(s: &mut GameState, p: PlayerId, name: &str, targets: &[Target], cost: us
     let card = put(s, p, name, Zone::Hand);
     cast_card(s, p, card, targets, cost)
 }
+// Run Away Together is the registered printed bounce instant. Its second
+// creature is explicit native fixture setup, not a paid Elf claim; the cast
+// below pays the real 1U and selects both distinct-controller targets.
+fn paid_bounce_response(s: &mut GameState, p: PlayerId, target: ObjectId) -> ObjectId {
+    let companion = put(s, p, "Llanowar Elves", Zone::Battlefield);
+    assert_ne!(target, companion);
+    assert_ne!(
+        s.objects.get(target).controller,
+        s.objects.get(companion).controller
+    );
+    cast(
+        s,
+        p,
+        "Run Away Together",
+        &[Target::Object(target), Target::Object(companion)],
+        2,
+    )
+}
 fn paid(s: &mut GameState, p: PlayerId, name: &str, cost: usize) -> ObjectId {
     let card = cast(s, p, name, &[], cost);
     finish(s);
@@ -871,13 +889,7 @@ fn genuine_paid_horde_departed_copy_uses_original_lki_and_refuses_corruption_bot
             ));
             assert_eq!(bad, expected);
         }
-        let response = cast(
-            &mut s,
-            actor.opponent(),
-            "Unsummon",
-            &[Target::Object(copied)],
-            1,
-        );
+        let response = paid_bounce_response(&mut s, actor.opponent(), copied);
         response_resolved_with_horde(&mut s, response);
         assert_ne!(s.objects.get(copied).zone, Zone::Battlefield);
         let receipt = s
@@ -1073,13 +1085,7 @@ fn native_nightmare_entry_primitive_departed_horde_lki_and_component_tamper_refu
         assert!(harvester_v1::validate_state(&bad).is_err());
         assert_eq!(bad, before);
         assert!(engine::validated_stack_item_target_spec(&row, &bad).is_err());
-        let response = cast(
-            &mut s,
-            actor.opponent(),
-            "Unsummon",
-            &[Target::Object(original)],
-            1,
-        );
+        let response = paid_bounce_response(&mut s, actor.opponent(), original);
         response_resolved_with_horde(&mut s, response);
         let mut replay = restore(&s);
         finish(&mut s);
@@ -1413,7 +1419,7 @@ fn genuine_paid_harvester_source_departure_and_control_response_keep_captured_co
                 // Genuine native control primitive, not a sorcery response claim.
                 crate::standard_cards_v1::gain_control(&mut s, h, p.opponent());
             } else {
-                cast(&mut s, p.opponent(), "Unsummon", &[Target::Object(h)], 1);
+                paid_bounce_response(&mut s, p.opponent(), h);
             }
             hv_finish_pair(&mut s);
             assert_eq!(hv_nightmares(&s, p).len(), 1);
