@@ -44,6 +44,7 @@ pub mod mandatory_cast_cost_v1;
 pub mod muldrotha_v1;
 pub mod omniscience_cast_v1;
 pub mod sphinx_lore_cast_v1;
+pub mod tinybones_v72;
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
     Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, OptionalAdditionalCostDef,
@@ -2200,6 +2201,7 @@ fn validate_physical_spell_cast_origin(
     sphinx_lore_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     omniscience_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     muldrotha_v1::validate_finalized(state, item, is_pending_placeholder)?;
+    tinybones_v72::validate_finalized(state, item, is_pending_placeholder)?;
     match (is_pending_placeholder, source.v4.finalized_cast_binding) {
         (true, None) => {}
         (true, Some(_)) => {
@@ -2274,7 +2276,7 @@ fn validate_physical_spell_cast_origin(
         }
         SpellCastRouteV4::AdventureExile => {
             origin.origin_zone == Zone::Exile
-                && source.owner == item.controller
+                && tinybones_v72::adventure_contract(state, source)
                 && cast_method == CastMethodV4::Normal
                 && def.adventure.is_some()
         }
@@ -2341,6 +2343,10 @@ fn validate_physical_spell_cast_origin(
                 && cast_method == CastMethodV4::Flashback
                 && def.flashback.is_some()
                 && def.escape.is_none()
+        }
+        SpellCastRouteV4::TinybonesExileV72 { .. } => {
+            origin.origin_zone == Zone::Exile
+                && tinybones_v72::validate_contract(state, contract).is_ok()
         }
         SpellCastRouteV4::MuldrothaGraveyardV1 { .. } => {
             origin.origin_zone == Zone::Graveyard
@@ -2840,6 +2846,7 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::AdventureExile
         | SpellCastRouteV4::GraveyardPermissionV1 { .. }
         | SpellCastRouteV4::GraveyardAdventure { .. }
+        | SpellCastRouteV4::TinybonesExileV72 { .. }
         | SpellCastRouteV4::MuldrothaGraveyardV1 { .. }
         | SpellCastRouteV4::GreatwurmGraveyardV1 { .. }
         | SpellCastRouteV4::SphinxLoreFlashbackV1 { .. } => false,
@@ -8752,7 +8759,8 @@ fn is_castable_now(
                     (state.objects.get(id).zone == Zone::Hand
                         || (state.objects.get(id).zone == Zone::Exile
                             && !state.objects.get(id).v4.on_adventure
-                            && active_permission_for(player, id, state).is_some())
+                            && (active_permission_for(player, id, state).is_some()
+                                || tinybones_v72::play_allowed(state, id, player)))
                         || crate::standard_creatures_v1::graveyard_adventure_allowed(
                             state, id, player,
                         ))
@@ -8837,8 +8845,7 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         // Adventure exile permission: the creature face of an Adventure
         // card sitting in exile with `on_adventure` set is castable by its
         // owner, no separate `PlayPermission` entry -- see that flag's doc.
-        if state.objects.get(id).owner == player
-            && state.objects.get(id).v4.on_adventure
+        if tinybones_v72::adventure_allowed(state, id, player)
             && is_castable_now(player, id, CastMethodV4::Normal, state)
         {
             out.push(id);
@@ -8852,6 +8859,12 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         // (same timing/cost logic any hand card gets, per external review
         // -- no separate "impulse-castable" legality system), the `Play`
         // half through `land_drop_candidates` instead.
+        if tinybones_v72::play_allowed(state, id, player)
+            && is_castable_now(player, id, CastMethodV4::Normal, state)
+        {
+            out.push(id);
+            continue;
+        }
         if let Some(perm) = active_permission_for(player, id, state) {
             if perm.play_or_cast == PlayOrCast::Cast
                 && is_castable_now(player, id, CastMethodV4::Normal, state)
@@ -9850,6 +9863,12 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     // library same as any other card) are still subject to the ordinary
     // current effective per-turn allowance, already enforced above.
     for &id in &state.exile {
+        if tinybones_v72::play_allowed(state, id, player)
+            && card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_playable_land()
+        {
+            out.push(id);
+            continue;
+        }
         if let Some(perm) = active_permission_for(player, id, state) {
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
             if perm.play_or_cast == PlayOrCast::Play && def.is_playable_land() {
@@ -10102,6 +10121,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
         .and_then(|()| effect::vivien_reid_v1::validate_state(state))
         .and_then(|()| muldrotha_v1::validate_state(state))
+        .and_then(|()| tinybones_v72::validate_state(state))
         .is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -11038,6 +11058,7 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
 /// replacement and ordinary owner-controlled trigger queue. Choice-bearing
 /// discard callers retain their own authentication and completion stages.
 pub(crate) fn commit_discarded_card(state: &mut GameState, id: ObjectId) {
+    let tinybones_discard = tinybones_v72::before_discard(state, id);
     let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
     if def.is_castable() && def.madness_cost.is_some() {
         // 702.83b: a discarded Madness card is exiled instead of
@@ -11076,6 +11097,7 @@ pub(crate) fn commit_discarded_card(state: &mut GameState, id: ObjectId) {
     } else {
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
+    tinybones_v72::after_discard(state, tinybones_discard);
 }
 
 fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: PendingDiscard) {
@@ -11823,6 +11845,7 @@ pub(crate) fn validate_pending_cast(
     sphinx_lore_cast_v1::validate(state, pending)?;
     omniscience_cast_v1::validate(state, pending)?;
     muldrotha_v1::validate_pending(state, pending)?;
+    tinybones_v72::validate_pending(state, pending)?;
     let source = state
         .objects
         .try_get(pending.spell)
@@ -11932,6 +11955,10 @@ pub(crate) fn validate_pending_cast(
 
     let has_prior_exile_permission = || {
         resolution_cast_v1::free_cast(state, pending.spell)
+            || pending.source_contract.spell_cast_origin.is_some_and(|o| {
+                matches!(o.route, SpellCastRouteV4::TinybonesExileV72 { .. })
+                    && tinybones_v72::validate_contract(state, pending.source_contract).is_ok()
+            })
             || pending
                 .source_contract
                 .zone_change_count
@@ -14684,6 +14711,18 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             ..StackStateV4::default()
         },
     });
+    if state
+        .stack
+        .last()
+        .is_some_and(|row| matches!(row.inline_effect, Some(EffectOp::TinybonesStashV72 { .. })))
+    {
+        let tinybones_row = state
+            .stack
+            .last()
+            .expect("just published Tinybones trigger")
+            .clone();
+        tinybones_v72::publish(state, &tinybones_row)?;
+    }
     if matches!(
         state
             .stack
@@ -15513,6 +15552,7 @@ fn triggered_stack_item_expected_target_spec(
             ability_source_contract.ok_or("Banishing ETB lost source")?,
         )?;
     }
+    tinybones_v72::trigger_identity(state, item)?;
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
     let expected_optional_cost =
         trigger::required_optional_additional_cost_for_trigger(source_card_def, inline_effect);
@@ -16351,6 +16391,7 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    tinybones_v72::countered(state, &item)?;
     if let Some(entry_history_index) = curator_counter {
         state
             .engine
@@ -16511,11 +16552,12 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
             {
                 return Err("resolved Adventure source did not enter exile".to_string());
             }
-            // 715-style Adventure exile: grant the owner permission to cast
+            // Adventure exile: grant the actual caster permission to cast
             // the creature face later from this exact exile incarnation.
             // Stamped only after the move, the same way `plot_spell`
             // re-stamps `plotted_turn` after its own zone change.
             state.objects.get_mut(item.source).v4.on_adventure = true;
+            tinybones_v72::foreign_adventure_finished(state, item);
             return Ok(());
         }
         supported_omen(def).ok_or("resolved Omen spell lost its definition")?;
@@ -20768,6 +20810,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     effect::genesis_wave_v1::validate_state(state)?;
     effect::vivien_reid_v1::validate_state(state)?;
     muldrotha_v1::validate_state(state)?;
+    tinybones_v72::validate_state(state)?;
     crate::leyline_axe_v1::validate(state)?;
     validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
@@ -23398,6 +23441,7 @@ fn play_land(
         .lands_played_this_turn
         .checked_add(1)
         .ok_or("native land-play count exceeds u8")?;
+    let tinybones_land = tinybones_v72::begin_play(state, id, player, true);
     let ctx = ExecCtx::no_targets(id, player);
     if crate::doubling_season_v48::requires_successor(state) {
         // Playing a land remains a special action even under a resolution-time
@@ -23407,7 +23451,9 @@ fn play_land(
             change.counter_origin_v48 = Some(crate::doubling_season_v48::CounterOriginV48::Rule);
         }
         event::propose_and_commit(state, event);
-    } else if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
+    } else if tinybones_land.is_some()
+        || resolution_cast_v1::permit(state, id).is_some_and(|p| p.land)
+    {
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),
@@ -23423,6 +23469,7 @@ fn play_land(
         );
     }
     muldrotha_v1::record_land(state, muldrotha_land);
+    tinybones_v72::record_land(state, tinybones_land, id);
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn = next_land_count;
     if resolution_cast_v1::finish_child(state)? {
@@ -23549,8 +23596,17 @@ fn materialize_begin_cast_with_quote_v1(
     // `plotted_turn` below.
     let is_adventure_exile = forced_cast_method.is_none()
         && origin_zone == Zone::Exile
-        && state.objects.get(spell_id).owner == player
-        && state.objects.get(spell_id).v4.on_adventure;
+        && tinybones_v72::adventure_allowed(state, spell_id, player);
+    let tinybones_announcement = if forced_cast_method.is_none()
+        && active_permission_for(player, spell_id, state).is_none()
+        && resolution_cast_v1::permit(state, spell_id).is_none()
+        && !is_adventure_exile
+        && !is_plotted
+    {
+        tinybones_v72::begin_play(state, spell_id, player, false)
+    } else {
+        None
+    };
     let muldrotha_announcement = muldrotha_v1::announcement(state, spell_id, player);
     let graveyard_adventure = (muldrotha_announcement.is_none()
         && crate::standard_creatures_v1::graveyard_adventure_allowed(state, spell_id, player))
@@ -23602,7 +23658,9 @@ fn materialize_begin_cast_with_quote_v1(
     });
     let is_flashback = cast_method == CastMethodV4::Flashback;
     let resolution_permission = resolution_cast_v1::permit(state, spell_id).filter(|p| !p.land);
-    let cast_route = if let Some(options_history_index) = muldrotha_announcement {
+    let cast_route = if let Some(play_history_index) = tinybones_announcement {
+        SpellCastRouteV4::TinybonesExileV72 { play_history_index }
+    } else if let Some(options_history_index) = muldrotha_announcement {
         SpellCastRouteV4::MuldrothaGraveyardV1 {
             options_history_index,
         }
@@ -23777,6 +23835,7 @@ fn materialize_begin_cast_with_quote_v1(
     });
 
     crate::effect::harvester_v1::record_cast(state, source_contract);
+    tinybones_v72::announced(state, source_contract, stack_item_id);
     state.engine.pending_cast = Some(PendingCast {
         omniscience_v1: omniscience_choice,
         sphinx_lore_v1: sphinx_lore_choice.map(|(c, _)| c),
@@ -24061,6 +24120,7 @@ fn finalize_owned_cast(
     item.v4.source_contract = Some(finalized_source_contract);
     let stack_item_id = item.v4.stack_item_id;
     mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
+    tinybones_v72::paid(state, finalized_source_contract, stack_item_id);
     state.players[pending.controller.index()].spells_cast_this_turn = state.players
         [pending.controller.index()]
     .spells_cast_this_turn
@@ -24228,6 +24288,12 @@ fn materialize_aborted_cast_v1(
     pending: &PendingCast,
     cast_method: CastMethodV4,
 ) -> AbortedCastSceneV1 {
+    let original_exile_counters = pending
+        .source_contract
+        .spell_cast_origin
+        .filter(|o| o.origin_zone == Zone::Exile && cast_method != CastMethodV4::Madness)
+        .and_then(|o| state.counter_lki_for(pending.spell, o.origin_zone_change_count))
+        .filter(|c| c.stash != 0);
     let harvester_rollback = crate::effect::harvester_v1::rollback_input(state, pending);
     let was_face_down = state.objects.get(pending.spell).v4.face_down_v1.is_some();
     let item = state.stack.pop();
@@ -24261,6 +24327,9 @@ fn materialize_aborted_cast_v1(
         let object = state.objects.get_mut(pending.spell);
         object.zone = to_zone;
         object.controller = owner;
+        if let Some(counters) = original_exile_counters {
+            object.counters = counters;
+        }
         object.plotted_turn = if cast_method == CastMethodV4::Plotted && to_zone == Zone::Exile {
             plotted_turn
         } else {
@@ -24287,6 +24356,7 @@ fn materialize_aborted_cast_v1(
         }
     }
     crate::effect::harvester_v1::record_rollback(state, pending, harvester_rollback);
+    tinybones_v72::aborted(state, pending);
     AbortedCastSceneV1 {
         was_face_down,
         owner,
@@ -24787,6 +24857,10 @@ fn push_paid_activation(
 /// casting is an engine action, not a `MoveObject` effect leaf any card
 /// program emits.
 fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+    let reset_stash = state.objects.get(id).counters.stash != 0;
+    if reset_stash {
+        event::record_counter_lki(state, id);
+    }
     let owner = state.objects.get(id).owner;
     match from_zone {
         Zone::Graveyard => state.players[owner.index()].graveyard.retain(|&x| x != id),
@@ -24798,6 +24872,9 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
     let turn = state.turn_key_v1();
     let object = state.objects.get_mut(id);
     object.zone = Zone::Stack;
+    if reset_stash {
+        object.counters = Default::default();
+    }
     object.plotted_turn = None;
     object.zone_change_count += 1;
     object

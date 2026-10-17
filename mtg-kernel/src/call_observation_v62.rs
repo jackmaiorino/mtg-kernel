@@ -68,6 +68,7 @@ pub fn producer_sha256() -> String {
             include_str!("cast_identity_v1.rs"),
             include_str!("event.rs"),
             include_str!("engine.rs"),
+            include_str!("engine/tinybones_v72.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

@@ -271,7 +271,11 @@ fn counters(
         incubation,
         revival,
         fellowship,
+        stash,
     } = live.counters;
+    if stash != 0 {
+        return Err(error("public projection does not expose stash counters"));
+    }
     if fellowship != 0 && scope != crate::optional_trigger_public_v1::CounterScopeV61::CallV62 {
         return Err(error("V53 does not expose fellowship counters"));
     }

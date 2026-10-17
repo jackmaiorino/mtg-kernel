@@ -305,6 +305,7 @@ fn paid_banner_current_control_type_suppression_full_counter_width_and_departure
                 incubation: i32::MAX,
                 revival: i32::MAX,
                 fellowship: i32::MAX,
+                stash: 0,
             };
             live.v4.lifelink_keyword_counters = i16::MAX;
             live.v4.time_counters_v1 = u8::MAX;

@@ -145,6 +145,7 @@ pub(super) struct SpellComponentChoicesV1 {
 
 pub(super) struct SelectedSpellManaCostsV1 {
     granted_flashback_v1: bool,
+    tinybones_mana_v72: Option<super::tinybones_v72::ManaGrantV72>,
     pub(super) legendary_spell: bool,
     pub(super) spell_subtypes: Vec<u16>,
     pub(super) all_creature_types_v60: bool,
@@ -335,7 +336,7 @@ impl SelectedSpellManaCostsV1 {
             .sum::<u32>();
         if self.convoke {
             let (mana, convoke_tapped) =
-                mana::plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
+                mana::plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
                     &pips,
                     generic,
                     player,
@@ -346,6 +347,7 @@ impl SelectedSpellManaCostsV1 {
                     self.legendary_spell,
                     &self.spell_subtypes,
                     self.all_creature_types_v60,
+                    self.tinybones_mana_v72.as_ref(),
                 )?;
             return Some(SpellManaPaymentV1 {
                 mana,
@@ -366,7 +368,7 @@ impl SelectedSpellManaCostsV1 {
         // Preserve deterministic minimum-exile, oldest-first Delve payment.
         let max_exiled = graveyard.len().min(generic as usize);
         for exiled in 0..=max_exiled {
-            if let Some(mana) = mana::plan_spell_mana_total_with_restrictions_v1_typed_v60(
+            if let Some(mana) = mana::plan_spell_mana_total_with_restrictions_with_grant_v72(
                 &pips,
                 generic - exiled as u32,
                 player,
@@ -377,6 +379,7 @@ impl SelectedSpellManaCostsV1 {
                 self.legendary_spell,
                 &self.spell_subtypes,
                 self.all_creature_types_v60,
+                self.tinybones_mana_v72.as_ref(),
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -442,6 +445,7 @@ pub(super) fn selected_spell_mana_costs_v1(
 ) -> Option<SelectedSpellManaCostsV1> {
     let mut selected = SelectedSpellManaCostsV1 {
         granted_flashback_v1: false,
+        tinybones_mana_v72: None,
         legendary_spell: definition
             .supertypes
             .contains(&card_def::Supertype::Legendary)
@@ -617,6 +621,7 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         player,
         state,
     )?;
+    selected.tinybones_mana_v72 = super::tinybones_v72::mana_grant(state, source, player);
     if granted {
         selected.component_groups.insert(0, &[]);
         selected.granted_flashback_v1 = true;

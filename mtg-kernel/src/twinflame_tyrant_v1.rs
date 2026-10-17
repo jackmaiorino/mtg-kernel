@@ -304,6 +304,7 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
         include_str!("event_history_v1.rs"),
         crate::engine::time_stop_v1::source_sha256_v1(),
         crate::effect::genesis_wave_v1::source_sha256_v1(),
+        include_str!("engine/tinybones_v72.rs"),
     ]
     .join("\0");
     Ok(PrintedMeaningV1 {
