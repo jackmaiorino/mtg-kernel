@@ -26,7 +26,7 @@ impl Pair {
             native,
         }
     }
-    fn visible(&self) -> HumanDecisionChandraV75 {
+    fn visible(&self) -> HumanDecisionKaitoV75 {
         let d = self.own.inner.decision_v75().unwrap();
         project_with_handles(&d, d.expected().acting_player, 1)
             .unwrap()
