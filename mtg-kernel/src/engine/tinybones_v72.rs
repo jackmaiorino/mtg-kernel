@@ -306,6 +306,13 @@ pub enum JournalV72 {
         original: StackSourceContractV4,
         returned: EffectObjectBinding,
     },
+    /// A stash-bearing cast may have an independent exile permission. Its
+    /// native reversal restores counters too, without inventing a Tiny play.
+    IndependentStashAborted {
+        original: StackSourceContractV4,
+        returned: EffectObjectBinding,
+        stash: i32,
+    },
 }
 
 /// Adventure grants its actual caster the later permanent cast, including a
@@ -903,6 +910,28 @@ pub(super) fn aborted(state: &mut GameState, p: &PendingCast) {
     if let Some(play) = route(p.source_contract) {
         let returned = binding(state, p.spell);
         push(state, JournalV72::Aborted { play, returned });
+    } else if let Some(origin) = p
+        .source_contract
+        .spell_cast_origin
+        .filter(|o| o.origin_zone == Zone::Exile)
+    {
+        let returned = binding(state, p.spell);
+        let stash = state.objects.get(p.spell).counters.stash;
+        if returned.expected_zone == Zone::Exile
+            && stash > 0
+            && state
+                .counter_lki_for(p.spell, origin.origin_zone_change_count)
+                .is_some_and(|c| c.stash == stash)
+        {
+            push(
+                state,
+                JournalV72::IndependentStashAborted {
+                    original: p.source_contract,
+                    returned,
+                    stash,
+                },
+            );
+        }
     }
     if let Some(origin) = p
         .source_contract
@@ -1057,6 +1086,26 @@ fn stashed_incarnation(state: &GameState, id: ObjectId, generation: u32, count: 
                 }) =>
             {
                 plays.push((at as u64, *p))
+            }
+            JournalV72::IndependentStashAborted {
+                original,
+                returned,
+                stash,
+            } => {
+                if let Some(origin) = original.spell_cast_origin {
+                    if known.iter().any(|(b, n)| {
+                        b.object == original.source
+                            && b.expected_zone == Zone::Exile
+                            && b.expected_zone_change_count == origin.origin_zone_change_count
+                            && n == stash
+                    }) && original.zone_change_count.checked_add(1)
+                        == Some(returned.expected_zone_change_count)
+                        && returned.object == original.source
+                        && returned.expected_zone == Zone::Exile
+                    {
+                        known.push((*returned, *stash));
+                    }
+                }
             }
             JournalV72::Aborted { play, returned } => {
                 if let Some((_, p)) = plays.iter().find(|(at, _)| at == play) {
@@ -1346,6 +1395,50 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Tinybones land changed actual owner/controller/incarnation".into());
                 }
+            }
+            JournalV72::IndependentStashAborted {
+                original,
+                returned,
+                stash,
+            } => {
+                let origin = original
+                    .spell_cast_origin
+                    .ok_or("independent stash reversal origin absent")?;
+                let live = state
+                    .objects
+                    .try_get(original.source)
+                    .ok_or("independent stash reversal card absent")?;
+                let original_route = match origin.route {
+                    SpellCastRouteV4::ExilePermission {
+                        holder,
+                        permission_zone_change_count,
+                    }
+                    | SpellCastRouteV4::ExileFreePermission {
+                        holder,
+                        permission_zone_change_count,
+                    } => {
+                        holder == original.controller
+                            && permission_zone_change_count == origin.origin_zone_change_count
+                    }
+                    SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
+                        holder == original.controller
+                    }
+                    SpellCastRouteV4::AdventureExile => adventure_contract(state, *original),
+                    SpellCastRouteV4::Plotted { .. } => {
+                        original.owner == original.controller
+                            && original.cast_method == CastMethodV4::Plotted
+                    }
+                    _ => false,
+                };
+                if !original_route || origin.origin_zone!=Zone::Exile || original.zone!=Zone::Stack
+                    || original.spell_copy_origin.is_some() || original.owner!=live.owner || original.card_def!=live.card_def
+                    || origin.origin_zone_change_count.checked_add(1)!=Some(original.zone_change_count)
+                    || original.zone_change_count.checked_add(1)!=Some(returned.expected_zone_change_count)
+                    || returned.object!=original.source || returned.expected_zone!=Zone::Exile || *stash<=0
+                    || !stashed_incarnation(state,original.source,origin.origin_zone_change_count,*stash)
+                    || state.counter_lki_for(original.source,origin.origin_zone_change_count).is_none_or(|c|c.stash!=*stash)
+                    || state.engine.event_history.iter().take(at).any(|e| matches!(e,CommittedEvent::TinybonesV72{journal}if matches!(journal.as_ref(),JournalV72::IndependentStashAborted{original:old,..} if old.source==original.source && old.zone_change_count==original.zone_change_count)))
+                {return Err("independent stash reversal changed original owner/route/incarnation/counters".into());}
             }
             JournalV72::Aborted { play: p, returned } => {
                 let before = play(state, *p)?;
