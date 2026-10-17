@@ -191,6 +191,8 @@ class LimitedLilianaClientV14(LimitedClientV1):
                 raise LimitedSessionError("Vivien catalog differs from header")
             if decision["state"]["muldrotha"]["meaning"]["card_db_hash"] != catalog:
                 raise LimitedSessionError("Muldrotha catalog differs from header")
+            if decision["state"]["tinybones"]["meaning"]["card_db_hash"] != catalog:
+                raise LimitedSessionError("Tinybones catalog differs from header")
             if decision["state"]["liliana"]["meaning"]["card_db_hash"] != catalog:
                 raise LimitedSessionError("Liliana catalog differs from header")
             _validate_play_context(decision)

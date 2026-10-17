@@ -2,7 +2,8 @@
 
 This checkpoint extends the actual Liliana V73 observation, sealed owner and
 numeric source with distinct Chandra V74 schemas. Chandra493 remains Partial.
-It grants no Full deck, Human/V15, wire, sampler or runtime qualification.
+It grants no Full deck, sampler or runtime qualification. Human/V15 source is
+now implemented below; it has not been compiled or executed.
 
 The complete observation retains every inherited ordinary/family row, original
 stack/source/target relation and all eighteen current counter forms at native
@@ -39,10 +40,55 @@ hidden worlds and full-width counter distinctions. Shield, concealment and
 source-zone setup are explicitly native primitives on genuinely paid printings.
 The existing native/read-only fixtures retain detailed permission expiry,
 partial target loss and copy-of-copy coverage. All new Rust is UNCOMPILED and
-UNRUN. Human/V15 waits for actual Liliana Human/V14; no API is guessed here.
+UNRUN. Human/V15 now follows the committed Liliana Human/V14 owner and wire
+contract, preserving its inherited facts and anonymous historical relations.
 
 The four new semantic children are appended once to the existing ordered
 Time Stop and Genesis source tuples, retaining their original paths/framing.
 The numeric feature identity binds all four plus the actual Chandra meaning,
 public appendix and native children. Observation/candidate producers bind the
 same children with original length/content framing. No identity is guessed.
+
+
+The distinct Human V74 and Limited V15 source retains every V14 field, with
+Chandra allocation, original target/division, exile-grant, affected damage,
+copied-token and end-step facts appended. Both facades dispatch through the
+actual sealed V74 owner with private original native indexes, generation and
+owner checks, complete fresh-packet equality and opaque restore. The fixed
+Human seat remains fixed; the actor-facing JSONL host is a trusted two-seat
+interface. No mutable native state or private journal index crosses either
+facade. Eighteen-counter rows reuse the actual inherited authoritative roster.
+Displayed actions bind their declared native option/exile/target identity even
+when labels sort differently. All inherited family and later Kaito refusals
+remain. The new binary is explicitly declared and built in the existing
+limited-v12 CI group, which also runs the actual Chandra native, owner,
+numeric, Human and V15 wire fixture filters with its existing bounds.
+
+Six paid both-seat Human source groups and three V15 wire groups cover the
+three roots and exact costs, zero/two/eight targets before payment, original
+3/5 damage after source and target loss, real affected multiplier/shield
+selection and original menu indexes, public exile selection and ordinary
+spell payment or land quota followed by expiry, paid Season and Self-Reflection
+copies with actual end-step observers, source reentry/concealment, independent
+hidden worlds, stale/forged/foreign requests and restore/native stream parity.
+All nine groups are UNCOMPILED and UNRUN. Original eleven native and six
+read-only fixture bodies and original native/event/registration source remain
+unchanged. Two existing Liliana sibling helpers gain only the visibility
+actually needed by the new facade; their bodies are unchanged.
+
+V14 and V15 now check inherited Tinybones meaning catalog equality against
+the reply header; V15 also retains the Liliana catalog check. One new V14
+negative process mock and seven new V15 parser/process mocks exercise these
+checks, sorted native option bindings, division, public exile, copiable token
+roles, closed schemas and stale restore. These mocks are not native evidence.
+
+Observed local checks: 161 Limited transport/parser Python tests and 112
+Limited deck/booster Python tests pass, both flat-policy golden generators
+pass with --check, pinned Rust 1.94.1 formatting (edition 2021, skip_children)
+and diff checks pass. Static source checks retain the 151/87 existing
+Time Stop/Genesis tuple prefixes and append exactly five actual V15 children;
+all included files resolve. Existing mixed-policy duplicate include paths
+are retained in their original prefix, with no new duplicate added. Actual
+logs and exact C/E copies are named fdn110-chandra-v74-v15-*.log and the
+source receipt under fdn110-pending-receipts and E:/storage-records/fdn110.
+No Rust build, check, test, Clippy, remote execution or admission was performed.

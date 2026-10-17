@@ -455,3 +455,12 @@ pub use liliana_v73::{
 pub(crate) mod limited_liliana_v14;
 pub(crate) use limited_liliana_v14::project_limited_liliana_v14;
 pub use limited_liliana_v14::LimitedLilianaDecisionV14;
+
+pub mod chandra_v74;
+pub use chandra_v74::{
+    HumanChandraProjectorV74, HumanChandraSessionV74, HumanChandraSnapshotV74,
+    HumanDecisionChandraV74, HumanVisibleStateChandraV74,
+};
+pub(crate) mod limited_chandra_v15;
+pub(crate) use limited_chandra_v15::project_limited_chandra_v15;
+pub use limited_chandra_v15::LimitedChandraDecisionV15;

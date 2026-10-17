@@ -633,7 +633,7 @@ impl HumanLilianaProjectorV73 {
 }
 
 record!(HumanLilianaRootV73 {original_source:HumanCardRefV1,current_original_source:Option<HumanCardRefV1>,captured_controller:PlayerSeatV1,original_source_relation:HumanTinybonesRelationV72});
-fn liliana_root(
+pub(super) fn liliana_root(
     v: &crate::optional_trigger_public_v1::RootV1,
     h: &mut Handles,
     roles: &mut Incarnations,
@@ -696,7 +696,7 @@ fn liliana_selection(
         current: r.current,
     })
 }
-fn liliana_facts(
+pub(super) fn liliana_facts(
     v: &crate::liliana_public_v73::FactsV73,
     battlefield: &[Vec<HumanTinybonesCurrentV72>; 2],
     h: &mut Handles,

@@ -1305,6 +1305,46 @@ pub(super) fn project_liliana_base_with_handles(
     ))
 }
 
+pub(super) fn project_chandra_base_with_handles(
+    candidates: &crate::chandra_candidates_v74::ChandraCandidatesV74,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Chandra(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
 pub(super) fn project_graveyard_return_base_with_handles(
     candidates: &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
     actions: &[ActionSemanticV1],
@@ -1354,6 +1394,7 @@ enum CompleteCandidatesV68<'a> {
     Muldrotha(&'a crate::muldrotha_candidates_v71::MuldrothaCandidatesV71),
     Tinybones(&'a crate::tinybones_candidates_v72::TinybonesCandidatesV72),
     Liliana(&'a crate::liliana_candidates_v73::LilianaCandidatesV73),
+    Chandra(&'a crate::chandra_candidates_v74::ChandraCandidatesV74),
 }
 #[derive(Clone, Copy)]
 enum CompleteOriginalV68<'a> {
@@ -1364,6 +1405,7 @@ enum CompleteOriginalV68<'a> {
     Muldrotha(&'a crate::muldrotha_observation_v71::MuldrothaObservationV71),
     Tinybones(&'a crate::tinybones_observation_v72::TinybonesObservationV72),
     Liliana(&'a crate::liliana_observation_v73::LilianaObservationV73),
+    Chandra(&'a crate::chandra_observation_v74::ChandraObservationV74),
 }
 #[derive(Clone, Copy)]
 struct CompleteObservationV68<'a> {
@@ -1478,6 +1520,22 @@ impl<'a> CompleteCandidatesV68<'a> {
                     original: CompleteOriginalV68::Liliana(o),
                 }
             }
+            Self::Chandra(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::Chandra(o),
+                }
+            }
             Self::Vivien(v) => {
                 let o = &v.observation;
                 CompleteObservationV68 {
@@ -1507,6 +1565,7 @@ impl<'a> CompleteCandidatesV68<'a> {
             Self::Muldrotha(v) => v.candidates.get(index)?.drake_activation.as_ref(),
             Self::Tinybones(v) => v.candidates.get(index)?.drake_activation.as_ref(),
             Self::Liliana(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::Chandra(v) => v.candidates.get(index)?.drake_activation.as_ref(),
             Self::Vivien(v) => v.candidates.get(index)?.drake_activation.as_ref(),
         }
     }
@@ -1540,6 +1599,7 @@ impl CompleteObservationV68<'_> {
             CompleteOriginalV68::Muldrotha(v) => super::muldrotha_v71::choice_label(v, a, h),
             CompleteOriginalV68::Tinybones(v) => super::tinybones_v72::choice_label(v, a, h),
             CompleteOriginalV68::Liliana(v) => super::liliana_v73::choice_label(v, a, h),
+            CompleteOriginalV68::Chandra(v) => super::chandra_v74::choice_label(v, a, h),
             CompleteOriginalV68::Vivien(v) => super::vivien_v70::choice_label(v, a, h),
         }
     }
@@ -1563,6 +1623,9 @@ impl CompleteObservationV68<'_> {
             }
             CompleteOriginalV68::Liliana(v) => {
                 super::labels::label_parts_liliana_v73(a, p, h, human, v)
+            }
+            CompleteOriginalV68::Chandra(v) => {
+                super::labels::label_parts_chandra_v74(a, p, h, human, v)
             }
             CompleteOriginalV68::Vivien(v) => {
                 super::labels::label_parts_vivien_v70(a, p, h, human, v)

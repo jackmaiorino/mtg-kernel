@@ -227,3 +227,8 @@ required-features = ["limited-fdn-fixtures"]
 name = "kernel_limited_liliana_env_v14"
 path = "src/bin/kernel_limited_liliana_env_v14.rs"
 required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_chandra_env_v15"
+path = "src/bin/kernel_limited_chandra_env_v15.rs"
+required-features = ["limited-fdn-fixtures"]

@@ -857,3 +857,5 @@ pub mod chandra_observation_v74;
 pub mod limited_tinybones_session_v13;
 
 pub mod limited_liliana_session_v14;
+
+pub mod limited_chandra_session_v15;

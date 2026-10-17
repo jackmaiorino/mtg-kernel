@@ -89,6 +89,11 @@ class LimitedLilianaClientV14Tests(unittest.TestCase):
         for change in (lambda m:m["printed"].update(zombie_colors=["W"]),lambda m:m["printed"].update(loyalty_costs=[1,-3,-9]),lambda m:m["ordered_rules"].reverse(),lambda m:m.update(complete_consumer_admitted=True)):
             bad=deepcopy(d);change(bad["state"]["liliana"]["meaning"])
             with self.assertRaises(LimitedSessionError):self.validate(bad)
+    def test_inherited_tinybones_catalog_must_match_header(self):
+        source=self.engine.read_text().replace('    print(json.dumps(reply), flush=True)', '    if reply.get("state",{}).get("state_type")=="decision":reply["state"]["decision"]["state"]["tinybones"]["meaning"]["card_db_hash"]=124\n    print(json.dumps(reply), flush=True)')
+        self.engine.write_text(source)
+        with self.client()as c:
+            with self.assertRaisesRegex(LimitedSessionError,"Tinybones catalog differs from header"):c.reset(self.decks)
     def test_eighteen_counter_roster_and_v13_closed_refusal(self):
         d=self.scene();self.validate(d)
         with self.assertRaises(LimitedSessionError):_validate_tinybones_visible(d["state"],d["actor"],d["action_meanings"],d["actions"])
