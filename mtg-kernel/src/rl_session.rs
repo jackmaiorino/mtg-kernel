@@ -346,6 +346,37 @@ pub(crate) fn end_turn_candidates_v68(
         crate::rl::core_policy_action_candidates_end_turn_v68(origin, state)
     }
 }
+pub(crate) fn genesis_wave_candidates_v69(
+    origin: &PolicyDecisionV5,
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    crate::genesis_wave_observation_v69::validate_state(state).map_err(RlContractError)?;
+    #[cfg(feature = "limited-fdn-fixtures")]
+    if let Some((player, pending, prefix)) = surface
+        .hunter_order_parts_v45(state)
+        .map_err(RlContractError)?
+    {
+        return crate::rl::hunter_trigger_order_candidates_v45(player, pending, prefix, state);
+    }
+    if let Some(candidates) =
+        crate::divine_actions_v44::candidates_genesis_wave_v69(origin, state, surface)?
+    {
+        return Ok(candidates);
+    }
+    if matches!(
+        origin,
+        PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEntryColorV36 { .. }
+        ))
+    ) {
+        banner_v36::actual_candidates(origin, state)
+    } else if inspiration_v37::is_mill(state) {
+        inspiration_v37::actual_candidates(origin, state)
+    } else {
+        crate::rl::core_policy_action_candidates_genesis_wave_v69(origin, state)
+    }
+}
 
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
@@ -2779,6 +2810,7 @@ fn flat_validate_origin_decision_common_scoped_v42(
                     | crate::rl::CommonProjectionScopeV42::GraveyardReturnV61
                     | crate::rl::CommonProjectionScopeV42::CallV62
                     | crate::rl::CommonProjectionScopeV42::EndTurnV68
+                    | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
             ) {
                 return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
             }
@@ -3713,6 +3745,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                     | FlatActionContractModeV1::GraveyardReturnV61
                     | FlatActionContractModeV1::CallV62
                     | FlatActionContractModeV1::EndTurnV68
+                    | FlatActionContractModeV1::GenesisWaveV69
             ))
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -3754,6 +3787,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         )
         && session
             .surface
@@ -4869,6 +4903,7 @@ fn flat_validate_expected_decision_numeric_domain(
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         )
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
@@ -4893,7 +4928,7 @@ fn flat_validate_expected_decision_numeric_domain(
             match replacement.kind {
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
-                | FlatActionContractModeV1::ElendaV52 | FlatActionContractModeV1::PreparedV57 | FlatActionContractModeV1::NextFiveV59 | FlatActionContractModeV1::GraveyardReturnV61 | FlatActionContractModeV1::CallV62 | FlatActionContractModeV1::EndTurnV68),
+                | FlatActionContractModeV1::ElendaV52 | FlatActionContractModeV1::PreparedV57 | FlatActionContractModeV1::NextFiveV59 | FlatActionContractModeV1::GraveyardReturnV61 | FlatActionContractModeV1::CallV62 | FlatActionContractModeV1::EndTurnV68 | FlatActionContractModeV1::GenesisWaveV69),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
@@ -5042,6 +5077,7 @@ enum FlatActionContractModeV1 {
     GraveyardReturnV61,
     CallV62,
     EndTurnV68,
+    GenesisWaveV69,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7762,7 +7798,9 @@ impl FastActorSessionV1 {
     pub fn restore_v1(&mut self, snapshot: &FastActorSessionSnapshotV1) {
         if !matches!(
             self.flat_action_contract_mode,
-            FlatActionContractModeV1::CallV62 | FlatActionContractModeV1::EndTurnV68
+            FlatActionContractModeV1::CallV62
+                | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) && crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             &snapshot.0.state,
             snapshot.0.current.as_ref().map(|c| c.actor),
@@ -7776,6 +7814,7 @@ impl FastActorSessionV1 {
             FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) && crate::graveyard_return_public_v61::require_legacy_visible(
             &snapshot.0.state,
             snapshot.0.current.as_ref().map(|c| c.actor),
@@ -7784,7 +7823,9 @@ impl FastActorSessionV1 {
         {
             return;
         }
-        if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+        if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+            let _ = self.genesis_wave_restore_v69(snapshot);
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
             let _ = self.end_turn_restore_v68(snapshot);
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
             let _ = self.call_restore_v62(snapshot);
@@ -7812,6 +7853,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             *self = snapshot.0.clone();
         }
@@ -7873,7 +7915,9 @@ impl FastActorSessionV1 {
     ) -> Result<FastActorResponseV1, RlSessionError> {
         if !matches!(
             self.flat_action_contract_mode,
-            FlatActionContractModeV1::CallV62 | FlatActionContractModeV1::EndTurnV68
+            FlatActionContractModeV1::CallV62
+                | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
                 &self.state,
@@ -7886,6 +7930,7 @@ impl FastActorSessionV1 {
             FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             crate::graveyard_return_public_v61::require_legacy_visible(
                 &self.state,
@@ -7899,6 +7944,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             crate::next_five_public_v59::require_legacy_visible(
                 &self.state,
@@ -7915,6 +7961,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             let actor = self.current.as_ref().map(|current| current.actor);
             crate::elenda_public_v52::require_legacy_visible(&self.state, actor).map_err(
@@ -7930,8 +7977,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -7966,8 +8016,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -8008,8 +8061,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -8045,6 +8101,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             crate::doubling_season_v48::require_legacy_visible(
                 &self.state,
@@ -8083,6 +8140,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::GraveyardReturnV61
                     | FlatActionContractModeV1::CallV62
                     | FlatActionContractModeV1::EndTurnV68
+                    | FlatActionContractModeV1::GenesisWaveV69
             ) {
                 ravenous_v51::prepare_current(self, &mut rederived)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
@@ -8262,7 +8320,9 @@ impl FastActorSessionV1 {
     fn advance_to_decision_or_terminal(&mut self) {
         if !matches!(
             self.flat_action_contract_mode,
-            FlatActionContractModeV1::CallV62 | FlatActionContractModeV1::EndTurnV68
+            FlatActionContractModeV1::CallV62
+                | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             if let Err(error) = crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
                 &self.state,
@@ -8285,6 +8345,7 @@ impl FastActorSessionV1 {
             FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             if let Err(error) =
                 crate::graveyard_return_public_v61::require_legacy_visible(&self.state, None)
@@ -8307,6 +8368,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             if let Err(error) =
                 crate::next_five_public_v59::require_legacy_visible(&self.state, None)
@@ -8332,6 +8394,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             // Before advancement the priority player need not be the actual
             // chooser (for example a foreign-owned Aura's host choice). Only
@@ -8360,8 +8423,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -8406,8 +8472,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -8456,8 +8525,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -8504,6 +8576,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) && crate::doubling_season_v48::require_legacy_visible(
             &self.state,
             self.state.priority_player,
@@ -8530,8 +8603,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -8581,8 +8657,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -8644,6 +8723,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::GraveyardReturnV61
                     | FlatActionContractModeV1::CallV62
                     | FlatActionContractModeV1::EndTurnV68
+                    | FlatActionContractModeV1::GenesisWaveV69
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43
                 && crate::faebloom_observation_v43::validate_state(&self.state).is_err())
@@ -8678,6 +8758,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::GraveyardReturnV61
                     | FlatActionContractModeV1::CallV62
                     | FlatActionContractModeV1::EndTurnV68
+                    | FlatActionContractModeV1::GenesisWaveV69
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
                 && crate::ajani_observation_v42::validate_state(&self.state).is_err())
@@ -8715,6 +8796,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::GraveyardReturnV61
                     | FlatActionContractModeV1::CallV62
                     | FlatActionContractModeV1::EndTurnV68
+                    | FlatActionContractModeV1::GenesisWaveV69
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
                 && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
@@ -8755,8 +8837,11 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::GraveyardReturnV61
                     | FlatActionContractModeV1::CallV62
                     | FlatActionContractModeV1::EndTurnV68
+                    | FlatActionContractModeV1::GenesisWaveV69
             ) {
-                if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+                if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                    crate::genesis_wave_observation_v69::validate_state(&self.state)
+                } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                     crate::end_turn_observation_v68::validate_state(&self.state)
                 } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                     crate::call_observation_v62::validate_state(&self.state)
@@ -8918,6 +9003,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::GraveyardReturnV61
                     | FlatActionContractModeV1::CallV62
                     | FlatActionContractModeV1::EndTurnV68
+                    | FlatActionContractModeV1::GenesisWaveV69
             )
         {
             self.current = None;
@@ -8990,6 +9076,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::GraveyardReturnV61
                     | FlatActionContractModeV1::CallV62
                     | FlatActionContractModeV1::EndTurnV68
+                    | FlatActionContractModeV1::GenesisWaveV69
             )
         {
             self.terminal = Some(halted_terminal(
@@ -9049,6 +9136,7 @@ impl FastActorSessionV1 {
                             | FlatActionContractModeV1::GraveyardReturnV61
                             | FlatActionContractModeV1::CallV62
                             | FlatActionContractModeV1::EndTurnV68
+                            | FlatActionContractModeV1::GenesisWaveV69
                     ) =>
                 {
                     substeps
@@ -9117,6 +9205,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
             if let Err(error) =
                 crate::elenda_public_v52::require_legacy_visible(&self.state, Some(actor))
@@ -9142,8 +9231,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::GraveyardReturnV61
                 | FlatActionContractModeV1::CallV62
                 | FlatActionContractModeV1::EndTurnV68
+                | FlatActionContractModeV1::GenesisWaveV69
         ) {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+                crate::genesis_wave_observation_v69::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
                 crate::end_turn_observation_v68::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
                 crate::call_observation_v62::validate_state(&self.state)
@@ -9172,7 +9264,9 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+            genesis_wave_candidates_v69(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
             end_turn_candidates_v68(&surfaced, &self.state, &self.surface)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
             call_candidates_v62(&surfaced, &self.state, &self.surface)
@@ -9494,7 +9588,8 @@ impl FastActorSessionV1 {
             | FlatActionContractModeV1::NextFiveV59
             | FlatActionContractModeV1::GraveyardReturnV61
             | FlatActionContractModeV1::CallV62
-            | FlatActionContractModeV1::EndTurnV68 => {
+            | FlatActionContractModeV1::EndTurnV68
+            | FlatActionContractModeV1::GenesisWaveV69 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
                 if let Err(error) = ravenous_v51::prepare_current(self, &mut current) {
@@ -19734,3 +19829,6 @@ mod tests {
         assert!(resampled, "the rest of the library is still resampled");
     }
 }
+
+pub(crate) mod genesis_wave_v69;
+pub use genesis_wave_v69::{GenesisWaveDecisionV69, GenesisWaveSessionV69, GenesisWaveSnapshotV69};

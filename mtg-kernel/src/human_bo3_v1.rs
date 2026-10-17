@@ -408,3 +408,12 @@ pub use end_turn_v68::{
 mod limited_end_turn_v9;
 pub(crate) use limited_end_turn_v9::project_limited_end_turn_v9;
 pub use limited_end_turn_v9::LimitedEndTurnDecisionV9;
+
+pub mod genesis_wave_v69;
+pub use genesis_wave_v69::{
+    HumanDecisionGenesisWaveV69, HumanGenesisWaveProjectorV69, HumanGenesisWaveSessionV69,
+    HumanGenesisWaveSnapshotV69, HumanVisibleStateGenesisWaveV69,
+};
+pub(crate) mod limited_genesis_wave_v10;
+pub(crate) use limited_genesis_wave_v10::project_limited_genesis_wave_v10;
+pub use limited_genesis_wave_v10::LimitedGenesisWaveDecisionV10;
