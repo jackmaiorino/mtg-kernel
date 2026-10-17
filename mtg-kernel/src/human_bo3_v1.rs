@@ -436,3 +436,13 @@ pub use muldrotha_v71::{
 pub(crate) mod limited_muldrotha_v12;
 pub(crate) use limited_muldrotha_v12::project_limited_muldrotha_v12;
 pub use limited_muldrotha_v12::LimitedMuldrothaDecisionV12;
+
+pub mod tinybones_v72;
+pub use tinybones_v72::{
+    HumanDecisionTinybonesV72, HumanTinybonesProjectorV72, HumanTinybonesSessionV72,
+    HumanTinybonesSnapshotV72, HumanVisibleStateTinybonesV72,
+};
+
+pub(crate) mod limited_tinybones_v13;
+pub(crate) use limited_tinybones_v13::project_limited_tinybones_v13;
+pub use limited_tinybones_v13::LimitedTinybonesDecisionV13;

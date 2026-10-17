@@ -375,6 +375,11 @@ pub fn feature_identity() -> String {
             include_str!("liliana_observation_v73.rs"),
             include_str!("liliana_candidates_v73.rs"),
             include_str!("rl_session/liliana_v73.rs"),
+            include_str!("human_bo3_v1/tinybones_v72.rs"),
+            include_str!("human_bo3_v1/limited_tinybones_v13.rs"),
+            include_str!("limited_tinybones_session_v13.rs"),
+            include_str!("bin/kernel_limited_tinybones_env_v13.rs"),
+            include_str!("../../python/tools/limited_tinybones_session_v13.py"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
