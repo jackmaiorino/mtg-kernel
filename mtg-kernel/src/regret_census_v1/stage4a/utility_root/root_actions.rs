@@ -86,7 +86,9 @@ fn validate_actions(actions: &[u32]) -> Result<(), String> {
 /// seed the case's own source or guide streams use.
 fn validate_repetitions(repetitions: &[ContinuationSeeds], src: &SourceSpec) -> Result<(), String> {
     if repetitions.is_empty() || repetitions.len() > MAX_REPETITIONS {
-        return Err(format!("root actions need 1..={MAX_REPETITIONS} repetitions"));
+        return Err(format!(
+            "root actions need 1..={MAX_REPETITIONS} repetitions"
+        ));
     }
     let case: HashSet<u64> = src
         .source_policy_seeds
@@ -284,7 +286,14 @@ pub(super) fn run(
         std::thread::Builder::new()
             .stack_size(256 << 20)
             .spawn_scoped(scope, || {
-                diagnose(&req, sh, policy, opponent_index, &search, &historical_binding)
+                diagnose(
+                    &req,
+                    sh,
+                    policy,
+                    opponent_index,
+                    &search,
+                    &historical_binding,
+                )
             })
             .map_err(|e| e.to_string())?
             .join()
@@ -517,7 +526,11 @@ mod tests {
             assert!(refused(&beyond, &at));
             let mut outside = row.clone();
             let k = row["game"]["decisions"][0]["k"].clone();
-            *outside["game"]["actions"].as_array_mut().unwrap().last_mut().unwrap() = k;
+            *outside["game"]["actions"]
+                .as_array_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap() = k;
             assert!(refused(&outside, &at));
             for wrong in [
                 Coordinates {
@@ -588,6 +601,45 @@ mod tests {
             assert_eq!(alone[0], repeated[0]);
             assert_eq!(alone[0], repeated[1]);
             assert_eq!(after_other[0].first_action, 1);
+        });
+    }
+
+    /// A branch resets both policies after the forced move, so its later
+    /// decisions are scored by encoders that never saw the game's start. They
+    /// must score every decision exactly as a policy that saw the whole game.
+    #[test]
+    #[ignore = "native qualification: small fixture policy inference"]
+    fn a_reset_policy_scores_later_decisions_as_a_continuous_one() {
+        replay_stack(|| {
+            let spec = spec(64, 128);
+            let src = case(0);
+            let mut session = bank::source_session(&spec, &src).unwrap();
+            let policy = FrozenPlayPolicyV1::training_fixture_v3();
+            // One continuous policy per seat, as in a branch.
+            let mut continuous = [
+                policy.fork_for_collection_v3().unwrap(),
+                policy.fork_for_collection_v3().unwrap(),
+            ];
+            continuous[0].reset_sampling_v1([1, 2]);
+            continuous[1].reset_sampling_v1([3, 4]);
+            let bits = |s: &crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1| {
+                let logits: Vec<u32> = s.logits.iter().map(|x| x.to_bits()).collect();
+                (logits, s.value.to_bits())
+            };
+            let mut compared = [0; 2];
+            while let Some(d) = decision(&session) {
+                let seat = usize::from(acting(&d).0);
+                let kept = continuous[seat].score_fast_session_v1(&session).unwrap();
+                let mut fresh = policy.fork_for_collection_v3().unwrap();
+                fresh.reset_sampling_v1([5, 6]);
+                let reset = fresh.score_fast_session_v1(&session).unwrap();
+                assert_eq!(bits(&kept), bits(&reset), "step {}", d.step);
+                compared[seat] += 1;
+                // Vary the line so later decisions see a mixed history.
+                let action = (d.step % u64::from(d.legal_action_count)) as u32;
+                session.step(d.episode_id, d.step, action).unwrap();
+            }
+            assert!(compared.iter().all(|&n| n >= 8), "{compared:?}");
         });
     }
 }
