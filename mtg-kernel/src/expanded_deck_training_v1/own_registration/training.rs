@@ -7,6 +7,8 @@ use crate::experimental_burn_net8_packed_v1::own_registration_training::{
 use crate::native_flat_tensorizer_v4::encoded_decision_view_v4;
 use crate::own_registration_v1::{contract_identity_v1, RegistrationExpectationV1};
 
+pub mod behavior;
+
 const CHECKPOINT_SCHEMA: &str = "mtg-kernel-own-registration-checkpoint/v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
