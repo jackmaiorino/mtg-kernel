@@ -11631,6 +11631,14 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let chandra_owner = match effect::chandra_flameshaper_v1::acquire_resume(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -11674,6 +11682,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         effect::resume_owned_frenzied_goblin_resolution(state, owner)
     } else if let Some(owner) = gourmand_owner.as_ref() {
         effect::resume_owned_vampire_gourmand_resolution(state, owner)
+    } else if let Some(owner) = chandra_owner {
+        effect::chandra_flameshaper_v1::resume(state, owner)
     } else if let Some(owner) = fiend_owner {
         effect::fiend_artisan_v1::resume(state, owner)
     } else if let Some(owner) = printed_optional_owner {

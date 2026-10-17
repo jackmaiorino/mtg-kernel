@@ -201,6 +201,7 @@ pub enum JournalV74 {
     ExileInput {
         publication: u64,
         prefix: Vec<EffectObjectBinding>,
+        original: Vec<crate::rl::CardStableRefV1>,
     },
     Exiled {
         input: u64,
@@ -518,6 +519,7 @@ fn capture(state: &GameState, index: u64) -> Result<(u64, &[EffectObjectBinding]
     let JournalV74::ExileInput {
         publication,
         prefix,
+        original,
     } = at(state, *input)?
     else {
         return Err("Chandra original exile input absent".into());
@@ -532,11 +534,18 @@ fn capture(state: &GameState, index: u64) -> Result<(u64, &[EffectObjectBinding]
         || cards.len() != moves.len()
         || public.len() != cards.len()
         || cards.len() != prefix.len()
+        || original.len() != prefix.len()
     {
         return Err("Chandra original exile batch changed".into());
     }
     for (i, ((old, card), event)) in prefix.iter().zip(cards).zip(moves).enumerate() {
-        if public[i].owner != item.controller
+        if original[i].zone != Zone::Library
+            || original[i].arena_id != old.object.0
+            || original[i].zone_change_count != old.expected_zone_change_count
+            || original[i].owner != item.controller
+            || original[i].controller != item.controller
+            || public[i].card_db_id != original[i].card_db_id
+            || public[i].owner != item.controller
             || public[i].controller != item.controller
             || card_def::CARD_DEFS
                 .get(public[i].card_db_id as usize)
@@ -611,9 +620,11 @@ fn validate_state_with_removed(
             JournalV74::ExileInput {
                 publication,
                 prefix,
+                original,
             } => {
                 if *publication >= i as u64
                     || prefix.len() > 3
+                    || original.len() != prefix.len()
                     || prefix
                         .iter()
                         .map(|b| b.object)
@@ -972,6 +983,55 @@ pub(crate) fn record_not_resolved(
     );
     Ok(())
 }
+/// The genuine ready row is fully validated before the engine's exact pop.
+/// The single-use value carries no serializable authority or public constructor.
+pub(crate) struct ResumeOwnerV74 {
+    native: NativeExecutionOwnerV1,
+}
+pub(crate) fn acquire_resume(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<ResumeOwnerV74>, String> {
+    let Some(pending) = state.engine.pending_effect.as_ref() else {
+        return Ok(None);
+    };
+    if !selected(state, &pending.resolving_item)
+        || !pending
+            .resolving_item
+            .v4
+            .crystal_prevention_started_v1
+            .is_empty()
+    {
+        return Ok(None);
+    }
+    super::validate_pending_effect_choice(state)?;
+    if pending.resolving_item != *item
+        || pending.choice.is_some()
+        || item.inline_effect != Some(plus_two())
+    {
+        return Err("Chandra ready resume lost original exact row or answered choice".into());
+    }
+    let position = crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
+        .ok_or("Chandra ready row absent")?;
+    let mut native = NativeExecutionOwnerV1::from_validated_pending(state)?;
+    native.saved_pending = Some(Box::new(pending.clone()));
+    if native.remaining_stack.remove(position) != *item
+        || native
+            .remaining_stack
+            .iter()
+            .any(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("Chandra ready row changed or duplicated".into());
+    }
+    Ok(Some(ResumeOwnerV74 { native }))
+}
+pub(crate) fn resume(
+    state: &mut GameState,
+    owner: ResumeOwnerV74,
+) -> Result<ResumableProgress, String> {
+    owner.native.validate_supplied_pending(state)?;
+    super::drive_with_native_row_v1(state, &owner.native)
+}
 fn candidate(b: EffectObjectBinding) -> EffectTargetCandidate {
     EffectTargetCandidate {
         target: Target::Object(b.object),
@@ -1075,12 +1135,17 @@ pub(super) fn begin(
                 return Err("Chandra mana event halted".into());
             }
             let prefix = bind_library_top(&staged, p.ctx.controller, 3);
+            let original = prefix
+                .iter()
+                .map(|b| crate::rl::card_ref(&staged, b.object).map_err(|e| e.to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
             let input = staged.engine.event_history.len() as u64;
             append(
                 &mut staged,
                 JournalV74::ExileInput {
                     publication,
                     prefix: prefix.clone(),
+                    original,
                 },
             );
             let start = staged.engine.event_history.len();
@@ -1549,3 +1614,11 @@ pub(crate) fn damage_source(
 fn has_pending_exile(state: &GameState) -> bool {
     rows(state).any(|(_,j)|matches!(j,JournalV74::ExileInput{publication,..}if !rows(state).any(|(_,other)|matches!(other,JournalV74::Completed{publication:done}if done==publication))))
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "chandra_flameshaper_v1_tests.rs"]
+mod tests;
