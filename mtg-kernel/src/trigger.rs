@@ -3645,6 +3645,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if crate::effect::liliana_dreadhorde_v1::definition(card_def) {
+        return &crate::effect::liliana_dreadhorde_v1::DEATH_TRIGGERS;
+    }
     if card.name == "Sphinx of Forgotten Lore"
         && crate::effect::sphinx_lore_v1::definition(card_def)
     {

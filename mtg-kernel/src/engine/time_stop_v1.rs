@@ -1467,10 +1467,6 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("../genesis_wave_public_v69.rs"),
                 ),
                 (
-                    "mtg-kernel/src/engine/tinybones_v72.rs",
-                    include_str!("tinybones_v72.rs"),
-                ),
-                (
                     "mtg-kernel/src/linked_aura_operation_v1/genesis_current_slots_v69.rs",
                     include_str!("../linked_aura_operation_v1/genesis_current_slots_v69.rs"),
                 ),
@@ -1529,6 +1525,14 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                 (
                     "mtg-kernel/src/current_mixed_policy_v1/ordinary_removal_printing.rs",
                     include_str!("../current_mixed_policy_v1/ordinary_removal_printing.rs"),
+                ),
+                (
+                    "mtg-kernel/src/engine/tinybones_v72.rs",
+                    include_str!("tinybones_v72.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/liliana_dreadhorde_v1.rs",
+                    include_str!("../effect/liliana_dreadhorde_v1.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());

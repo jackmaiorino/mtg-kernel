@@ -10120,6 +10120,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         .and_then(|_| ordinary_cleanup_v1::validate(state))
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
         .and_then(|()| effect::vivien_reid_v1::validate_state(state))
+        .and_then(|()| effect::liliana_dreadhorde_v1::validate_state(state))
         .and_then(|()| muldrotha_v1::validate_state(state))
         .and_then(|()| tinybones_v72::validate_state(state))
         .is_err()
@@ -20809,6 +20810,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     ordinary_cleanup_v1::validate(state)?;
     effect::genesis_wave_v1::validate_state(state)?;
     effect::vivien_reid_v1::validate_state(state)?;
+    effect::liliana_dreadhorde_v1::validate_state(state)?;
     muldrotha_v1::validate_state(state)?;
     tinybones_v72::validate_state(state)?;
     crate::leyline_axe_v1::validate(state)?;
@@ -24457,6 +24459,16 @@ fn finalize_activation(state: &mut GameState) {
             return;
         }
     };
+    frozen.liliana_payment = match effect::liliana_dreadhorde_v1::record_input(state, &pending) {
+        Ok(input) => input,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    };
     let ability = &ability;
     let mut discarded = Vec::new();
     if ability
@@ -24599,6 +24611,7 @@ struct FrozenActivationSource {
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
     vivien_payment: Option<u64>,
+    liliana_payment: Option<u64>,
     ravenous_payment: Option<crate::ravenous_amulet_v1::PaymentOwnerV1>,
     drake_payment: Option<crate::drake_hatcher_v1::custody::PaymentOwnerV1>,
 }
@@ -24640,6 +24653,7 @@ fn freeze_activation_source(
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
         vivien_payment: None,
+        liliana_payment: None,
         ravenous_payment: None,
         drake_payment: None,
     }
@@ -24761,6 +24775,15 @@ fn push_paid_activation(
         return;
     }
     if effect::vivien_reid_v1::record_paid(state, stack_item_id, frozen.vivien_payment).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    if effect::liliana_dreadhorde_v1::record_paid(state, stack_item_id, frozen.liliana_payment)
+        .is_err()
+    {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
