@@ -469,7 +469,7 @@ fn paid_storm_virtual_time_stop_exiles_original_and_copy_then_copy_ceases_both_s
         for branch in [&mut state, &mut replay] {
             end_turn(branch);
             assert_eq!(branch.objects.get(original).zone, Zone::Exile);
-            assert!(!branch.players[player.index()].exile.contains(&copy.source));
+            assert!(!branch.exile.contains(&copy.source));
             assert!(branch.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Stack,to:Zone::Exile,..} if *object==copy.source)));
             assert!(disposed(branch, &copy).unwrap());
         }

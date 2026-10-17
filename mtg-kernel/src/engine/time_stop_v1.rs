@@ -1519,6 +1519,14 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("muldrotha_v1.rs"),
                 ),
                 (
+                    "mtg-kernel/src/current_mixed_policy_v1/roots.rs",
+                    include_str!("../current_mixed_policy_v1/roots.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/ordinary_removal_printing.rs",
+                    include_str!("../current_mixed_policy_v1/ordinary_removal_printing.rs"),
+                ),
+                (
                     "mtg-kernel/src/effect/chandra_flameshaper_v1.rs",
                     include_str!("../effect/chandra_flameshaper_v1.rs"),
                 ),

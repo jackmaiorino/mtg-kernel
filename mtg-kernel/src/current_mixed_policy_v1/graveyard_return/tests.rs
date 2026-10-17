@@ -185,7 +185,7 @@ fn paid_both_printings_cast_entry_complete_rules_and_finite_numeric_native_parit
 fn paid_alesha_original_raid_target_costless_accept_decline_and_numeric_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for accept in [false, true] {
-            let (state, _alesha, target) = native::raid_ready_with_kill(actor, "Lightning Bolt");
+            let (state, _alesha, target) = native::raid_ready(actor);
             let mut owner = own(state);
             act(
                 &mut owner,
@@ -254,9 +254,9 @@ fn paid_familiar_death_original_schedule_and_next_endstep_numeric_replay_both_se
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = native::ready(actor);
         let familiar = native::paid(&mut state, actor, "Nine-Lives Familiar", None);
-        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        let breath = put(&mut state, actor, "Breath Weapon", Zone::Hand);
         let mut owner = own(state);
-        cast(&mut owner, actor, bolt, Some(familiar), 1);
+        cast(&mut owner, actor, breath, None, 3);
         drain(&mut owner);
         assert_eq!(
             owner.fixture_state().objects.get(familiar).zone,
@@ -289,6 +289,144 @@ fn paid_familiar_death_original_schedule_and_next_endstep_numeric_replay_both_se
                 owner.fixture_state().objects.get(familiar).zone,
                 Zone::Battlefield
             );
+            if let Some(result) = &result {
+                assert_eq!(&gameplay(&owner), result);
+            } else {
+                result = Some(gameplay(&owner));
+            }
+        }
+    }
+}
+
+#[test]
+fn paid_abrade_both_modes_and_numeric_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for selected_mode in [0, 1] {
+            let mut state = native::ready(actor);
+            let familiar = native::paid(&mut state, actor, "Nine-Lives Familiar", None);
+            // Explicit native token setup supplies a target, not a paid token issuer.
+            let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::create_token(treasure, actor.opponent()),
+            );
+            assert!(state.engine.halted.is_none());
+            let artifact = *state.players[actor.opponent().index()]
+                .battlefield
+                .iter()
+                .find(|&&object| state.objects.get(object).card_def == treasure)
+                .unwrap();
+            let (target, target_controller, survivor, survivor_controller) = if selected_mode == 0 {
+                (familiar, actor, artifact, actor.opponent())
+            } else {
+                (artifact, actor.opponent(), familiar, actor)
+            };
+            let abrade = put(&mut state, actor, "Abrade", Zone::Hand);
+            let mut owner = own(state);
+            let before = taps(&owner, actor);
+            act(
+                &mut owner,
+                |a| matches!(a, A::CastSpell { source, .. } if source.arena_id == abrade.0),
+            );
+            let modes = current(&owner)
+                .backend
+                .actions()
+                .iter()
+                .filter_map(|a| match a {
+                    A::ChooseSpellMode { mode_index, .. } => Some(*mode_index),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(modes, [0, 1]);
+            let saved = owner.snapshot();
+            let mut result = None;
+            for replay in [false, true] {
+                if replay {
+                    owner.restore(&saved).unwrap();
+                }
+                act(
+                    &mut owner,
+                    |a| matches!(a, A::ChooseSpellMode { mode_index, .. } if *mode_index == selected_mode),
+                );
+                act(&mut owner, |a| {
+                    matches!(a, A::ChooseTarget { target: TargetRefV1::Object { object }, .. }
+                    if object.arena_id == target.0)
+                });
+                assert!(owner.fixture_state().engine.pending_cast.is_none());
+                assert_eq!(owner.fixture_state().objects.get(abrade).zone, Zone::Stack);
+                assert_eq!(taps(&owner, actor) - before, 2);
+                assert_eq!(
+                    owner.fixture_state().players[actor.index()].mana_pool,
+                    [0; 6]
+                );
+                drain(&mut owner);
+                assert!(!owner.fixture_state().players[target_controller.index()]
+                    .battlefield
+                    .contains(&target));
+                assert!(owner.fixture_state().players[survivor_controller.index()]
+                    .battlefield
+                    .contains(&survivor));
+                assert_eq!(
+                    owner.fixture_state().objects.get(abrade).zone,
+                    Zone::Graveyard
+                );
+                if let Some(result) = &result {
+                    assert_eq!(&gameplay(&owner), result);
+                } else {
+                    result = Some(gameplay(&owner));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn paid_breath_weapon_excludes_dragons_but_damages_other_flyers_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = native::ready(actor);
+        native::paid(&mut state, actor, "Nine-Lives Familiar", None);
+        // Explicit native token setup isolates the printed damage filter.
+        let mut targets = Vec::new();
+        for (name, controller) in [
+            ("Dragon Token", actor),
+            ("Drake Token", actor.opponent()),
+            ("Goblin Token", actor),
+        ] {
+            let card = crate::card_def::card_id_by_name(name).unwrap();
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::create_token(card, controller),
+            );
+            assert!(state.engine.halted.is_none());
+            let object = *state.players[controller.index()]
+                .battlefield
+                .iter()
+                .find(|&&object| state.objects.get(object).card_def == card)
+                .unwrap();
+            targets.push((object, controller));
+        }
+        let breath = put(&mut state, actor, "Breath Weapon", Zone::Hand);
+        let mut owner = own(state);
+        cast(&mut owner, actor, breath, None, 3);
+        let saved = owner.snapshot();
+        let mut result = None;
+        for replay in [false, true] {
+            if replay {
+                owner.restore(&saved).unwrap();
+            }
+            drain(&mut owner);
+            let state = owner.fixture_state();
+            let (dragon, controller) = targets[0];
+            assert!(state.players[controller.index()]
+                .battlefield
+                .contains(&dragon));
+            assert_eq!(state.objects.get(dragon).damage, 0);
+            for &(object, controller) in &targets[1..] {
+                assert!(!state.players[controller.index()]
+                    .battlefield
+                    .contains(&object));
+            }
+            assert_eq!(state.objects.get(breath).zone, Zone::Graveyard);
             if let Some(result) = &result {
                 assert_eq!(&gameplay(&owner), result);
             } else {

@@ -1525,6 +1525,9 @@ fn conflicts_in_scope(
             | ProgenitusInputV1 { .. }
             | ProgenitusShuffledV1 { .. }
             | LeylineOpeningV1 { .. }
+            | MuldrothaOptionsV1 { .. }
+            | MuldrothaSelectedV1 { .. }
+            | MuldrothaPlayedV1 { .. }
             | FiendArtisanInputV1 { .. }
             | FiendArtisanPaidV1 { .. }
             | FiendArtisanSearchStartedV1 { .. }
