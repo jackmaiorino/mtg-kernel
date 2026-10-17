@@ -534,6 +534,43 @@ impl CallSessionV62 {
         }
         Ok(fresh)
     }
+    /// Sample only current unknown slots, preserving the complete issued Call
+    /// decision and every factual native journal. The clone owns a fresh lineage.
+    pub fn sampled_clone_v62(
+        &self,
+        decision: &CallDecisionV62,
+        seed: u64,
+    ) -> Result<Self, RlContractError> {
+        let before = self.validated_current(decision)?;
+        let actor = self
+            .inner
+            .current
+            .as_ref()
+            .ok_or_else(|| RlContractError("V62 sampling has no current decision".into()))?
+            .actor;
+        let mut inner = self.inner.clone();
+        super::flat_action_v4::redeterminize_call_v62(&mut inner.state, actor, seed)
+            .map_err(|error| RlContractError(format!("V62 current-slot sampling:{error:?}")))?;
+        let mut current = inner
+            .current
+            .take()
+            .ok_or_else(|| RlContractError("V62 sampled current decision absent".into()))?;
+        prepare_current(&inner, &mut current).map_err(binding_error)?;
+        inner.flat_action_cache_spare = None;
+        inner.flat_action_cache_spare_v2 = None;
+        inner.current = Some(current);
+        let sampled = Self {
+            inner,
+            owner: std::sync::Arc::new(()),
+            generation: self.generation,
+        };
+        if sampled.fresh_binding()? != before {
+            return Err(RlContractError(
+                "V62 sampled complete public/native binding changed".into(),
+            ));
+        }
+        Ok(sampled)
+    }
     pub fn validate_decision_v62(&self, decision: &CallDecisionV62) -> Result<(), RlContractError> {
         self.validated_current(decision).map(|_| ())
     }
@@ -598,6 +635,12 @@ impl CallSessionV62 {
     }
 }
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod sampler_tests;
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",

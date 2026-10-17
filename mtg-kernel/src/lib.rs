@@ -806,6 +806,7 @@ pub mod rules_meaning_drakuseth_v67;
 
 pub mod call_candidates_v62;
 pub mod call_observation_v62;
+pub mod cast_identity_v1;
 
 pub mod limited_call_session_v8;
 

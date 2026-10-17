@@ -2043,6 +2043,11 @@ pub enum CommittedEvent {
         // None is the original virtual-copy disposition, never a GY move.
         departure: Option<Zone>,
     },
+    /// Public identity of one finalized physical cast, captured before its
+    /// bare SpellCast marker. Concealed casts retain no private printing.
+    PublishedCastIdentityV1 {
+        receipt: crate::cast_identity_v1::ReceiptV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
