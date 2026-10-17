@@ -108,5 +108,5 @@ and6 frozen-target cases pass,250 total. Both canonical generators --check pass;
 pinned formatting, diff checks, CI matrix/filter checks and Bash syntax pass.
 Old private sampling-scope enum prefixes and old-scope branch truth tables are
 preserved, with an explicit Muldrotha-history refusal outside V71. Registry,
-frozen target, original sample bytes and shared source guard bytes remain
+frozen target, original sample bytes and rl.rs consumer source guards remain
 identical to ed579609. Rust source and all16 V71 fixture groups are still UNRUN.
