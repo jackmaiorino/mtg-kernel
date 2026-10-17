@@ -888,6 +888,11 @@ fn paid_spirit_self_reflection_electroduplicate_copy_of_copy_and_season_restore_
     for p in [PlayerId::P0, PlayerId::P1] {
         for season in [false, true] {
             let mut s = ready(p);
+            // Keep four real initial blue sources for both paid Self-Reflections
+            // after the earlier generic payments have consumed the first Islands.
+            for _ in 0..4 {
+                put(&mut s, p, "Island", Zone::Battlefield);
+            }
             if season {
                 cast(&mut s, p, "Doubling Season", &[], 5);
                 finish(&mut s);
@@ -1127,6 +1132,11 @@ fn genuine_native_spell_copies_of_paid_spirit_copy_spells_keep_ancestry_and_rest
         for season in [false, true] {
             for name in ["Self-Reflection", "Electroduplicate"] {
                 let mut s = ready(p);
+                // Season, Kykar and Amulet can consume the original blue sources.
+                // Fund the selected paid Self-Reflection with actual initial lands.
+                for _ in 0..2 {
+                    put(&mut s, p, "Island", Zone::Battlefield);
+                }
                 if season {
                     cast(&mut s, p, "Doubling Season", &[], 5);
                     finish(&mut s);

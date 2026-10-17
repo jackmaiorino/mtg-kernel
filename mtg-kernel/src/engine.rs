@@ -14948,16 +14948,11 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
-    // Same `priority_passes`/`priority_player` reset as `reset_priority`
-    // (117.5: priority passes to the active player once a triggered
-    // ability is put on the stack), but deliberately inlined instead of
-    // calling that shared helper: a trigger firing mid-cascade off another
-    // action (e.g. Guttersnipe off a cast) is not a rules-level "everyone's
-    // pass streak clears" boundary in the same sense `advance_step`/a
-    // resolution/declare-attackers-or-blockers are, so it must not bump
-    // `EngineState::priority_round` -- see that field's doc.
+    // 117.3c/117.5: placing triggers precedes priority; it does not change
+    // the player who would have received it (including an off-turn caster).
+    // Clear the pass streak without bumping `priority_round`: this is not
+    // a new step, resolution or declare-attackers/blockers boundary.
     state.engine.priority_passes = [false, false];
-    state.priority_player = state.active_player;
     Ok(())
 }
 
