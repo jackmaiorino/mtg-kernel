@@ -40,6 +40,9 @@ use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use serde_json::{json, Value};
 use std::time::Instant;
 
+mod execution;
+pub(super) use execution::ExecutionMode;
+
 pub(super) const TOTAL_BUDGET: u64 = 512_000;
 pub(super) const ANCHOR_BUDGET: u64 = 128_000;
 pub(super) const REFRESH_BUDGET: u64 = 64_000;
@@ -132,6 +135,8 @@ pub(super) struct GuideRun {
     pub(super) bestline: Option<u64>,
     /// Passive actual reused-decision evidence; never changes execution.
     pub(super) reuse_witnesses: Recording,
+    /// Opt-in root-only execution, independently of search allocation.
+    pub(super) executor: ExecutionMode,
 }
 
 impl GuideRun {
@@ -141,6 +146,7 @@ impl GuideRun {
         interchange: false,
         bestline: None,
         reuse_witnesses: Recording::Disabled,
+        executor: ExecutionMode::Persistent,
     };
 }
 
@@ -469,6 +475,16 @@ fn guide_inner(
     #[cfg(feature = "viewer-recording-v1")] max_step: Option<u64>,
     #[cfg(feature = "viewer-recording-v1")] actual_core_hash: Option<&mut u64>,
 ) -> Result<(Value, Option<Tree>), String> {
+    run.executor.validate_budget(
+        false,
+        run.mode,
+        run.interchange,
+        run.bestline,
+        run.reuse_witnesses,
+    )?;
+    if run.executor == ExecutionMode::RootOnly && !run.opening {
+        return Err("root-only-v1 runs from ordinary openings only".into());
+    }
     let started = Instant::now();
     let focal = PlayerId(src.seat);
     let defs = spy_defs();
@@ -578,18 +594,32 @@ fn guide_inner(
                 log.hit(cursor.search, d.step, k);
             }
             let new_root = cursor.depth == 1 && !cursor.advanced;
+            let route = execution::route(
+                run.executor,
+                new_root,
+                rule(lookup, allocation, searches.used, true),
+            );
             let mut edge_backups = None;
-            let (a, chooser) = match rule(lookup, allocation, searches.used, true) {
-                Step::Execute(e) => {
+            let suppressed_reuse = match route {
+                execution::Route::RawInsteadOfReuse(edge) => {
                     let h = hit.as_ref().expect("a supported lookup has a node");
-                    edge_backups = h.backups;
-                    (
-                        cursor.live(h, e)?,
-                        if new_root { "new_root" } else { "reused" },
+                    Some(
+                        json!({"storage_edge_index":edge,"live_action":cursor.live(h, edge)?,
+                        "natural_terminal_backups":h.backups}),
                     )
                 }
-                _ => (act_plain(live_focal, &s, &d, &mut c)?, "plain"),
+                _ => None,
             };
+            let a = execution::choose(
+                route,
+                |edge| {
+                    let h = hit.as_ref().expect("a supported lookup has a node");
+                    edge_backups = h.backups;
+                    cursor.live(h, edge)
+                },
+                || act_plain(live_focal, &s, &d, &mut c),
+            )?;
+            let chooser = route.chooser(new_root);
             // Along a matching history an interchangeable copy plays as its
             // representative, so the cursor stays on the stored edge.
             let a = match &hit {
@@ -636,6 +666,13 @@ fn guide_inner(
                 "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
                 "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen}),
             );
+            if run.executor == ExecutionMode::RootOnly {
+                let record = decisions.last_mut().expect("just recorded decision");
+                record["executor"] = json!(execution::ROOT_ONLY_IDENTITY);
+                if let Some(candidate) = suppressed_reuse {
+                    record["suppressed_reuse"] = candidate;
+                }
+            }
             if let Some(witness) = reuse_witness {
                 decisions.last_mut().expect("just recorded decision")["reuse_witness"] = witness;
             }
@@ -719,6 +756,38 @@ pub(super) fn budget_case(
     reuse_witnesses: Recording,
     binding: &str,
 ) -> Result<Value, String> {
+    budget_case_with_executor(
+        sh,
+        policy,
+        src,
+        total,
+        mode,
+        interchange,
+        bestline,
+        reuse_witnesses,
+        binding,
+        ExecutionMode::Persistent,
+    )
+}
+
+/// Explicit sibling; legacy callers never select an alternate executor.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "versioned budget player contract"
+)]
+pub(super) fn budget_case_with_executor(
+    sh: &BankShared,
+    policy: &FrozenPlayPolicyV1,
+    src: &SourceSpec,
+    total: u64,
+    mode: KeyMode,
+    interchange: bool,
+    bestline: Option<u64>,
+    reuse_witnesses: Recording,
+    binding: &str,
+    executor: ExecutionMode,
+) -> Result<Value, String> {
+    executor.validate_budget(false, mode, interchange, bestline, reuse_witnesses)?;
     let started = Instant::now();
     let opp = sh
         .labels
@@ -750,6 +819,7 @@ pub(super) fn budget_case(
             interchange,
             bestline,
             reuse_witnesses,
+            executor,
         },
     )?;
     let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -758,6 +828,7 @@ pub(super) fn budget_case(
         "search_root":src.search_root,"bank_binding_sha256":binding,
         "allocation":{"initial":allocation.anchor,"refresh":allocation.refresh,"total":allocation.total},
         "game":rec,"wall":started.elapsed().as_secs_f64()});
+    executor.annotate_row(&mut row);
     // Present only when merging was on, so default rows are unchanged.
     if interchange {
         row["interchange"] = json!(INTERCHANGE_RULE);
@@ -1777,5 +1848,217 @@ mod tests {
         let ctx = guide_ctx(&s, focal, 0, &seeds, &prior, limits).unwrap();
         let (sel, tree) = roles.select_e(&ctx);
         assert!(!sel.incomplete && sel.faults.is_empty() && !tree.nodes.is_empty());
+    }
+
+    /// Real sessions/cursor history with synthetic eight-backup stored nodes.
+    /// No search or strength claim. The selected child edge deliberately differs
+    /// from the frozen sampler action, exposing advancement along the wrong edge.
+    #[test]
+    #[ignore = "bounded native routing qualification: at most 514 prefix steps and 20 fixture policy calls"]
+    fn root_only_executor_preserves_new_roots_and_uses_one_live_raw_draw_on_reuse() {
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut live = policy.fork_for_collection_v3().unwrap();
+        let mut reference = policy.fork_for_collection_v3().unwrap();
+        live.reset_sampling_v1([7, 9]);
+        reference.reset_sampling_v1([7, 9]);
+        let original_streams = live.sampling_stream_snapshot_for_test_v1();
+        assert_eq!(
+            original_streams,
+            reference.sampling_stream_snapshot_for_test_v1()
+        );
+        // Exercise the existing forced-decision helper on an actual forced
+        // response. Both physical seats must retain their sampling state.
+        let mut forced_state = game(11);
+        let mut forced = None;
+        for _ in 0..128 {
+            let d = decision(&forced_state).expect("forced fixture ended early");
+            if d.legal_action_count == 1 {
+                forced = Some(d);
+                break;
+            }
+            forced_state.step(d.episode_id, d.step, 0).unwrap();
+        }
+        let forced = forced.expect("fixture needs one actual forced decision");
+        let mut forced_calls = Counters::default();
+        assert_eq!(
+            act_plain(&mut live, &forced_state, &forced, &mut forced_calls).unwrap(),
+            0
+        );
+        assert_eq!(forced_calls.inference, 0);
+        assert_eq!(
+            live.sampling_stream_snapshot_for_test_v1(),
+            original_streams
+        );
+        let mut state = game(11);
+        let eligible = |d: &crate::rl_session::FastActorDecisionV1| {
+            acting(d) == PlayerId(0) && d.legal_action_count >= 2
+        };
+        let bounded_next = |state: &mut FastActorSessionV1| {
+            for _ in 0..128 {
+                let d = decision(state).expect("fixture ended before next focal decision");
+                if eligible(&d) {
+                    return d;
+                }
+                state.step(d.episode_id, d.step, 0).unwrap();
+            }
+            panic!("fixture exceeded bounded prefix");
+        };
+        let first = bounded_next(&mut state);
+        let mut cursor = Cursor::new(Tree::default(), 0, KeyMode::Repaired, false);
+        let mut reference_keyer = Keyer::new(KeyMode::Repaired, KeyStats::default());
+        let reference_first = reference_keyer.step(&state, first).unwrap();
+        let st = cursor.keyer.step(&state, first).unwrap();
+        let (key, parent, edge, canon) = cursor.keyer.storage(&st);
+        let mut node = super::super::tree::Node::with_perm(
+            parent,
+            edge,
+            canon.clone(),
+            2,
+            (0..canon.edges.len()).collect(),
+        );
+        node.n.fill(8);
+        node.visits = 8 * node.n.len() as u64;
+        cursor.tree.nodes.insert(key, node);
+        let (lookup, hit) = cursor.lookup(&state, first).unwrap();
+        let hit = hit.unwrap();
+        let Lookup::Supported(edge) = lookup else {
+            panic!("synthetic root lacks support")
+        };
+        assert!(cursor.depth == 1 && !cursor.advanced);
+        let route = execution::route(ExecutionMode::RootOnly, true, Step::Execute(edge));
+        assert_eq!(route.chooser(true), "new_root");
+        let first_action = execution::choose(
+            route,
+            |e| cursor.live(&hit, e),
+            || panic!("new root drew raw policy"),
+        )
+        .unwrap();
+        assert_eq!(
+            live.sampling_stream_snapshot_for_test_v1(),
+            original_streams
+        );
+        // Persistent root execution must also leave both live streams intact.
+        let persistent = execution::route(ExecutionMode::Persistent, true, Step::Execute(edge));
+        assert_eq!(
+            execution::choose(
+                persistent,
+                |e| cursor.live(&hit, e),
+                || panic!("persistent new root drew raw policy")
+            )
+            .unwrap(),
+            first_action
+        );
+        assert_eq!(
+            live.sampling_stream_snapshot_for_test_v1(),
+            original_streams
+        );
+        cursor.advance(hit, first_action);
+        reference_keyer.advance(reference_first, first_action);
+        state
+            .step(first.episode_id, first.step, first_action)
+            .unwrap();
+
+        let child = bounded_next(&mut state);
+        let expected = reference.select_fast_session_v1(&state).unwrap();
+        let reference_child = reference_keyer.step(&state, child).unwrap();
+        let st = cursor.keyer.step(&state, child).unwrap();
+        let (key, parent, parent_edge, canon) = cursor.keyer.storage(&st);
+        let chosen_edge = canon
+            .edges
+            .iter()
+            .position(|bytes| live_index(canon, bytes).unwrap() != expected)
+            .expect("fixture needs a different supported candidate");
+        let candidate = live_index(canon, &canon.edges[chosen_edge]).unwrap();
+        let mut node = super::super::tree::Node::with_perm(
+            parent,
+            parent_edge,
+            canon.clone(),
+            2,
+            (0..canon.edges.len()).collect(),
+        );
+        node.n.fill(8);
+        node.wins[chosen_edge] = 8;
+        node.visits = 8 * node.n.len() as u64;
+        cursor.tree.nodes.insert(key, node);
+        let (lookup, hit) = cursor.lookup(&state, child).unwrap();
+        let hit = hit.unwrap();
+        assert_eq!(lookup, Lookup::Supported(chosen_edge));
+        assert!(cursor.advanced);
+        let route = execution::route(ExecutionMode::RootOnly, false, Step::Execute(chosen_edge));
+        assert_eq!(route.chooser(false), "raw_instead_of_reuse");
+        let mut calls = Counters::default();
+        let actual = execution::choose(
+            route,
+            |_| panic!("reused edge was selected"),
+            || act_plain(&mut live, &state, &child, &mut calls),
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+        assert_ne!(actual, candidate);
+        assert_eq!(calls.inference, 1);
+        assert_eq!(
+            live.sampling_stream_snapshot_for_test_v1(),
+            reference.sampling_stream_snapshot_for_test_v1()
+        );
+        // Persistent reuse still selects the tree edge without an extra raw
+        // draw, retaining its pre-existing continuation stream position.
+        let mut persistent_live = policy.fork_for_collection_v3().unwrap();
+        let mut persistent_reference = policy.fork_for_collection_v3().unwrap();
+        persistent_live.reset_sampling_v1([7, 9]);
+        persistent_reference.reset_sampling_v1([7, 9]);
+        let persistent =
+            execution::route(ExecutionMode::Persistent, false, Step::Execute(chosen_edge));
+        assert_eq!(
+            execution::choose(
+                persistent,
+                |e| cursor.live(&hit, e),
+                || panic!("persistent reuse drew raw policy")
+            )
+            .unwrap(),
+            candidate
+        );
+        assert_eq!(
+            persistent_live.sampling_stream_snapshot_for_test_v1(),
+            persistent_reference.sampling_stream_snapshot_for_test_v1()
+        );
+        cursor.advance(hit, actual);
+        reference_keyer.advance(reference_child, actual);
+        state.step(child.episode_id, child.step, actual).unwrap();
+
+        let next = bounded_next(&mut state);
+        let (lookup, hit) = cursor.lookup(&state, next).unwrap();
+        assert_eq!(lookup, Lookup::Miss);
+        let st = reference_keyer.step(&state, next).unwrap();
+        let hit = hit.unwrap();
+        let actual_key = cursor.keyer.storage(&hit.step);
+        let expected_key = reference_keyer.storage(&st);
+        assert_eq!(
+            (actual_key.0, actual_key.1, actual_key.2),
+            (expected_key.0, expected_key.1, expected_key.2)
+        );
+        let allocation = Allocation {
+            anchor: ANCHOR_BUDGET,
+            refresh: REFRESH_BUDGET,
+            total: 2_048_000,
+        };
+        assert_eq!(
+            rule(lookup, allocation, ANCHOR_BUDGET, false),
+            Step::Refresh(REFRESH_BUDGET)
+        );
+        // Check the actual legacy stream continuation as well as draw states.
+        assert_eq!(
+            persistent_live.select_fast_session_v1(&state).unwrap(),
+            persistent_reference.select_fast_session_v1(&state).unwrap()
+        );
+        assert_eq!(
+            persistent_live.sampling_stream_snapshot_for_test_v1(),
+            persistent_reference.sampling_stream_snapshot_for_test_v1()
+        );
+        for _ in 0..8 {
+            assert_eq!(
+                live.select_fast_session_v1(&state).unwrap(),
+                reference.select_fast_session_v1(&state).unwrap()
+            );
+        }
     }
 }
