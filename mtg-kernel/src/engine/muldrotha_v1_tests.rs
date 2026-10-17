@@ -6,7 +6,7 @@ const NAME: &str = "Muldrotha, the Gravetide";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(p: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready(p: PlayerId, hidden: &str) -> GameState {
     let a = [id("Forest"); 80];
     let b = [id(hidden); 80];
     let (a, b) = if p == PlayerId::P0 {
@@ -65,7 +65,7 @@ fn pass(s: &mut GameState, d: Decision) {
     };
     step(s, a).unwrap();
 }
-fn priority(s: &mut GameState, p: PlayerId) {
+pub(crate) fn priority(s: &mut GameState, p: PlayerId) {
     for _ in 0..64 {
         let d = next(s);
         if matches!(d,Decision::CastSpellOrPass { player,.. } if player==p) {
@@ -75,7 +75,7 @@ fn priority(s: &mut GameState, p: PlayerId) {
     }
     panic!("priority absent");
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..64 {
         let d = next(s);
         if s.stack.is_empty() && s.engine.pending_effect.is_none() {
@@ -85,14 +85,14 @@ fn finish(s: &mut GameState) {
     }
     panic!("native stack unfinished");
 }
-fn tapped(s: &GameState, p: PlayerId) -> usize {
+pub(crate) fn tapped(s: &GameState, p: PlayerId) -> usize {
     s.players[p.index()]
         .battlefield
         .iter()
         .filter(|id| s.objects.get(**id).tapped)
         .count()
 }
-fn pay(
+pub(crate) fn pay(
     s: &mut GameState,
     p: PlayerId,
     card: ObjectId,
@@ -101,7 +101,7 @@ fn pay(
 ) -> StackItem {
     pay_form(s, p, card, permission, target, 0, 0)
 }
-fn pay_form(
+pub(crate) fn pay_form(
     s: &mut GameState,
     p: PlayerId,
     card: ObjectId,
@@ -196,7 +196,7 @@ fn complete_cast(
     }
     panic!("native cast unfinished");
 }
-fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     let card = put(s, p, NAME, Zone::Hand);
     let before = tapped(s, p);
     pay(s, p, card, None, None);

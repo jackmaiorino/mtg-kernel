@@ -831,3 +831,9 @@ pub mod vivien_candidates_v70;
 pub mod vivien_observation_v70;
 
 pub mod limited_vivien_session_v11;
+pub mod muldrotha_public_v71;
+pub mod rules_meaning_muldrotha_v71;
+
+pub mod limited_muldrotha_session_v12;
+pub mod muldrotha_candidates_v71;
+pub mod muldrotha_observation_v71;
