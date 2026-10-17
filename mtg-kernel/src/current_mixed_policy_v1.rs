@@ -411,6 +411,11 @@ pub fn feature_identity() -> String {
             include_str!("bin/kernel_limited_chandra_env_v15.rs"),
             include_str!("../../python/tools/limited_chandra_session_v15.py"),
             include_str!("effect/liliana_dreadhorde_v1.rs"),
+            include_str!("human_bo3_v1/kaito_v75.rs"),
+            include_str!("human_bo3_v1/limited_kaito_v16.rs"),
+            include_str!("limited_kaito_session_v16.rs"),
+            include_str!("bin/kernel_limited_kaito_env_v16.rs"),
+            include_str!("../../python/tools/limited_kaito_session_v16.py"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

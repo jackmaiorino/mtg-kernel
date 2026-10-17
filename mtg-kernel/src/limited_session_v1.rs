@@ -75,6 +75,10 @@ impl CustomDeckV1 {
         self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::ChandraV74)
     }
 
+    pub(crate) fn resolve_kaito_v75(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::KaitoV75)
+    }
+
     fn resolve_for_scope(
         &self,
         scope: crate::rl::CommonProjectionScopeV42,

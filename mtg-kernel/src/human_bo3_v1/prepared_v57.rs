@@ -1070,6 +1070,22 @@ pub(super) fn choice_label_chandra(
     )
 }
 
+pub(super) fn choice_label_kaito(
+    obs: &crate::kaito_observation_v75::KaitoObservationV75,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    choice_label_parts(
+        &obs.common.common,
+        obs.common.common.trigger_order.as_ref(),
+        &obs.spinner,
+        &obs.phoenix,
+        &obs.quandary,
+        action,
+        handles,
+    )
+}
+
 pub(super) fn choice_label_graveyard_return(
     obs: &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
     action: &ActionSemanticV1,

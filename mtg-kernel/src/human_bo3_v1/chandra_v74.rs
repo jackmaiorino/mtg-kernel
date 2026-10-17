@@ -915,7 +915,7 @@ fn chandra_damage(
             .collect::<Result<_, Error>>()?,
     })
 }
-fn chandra_facts(
+pub(super) fn chandra_facts(
     v: &crate::chandra_public_v74::FactsV74,
     battlefield: &[Vec<HumanTinybonesCurrentV72>; 2],
     h: &mut Handles,

@@ -80,7 +80,7 @@ jobs:
             # also relevant because they determine which tests execute.
             # Other non-embedded python, docs, and markdown are irrelevant.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -673,11 +673,11 @@ jobs:
           done
           exit "$status"
 
-      - name: Build limited-v12/v13/v14/v15 declared JSONL binaries
+      - name: Build limited-v12/v13/v14/v15/v16 declared JSONL binaries
         if: ${{ !cancelled() && matrix.group == 'limited-v12' }}
-        run: cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_muldrotha_env_v12 --bin kernel_limited_tinybones_env_v13 --bin kernel_limited_liliana_env_v14 --bin kernel_limited_chandra_env_v15
+        run: cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_muldrotha_env_v12 --bin kernel_limited_tinybones_env_v13 --bin kernel_limited_liliana_env_v14 --bin kernel_limited_chandra_env_v15 --bin kernel_limited_kaito_env_v16
 
-      - name: Validate Muldrotha V71 through Chandra V74 native owners and transports
+      - name: Validate Muldrotha V71 through Kaito V75 native owners and transports
         if: ${{ !cancelled() && matrix.group == 'limited-v12' }}
         run: |
           status=0
@@ -699,7 +699,12 @@ jobs:
             rl_session::chandra_v74:: \
             current_mixed_policy_v1::chandra:: \
             human_bo3_v1::chandra_v74:: \
-            limited_chandra_session_v15::; do
+            limited_chandra_session_v15:: \
+            effect::kaito_cunning_v75:: \
+            rl_session::kaito_v75:: \
+            current_mixed_policy_v1::kaito:: \
+            human_bo3_v1::kaito_v75:: \
+            limited_kaito_session_v16::; do
             python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --nocapture "$filter" || status=1
           done
           exit "$status"
