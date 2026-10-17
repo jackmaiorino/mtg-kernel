@@ -1,5 +1,5 @@
-//! Genuine paid Chandra fixtures. The printing is still unregistered in the
-//! prerequisite checkpoint, so these groups are not execution qualification.
+//! Genuine paid Chandra source fixtures. Real Partial493 follows the actual
+//! Tinybones490 and Liliana491/Zombie492 definitions. Rust remains unrun.
 //! Zone/counter/shield/face-down setup explicitly marked below is native
 //! primitive coverage, not an invented paid printing or copy-spell issuer.
 use super::*;
@@ -107,6 +107,19 @@ fn activate(s: &mut GameState, p: PlayerId, c: ObjectId, index: u8, units: &[Tar
                 return row;
             }
             d => panic!("Chandra activation did not publish {d:?}"),
+        }
+        if s.engine.pending_activation.as_ref().is_some_and(|pending| {
+            pending
+                .chandra_damage_v74
+                .as_ref()
+                .is_some_and(|d| d.finished)
+        }) {
+            // The completed answer awaits native Advance, never a second menu.
+            let before = s.clone();
+            assert!(engine::step(s, Action::FinishEffectSelection).is_err());
+            assert_eq!(*s, before);
+            assert!(engine::step(s, Action::ChooseEffectTarget(Target::Player(p))).is_err());
+            assert_eq!(*s, before);
         }
     }
     panic!("Chandra activation missing")
@@ -740,6 +753,67 @@ fn genuine_paid_division_union_includes_original_planeswalker_and_creature_contr
         assert_eq!(s, replay);
         assert_eq!(crate::planeswalker_v1::loyalty(&s, ajani), Some(old - 3));
         assert_eq!(s.objects.get(creature).zone, Zone::Graveyard);
+        validate_state(&s).unwrap();
+    }
+}
+
+#[test]
+fn genuine_paid_liliana_zombie_copy_uses_distinct_native_permit_and_raw_partial_creation_refuses_both_seats(
+) {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p);
+        let liliana = cast(&mut s, p, "Liliana, Dreadhorde General", &[], 6);
+        finish(&mut s);
+        priority(&mut s, p);
+        assert!(
+            matches!(next(&mut s),Decision::CastSpellOrPass{activatable_abilities,..}if activatable_abilities.contains(&(liliana,0)))
+        );
+        engine::step(&mut s, Action::ActivateAbility(liliana, 0)).unwrap();
+        priority(&mut s, p);
+        assert_eq!(crate::planeswalker_v1::loyalty(&s, liliana), Some(7));
+        assert!(s
+            .stack
+            .iter()
+            .any(|r| r.source == liliana && r.inline_effect == Some(EffectOp::LilianaZombieV1)));
+        finish(&mut s);
+        let blueprint = card_def::card_id_by_name("Zombie Token").unwrap();
+        assert_eq!(blueprint, 492);
+        let zombie = s.players[p.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|o| s.objects.get(*o).v4.is_token && s.objects.get(*o).card_def == blueprint)
+            .unwrap();
+        assert_eq!(event::copiable_token_abilities_v1(&s, zombie).unwrap(), 0);
+        let mut bad = restore(&s);
+        let before = bad.clone();
+        event::propose_and_commit_batch(
+            &mut bad,
+            vec![event::ProposedEvent::create_token(blueprint, p)],
+        );
+        assert!(bad.engine.halted.take().is_some());
+        assert_eq!(bad, before);
+        let c = walker(&mut s, p);
+        let before = s.players[p.index()].battlefield.clone();
+        activate(&mut s, p, c, 1, &[Target::Object(zombie)]);
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        let copied = s.players[p.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|o| {
+                !before.contains(o)
+                    && s.objects.get(*o).v4.is_token
+                    && s.objects.get(*o).card_def == blueprint
+            })
+            .unwrap();
+        assert_eq!(s.objects.get(copied).owner, p);
+        assert_eq!(engine::checked_effective_pt(&s, copied).unwrap(), (2, 2));
+        assert!(engine::has_effective_keyword(&s, copied, Keywords::HASTE));
+        assert_eq!(event::copiable_token_abilities_v1(&s, copied).unwrap(), 1);
         validate_state(&s).unwrap();
     }
 }

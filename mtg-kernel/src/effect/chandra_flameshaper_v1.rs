@@ -1,4 +1,4 @@
-//! Unregistered native prerequisite for frozen FDN81, Chandra, Flameshaper.
+//! Native Partial source for frozen FDN81, Chandra, Flameshaper.
 //! Pinned Mage a5c90fe180021e70e2a644ade00eeab07f857a40,
 //! Mage.Sets/src/mage/cards/c/ChandraFlameshaper.java. No consumer admission.
 use super::*;
@@ -1109,7 +1109,6 @@ pub(super) fn begin(
     owner.validate_entry(state, &p.resolving_item, &p.ctx, &program(index as usize))?;
     validate_state_with_removed(state, Some(&owner.item))?;
     let (publication, payment) = self::publication(state, &p.resolving_item)?;
-    let payment = payment.clone();
     if rows(state)
         .any(|(_, j)| matches!(j,JournalV74::Completed{publication:old}if *old==publication))
     {

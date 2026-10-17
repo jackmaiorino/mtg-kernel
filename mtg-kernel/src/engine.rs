@@ -20765,7 +20765,9 @@ fn pending_activation_action_stage(
     if crew_requirement(staged_ability.cost).is_some() && !pending.crew_finished {
         return Ok(PendingActivationActionStage::Crew);
     }
-    if pending.targets_chosen.len() < usize::from(target_count(pending.target_spec)) {
+    if pending.chandra_damage_v74.is_none()
+        && pending.targets_chosen.len() < usize::from(target_count(pending.target_spec))
+    {
         if target_min_count(pending.target_spec) < target_count(pending.target_spec) {
             return Ok(PendingActivationActionStage::ChooseOptionalTarget);
         }
