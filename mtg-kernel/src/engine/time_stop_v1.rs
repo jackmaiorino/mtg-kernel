@@ -1372,6 +1372,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("../rl_session/flat_action_v4/search_state/sampler.rs"),
                 ),
                 (
+                    "mtg-kernel/src/cast_identity_v1.rs",
+                    include_str!("../cast_identity_v1.rs"),
+                ),
+                (
                     "mtg-kernel/build_standard_v1.rs",
                     include_str!("../../build_standard_v1.rs"),
                 ),

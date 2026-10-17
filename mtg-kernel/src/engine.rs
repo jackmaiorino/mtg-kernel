@@ -23991,6 +23991,7 @@ fn finalize_owned_cast(
     .spells_cast_this_turn
     .saturating_add(1);
     log_final_targeting_events(state, stack_item_id)?;
+    crate::cast_identity_v1::publish(state, finalized_source_contract, stack_item_id);
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;

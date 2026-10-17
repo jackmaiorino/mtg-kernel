@@ -7,6 +7,7 @@ use crate::state::{AbilitySourceContractV4, SplitMix64, StackItem};
 enum SamplingScopeV68 {
     Legacy,
     EndTurn,
+    Call,
 }
 fn conflicts(
     state: &GameState,
@@ -21,6 +22,11 @@ fn conflicts_in_scope(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     scope: SamplingScopeV68,
 ) -> bool {
+    let op_conflicts = |op: &crate::effect::EffectOp| match scope {
+        SamplingScopeV68::Call => super::effect_refs::op_conflicts_call_v62(state, pool, op),
+        SamplingScopeV68::EndTurn => super::effect_refs::op_conflicts_end_turn_v68(state, pool, op),
+        SamplingScopeV68::Legacy => super::effect_refs::op_conflicts(state, pool, op),
+    };
     if crate::bloodthirsty_conqueror_v49::has_history(state)
         || crate::soul_counters_v1::has_history(state)
     {
@@ -82,16 +88,17 @@ fn conflicts_in_scope(
         Err(_) => return true,
         _ => {},
     }
-    if state.wildwood_waiting_v1.as_ref().is_some_and(|waiting| {
-        waiting
-            .iter()
-            .any(|row| super::effect_refs::op_conflicts(state, pool, &row.effect))
-    }) {
+    if state
+        .wildwood_waiting_v1
+        .as_ref()
+        .is_some_and(|waiting| waiting.iter().any(|row| op_conflicts(&row.effect)))
+    {
         return true;
     }
     if match scope {
         SamplingScopeV68::Legacy => super::effect_refs::conflicts(state, pool, plan),
         SamplingScopeV68::EndTurn => super::effect_refs::conflicts_end_turn_v68(state, pool, plan),
+        SamplingScopeV68::Call => super::effect_refs::conflicts_call_v62(state, pool, plan),
     } {
         return true;
     }
@@ -108,10 +115,24 @@ fn conflicts_in_scope(
             pool.contains(&source.source)
                 && crate::creature_death_capture_v1::owns_program(source, effect)
         };
+    let active_call_source = |source: ObjectId, op: &crate::effect::EffectOp| {
+        scope != SamplingScopeV68::Legacy
+            && pool.contains(&source)
+            && matches!(
+                op,
+                crate::effect::EffectOp::BindAleshaRaidReturn
+                    | crate::effect::EffectOp::AleshaRaidReturn { .. }
+                    | crate::effect::EffectOp::BindNineLivesFamiliarReturnV1
+                    | crate::effect::EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
+                    | crate::effect::EffectOp::ReturnNineLivesFamiliarV1 { .. }
+                    | crate::effect::EffectOp::BindValkyriesCallDeathV1
+                    | crate::effect::EffectOp::ReturnValkyriesCallCreatureV1 { .. }
+            )
+    };
     let stack = |s: &StackItem| {
         s.inline_effect
             .as_ref()
-            .is_some_and(|op| super::effect_refs::op_conflicts(state, pool, op))
+            .is_some_and(|op| op_conflicts(op) || active_call_source(s.source, op))
             || s.v4.ability_source_contract.as_ref().is_some_and(&ability)
             || s.v4
                 .ability_source_contract
@@ -142,8 +163,11 @@ fn conflicts_in_scope(
                 || upgrade.combat_impulse_donor.as_ref().is_some_and(&ability)
         })
     }) || e.pending_triggers.iter().any(|t| {
-        super::effect_refs::op_conflicts(state, pool, &t.effect)
+        op_conflicts(&t.effect)
             || t.source_contract.as_ref().is_some_and(&ability)
+            || t.source_contract
+                .as_ref()
+                .is_some_and(|source| active_call_source(source.source, &t.effect))
             || t.source_contract
                 .as_ref()
                 .is_some_and(|source| historical_death_source(source, &t.effect))
@@ -301,10 +325,20 @@ pub(super) fn redeterminize_end_turn_v68(
     seed: u64,
 ) -> Result<(), Error> {
     // Validate all new factual journals before either owner's first permutation.
+    crate::end_turn_observation_v68::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
     if crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true) {
         return Err(Error::HiddenReferenceConflict);
     }
     redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::EndTurn)
+}
+pub(super) fn redeterminize_call_v62(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::call_observation_v62::validate_state(state).map_err(|_| Error::HiddenStateContract)?;
+    redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::Call)
 }
 fn redeterminize_with_library_plan_inner(
     state: &mut GameState,
@@ -384,7 +418,9 @@ fn redeterminize_with_library_plan_inner(
         }
         if match scope {
             SamplingScopeV68::Legacy => conflicts(state, &pool, plan),
-            SamplingScopeV68::EndTurn => conflicts_in_scope(state, &pool, plan, scope),
+            SamplingScopeV68::EndTurn | SamplingScopeV68::Call => {
+                conflicts_in_scope(state, &pool, plan, scope)
+            }
         } {
             return Err(if classified {
                 Error::HiddenReferenceConflict

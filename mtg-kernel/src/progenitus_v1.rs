@@ -339,7 +339,6 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
 
 impl std::hash::Hash for InputV1 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        use std::hash::Hash;
         self.source.hash(h);
         serde_json::to_vec(&self.original)
             .expect("native proposal serializes")

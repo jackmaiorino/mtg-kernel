@@ -65,6 +65,9 @@ pub fn producer_sha256() -> String {
             include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
+            include_str!("cast_identity_v1.rs"),
+            include_str!("event.rs"),
+            include_str!("engine.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
@@ -108,9 +111,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 /// this closed Call scope, including a supported return of such a printing.
 /// Later-family receipt variants select only originally public mechanics; their
 /// private payloads are never scanned or published.
-fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
+pub(crate) fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
     use crate::{event::CommittedEvent as E, optional_trigger_public_v1 as public};
     let unsupported = |id: u16| id >= 460;
+    let historical_unsupported =
+        crate::cast_identity_v1::unsupported_public_history(state, unsupported)?;
     let visible = state.objects.iter().any(|(id, live)| {
         public::reference(state, id, viewer).is_some_and(
             |r| matches!(r.identity, public::IdentityV1::Known { card_id } if unsupported(card_id)),
@@ -174,26 +179,9 @@ fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> Result<(), 
             | E::KykarExiledV1 { .. }
             | E::KykarDelayedCollectedV1 { .. } => true,
 
-            // Native SpellCast is logged only after successful finalization,
-            // never for an uncast spell copy. Its bare marker does not identify
-            // a disguised printing. The native face-down cast route requires
-            // this exact definition-owned alternative, so only definitions
-            // without that route can supply historical public identity here.
-            // A later zone change keeps the physical definition, not its old
-            // incarnation metadata; no later hidden reference is published.
-            E::SpellCast { spell, .. } => state.objects.try_get(*spell).is_some_and(|o| {
-                unsupported(o.card_def)
-                    && crate::card_def::CARD_DEFS
-                        .get(usize::from(o.card_def))
-                        .is_some_and(|d| {
-                            !d.alt_cost.is_some_and(|alt| {
-                                alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand
-                            })
-                        })
-            }),
             _ => false,
         });
-    if visible || retained {
+    if visible || retained || historical_unsupported {
         Err("V62 has no Artist or later-family semantics".into())
     } else {
         Ok(())
