@@ -82,7 +82,8 @@ impl Scan<'_> {
             | BindSphinxLoreV1
             | SphinxLoreV1 { .. }
             | HarvesterExileAndCopyV1
-            | TinybonesStashV72 { .. } | FiendArtisanSearchV1 | GenesisWaveV1 => true,
+            | TinybonesStashV72 { .. } | FiendArtisanSearchV1 => true,
+            GenesisWaveV1 => self.scope != ReferenceScopeV68::GenesisWave,
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
@@ -371,8 +372,14 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
-            GenesisWaveV1 { .. }
-            | CuratorV1 { .. }
+            GenesisWaveV1 { choice, cards } => {
+                self.scope != ReferenceScopeV68::GenesisWave
+                    || self.bs(&crate::effect::genesis_wave_v1::sampler_bindings_v69(
+                        choice,
+                    ))
+                    || self.bs(cards)
+            }
+            CuratorV1 { .. }
             | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
             | AleshaRaidAnswerV1 { .. }
@@ -629,8 +636,13 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
-            GenesisWaveCardsV1 { .. }
-            | CuratorCardsV1 { .. }
+            GenesisWaveCardsV1 { choice } => {
+                self.scope != ReferenceScopeV68::GenesisWave
+                    || self.bs(&crate::effect::genesis_wave_v1::sampler_bindings_v69(
+                        choice,
+                    ))
+            }
+            CuratorCardsV1 { .. }
             | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
             | SphinxsTutelageMillOrderV1 { .. } => true,
@@ -928,6 +940,18 @@ pub(super) fn op_conflicts_call_v62(state: &GameState, pool: &[ObjectId], op: &E
     }
     .op(op)
 }
+pub(super) fn op_conflicts_genesis_wave_v69(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::GenesisWave,
+    }
+    .op(op)
+}
 pub(super) fn op_conflicts_end_turn_v68(
     state: &GameState,
     pool: &[ObjectId],
@@ -1082,6 +1106,7 @@ enum ReferenceScopeV68 {
     Legacy,
     EndTurn,
     Call,
+    GenesisWave,
 }
 
 pub(super) fn conflicts(
@@ -1105,6 +1130,13 @@ pub(super) fn conflicts_call_v62(
 ) -> bool {
     conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Call)
 }
+pub(super) fn conflicts_genesis_wave_v69(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::GenesisWave)
+}
 fn conflicts_in_scope(
     state: &GameState,
     pool: &[ObjectId],
@@ -1123,8 +1155,10 @@ fn conflicts_in_scope(
     {
         return true;
     }
-    if scope == ReferenceScopeV68::EndTurn
-        && crate::engine::time_stop_v1::sampler_conflicts_v68(state, pool).unwrap_or(true)
+    if matches!(
+        scope,
+        ReferenceScopeV68::EndTurn | ReferenceScopeV68::GenesisWave
+    ) && crate::engine::time_stop_v1::sampler_conflicts_v68(state, pool).unwrap_or(true)
     {
         return true;
     }
@@ -1264,7 +1298,17 @@ fn conflicts_in_scope(
                 event,
                 crate::event::CommittedEvent::TimeStopJournalV1 { .. }
             ) {
-                return scope != ReferenceScopeV68::EndTurn;
+                return !matches!(
+                    scope,
+                    ReferenceScopeV68::EndTurn | ReferenceScopeV68::GenesisWave
+                );
+            }
+            if matches!(
+                event,
+                crate::event::CommittedEvent::GenesisWaveProgressV1 { .. }
+                    | crate::event::CommittedEvent::GenesisWaveFinishedV1 { .. }
+            ) {
+                return scope != ReferenceScopeV68::GenesisWave;
             }
             matches!(
                 event,
@@ -1480,6 +1524,9 @@ fn conflicts_in_scope(
             | ProgenitusInputV1 { .. }
             | ProgenitusShuffledV1 { .. }
             | LeylineOpeningV1 { .. }
+            | MuldrothaOptionsV1 { .. }
+            | MuldrothaSelectedV1 { .. }
+            | MuldrothaPlayedV1 { .. }
             | FiendArtisanInputV1 { .. }
             | FiendArtisanPaidV1 { .. }
             | FiendArtisanSearchStartedV1 { .. }

@@ -95,19 +95,24 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
             }
         }
         Value::Object(values) => {
-            if source == Source::GenesisWaveV69
-                && super::genesis_wave::typed_meaning(values, covered)?
-            {
+            if source == Source::VivienV70 && super::vivien::typed_meaning(values, covered)? {
                 return Ok(());
             }
-            if matches!(source, Source::EndTurnV68 | Source::GenesisWaveV69)
-                && super::end_turn::typed_meaning(values, covered)?
+            if matches!(source, Source::GenesisWaveV69 | Source::VivienV70)
+                && super::genesis_wave::typed_meaning(values, covered)?
             {
                 return Ok(());
             }
             if matches!(
                 source,
-                Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69
+                Source::EndTurnV68 | Source::GenesisWaveV69 | Source::VivienV70
+            ) && super::end_turn::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69 | Source::VivienV70
             ) && super::call::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -118,6 +123,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::CallV62
                     | Source::EndTurnV68
                     | Source::GenesisWaveV69
+                    | Source::VivienV70
             ) && super::graveyard_return::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -129,6 +135,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::CallV62
                     | Source::EndTurnV68
                     | Source::GenesisWaveV69
+                    | Source::VivienV70
             ) && super::next_five::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -141,6 +148,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
                     | Source::CallV62
                     | Source::EndTurnV68
                     | Source::GenesisWaveV69
+                    | Source::VivienV70
             ) && super::prepared::typed_meaning(values, covered)?
             {
                 return Ok(());
@@ -305,7 +313,11 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     );
     if matches!(
         source,
-        Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69
+        Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
     ) {
         let observation = state
             .get_mut("observation")
@@ -325,12 +337,17 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::CallV62
             | Source::EndTurnV68
             | Source::GenesisWaveV69
+            | Source::VivienV70
     ) {
         super::prepared::references(&mut state)?;
     }
     if matches!(
         source,
-        Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69
+        Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
     ) {
         // V61 actions carry the complete typed candidate annotations, including
         // their public references, in addition to the ordinary action semantic.
@@ -347,17 +364,24 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     }
     let mut meanings = Vec::new();
     for id in cards.difference(&covered) {
-        if source == Source::GenesisWaveV69 && super::genesis_wave::printing(*id)?.is_some() {
+        if source == Source::VivienV70 && super::vivien::printing(*id)?.is_some() {
             continue;
         }
-        if matches!(source, Source::EndTurnV68 | Source::GenesisWaveV69)
-            && super::end_turn::printing(*id)?.is_some()
+        if matches!(source, Source::GenesisWaveV69 | Source::VivienV70)
+            && super::genesis_wave::printing(*id)?.is_some()
         {
             continue;
         }
         if matches!(
             source,
-            Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69
+            Source::EndTurnV68 | Source::GenesisWaveV69 | Source::VivienV70
+        ) && super::end_turn::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69 | Source::VivienV70
         ) && super::call::printing(*id)?.is_some()
         {
             continue;
@@ -368,6 +392,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::CallV62
                 | Source::EndTurnV68
                 | Source::GenesisWaveV69
+                | Source::VivienV70
         ) && super::graveyard_return::printing(*id)?.is_some()
         {
             continue;
@@ -379,6 +404,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::CallV62
                 | Source::EndTurnV68
                 | Source::GenesisWaveV69
+                | Source::VivienV70
         ) && super::next_five::printing(*id)?.is_some()
         {
             continue;
@@ -391,6 +417,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
                 | Source::CallV62
                 | Source::EndTurnV68
                 | Source::GenesisWaveV69
+                | Source::VivienV70
         ) && super::prepared::printing(*id)?.is_some()
         {
             continue;
@@ -419,6 +446,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::CallV62
             | Source::EndTurnV68
             | Source::GenesisWaveV69
+            | Source::VivienV70
     ) {
         for id in &cards {
             if let Some(printing) = super::prepared::printing(*id)? {
@@ -433,6 +461,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             | Source::CallV62
             | Source::EndTurnV68
             | Source::GenesisWaveV69
+            | Source::VivienV70
     ) {
         for id in &cards {
             if let Some(printing) = super::next_five::printing(*id)? {
@@ -442,7 +471,11 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     }
     if matches!(
         source,
-        Source::GraveyardReturnV61 | Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69
+        Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
     ) {
         for id in &cards {
             if let Some(printing) = super::graveyard_return::printing(*id)? {
@@ -452,7 +485,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     }
     if matches!(
         source,
-        Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69
+        Source::CallV62 | Source::EndTurnV68 | Source::GenesisWaveV69 | Source::VivienV70
     ) {
         for id in &cards {
             if let Some(printing) = super::call::printing(*id)? {
@@ -460,14 +493,17 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             }
         }
     }
-    if source == Source::GenesisWaveV69 {
+    if matches!(source, Source::GenesisWaveV69 | Source::VivienV70) {
         for id in &cards {
             if let Some(printing) = super::genesis_wave::printing(*id)? {
                 meanings.push(printing);
             }
         }
     }
-    if matches!(source, Source::EndTurnV68 | Source::GenesisWaveV69) {
+    if matches!(
+        source,
+        Source::EndTurnV68 | Source::GenesisWaveV69 | Source::VivienV70
+    ) {
         for id in &cards {
             if let Some(printing) = super::end_turn::printing(*id)? {
                 meanings.push(printing);
@@ -478,6 +514,13 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         if let Some(id) = crate::card_def::card_id_by_name("Elenda, Saint of Dusk") {
             if cards.contains(&id) {
                 meanings.push(roots::elenda_printing(id)?);
+            }
+        }
+    }
+    if source == Source::VivienV70 {
+        for id in &cards {
+            if let Some(p) = super::vivien::printing(*id)? {
+                meanings.push(p);
             }
         }
     }

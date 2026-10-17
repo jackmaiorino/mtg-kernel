@@ -59,6 +59,9 @@ impl CustomDeckV1 {
     pub(crate) fn resolve_genesis_wave_v69(&self) -> Result<Vec<u16>, String> {
         self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::GenesisWaveV69)
     }
+    pub(crate) fn resolve_vivien_v70(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::VivienV70)
+    }
     fn resolve_for_scope(
         &self,
         scope: crate::rl::CommonProjectionScopeV42,

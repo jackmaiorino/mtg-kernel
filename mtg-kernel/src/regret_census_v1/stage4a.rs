@@ -23,15 +23,29 @@
 //! In `s4a-budget`, `S4A_INTERCHANGE=1` merges interchangeable choices
 //! (`stage4a/interchange.rs`); unset or `0` leaves the search unchanged, and
 //! rows carry `"interchange"` only when it is on.
+//! `S4A_EXECUTOR=root-only-v1` in searched `s4a-budget` executes only new-root
+//! tree choices; supported would-be reuse uses one ordinary live-policy draw.
+//! It requires repaired keys, mean backup, no interchange or witness recording.
+//! Alternate rows carry arm `search-root-only-v1`; defaults remain unchanged.
 //! `BUDGET_ARM=plain-v1` selects an explicit ordinary-opening plain control
 //! in `s4a-budget`, with `BUDGET_TOTAL=0`, mean backup and no interchange.
 //! It uses the case's guide policy seeds and never constructs a search.
 //! Unset or `search-v1` preserves the existing search and row format.
+//! `s4a-root-rebuild` replays recorded `s4a-budget` search games without
+//! search (`BUDGET_ROWS`, as `s4a-budget-replay`), checks each record (and,
+//! with `S4A_ROOT_SCHEDULE`, every case field it carries against that frozen
+//! schedule) and rebuilds every new-root decision's map from storage edges
+//! to live actions along the executor's own keying
+//! (`stage4a/root_rebuild.rs`).
 //! In `s4a-budget` and `s4a-diag`, `S4A_BACKUP=bestline-m<m>` (m = 3 or 8)
 //! uses the opt-in best-line backup (`stage4a/tree.rs` `BestLine`); unset or
 //! `mean` is the formal backup, and rows carry `"backup"` only when it is on.
 //! `S4A_REUSE_WITNESS=1` in searched `s4a-budget` records passive witnesses
 //! at every executed reused decision; unset or `0` leaves rows unchanged.
+//! `s4a-reuse-prefix` captures the first witnessed later-physical-decision
+//! reuse under a separate acquisition ceiling. `s4a-reused-action` consumes
+//! that prefix and compares its action with one isolated ordinary-policy
+//! draw or an explicit same-action control (utility_root/reused.rs).
 
 mod allocation_experiment;
 mod arms;
@@ -47,12 +61,14 @@ mod interchange;
 mod labels;
 mod pathlog;
 mod play;
+mod policy_ensemble;
 mod process_cpu;
 mod profile_roots;
 mod refresh;
 mod replay_labels;
 mod reuse_witness;
 mod root_allocation;
+mod root_rebuild;
 mod seeds;
 mod sharing;
 mod tree;
@@ -95,9 +111,13 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-canon-offline"
             | "s4a-budget"
             | "s4a-budget-replay"
+            | "s4a-root-rebuild"
             | "s4a-search-profile"
             | "s4a-utility-root"
             | "s4a-utility-root-inspect"
+            | "s4a-reuse-prefix"
+            | "s4a-reused-action"
+            | "s4a-policy-ensemble"
     )
 }
 
@@ -1017,11 +1037,20 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         prior: world::DeckPrior::new(&cfg.decks),
         limits: parse_limits()?,
     };
+    if cfg.mode == policy_ensemble::MODE {
+        return policy_ensemble::run(cfg, policy, &sh, &spec_bytes);
+    }
     if cfg.mode == "s4a-utility-root" {
         return utility_root::run(cfg, policy, &sh, &spec_bytes);
     }
     if cfg.mode == "s4a-utility-root-inspect" {
         return utility_root::run_inspect(cfg, policy, &sh, &spec_bytes);
+    }
+    if cfg.mode == "s4a-reuse-prefix" {
+        return utility_root::run_acquisition(cfg, policy, &sh, &spec_bytes);
+    }
+    if cfg.mode == "s4a-reused-action" {
+        return utility_root::run_comparison(cfg, policy, &sh, &spec_bytes);
     }
     if cfg.mode == "s4a-branch" {
         // Roots: BRANCH_ROOTS (JSONL of branch::RootSpec); this process plays
@@ -1225,6 +1254,33 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
+    if cfg.mode == "s4a-root-rebuild" {
+        // Search-evidence distillation (SD1) stage 1: BUDGET_ROWS lists
+        // recorded s4a-budget search-arm files (one path per line). Every
+        // budget_game row of the spec's lineage in each file is replayed
+        // without search, checked, and its new_root maps rebuilt
+        // (`stage4a/root_rebuild.rs`); one root_rebuild row per game, with
+        // `void` null or the reason the game is void. A listed file that
+        // cannot be read, or a line of one that is not JSON, writes a void
+        // row and the run continues; a missing or unreadable list and every
+        // schedule error stop the run.
+        let path = std::env::var("BUDGET_ROWS").map_err(|_| "BUDGET_ROWS is required")?;
+        // Optional: the frozen schedule (JSONL of cases, as BUDGET_CASES)
+        // whose case each record's carried case fields must equal.
+        let schedule = match std::env::var("S4A_ROOT_SCHEDULE") {
+            Ok(p) => {
+                use sha2::{Digest, Sha256};
+                let bytes = std::fs::read(&p).map_err(|e| format!("{p}: {e}"))?;
+                let sha256 = format!("{:x}", Sha256::digest(&bytes));
+                let text = String::from_utf8(bytes).map_err(|e| format!("{p}: {e}"))?;
+                Some(root_rebuild::Schedule::parse(&text, sha256)?)
+            }
+            Err(_) => None,
+        };
+        let list = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+        let out = root_rebuild::rows(&sh.spec, &list, schedule.as_ref());
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
     if cfg.mode == "s4a-budget" {
         // Total-budget screen (collab LANES/search-budget-discovery-plan-20261011):
         // BUDGET_CASES is JSONL of source cases (ordinary openings); this
@@ -1266,6 +1322,8 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         if plain && reuse_witnesses == reuse_witness::Recording::Enabled {
             return Err("S4A_REUSE_WITNESS=1 requires BUDGET_ARM=search-v1".into());
         }
+        let executor = refresh::ExecutionMode::parse(&cfg.mode, std::env::var("S4A_EXECUTOR"))?;
+        executor.validate_budget(plain, mode, interchange, bestline, reuse_witnesses)?;
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1277,7 +1335,20 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                         if plain {
                             return refresh::budget_plain_case(&sh, policy, src, &binding);
                         }
-                        refresh::budget_case(
+                        if executor == refresh::ExecutionMode::Persistent {
+                            return refresh::budget_case(
+                                &sh,
+                                policy,
+                                src,
+                                total,
+                                mode,
+                                interchange,
+                                bestline,
+                                reuse_witnesses,
+                                &binding,
+                            );
+                        }
+                        refresh::budget_case_with_executor(
                             &sh,
                             policy,
                             src,
@@ -1287,6 +1358,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                             bestline,
                             reuse_witnesses,
                             &binding,
+                            executor,
                         )
                     })
                     .map_err(|e| e.to_string())?
@@ -1475,12 +1547,25 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
     Ok(())
 }
 
+/// Validate even non-Stage4a modes before loading their source policy.
+pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
+    if mode != policy_ensemble::MODE && std::env::var_os("POLICY_ENSEMBLE_MEMBERS").is_some() {
+        return Err("POLICY_ENSEMBLE_MEMBERS is supported only for s4a-policy-ensemble".into());
+    }
+    refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
+}
+
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     if cfg.mode == "s4a-utility-root-inspect" && !cfg!(feature = "gameplay-decision-trace-v1") {
         return Err("s4a-utility-root-inspect requires gameplay-decision-trace-v1".into());
     }
     // Every mode refuses a best-line `S4A_BACKUP` it would not use.
     parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
+    if matches!(cfg.mode.as_str(), "s4a-reuse-prefix" | "s4a-reused-action")
+        && parse_interchange(std::env::var("S4A_INTERCHANGE"))?
+    {
+        return Err("reused-action modes require interchange off".into());
+    }
     match cfg.mode.as_str() {
         "s4a-bank"
         | "s4a-bank-trace"
@@ -1489,8 +1574,12 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-canon-offline"
         | "s4a-budget"
         | "s4a-budget-replay"
+        | "s4a-root-rebuild"
         | "s4a-search-profile"
         | "s4a-utility-root"
+        | "s4a-reuse-prefix"
+        | "s4a-reused-action"
+        | "s4a-policy-ensemble"
         | "s4a-utility-root-inspect" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),

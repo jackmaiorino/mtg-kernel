@@ -581,6 +581,7 @@ mod extravagant_replication_v1;
 pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub(crate) mod life_loss_turn_v1;
+pub mod own_registration_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
@@ -822,3 +823,11 @@ pub mod genesis_wave_observation_v69;
 pub mod genesis_wave_public_v69;
 pub mod limited_genesis_wave_session_v10;
 pub mod rules_meaning_genesis_wave_v69;
+
+pub mod rules_meaning_vivien_v70;
+pub mod vivien_public_v70;
+
+pub mod vivien_candidates_v70;
+pub mod vivien_observation_v70;
+
+pub mod limited_vivien_session_v11;

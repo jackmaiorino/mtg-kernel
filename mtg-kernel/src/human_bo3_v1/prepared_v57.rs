@@ -824,7 +824,7 @@ fn trigger_occurrence(
 }
 fn order_label(
     common: &crate::ravenous_observation_v51::RavenousObservationV51,
-    trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,
+    _trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,
     action: &ActionSemanticV1,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {
@@ -976,6 +976,21 @@ pub(super) fn choice_label_end_turn(
 
 pub(super) fn choice_label_genesis_wave(
     obs: &crate::genesis_wave_observation_v69::GenesisWaveObservationV69,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    choice_label_parts(
+        &obs.common.common,
+        obs.common.common.trigger_order.as_ref(),
+        &obs.spinner,
+        &obs.phoenix,
+        &obs.quandary,
+        action,
+        handles,
+    )
+}
+pub(super) fn choice_label_vivien(
+    obs: &crate::vivien_observation_v70::VivienObservationV70,
     action: &ActionSemanticV1,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {

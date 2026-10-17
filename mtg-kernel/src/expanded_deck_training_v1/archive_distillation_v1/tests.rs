@@ -377,10 +377,20 @@ fn archive_distillation_commands_keep_their_wire_shape() {
         "candidates":[{"id":"parent","source":source}],
         "banks":[{"role":"training","games":file,"bank":file}],"anchor":anchor,
         "offers":[file],"output_directory":"out"});
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(probe.clone()).unwrap();
     assert!(matches!(
-        serde_json::from_value(probe).unwrap(),
-        ExpandedTrainingCommandV1::ArchiveDistillationProbe { .. }
+        command,
+        ExpandedTrainingCommandV1::ArchiveDistillationProbe { evidence: None, .. }
     ));
+    // Without evidence files the field stays off the wire.
+    assert_eq!(serde_json::to_value(&command).unwrap(), probe);
+    let mut evidenced = probe.clone();
+    evidenced["evidence"] = json!({"training":file,"held_out":file});
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(evidenced.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&command).unwrap(), evidenced);
+    let mut partial = probe.clone();
+    partial["evidence"] = json!({"training":file});
+    assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(partial).is_err());
     let trace = json!({"mode":"line_retention_trace","run":file,"completion":file,
         "output_directory":"out"});
     let command: ExpandedTrainingCommandV1 = serde_json::from_value(trace.clone()).unwrap();
@@ -483,6 +493,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         None,
+        0,
     )
     .unwrap();
     assert_eq!(plan.epoch_steps, 3);
@@ -518,6 +529,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         None,
+        0,
     )
     .unwrap();
     assert!(plan
@@ -532,6 +544,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         "r2",
         ArchiveDistillationArmV1::Uniform,
         None,
+        0,
     )
     .unwrap();
     assert_ne!(plan.steps[0].archive, other.steps[0].archive);
@@ -585,6 +598,7 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         "r1",
         ArchiveDistillationArmV1::LineDecisions,
         None,
+        0,
     )
     .unwrap();
     assert_eq!(plan.checkpoints, LINE_STEPS.to_vec());
@@ -605,6 +619,7 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
             "r1",
             ArchiveDistillationArmV1::LineDecisions,
             None,
+            0,
         )
         .unwrap();
         assert_eq!(plan.epoch_steps, 2);
@@ -625,7 +640,8 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::Uniform,
-        None
+        None,
+        0
     )
     .is_err());
     assert!(plan_v1(
@@ -634,7 +650,8 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         &anchor_rows(255),
         "r1",
         ArchiveDistillationArmV1::Uniform,
-        None
+        None,
+        0
     )
     .is_err());
 }
@@ -1006,6 +1023,7 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         None,
+        0,
     )
     .unwrap();
     // Own checkpoint steps, past the frozen schedule's end: the same
@@ -1018,6 +1036,7 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         Some(&steps),
+        0,
     )
     .unwrap();
     assert_eq!(cell_plan.checkpoints, steps.to_vec());
@@ -1039,6 +1058,7 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         Some(&steps),
+        0,
     )
     .unwrap();
     assert_eq!(sub.epoch_steps, (subset.len() as u64).div_ceil(32));
@@ -1068,7 +1088,8 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::LineDecisions,
-        Some(&steps)
+        Some(&steps),
+        0
     )
     .is_err());
     assert!(plan_v1(
@@ -1077,9 +1098,217 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::Uniform,
-        Some(&[32, 16])
+        Some(&[32, 16]),
+        0
     )
     .is_err());
+}
+
+/// Every recorded cell label (and the frozen recipe, and `SD1-T-s0`) reads
+/// order seed 0, so its archive-order and anchor-order hash inputs are the
+/// unseeded ones byte for byte, and so is its plan.
+#[test]
+fn recorded_cell_labels_keep_byte_identical_order_hash_inputs() {
+    let unseeded_archive =
+        br#"["spy-archive-distillation-v1","archive-order","r1","uniform",3,"game-1",7]"#;
+    let unseeded_anchor = br#"["spy-archive-distillation-v1","anchor-order","r1",2,"anchor-4",9]"#;
+    let rows = bank_rows(70);
+    let all: Vec<usize> = (0..70).collect();
+    let anchor = anchor_rows(300);
+    let unseeded = |arm| plan_v1(&rows, &all, &anchor, "r1", arm, None, 0).unwrap();
+    let recorded = [
+        "U0", "U-lr", "U-a4", "U-a16", "U-s32", "U-s256", "U-c32", "U-c256", "BT1-T", "BT1-P",
+        "SD1-T-s0",
+    ];
+    let mut seeds = vec![("frozen", frozen_recipe().order_seed)];
+    for label in recorded {
+        assert_eq!(order_seed_v1(label), 0, "{label}");
+        let recipe = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(label))).unwrap();
+        seeds.push((label, recipe.order_seed));
+    }
+    for (label, seed) in seeds {
+        assert_eq!(seed, 0, "{label}");
+        for arm in [
+            ArchiveDistillationArmV1::Uniform,
+            ArchiveDistillationArmV1::LineDecisions,
+        ] {
+            let key = serde_json::to_vec(&archive_order_key_v1("r1", arm, 3, "game-1", 7, seed));
+            let literal = serde_json::to_vec(&json!([
+                ARCHIVE_DISTILLATION_NAMESPACE_V1,
+                "archive-order",
+                "r1",
+                arm.label(),
+                3,
+                "game-1",
+                7
+            ]));
+            assert_eq!(key.unwrap(), literal.unwrap(), "{label}");
+        }
+        assert_eq!(
+            serde_json::to_vec(&archive_order_key_v1(
+                "r1",
+                ArchiveDistillationArmV1::Uniform,
+                3,
+                "game-1",
+                7,
+                seed
+            ))
+            .unwrap(),
+            unseeded_archive.to_vec(),
+            "{label}"
+        );
+        assert_eq!(
+            serde_json::to_vec(&anchor_order_key_v1("r1", 2, "anchor-4", 9, seed)).unwrap(),
+            unseeded_anchor.to_vec(),
+            "{label}"
+        );
+        let base = unseeded(ArchiveDistillationArmV1::Uniform);
+        let plan = plan_v1(
+            &rows,
+            &all,
+            &anchor,
+            "r1",
+            ArchiveDistillationArmV1::Uniform,
+            None,
+            seed,
+        )
+        .unwrap();
+        assert!(plan
+            .steps
+            .iter()
+            .zip(&base.steps)
+            .all(|(a, b)| a.archive == b.archive && a.anchor == b.anchor));
+    }
+}
+
+/// `SD1-T-s{k}` with k from 1 to 7 appends k to both hash inputs: each seed
+/// has its own epoch and anchor orders over the same rows, batch sizes and
+/// checkpoints. A label without the `SD1-T-s` prefix reads seed 0 (one with
+/// it is refused unless exact: `sd1_seed_label_near_misses_are_refused`),
+/// and the cell records no new field.
+#[test]
+fn sd1_seed_labels_reorder_both_orders_over_the_same_rows() {
+    for (label, seed) in [
+        ("SD1-T-s0", 0),
+        ("SD1-T-s1", 1),
+        ("SD1-T-s4", 4),
+        ("SD1-T-s7", 7),
+        ("SD1-T-S1", 0),
+        ("sd1-T-s1", 0),
+        ("SD1-P-s1", 0),
+        ("xSD1-T-s1", 0),
+    ] {
+        assert_eq!(order_seed_v1(label), seed, "{label}");
+        let recipe = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(label))).unwrap();
+        assert_eq!(recipe.order_seed, seed, "{label}");
+        let fields: Vec<String> = serde_json::to_value(recipe.cell.as_ref().unwrap())
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            fields,
+            ["anchor_coefficient_bits", "cell", "checkpoint_steps"],
+            "{label}"
+        );
+    }
+    assert_eq!(
+        serde_json::to_vec(&archive_order_key_v1(
+            "r1",
+            ArchiveDistillationArmV1::Uniform,
+            3,
+            "game-1",
+            7,
+            5
+        ))
+        .unwrap(),
+        br#"["spy-archive-distillation-v1","archive-order","r1","uniform",3,"game-1",7,5]"#
+            .to_vec()
+    );
+    assert_eq!(
+        serde_json::to_vec(&anchor_order_key_v1("r1", 2, "anchor-4", 9, 5)).unwrap(),
+        br#"["spy-archive-distillation-v1","anchor-order","r1",2,"anchor-4",9,5]"#.to_vec()
+    );
+    let rows = bank_rows(70);
+    let all: Vec<usize> = (0..70).collect();
+    let anchor = anchor_rows(300);
+    let steps = [8, 16, 32];
+    let plans: Vec<PlanV1> = (0..8)
+        .map(|seed| {
+            plan_v1(
+                &rows,
+                &all,
+                &anchor,
+                "r1",
+                ArchiveDistillationArmV1::Uniform,
+                Some(&steps),
+                seed,
+            )
+            .unwrap()
+        })
+        .collect();
+    let mut first_epochs = BTreeSet::new();
+    let mut first_anchors = BTreeSet::new();
+    for plan in &plans {
+        assert_eq!(plan.checkpoints, steps.to_vec());
+        assert_eq!(plan.epoch_steps, plans[0].epoch_steps);
+        assert_eq!(plan.steps.len(), plans[0].steps.len());
+        let per = plan.epoch_steps as usize;
+        for epoch in plan.steps.chunks(per).filter(|e| e.len() == per) {
+            assert_eq!(
+                epoch.iter().map(|s| s.archive.len()).collect::<Vec<_>>(),
+                vec![23, 23, 24]
+            );
+            let order: Vec<usize> = epoch.iter().flat_map(|s| s.archive.clone()).collect();
+            assert_eq!(sorted(order), all);
+        }
+        let draws: Vec<usize> = plan.steps.iter().flat_map(|s| s.anchor.clone()).collect();
+        for pass in draws
+            .chunks(anchor.len())
+            .filter(|pass| pass.len() == anchor.len())
+        {
+            assert_eq!(sorted(pass.to_vec()), (0..anchor.len()).collect::<Vec<_>>());
+        }
+        first_epochs.insert(
+            plan.steps[..per]
+                .iter()
+                .flat_map(|s| s.archive.clone())
+                .collect::<Vec<_>>(),
+        );
+        first_anchors.insert(draws[..anchor.len()].to_vec());
+    }
+    assert_eq!(first_epochs.len(), 8, "each seed has its own archive order");
+    assert_eq!(first_anchors.len(), 8, "each seed has its own anchor order");
+}
+
+/// A label with the `SD1-T-s` prefix that is not exactly `SD1-T-s{k}`, one
+/// digit k from 0 to 7 and nothing after it, is refused: it would read
+/// seed 0 and repeat D1-0's batch orders under another label. The eight
+/// exact labels read their seeds.
+#[test]
+fn sd1_seed_label_near_misses_are_refused() {
+    for (label, expected) in [
+        ("SD1-T-s8", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s07", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s-1", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s1x", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s1-x", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s", "SD1-T-s0 to SD1-T-s7"),
+        ("SD1-T-s1 ", "ASCII letters, digits or '-'"),
+    ] {
+        assert_eq!(order_seed_v1(label), 0, "{label}");
+        let error = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(label)))
+            .err()
+            .unwrap_or_else(|| panic!("{label:?} accepted"));
+        assert!(error.contains(expected), "{label:?}: {error}");
+    }
+    for seed in 0..8 {
+        let label = format!("SD1-T-s{seed}");
+        let recipe = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(&label))).unwrap();
+        assert_eq!(recipe.order_seed, seed, "{label}");
+    }
 }
 
 #[test]
@@ -1585,6 +1814,184 @@ fn probe_readings_follow_the_deployed_sampler_and_the_line_groups() {
     assert!(!is_spy_label("SpyV2/0123456789ab") && !is_spy_label("Elves"));
 }
 
+fn archive_game(id: &str, episode: ExpandedEpisodeV1) -> ArchiveGameV1 {
+    ArchiveGameV1 {
+        id: id.into(),
+        lineage: "r1".into(),
+        episode,
+        actions: Vec::new(),
+        starts: Vec::new(),
+        decisions: Vec::new(),
+        end: "win".into(),
+    }
+}
+
+/// SD1's evidence inputs: two keep-set files on the training bank listing
+/// disjoint games, each row with its game's ordered matchup; the separated
+/// mass and KL summaries, overall, per focal deck and per held-out row; and
+/// the held-out anchor readings over all decks, the non-Spy decks and each
+/// deck.
+#[test]
+fn probe_evidence_reads_separated_mass_kl_matchups_and_decks() {
+    assert_eq!(
+        separated_mass_v1(&[0.5, 0.25, 0.125, 0.125], &[0, 2]),
+        0.375
+    );
+    assert_eq!(separated_mass_v1(&[0.5, 0.25, 0.25], &[1]), 0.75);
+    let root = temp_root("probe-evidence");
+    let mut rows = bank_rows(60);
+    rows[3].0.parent_logits = logits_bits(&[1.0, -0.5, 2.0]);
+    // game-0 and game-1 have Spy as the focal deck (seats 0 and 1); game-2's
+    // focal deck is Terror.
+    let mut terror = real_episode("game-2", 3, 0);
+    terror.selected.swap(0, 1);
+    let games = vec![
+        archive_game("game-0", real_episode("game-0", 1, 0)),
+        archive_game("game-1", real_episode("game-1", 2, 1)),
+        archive_game("game-2", terror),
+    ];
+    let bank_sha = "b".repeat(64);
+    let pins =
+        |tag: &str, training: &[(&str, u64, Vec<u32>)], held_out: &[(&str, u64, Vec<u32>)]| {
+            ArchiveDistillationProbeEvidenceV1 {
+                training: write_pinned(
+                    &root.join(format!("{tag}-training.json")),
+                    &keep_file(training),
+                ),
+                held_out: write_pinned(
+                    &root.join(format!("{tag}-held-out.json")),
+                    &keep_file(held_out),
+                ),
+            }
+        };
+    let evidence = pins(
+        "base",
+        &[("game-1", 0, vec![1]), ("game-0", 3, vec![0, 2])],
+        &[("game-2", 5, vec![0, 1])],
+    );
+    let [training, held_out] =
+        evidence_split_v1(&evidence, "r1", &bank_sha, &rows, &games).unwrap();
+    assert_eq!(
+        training.iter().map(|e| e.index).collect::<Vec<_>>(),
+        vec![3, 20],
+        "bank order"
+    );
+    assert_eq!(training[0].keep, vec![0, 2]);
+    assert_eq!(
+        training[0].target,
+        kept_target_v1(&rows[3].0, &[0, 2]).unwrap()
+    );
+    let spy = ["Spy".to_string(), "Terror".to_string()];
+    assert!(training.iter().all(|e| e.matchup == spy));
+    assert_eq!(held_out[0].index, 45);
+    assert_eq!(
+        held_out[0].matchup,
+        ["Terror".to_string(), "Spy".to_string()]
+    );
+    for (training, held, games, wanted) in [
+        (
+            vec![("game-0", 3, vec![0, 2])],
+            vec![("game-0", 4, vec![1])],
+            &games[..],
+            "share a game",
+        ),
+        (
+            vec![("game-0", 3, vec![0, 1, 2])],
+            vec![("game-2", 5, vec![0, 1])],
+            &games[..],
+            "separates at least one action",
+        ),
+        (
+            vec![("game-0", 3, vec![0, 2])],
+            vec![("game-2", 5, vec![0, 1])],
+            &games[..2],
+            "not a bank game",
+        ),
+    ] {
+        let error = evidence_split_v1(
+            &pins(wanted, &training, &held),
+            "r1",
+            &bank_sha,
+            &rows,
+            games,
+        )
+        .err()
+        .unwrap();
+        assert!(error.contains(wanted), "{error}");
+    }
+    let error = evidence_split_v1(&evidence, "r1", &"c".repeat(64), &rows, &games)
+        .err()
+        .unwrap();
+    assert!(error.contains("identity differs"), "{error}");
+    // The fit summaries: means overall and per focal deck, and each row's
+    // values with its matchup only where asked.
+    let terror_spy = ["Terror".to_string(), "Spy".to_string()];
+    let reading = |game, step, matchup, separated_mass, kl_target| EvidenceReadingV1 {
+        game,
+        step,
+        matchup,
+        separated_mass,
+        kl_target,
+    };
+    let readings = [
+        reading("game-0", 3, &spy, 0.25, 0.5),
+        reading("game-1", 0, &spy, 0.5, 1.0),
+        reading("game-2", 5, &terror_spy, 0.125, 0.25),
+    ];
+    let summary = evidence_summary_v1(&readings, false);
+    assert_eq!(
+        summary,
+        json!({"rows":3,"mean_separated_mass":0.875 / 3.0,"mean_kl_target":1.75 / 3.0,
+            "by_deck":{"Spy":{"rows":2,"mean_separated_mass":0.375,"mean_kl_target":0.75},
+                "Terror":{"rows":1,"mean_separated_mass":0.125,"mean_kl_target":0.25}}})
+    );
+    let held = evidence_summary_v1(&readings[2..], true);
+    assert_eq!(
+        held["row_values"],
+        json!([{"game":"game-2","step":5,"matchup":["Terror","Spy"],
+            "separated_mass":0.125,"kl_target":0.25}])
+    );
+    assert_eq!(
+        evidence_summary_v1(&[], true),
+        json!({"rows":0,"mean_separated_mass":null,"mean_kl_target":null,"by_deck":{},
+            "row_values":[]})
+    );
+    // Held-out anchor readings: all nine decks, the non-Spy decks, each deck.
+    let anchor = |deck, gap, agrees, kl| AnchorReadingV1 {
+        deck,
+        gap,
+        agrees,
+        kl,
+    };
+    let decks = anchor_decks_v1(&[
+        anchor("Spy", 1.0, true, 0.25),
+        anchor("Spy", 3.0, false, 0.75),
+        anchor("Terror", 2.0, true, 0.5),
+        anchor("Elves", 16.0, true, 0.0),
+    ]);
+    assert_eq!(
+        decks,
+        json!({
+            "all":{"rows":4,"median_clamped_top_two_gap":2.5,"top_agreement":0.75,
+                "mean_kl_from_parent":0.375},
+            "non_spy":{"rows":2,"median_clamped_top_two_gap":9.0,"top_agreement":1.0,
+                "mean_kl_from_parent":0.25},
+            "by_deck":{
+                "Elves":{"rows":1,"median_clamped_top_two_gap":16.0,"top_agreement":1.0,
+                    "mean_kl_from_parent":0.0},
+                "Spy":{"rows":2,"median_clamped_top_two_gap":2.0,"top_agreement":0.5,
+                    "mean_kl_from_parent":0.5},
+                "Terror":{"rows":1,"median_clamped_top_two_gap":2.0,"top_agreement":1.0,
+                    "mean_kl_from_parent":0.5}}})
+    );
+    assert_eq!(
+        anchor_decks_v1(&[anchor("Spy", 1.0, true, 0.25)])["non_spy"],
+        json!({"rows":0,"median_clamped_top_two_gap":null,"top_agreement":null,
+            "mean_kl_from_parent":null})
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// A real parent (one ordinary GAE update from a synthetic fresh V3 source),
 /// two faithful archive games and one tampered one, the parent's own anchor
 /// play (two training episodes, one held out) and one Spy offer episode.
@@ -1848,6 +2255,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
         }],
         anchor: world.anchor.clone(),
         offers: world.offers.clone(),
+        evidence: None,
         output_directory: world.root.join("probe"),
     })
     .unwrap();
@@ -1883,10 +2291,160 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
         }],
         anchor: world.anchor.clone(),
         offers: world.anchor.held_out.clone(),
+        evidence: None,
         output_directory: world.root.join("probe-reused-offers"),
     })
     .unwrap_err();
     assert!(error.contains("appears twice"), "{error}");
+    // With SD1's evidence files (game k0's rows trained, game k1's held out,
+    // each keeping every action but its last), each readout gains the
+    // evidence fit and the per-deck anchor readings and keeps every other
+    // value; the probe records the files.
+    let bank_pin: PinnedFileV1 = serde_json::from_value(bank["bank"].clone()).unwrap();
+    let games: Vec<ArchiveGameV1> = fs::read_to_string(&world.games.path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let rows_of = |game: &str| {
+        record
+            .rows
+            .iter()
+            .filter(|r| r.game == game)
+            .collect::<Vec<_>>()
+    };
+    let evidence_file = |game: &str, name: &str| {
+        let rows = rows_of(game)
+            .iter()
+            .map(|r| ArchiveDistillationKeepRowV1 {
+                game: r.game.clone(),
+                step: r.step,
+                keep: (0..r.k - 1).collect(),
+            })
+            .collect();
+        write_pinned(
+            &world.root.join(name),
+            &ArchiveDistillationKeepSetsV1 {
+                schema: KEEP_SETS_SCHEMA_V1.into(),
+                lineage: "r1".into(),
+                bank_rows_sha256: record.rows_sha256.clone(),
+                rows,
+            },
+        )
+    };
+    let (trained_game, held_game) = (games[0].id.as_str(), games[1].id.as_str());
+    let evidence = ArchiveDistillationProbeEvidenceV1 {
+        training: evidence_file(trained_game, "keep-training.json"),
+        held_out: evidence_file(held_game, "keep-held-out.json"),
+    };
+    let probe_with = |evidence: ArchiveDistillationProbeEvidenceV1, out: &str| {
+        execute_v1(ExpandedTrainingCommandV1::ArchiveDistillationProbe {
+            parent: world.parent.clone(),
+            lineage: "r1".into(),
+            candidates: vec![
+                candidate("parent", &world.parent),
+                candidate("distilled", &distilled),
+            ],
+            banks: vec![ArchiveDistillationProbeBankV1 {
+                role: "training".into(),
+                games: world.games.clone(),
+                bank: bank_pin.clone(),
+            }],
+            anchor: world.anchor.clone(),
+            offers: world.offers.clone(),
+            evidence: Some(evidence),
+            output_directory: world.root.join(out),
+        })
+    };
+    let evidenced = probe_with(evidence.clone(), "probe-evidence").unwrap();
+    assert_eq!(evidenced["evidence"], json!(evidence));
+    assert!(probe.get("evidence").is_none());
+    let pairs = evidenced["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(probe["candidates"].as_array().unwrap());
+    for (with, without) in pairs {
+        let mut trimmed = with.clone();
+        let fields = trimmed.as_object_mut().unwrap();
+        assert!(fields.remove("evidence").is_some());
+        assert!(fields.remove("anchor_held_out_decks").is_some());
+        assert_eq!(&trimmed, without);
+        let (held, decks) = (&with["anchor_held_out"], &with["anchor_held_out_decks"]);
+        assert_eq!(decks["all"]["rows"], held["rows"]);
+        assert_eq!(
+            decks["all"]["median_clamped_top_two_gap"],
+            held["median_clamped_top_two_gap"]
+        );
+        assert_eq!(
+            decks["all"]["mean_kl_from_parent"],
+            held["mean_kl_from_parent_all"]
+        );
+        assert_eq!(decks["non_spy"]["rows"], held["non_spy_rows"]);
+        assert_eq!(
+            decks["non_spy"]["top_agreement"],
+            held["non_spy_top_agreement"]
+        );
+        assert_eq!(
+            decks["non_spy"]["mean_kl_from_parent"],
+            held["mean_kl_from_parent_non_spy"]
+        );
+    }
+    let parent_reading = &evidenced["candidates"][0];
+    assert_eq!(
+        parent_reading["anchor_held_out_decks"]["all"]["top_agreement"],
+        json!(1.0)
+    );
+    // The parent's fit, recomputed from the bank's recorded parent logits.
+    let fit = &parent_reading["evidence"];
+    for (name, game) in [("training", trained_game), ("held_out", held_game)] {
+        let members = rows_of(game);
+        assert!(!members.is_empty());
+        let mut masses = Vec::new();
+        let mut kls = Vec::new();
+        for r in &members {
+            let logits = recorded_logits(&r.parent_logits);
+            masses.push(deployed_v1(&logits).unwrap()[r.k as usize - 1]);
+            let keep: Vec<u32> = (0..r.k - 1).collect();
+            let target = kept_target_v1(r, &keep).unwrap();
+            kls.push(
+                line_b_divergence_v1(LineBDivergenceV1::Forward, &f64_logits(&logits), &target)
+                    .unwrap()
+                    .divergence,
+            );
+        }
+        assert_eq!(fit[name]["rows"], json!(members.len()));
+        assert_eq!(fit[name]["mean_separated_mass"], json!(mean(&masses)));
+        assert_eq!(fit[name]["mean_kl_target"], json!(mean(&kls)));
+        let episode = &games.iter().find(|g| g.id == game).unwrap().episode;
+        let seat = usize::from(episode.learner_seat);
+        let matchup = json!([
+            episode.selected[seat].label,
+            episode.selected[1 - seat].label
+        ]);
+        assert_eq!(
+            fit[name]["by_deck"][&episode.selected[seat].label]["rows"],
+            json!(members.len())
+        );
+        if name == "held_out" {
+            let values = fit[name]["row_values"].as_array().unwrap();
+            assert_eq!(values.len(), members.len());
+            for (value, r) in values.iter().zip(&members) {
+                assert_eq!(value["game"], json!(game));
+                assert_eq!(value["step"], json!(r.step));
+                assert_eq!(value["matchup"], matchup);
+            }
+        } else {
+            assert!(fit[name].get("row_values").is_none());
+        }
+    }
+    // The two files must list disjoint games.
+    let shared = ArchiveDistillationProbeEvidenceV1 {
+        training: evidence.training.clone(),
+        held_out: evidence.training.clone(),
+    };
+    let error = probe_with(shared, "probe-evidence-shared").unwrap_err();
+    assert!(error.contains("share a game"), "{error}");
     fs::remove_dir_all(world.root).unwrap();
 }
 
@@ -2056,6 +2614,7 @@ fn phase1_runs_write_reloadable_checkpoints_and_reproduce_their_first_steps() {
         }],
         anchor: world.anchor.clone(),
         offers: world.offers.clone(),
+        evidence: None,
         output_directory: world.root.join("probe"),
     })
     .unwrap();

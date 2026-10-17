@@ -10,7 +10,12 @@ fn genuine_paid_wave_public_reveal_subset_and_terminal_roundtrip_are_complete_bo
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(
             p,
-            &["Forest", "Giant Growth", "Llanowar Elves", "Pacifism"],
+            &[
+                "Forest",
+                "Giant Growth",
+                "Llanowar Elves",
+                "Witness Protection",
+            ],
             12,
             "Island",
         );
@@ -131,7 +136,12 @@ fn genuine_paid_wave_native_virtual_copy_public_lineage_and_terminal_are_exact_b
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(
             p,
-            &["Forest", "Giant Growth", "Llanowar Elves", "Pacifism"],
+            &[
+                "Forest",
+                "Giant Growth",
+                "Llanowar Elves",
+                "Witness Protection",
+            ],
             12,
             "Island",
         );

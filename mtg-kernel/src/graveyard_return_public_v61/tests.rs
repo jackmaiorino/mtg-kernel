@@ -234,10 +234,16 @@ fn paid_two_familiars_expose_exact_death_schedule_and_delayed_native_stages_rest
     }
 }
 pub(crate) fn raid_ready(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    raid_ready_with_kill(actor, "Abrade")
+}
+pub(crate) fn raid_ready_with_kill(
+    actor: PlayerId,
+    kill_spell: &str,
+) -> (GameState, ObjectId, ObjectId) {
     let mut state = ready(actor);
     let alesha = paid(&mut state, actor, "Alesha, Who Laughs at Fate", None);
     let target = paid(&mut state, actor, "Vampire Nighthawk", None);
-    paid(&mut state, actor, "Abrade", Some(target));
+    paid(&mut state, actor, kill_spell, Some(target));
     let turn = state.turn;
     for _ in 0..300 {
         let d = engine::advance_until_decision(&mut state);

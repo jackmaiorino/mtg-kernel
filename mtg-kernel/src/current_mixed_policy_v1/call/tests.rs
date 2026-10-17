@@ -115,13 +115,13 @@ fn paid_call_numeric_complete_program_death_return_native_parity_restore_and_pri
         let mut s = ready(p, "Forest");
         let call = hand(&mut s, p, "Valkyrie's Call");
         let elf = hand(&mut s, p, "Llanowar Elves");
-        let shock = hand(&mut s, p.opponent(), "Shock");
+        let bolt = hand(&mut s, p.opponent(), "Lightning Bolt");
         let mut pair = Pair::new(s);
         pair.cast(call, None);
         pair.drain();
         pair.cast(elf, None);
         pair.drain();
-        pair.cast(shock, Some(elf));
+        pair.cast(bolt, Some(elf));
         for _ in 0..60 {
             if !pair
                 .decision()
@@ -230,3 +230,91 @@ fn genuine_paid_call_full_width_fellowship_storage_primitive_keeps_adjacent_inte
 
 #[path = "complete_family.rs"]
 mod complete_family;
+
+#[test]
+fn genuine_paid_call_canonical_infernal_successor_rule_encodes_without_raw_generation_exception_both_seats(
+) {
+    use crate::{
+        current_mixed_policy_v1::canonical_semantic_booleans,
+        rules_meaning_next_five_v59::FamilyV59,
+    };
+    use serde_json::json;
+    const FIELD: &str = "/ordered_rules/1/Trigger/ordered/0/ReturnOriginalGraveyardIncarnation";
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (state, _, _) = crate::call_observation_v62::tests::paid_scene(p, "Forest");
+        let mut pair = Pair::new(state);
+        let decision = pair.decision();
+        let original = serde_json::to_value(
+            decision
+                .backend
+                .observation()
+                .next_five
+                .meanings
+                .iter()
+                .find(|root| root.family == FamilyV59::Infernal)
+                .unwrap(),
+        )
+        .unwrap();
+        let mut expected = original.clone();
+        let fields = expected
+            .pointer_mut(FIELD)
+            .unwrap()
+            .as_object_mut()
+            .unwrap();
+        assert_eq!(
+            fields.remove("requires_exact_successor_generation"),
+            Some(json!(true))
+        );
+        fields.insert("requires_exact_successor_incarnation".into(), json!(true));
+        let mut actual = original.clone();
+        canonical_semantic_booleans::prepare(&mut actual).unwrap();
+        assert_eq!(actual, expected); // Preserve every other member, value and ordered operation.
+        assert!(!decision.packet().state().rows().is_empty());
+        assert!(NativeModel::deterministic_fixture()
+            .unwrap()
+            .forward(decision.packet())
+            .unwrap()
+            .iter()
+            .all(|v| v.is_finite()));
+
+        for wrong in [json!(false), json!(37)] {
+            let mut forged = original.clone();
+            forged.pointer_mut(FIELD).unwrap()["requires_exact_successor_generation"] = wrong;
+            let before = forged.clone();
+            assert!(canonical_semantic_booleans::prepare(&mut forged).is_err());
+            assert_eq!(forged, before);
+        }
+        let mut unknown = original.clone();
+        unknown["unpaired_generation"] = json!(23);
+        let before = unknown.clone();
+        assert!(canonical_semantic_booleans::prepare(&mut unknown).is_err());
+        assert_eq!(unknown, before);
+        // Even the same true Boolean outside its whole authenticated printed
+        // program remains a forbidden raw-generation operand.
+        let mut raw = serde_json::to_value(decision.backend.candidates_v62()).unwrap();
+        raw["observation"]["requires_exact_successor_generation"] = json!(true);
+        let actions = decision
+            .backend
+            .candidates_v62()
+            .candidates
+            .iter()
+            .map(|row| serde_json::to_value(row).unwrap())
+            .collect();
+        assert!(matches!(normalize::encode(Source::CallV62, raw, actions),
+            Err(Error::UnsupportedOperand(key)) if key == "requires_exact_successor_generation"));
+
+        let before = pair.model.fixture_state().clone();
+        let counts = pair.model.fixture_counts();
+        let save = pair.model.snapshot();
+        let native = pair.native.snapshot_v1();
+        pair.quiet(); // Actual original-index native step and complete world/count parity.
+        pair.model.restore(&save).unwrap();
+        pair.native.call_restore_v62(&native).unwrap();
+        assert_eq!(pair.model.fixture_state(), &before);
+        assert_eq!(pair.model.fixture_state(), pair.native.call_fixture_state());
+        assert_eq!(pair.model.fixture_counts(), counts);
+        assert_eq!(pair.decision().packet(), decision.packet());
+        assert_eq!(pair.model.apply(&decision, 0), Err(Error::StaleBinding));
+        assert_eq!(pair.model.fixture_state(), &before);
+    }
+}

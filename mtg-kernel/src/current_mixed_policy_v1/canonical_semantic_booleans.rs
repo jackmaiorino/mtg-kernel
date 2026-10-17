@@ -1,4 +1,4 @@
-//! Preserve exact canonical programs while distinguishing five printed semantic
+//! Preserve exact canonical programs while distinguishing printed semantic
 //! booleans from executable raw identity operands. Only a whole revalidated
 //! meaning may use these private numeric-tree spellings; other keys still refuse.
 use super::{Error, Result};
@@ -70,6 +70,35 @@ pub(super) fn prepare(value: &mut Value) -> Result<()> {
                 return Ok(());
             }
             _ => {}
+        }
+        if fields.get("schema").and_then(Value::as_str)
+            == Some(crate::rules_meaning_next_five_v59::SCHEMA)
+        {
+            use crate::rules_meaning_next_five_v59::{
+                FamilyV59, InstructionV59, MeaningV59, RuleV59,
+            };
+            let typed: MeaningV59 = exact(value)?;
+            crate::rules_meaning_next_five_v59::validate(&typed).map_err(|_| error())?;
+            if typed.family == FamilyV59::Infernal {
+                for (rule_index, rule) in typed.ordered_rules.iter().enumerate() {
+                    if let RuleV59::Trigger { ordered, .. } = rule {
+                        for (op_index, op) in ordered.iter().enumerate() {
+                            if matches!(
+                                op,
+                                InstructionV59::ReturnOriginalGraveyardIncarnation { .. }
+                            ) {
+                                rename(
+                                    &mut value["ordered_rules"][rule_index]["Trigger"]["ordered"]
+                                        [op_index]["ReturnOriginalGraveyardIncarnation"],
+                                    "requires_exact_successor_generation",
+                                    "requires_exact_successor_incarnation",
+                                )?;
+                            }
+                        }
+                    }
+                }
+                return Ok(());
+            }
         }
         if fields.get("schema").and_then(Value::as_str)
             == Some(crate::rules_meaning_ravenous_amulet_v51::SCHEMA)

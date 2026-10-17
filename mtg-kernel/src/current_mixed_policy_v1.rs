@@ -67,6 +67,7 @@ pub enum Source {
     CallV62,
     EndTurnV68,
     GenesisWaveV69,
+    VivienV70,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -334,6 +335,18 @@ pub fn feature_identity() -> String {
             include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
+            include_str!("rules_meaning_vivien_v70.rs"),
+            include_str!("vivien_public_v70.rs"),
+            include_str!("vivien_observation_v70.rs"),
+            include_str!("vivien_candidates_v70.rs"),
+            include_str!("rl_session/vivien_v70.rs"),
+            include_str!("current_mixed_policy_v1/vivien.rs"),
+            include_str!("human_bo3_v1/vivien_v70.rs"),
+            include_str!("human_bo3_v1/limited_vivien_v11.rs"),
+            include_str!("limited_vivien_session_v11.rs"),
+            include_str!("bin/kernel_limited_vivien_env_v11.rs"),
+            include_str!("effect/vivien_reid_v1.rs"),
+            include_str!("effect/squad_rallier_resolution_v1.rs"),
             crate::engine::time_stop_v1::source_sha256_v1(),
             crate::effect::genesis_wave_v1::source_sha256_v1(),
             include_str!("engine/tinybones_v72.rs"),
@@ -520,3 +533,6 @@ mod tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod legendary_tests;
+
+mod vivien;
+pub use vivien::{VivienDecision, VivienSession, VivienSnapshot};
