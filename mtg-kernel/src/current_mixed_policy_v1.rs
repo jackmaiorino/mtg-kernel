@@ -72,6 +72,7 @@ pub enum Source {
     TinybonesV72,
     LilianaV73,
     ChandraV74,
+    KaitoV75,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -389,6 +390,13 @@ pub fn feature_identity() -> String {
             include_str!("effect/chandra_flameshaper_public_v74.rs"),
             include_str!("effect/chandra_flameshaper_v1.rs"),
             include_str!("rules_meaning_chandra_v74.rs"),
+            include_str!("kaito_observation_v75.rs"),
+            include_str!("kaito_candidates_v75.rs"),
+            include_str!("rl_session/kaito_v75.rs"),
+            include_str!("current_mixed_policy_v1/kaito.rs"),
+            include_str!("kaito_public_v75.rs"),
+            include_str!("effect/kaito_cunning_v75.rs"),
+            include_str!("rules_meaning_kaito_v75.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
@@ -586,3 +594,6 @@ pub use liliana::{LilianaDecision, LilianaSession, LilianaSnapshot};
 
 mod chandra;
 pub use chandra::{ChandraDecision, ChandraSession, ChandraSnapshot};
+
+mod kaito;
+pub use kaito::{KaitoDecision, KaitoSession, KaitoSnapshot};

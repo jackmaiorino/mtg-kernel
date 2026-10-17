@@ -977,6 +977,7 @@ fn build_for_scope_with_assembly(
             | crate::rl::CommonProjectionScopeV42::TinybonesV72
             | crate::rl::CommonProjectionScopeV42::LilianaV73
             | crate::rl::CommonProjectionScopeV42::ChandraV74
+            | crate::rl::CommonProjectionScopeV42::KaitoV75
     ) {
         crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
     } else {
@@ -998,6 +999,7 @@ fn build_for_scope_with_assembly(
             | crate::rl::CommonProjectionScopeV42::TinybonesV72
             | crate::rl::CommonProjectionScopeV42::LilianaV73
             | crate::rl::CommonProjectionScopeV42::ChandraV74
+            | crate::rl::CommonProjectionScopeV42::KaitoV75
     ) {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -1032,7 +1034,8 @@ fn build_for_scope_with_assembly(
         | crate::rl::CommonProjectionScopeV42::MuldrothaV71
         | crate::rl::CommonProjectionScopeV42::TinybonesV72
         | crate::rl::CommonProjectionScopeV42::LilianaV73
-        | crate::rl::CommonProjectionScopeV42::ChandraV74 => {}
+        | crate::rl::CommonProjectionScopeV42::ChandraV74
+        | crate::rl::CommonProjectionScopeV42::KaitoV75 => {}
     }
     // This is the original first complete common build, after the unchanged
     // scope checks and before any family validation/construction.
