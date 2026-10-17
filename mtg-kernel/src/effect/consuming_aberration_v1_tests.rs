@@ -1295,6 +1295,10 @@ fn paid_longbow_granted_activation_above_original_mill_keeps_native_owner_both_s
         assert!(ping.v4.granted_by.is_some());
         assert!(state.stack.iter().any(|row| row == &waiting));
         assert!(state.objects.get(source).tapped);
+        // The actual granted damage row needs its native owner, while the
+        // catalog's unrelated as-enters probes need no enclosing Runner.
+        assert!(crate::linked_aura_operation_v1::needs_event_owner(&state));
+        assert!(!crate::linked_aura_operation_v1::needs_surrounding_operation_owner(&state));
         let life = state.players[actor.opponent().index()].life;
         let mut replay = restore(&state);
         finish(&mut state, false);

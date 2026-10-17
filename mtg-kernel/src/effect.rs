@@ -27054,7 +27054,11 @@ pub(crate) fn execute_owned_native_row_v1(
     owner: NativeExecutionOwnerV1,
 ) -> Result<(), String> {
     owner.validate_entry(state, item, ctx, program)?;
-    if crate::linked_aura_operation_v1::needs_event_owner(state) {
+    // The event-level predicate also probes catalog-only as-enters choices.
+    // Those probes may decline an unrelated operation without a Runner. Only
+    // an actual surrounding operation requires its enclosing owner here;
+    // individual native events retain their ordinary entry-owner dispatch.
+    if crate::linked_aura_operation_v1::needs_surrounding_operation_owner(state) {
         return Err("native execution frame lost its enclosing event owner".into());
     }
     let proof = NativeExecutionProofV1 { owner: &owner, ctx };

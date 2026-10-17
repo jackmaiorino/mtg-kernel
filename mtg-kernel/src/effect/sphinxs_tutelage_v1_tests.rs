@@ -890,6 +890,10 @@ fn paid_draw_discard_above_published_mill_keeps_lexical_native_owner_and_restore
         }
         let waiting = waiting.expect("genuine first mill is published before its response window");
         event::validate_published_tutelage_v1(&state, &waiting).unwrap();
+        // Catalog-only entry probes do not require an enclosing Runner for
+        // this separate genuine draw/discard activation above the mill row.
+        assert!(crate::linked_aura_operation_v1::needs_event_owner(&state));
+        assert!(!crate::linked_aura_operation_v1::needs_surrounding_operation_owner(&state));
         let before = taps(&state, actor);
         activate_to_discard(&mut state, actor, source);
         assert_eq!(taps(&state, actor) - before, 6);
