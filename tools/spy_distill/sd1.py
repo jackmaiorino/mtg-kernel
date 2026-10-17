@@ -1553,7 +1553,11 @@ def custody_spec_problems(spec) -> list:
 
 def seal_index(seal: dict, failures: list) -> dict | None:
     """The seal's members by name and by retained original path (aliases
-    included, by norm_key), each original bound to its member's SHA-256."""
+    included, by norm_key), each original bound to its member's SHA-256. A
+    seal may map one original to several members. When they all have one
+    SHA-256 the original binds to the first, since either names the same
+    bytes; otherwise it binds to none and is ``ambiguous``, so every lookup
+    of it fails. ``repeated`` lists each such original for the record."""
     files = {}
     for entry in seal.get("files") or []:
         name = entry.get("name") if isinstance(entry, dict) else None
@@ -1561,20 +1565,30 @@ def seal_index(seal: dict, failures: list) -> dict | None:
             failures.append(f"the seal lists an unsafe, repeated or unhashed member {name!r}")
             return None
         files[name] = entry
-    by_original, originals_of = {}, {}
+    mapped, originals_of = {}, {}
     for row in seal.get("original_archive_members") or []:
         original, name = row.get("original") or {}, row.get("member")
         if name not in files or original.get("sha256") != files[name]["sha256"] or not isinstance(
                 original.get("path"), str):
             failures.append(f"the seal maps {original.get('path')!r} to {name!r} with another SHA-256")
             return None
-        key = norm_key(original["path"])
-        if key in by_original and by_original[key][0] != name:
-            failures.append(f"the seal maps {original['path']} to two members")
-            return None
-        by_original[key] = (name, original["sha256"])
+        hits = mapped.setdefault(norm_key(original["path"]), {"original": original["path"], "members": []})
+        if name not in hits["members"]:
+            hits["members"].append(name)
         originals_of.setdefault(name, []).append(original["path"])
-    return {"files": files, "by_original": by_original, "originals_of": originals_of}
+    by_original, ambiguous, repeated = {}, {}, []
+    for key, hits in mapped.items():
+        names = hits["members"]
+        digests = list(dict.fromkeys(files[n]["sha256"] for n in names))
+        if len(digests) == 1:
+            by_original[key] = (names[0], digests[0])
+        else:
+            ambiguous[key] = names
+        if len(names) > 1:
+            repeated.append({"original": hits["original"], "members": names, "sha256": digests,
+                             "binds": names[0] if len(digests) == 1 else None})
+    return {"files": files, "by_original": by_original, "originals_of": originals_of, "ambiguous": ambiguous,
+            "repeated": repeated}
 
 
 class Archive:
@@ -1728,7 +1742,9 @@ class Remap:
     def locate(self, token: str, pinned: bool):
         """Where one absolute path resolves: ("kept", None) as it is,
         ("kept", PATH) as rewritten, ("member", NAME), ("file", ENTRY),
-        ("directory", PATH) or None."""
+        ("directory", PATH) or None; ("ambiguous", NAMES) for an original
+        the seal maps to members with different SHA-256s, which resolves
+        to none of them."""
         key = norm_key(token)
         if self.kept(key):
             return "kept", None
@@ -1740,6 +1756,8 @@ class Remap:
         hit = self.index["by_original"].get(key)
         if hit is not None:
             return "member", hit[0]
+        if key in self.index["ambiguous"]:
+            return "ambiguous", self.index["ambiguous"][key]
         plain = self.files.get(key)
         if plain is not None:
             return "file", plain
@@ -1770,6 +1788,10 @@ class Remap:
             self.failures.append(f"{member}: {token} resolves to no sealed member, verified file or directory")
             return None
         place, value = where
+        if place == "ambiguous":
+            self.failures.append(f"{member}: {token} is an original the seal maps to members with different "
+                                 f"SHA-256s ({', '.join(value)}), so it names none of them")
+            return None
         if place == "kept":
             self.notes[member]["kept"].append({"from": token, "to": value or token})
             if self.reads(member, kind) and (member, token) not in self.refused:
@@ -1923,7 +1945,7 @@ class Remap:
 
     def located_identity(self, token: str, pinned: bool):
         where = self.locate(token, pinned)
-        if where is None:
+        if where is None or where[0] == "ambiguous":
             return None
         place, value = where
         if place == "member":
@@ -2140,8 +2162,13 @@ class Custody:
 
     def sealed(self, entry: dict, what: str) -> str | None:
         """The member the seal maps an original path to, with the pin's
-        SHA-256; None (listed) when it maps none."""
-        hit = self.index["by_original"].get(norm_key(entry["path"]))
+        SHA-256; None (listed) when it maps none, or maps it ambiguously."""
+        key = norm_key(entry["path"])
+        if key in self.index["ambiguous"]:
+            self.failures.append(f"{what}: {entry['path']} is an original the seal maps to members with different "
+                                 f"SHA-256s ({', '.join(self.index['ambiguous'][key])}), so it names none of them")
+            return None
+        hit = self.index["by_original"].get(key)
         if hit is None or hit[1] != entry["sha256"]:
             self.failures.append(f"{what}: the seal maps no member with SHA-256 {entry['sha256']} to {entry['path']}")
             return None
@@ -2226,7 +2253,11 @@ class Custody:
             job = beside(row["path"], JOB_SPEC)
             hit = self.index["by_original"].get(norm_key(job))
             if hit is None:
-                self.failures.append(f"{eid}: its job spec {job} is not sealed")
+                names = self.index["ambiguous"].get(norm_key(job))
+                self.failures.append(f"{eid}: its job spec {job} is " + (
+                    "not sealed" if names is None else
+                    f"an original the seal maps to members with different SHA-256s ({', '.join(names)}), so it "
+                    "names none of them"))
                 continue
             self.register(hit[0], f"{lineage}-jobs", "job", f"{eid}'s job spec", id=case, record=record)
         for lineage in LINEAGES:
@@ -2414,6 +2445,7 @@ class Custody:
                     "side_by_side": c["side_by_side"]} for c in self.copies]
         return {"schema": CUSTODY_SCHEMA, "spec": spec_pin, "out_dir": absolute(self.out_dir), "durable": durable,
                 "completion_rule": self.rule, "extracted_from": self.archive_pin, "forbidden": self.spec["forbidden"],
+                "repeated_originals": None if self.index is None else self.index["repeated"],
                 "schedule": self.spec["schedule"], "index": self.index_record, "analysis_sources": self.analysis,
                 "known_answer": self.answer, "inputs": self.inputs, "members": members, "files": self.files,
                 "lists": list_pins, "counts": dict(sorted(roles.items())), "failures": self.failures,
@@ -2480,7 +2512,10 @@ def custody(spec: dict, out_dir: Path, spec_pin: dict | None = None) -> dict:
     (role inputs). Within a lineage each job's out= is its record and the
     jobs name one source, bank spec and pair of opponents by identity,
     paths aside; SD1's input set is the first job's copies, listed as
-    LIN-source, LIN-bank-spec, LIN-t1 and LIN-a48. Every gap and mismatch is
+    LIN-source, LIN-bank-spec, LIN-t1 and LIN-a48. An original the seal maps
+    to several members binds to the first when they share one SHA-256, and
+    to none otherwise, so a lookup of it fails (seal_index); the record lists
+    each such original (repeated_originals). Every gap and mismatch is
     listed in the record and fails it; DIR/members holds the extracted
     members, DIR/remapped the remapped copies, and DIR/lists/ROLE.txt each
     role's files (remapped copies where remapped)."""
