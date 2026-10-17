@@ -74,6 +74,52 @@ impl MuldrothaSession {
             generation: 0,
         }
     }
+    /// Ordinary production reset keeps the native Full-only declared-deck preflight.
+    pub fn reset_explicit_mainboards(
+        episode_id: u64,
+        env_seed: u64,
+        limits: (u64, u64),
+        deck_ids: crate::rl_session::SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: crate::ids::PlayerId,
+    ) -> Result<Self> {
+        MuldrothaSessionV71::reset_explicit_mainboards_v71(
+            episode_id,
+            env_seed,
+            limits,
+            deck_ids,
+            mainboards,
+            starting_player,
+        )
+        .map(Self::from_muldrotha)
+        .map_err(|e| Error::Projection(format!("{e:?}")))
+    }
+    /// A derived numeric owner always has a fresh lineage and freshly encodes
+    /// the genuine sampled backend. Original decisions never authorize it.
+    pub fn sampled_clone(&self, decision: &MuldrothaDecision, seed: u64) -> Result<Self> {
+        if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
+            return Err(Error::StaleBinding);
+        }
+        self.inner
+            .validate_decision_v71(&decision.backend)
+            .map_err(|_| Error::StaleBinding)?;
+        if packet_from_current(
+            decision.backend.candidates_v71(),
+            decision.backend.actions(),
+        )? != decision.packet
+        {
+            return Err(Error::StaleBinding);
+        }
+        let inner = self
+            .inner
+            .sampled_clone_v71(&decision.backend, seed)
+            .map_err(|e| Error::Projection(e.to_string()))?;
+        let sampled = Self::from_muldrotha(inner);
+        if sampled.encode(decision.backend.expected())?.packet != decision.packet {
+            return Err(Error::StaleBinding);
+        }
+        Ok(sampled)
+    }
     pub fn current_response(&self) -> FastActorResponseV1 {
         self.inner.response()
     }
