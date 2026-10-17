@@ -457,3 +457,88 @@ fn genuine_paid_independent_opposing_emblem_controllers_share_cast_not_ninja_own
         assert!(batches.iter().all(|b| b.created.len() == 1));
     }
 }
+#[test]
+fn genuine_paid_return_recast_battlefield_order_and_membership_refuse_readonly_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p);
+        walker(&mut s, p);
+        let first = cast(&mut s, p, "Axgard Cavalry", &[], 2);
+        finish(&mut s);
+        let second = cast(&mut s, p, "Axgard Cavalry", &[], 2);
+        finish(&mut s);
+        next_own_main(&mut s, p.opponent());
+        let opponent = cast(&mut s, p.opponent(), "Axgard Cavalry", &[], 2);
+        finish(&mut s);
+        next_own_main(&mut s, p);
+        let original = s.objects.get(first).zone_change_count;
+        cast(
+            &mut s,
+            p,
+            "Run Away Together",
+            &[Target::Object(first), Target::Object(opponent)],
+            2,
+        );
+        finish(&mut s);
+        assert_eq!(s.objects.get(first).zone, Zone::Hand);
+        assert_eq!(s.objects.get(opponent).zone, Zone::Hand);
+        // Recast the same genuinely returned physical card, without inserting a new one.
+        crate::engine::time_stop_v1::tests::priority(&mut s, p);
+        let before = crate::engine::time_stop_v1::tests::tapped(&s, p);
+        assert!(
+            matches!(next(&mut s),engine::Decision::CastSpellOrPass{castable_spells,..}if castable_spells.contains(&first))
+        );
+        engine::step(&mut s, Action::CastSpell(first)).unwrap();
+        crate::engine::time_stop_v1::tests::priority(&mut s, p);
+        assert!(s.engine.pending_cast.is_none());
+        assert_eq!(
+            crate::engine::time_stop_v1::tests::tapped(&s, p) - before,
+            2
+        );
+        assert_eq!(s.players[p.index()].mana_pool, [0; 6]);
+        finish(&mut s);
+        assert_eq!(s.objects.get(first).zone_change_count, original + 3);
+        let native = s.players[p.index()]
+            .battlefield
+            .iter()
+            .map(|id| id.0)
+            .collect::<Vec<_>>();
+        let arena = s
+            .objects
+            .iter()
+            .filter_map(|(id, o)| {
+                (o.zone == Zone::Battlefield && o.controller == p).then_some(id.0)
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(native, arena);
+        assert!(
+            native.iter().position(|id| *id == second.0).unwrap()
+                < native.iter().position(|id| *id == first.0).unwrap()
+        );
+        for viewer in [p, p.opponent()] {
+            let f = capture(&s, viewer);
+            assert_eq!(
+                f.battlefield[p.index()]
+                    .iter()
+                    .map(|c| c.card.object)
+                    .collect::<Vec<_>>(),
+                native
+            );
+            let mut wrong = f.clone();
+            wrong.battlefield[p.index()].reverse();
+            let before = s.clone();
+            assert!(facts::validate_current(&s, viewer, &wrong).is_err());
+            assert_eq!(s, before);
+        }
+        for duplicate in [false, true] {
+            let mut bad = restore(&s);
+            if duplicate {
+                bad.players[p.index()].battlefield.push(first);
+            } else {
+                bad.players[p.index()].battlefield.retain(|id| *id != first);
+            }
+            let before = bad.clone();
+            assert!(facts::capture(&bad, p).is_err());
+            assert_eq!(bad, before);
+        }
+    }
+}

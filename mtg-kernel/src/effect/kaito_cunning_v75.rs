@@ -1795,14 +1795,26 @@ pub(crate) fn public_facts_v75(
         complete_ordinary_observation: false,
         owning_consumer_admitted: false,
     };
-    for (id, o) in state.objects.iter() {
+    // Printing discovery stays a separate stable arena scan. Complete current
+    // battlefield rows follow the native per-seat membership order.
+    for (id, _) in state.objects.iter() {
         if let Some(r) = public::reference(state, id, Some(viewer)) {
             if matches!(r.identity, public::IdentityV1::Known { card_id: 494 | 495 }) {
                 f.authorized_printings.push(r);
             }
         }
-        if o.zone == Zone::Battlefield {
-            f.battlefield[o.controller.index()].push(CurrentV75 {
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for seat in [PlayerId::P0, PlayerId::P1] {
+        for &id in &state.players[seat.index()].battlefield {
+            let o = state
+                .objects
+                .try_get(id)
+                .ok_or("V75 battlefield member absent")?;
+            if o.zone != Zone::Battlefield || o.controller != seat || !seen.insert(id.0) {
+                return Err("V75 battlefield membership changed".into());
+            }
+            f.battlefield[seat.index()].push(CurrentV75 {
                 card: public::reference(state, id, Some(viewer))
                     .ok_or("V75 battlefield reference absent")?,
                 is_token: o.v4.is_token,
@@ -1813,6 +1825,13 @@ pub(crate) fn public_facts_v75(
                 form: public::checked_form(state, id)?,
             });
         }
+    }
+    if state
+        .objects
+        .iter()
+        .any(|(id, o)| o.zone == Zone::Battlefield && !seen.contains(&id.0))
+    {
+        return Err("V75 battlefield roster incomplete".into());
     }
     let mut publications = BTreeMap::new();
     let mut combats = BTreeMap::new();

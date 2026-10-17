@@ -50,3 +50,14 @@ Checks are pinned1.94.1 Rust2021 formatting and static/diff checks only. Initial
 workspace fmt check found the new lib module order and was corrected. No Rust
 compile/check/test/clippy or remote work was run. Runtime and complete consumer
 qualification remain pending.
+
+## Authoritative battlefield order repair
+
+The follow-on preserves the separate authorized-printing arena scan, but projects
+current battlefield rows through each native per-seat membership vector. Duplicate,
+foreign-controller, missing-object and omitted live battlefield members refuse
+read-only. A ninth genuine paid group casts Run Away Together on two genuinely
+paid creatures, recasts the exact returned physical card, proves native membership
+order differs from arena allocation order, then checks both viewers, restore and
+malformed-roster/changed-DTO negatives. The original eight V75 groups and fourteen
+native bodies remain unchanged. Rust is still uncompiled/unrun.
