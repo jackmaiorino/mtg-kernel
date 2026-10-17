@@ -174,3 +174,160 @@ fn genuine_paid_employment_control_expires_after_issued_cleanup_discard_both_sea
         assert!(discard_index < cleanup_index && cleanup_index < expired_index);
     }
 }
+
+#[test]
+fn genuine_paid_cleanup_death_priority_new_growth_repeat_and_restored_origin_both_seats() {
+    fn quiet(state: &mut GameState, decision: Decision) {
+        crate::graveyard_return_public_v61::tests::quiet(state, decision);
+    }
+    fn next(state: &mut GameState) -> Decision {
+        let d = advance_until_decision(state);
+        assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
+        assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
+        d
+    }
+    fn paid(
+        state: &mut GameState,
+        actor: PlayerId,
+        name: &str,
+        target: Option<ObjectId>,
+        cost: usize,
+    ) -> ObjectId {
+        let card = put(state, actor, name, Zone::Hand);
+        let taps = state.players[actor.index()]
+            .battlefield
+            .iter()
+            .filter(|o| state.objects.get(**o).tapped)
+            .count();
+        assert!(
+            matches!(next(state),Decision::CastSpellOrPass{player,castable_spells,..} if player==actor && castable_spells.contains(&card))
+        );
+        step(state, Action::CastSpell(card)).unwrap();
+        if let Some(target) = target {
+            assert!(
+                matches!(next(state),Decision::ChooseTargets{legal_targets,..} if legal_targets.contains(&Target::Object(target)))
+            );
+            step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        }
+        assert!(matches!(next(state),Decision::CastSpellOrPass{player,..} if player==actor));
+        assert!(state.engine.pending_cast.is_none());
+        assert_eq!(
+            state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|o| state.objects.get(**o).tapped)
+                .count()
+                - taps,
+            cost
+        );
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        assert!(state
+            .stack
+            .iter()
+            .any(|r| r.source == card && r.kind == StackItemKind::Spell));
+        for _ in 0..32 {
+            let d = next(state);
+            if state.stack.is_empty() && state.engine.pending_triggers.is_empty() {
+                return card;
+            }
+            quiet(state, d);
+        }
+        panic!("paid spell failed to finish")
+    }
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        for name in ["Forest", "Mountain"] {
+            for _ in 0..4 {
+                put(&mut state, actor, name, Zone::Battlefield);
+            }
+        }
+        for _ in 0..6 {
+            put(&mut state, actor, "Island", Zone::Battlefield);
+        }
+        let clock = paid(&mut state, actor, "Clockwork Percussionist", None, 1);
+        let target = put(&mut state, actor, "Axgard Cavalry", Zone::Battlefield);
+        paid(&mut state, actor, "Giant Growth", Some(clock), 1);
+        // Native counter setup, not a claimed paid counter-producing spell.
+        // The real +3/+3 expires first, then the printed dies ability triggers.
+        state.objects.get_mut(clock).counters.minus1_minus1 = 2;
+        let mut found = false;
+        for _ in 0..240 {
+            let d = next(&mut state);
+            if state.step == Step::Cleanup
+                && ordinary_cleanup_v1::at_priority(&state)
+                && !state.stack.is_empty()
+            {
+                assert_eq!(state.objects.get(clock).zone, Zone::Graveyard);
+                assert!(matches!(d,Decision::CastSpellOrPass{player,..} if player==actor));
+                found = true;
+                break;
+            }
+            quiet(&mut state, d);
+        }
+        assert!(
+            found,
+            "ordinary cleanup did not issue actual trigger priority"
+        );
+        assert!(!state.engine.ordinary_cleanup_v1.is_empty());
+        assert!(state.engine.time_stop_v1.is_empty());
+        assert!(!state
+            .engine
+            .event_history
+            .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1]));
+        for viewer in [actor, actor.opponent()] {
+            let public = crate::rl::observe_v1(&state, viewer, 0).unwrap();
+            assert!(!serde_json::to_string(&public)
+                .unwrap()
+                .contains("ordinary_cleanup_v1"));
+        }
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(state, replay);
+        assert_eq!(state.state_hash(), replay.state_hash());
+        // A genuine paid Time Stop can replace this actual ordinary cleanup
+        // priority window. Its separate replay journal closes the scalar step;
+        // the discarded Clockwork trigger is not relabelled as countered.
+        let mut ended = state.clone();
+        let library_before = ended.players[actor.index()].library.len();
+        let stop = paid(&mut ended, actor, "Time Stop", None, 6);
+        assert_eq!(ended.objects.get(stop).zone, Zone::Exile);
+        assert_eq!(ended.players[actor.index()].library.len(), library_before);
+        assert!(ended.engine.ordinary_cleanup_v1.is_empty());
+        assert!(ended.engine.time_stop_v1.is_empty());
+        ordinary_cleanup_v1::validate(&ended).unwrap();
+        time_stop_v1::validate(&ended).unwrap();
+        let restored_ended: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&ended).unwrap()).unwrap();
+        assert_eq!(ended, restored_ended);
+        ordinary_cleanup_v1::validate(&restored_ended).unwrap();
+        time_stop_v1::validate(&restored_ended).unwrap();
+        let original_library = state.players[actor.index()].library.len();
+        for branch in [&mut state, &mut replay] {
+            paid(branch, actor, "Giant Growth", Some(target), 1);
+            assert_eq!(checked_effective_pt(branch, target).unwrap(), (5, 5));
+            for _ in 0..64 {
+                let d = next(branch);
+                if branch.active_player != actor {
+                    assert_eq!(checked_effective_pt(branch, target).unwrap(), (2, 2));
+                    assert_eq!(
+                        branch.players[actor.index()].library.len(),
+                        original_library - 1
+                    );
+                    assert!(branch.engine.time_stop_v1.is_empty());
+                    assert!(branch.engine.ordinary_cleanup_v1.is_empty());
+                    break;
+                }
+                quiet(branch, d);
+            }
+            assert_eq!(branch.active_player, actor.opponent());
+            time_stop_v1::validate(branch).unwrap();
+        }
+        assert_eq!(state, replay);
+        // Ordinary cleanup never creates Time Stop disposal or a retained
+        // private-world history record.
+        assert!(!state
+            .engine
+            .event_history
+            .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1]));
+    }
+}

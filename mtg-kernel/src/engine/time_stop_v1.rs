@@ -507,6 +507,8 @@ fn dispose_stack(state: &mut GameState, item: &StackItem) -> Result<(), String> 
         return Err("end-turn stack exile failed".into());
     }
     state.stack.clear();
+    // A real end-turn resolution replaces any ordinary cleanup priority window.
+    ordinary_cleanup_v1::replaced_by_time_stop(state)?;
     let disposal = u64::try_from(state.engine.event_history.len())
         .map_err(|_| "end-turn disposal index exceeds u64")?;
     state.engine.time_stop_v1 = StateV1(Some(CleanupV1 {
@@ -989,6 +991,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                 (
                     "mtg-kernel/src/zul_ashur_v1.rs",
                     include_str!("../zul_ashur_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/engine/ordinary_cleanup_v1.rs",
+                    include_str!("ordinary_cleanup_v1.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());

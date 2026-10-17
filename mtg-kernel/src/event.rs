@@ -2028,6 +2028,9 @@ pub enum CommittedEvent {
     TimeStopJournalV1 {
         journal: Box<crate::engine::time_stop_v1::JournalV1>,
     },
+    OrdinaryCleanupStageV1 {
+        stage: crate::engine::ordinary_cleanup_v1::StageV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
