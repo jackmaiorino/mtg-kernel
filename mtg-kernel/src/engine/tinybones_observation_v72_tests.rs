@@ -201,3 +201,14 @@ fn genuine_paid_time_stop_disposes_original_tinybones_trigger_with_archive_resto
         assert_eq!(observe(&mut restored).2, value);
     }
 }
+
+/// Legal initial scene followed by actual native paid Tinybones cast and turns.
+/// This test-only bridge exports no factory or executable authority in production.
+pub(crate) fn owning_ready(p: PlayerId, hidden: &str) -> (GameState, ObjectId, ObjectId) {
+    let mut state = ready(p, hidden);
+    let tiny = put(&mut state, p, NAME, Zone::Hand);
+    let card = put(&mut state, p.opponent(), "Think Twice", Zone::Hand);
+    paid(&mut state, p, tiny);
+    turn(&mut state, p);
+    (state, tiny, card)
+}

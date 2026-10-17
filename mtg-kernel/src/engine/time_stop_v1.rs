@@ -1664,6 +1664,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/kaito_public_v75.rs",
                     include_str!("../kaito_public_v75.rs"),
                 ),
+                (
+                    "mtg-kernel/src/rl_session/tinybones_v72.rs",
+                    include_str!("../rl_session/tinybones_v72.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

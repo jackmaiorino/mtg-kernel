@@ -1539,4 +1539,4 @@ fn activation_matches(a: &ActivatedAbilityDef) -> bool {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "tinybones_v72_tests.rs"]
-mod tests;
+pub(crate) mod tests;

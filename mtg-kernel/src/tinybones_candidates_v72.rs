@@ -135,6 +135,7 @@ pub fn producer_sha256() -> String {
             include_str!("rules_meaning_muldrotha_v71.rs"),
             include_str!("engine/muldrotha_v1.rs"),
             include_str!("tinybones_public_v72.rs"),
+            include_str!("rl_session/tinybones_v72.rs"),
             include_str!("rules_meaning_tinybones_v72.rs"),
             include_str!("engine/tinybones_v72.rs"),
         ] {
@@ -575,6 +576,18 @@ pub(crate) fn project_parts_v72(
     project_authenticated_parts_v72(state, surface, actor_and_origin, step, physical, substep)
 }
 
+pub(crate) fn project_issued_parts_v72(
+    proof: &crate::rl_session::tinybones_v72::IssuedOriginV72<'_>,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<(TinybonesCandidatesV72, NativeCandidateProjectionV72), RlContractError> {
+    proof.validate(state, surface, actor_and_origin, step, physical, substep)?;
+    project_authenticated_parts_v72(state, surface, actor_and_origin, step, physical, substep)
+}
 fn project_authenticated_parts_v72(
     state: &GameState,
     surface: &PolicySurfaceV5,
