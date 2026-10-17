@@ -3,6 +3,8 @@
 //! Zone/counter/shield/face-down setup explicitly marked below is native
 //! primitive coverage, not an invented paid printing or copy-spell issuer.
 use super::*;
+#[path = "chandra_public_v74_tests.rs"]
+mod public_v74_tests;
 use crate::{
     engine::time_stop_v1::tests::{cast, finish, next, pass, priority, restore, tapped},
     engine::{self, Action, Decision},

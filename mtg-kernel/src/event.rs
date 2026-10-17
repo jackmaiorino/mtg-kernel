@@ -10070,7 +10070,9 @@ pub(crate) fn record_copied_token_end_step_v1(
     }
     Ok(())
 }
-fn copied_end_sources_v1(
+/// Immutable validated source/count query for successor public facts. This
+/// returns no interpreter owner and neither collects nor publishes a trigger.
+pub(crate) fn copied_end_sources_v1(
     state: &GameState,
     capture: u64,
 ) -> Result<&[(crate::state::AbilitySourceContractV4, u32)], String> {
@@ -10160,6 +10162,18 @@ pub(crate) fn copied_token_trigger_v1(
     state: &GameState,
     item: &crate::state::StackItem,
 ) -> Result<(u64, u32, u32, crate::state::AbilitySourceContractV4), String> {
+    let facts = copied_token_trigger_facts_v74(state, item)?;
+    if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificeFinishedV1{stack_item_id} if *stack_item_id==item.v4.stack_item_id && item.v4.stack_item_id!=crate::ids::StackItemId::default())) {
+        return Err("copied token trigger source/controller/instance changed or consumed".into());
+    }
+    Ok(facts)
+}
+// Historical read-only validation retains every original source/instance check.
+// The execution entry above separately rejects an already finished occurrence.
+fn copied_token_trigger_facts_v74(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(u64, u32, u32, crate::state::AbilitySourceContractV4), String> {
     let Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1 {
         capture_history_index,
         observer,
@@ -10178,10 +10192,63 @@ pub(crate) fn copied_token_trigger_v1(
         || item.mode_chosen!=0 || item.is_copy || item.is_flashback || item.kicked || item.madness_offer || item.v4.x_value!=0
         || !item.targets.is_empty() || !item.v4.target_contracts.is_empty() || !item.discarded.is_empty() || !item.v4.paid_cost_refs.is_empty() || item.v4.optional_additional_cost_paid.is_some()
         || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenEndStepCollectedV1{capture_history_index:other} if other==capture_history_index)).count()!=1
-        || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificeFinishedV1{stack_item_id} if *stack_item_id==item.v4.stack_item_id && item.v4.stack_item_id!=crate::ids::StackItemId::default()))
     {return Err("copied token trigger source/controller/instance changed or consumed".into());}
     Ok((*capture_history_index, *observer, *ability, source))
 }
+/// Closed immutable receipt counts. This never returns an execution capability.
+pub(crate) fn copied_token_receipt_counts_v74(
+    state: &GameState,
+    capture: u64,
+) -> Result<(u32, u32), String> {
+    copied_end_sources_v1(state, capture)?;
+    let mut instances = std::collections::BTreeSet::new();
+    let mut ids = std::collections::BTreeSet::new();
+    let mut finished = 0u32;
+    for e in &state.engine.event_history {
+        let CommittedEvent::CopiedTokenSacrificePublishedV1 {
+            capture_history_index,
+            observer,
+            ability,
+            item,
+        } = e
+        else {
+            continue;
+        };
+        if *capture_history_index != capture {
+            continue;
+        }
+        let (original, original_observer, original_ability, _) =
+            copied_token_trigger_facts_v74(state, item)?;
+        if (original, original_observer, original_ability) != (capture,*observer,*ability)
+            || item.v4.stack_item_id == crate::ids::StackItemId::default()
+            || !instances.insert((*observer,*ability)) || !ids.insert(item.v4.stack_item_id)
+            || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{item:other,..} if other.v4.stack_item_id==item.v4.stack_item_id)).count()!=1 {
+            return Err("copied token historical publication source/instance changed or repeated".into());
+        }
+        let terminal=state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CopiedTokenSacrificeFinishedV1{stack_item_id} if *stack_item_id==item.v4.stack_item_id)).count();
+        if terminal > 1
+            || state.stack.iter().any(|r| {
+                r.v4.stack_item_id == item.v4.stack_item_id && (r != item.as_ref() || terminal != 0)
+            })
+            || state.engine.pending_effect.as_ref().is_some_and(|p| {
+                p.resolving_item.v4.stack_item_id == item.v4.stack_item_id
+                    && (p.resolving_item != **item || terminal != 0)
+            })
+        {
+            return Err("copied token historical terminal/current publication changed".into());
+        }
+        finished = finished
+            .checked_add(
+                u32::try_from(terminal).map_err(|_| "copied token terminal count overflow")?,
+            )
+            .ok_or("copied token finished count overflow")?;
+    }
+    Ok((
+        u32::try_from(instances.len()).map_err(|_| "copied token publication count overflow")?,
+        finished,
+    ))
+}
+
 pub(crate) fn publish_copied_token_trigger_v1(
     state: &mut GameState,
     item: &crate::state::StackItem,
