@@ -698,3 +698,106 @@ fn independently_initialized_hidden_worlds_and_source_departure_keep_original_pr
         }
     }
 }
+
+#[test]
+fn paid_completed_look_pup_bounce_and_same_card_recast_has_fresh_native_occurrence_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(
+            p,
+            &[
+                "Forest",
+                "Llanowar Elves",
+                "Think Twice",
+                "Island",
+                "Mountain",
+                "Forest",
+            ],
+            &[NAME, "Mischievous Pup"],
+            "Island",
+        );
+        let v = walker(&mut s, p);
+        let old_generation = s.objects.get(v).zone_change_count;
+        let old = activate(&mut s, p, v, 0, None);
+        prompt(&mut s, p);
+        engine::step(&mut s, Action::FinishEffectSelection).unwrap();
+        finish(&mut s);
+        assert!(s.engine.pending_effect.is_none());
+        assert!(!s
+            .stack
+            .iter()
+            .any(|r| r.v4.stack_item_id == old.v4.stack_item_id));
+        for id in [
+            Some(old.v4.stack_item_id),
+            None,
+            Some(StackItemId(u64::MAX)),
+        ] {
+            let mut ctx = super::super::crystal_prevention_v1::context(&old);
+            ctx.stack_item_id = id;
+            let draw = EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            };
+            let mut bad = restore(&s);
+            let before = bad.clone();
+            assert!(begin_resumable_resolution(&draw, &ctx, old.clone(), &mut bad).is_err());
+            assert_eq!(bad, before);
+            execute(&draw, &ctx, &mut bad);
+            assert!(bad.engine.halted.is_some());
+            let mut expected = before;
+            expected.engine.halted = bad.engine.halted;
+            assert_eq!(bad, expected);
+        }
+        let pup = paid(&mut s, p, "Mischievous Pup", &[], 3);
+        let mut issued = false;
+        for _ in 0..32 {
+            let d = next(&mut s);
+            if let Decision::ChooseTargets {
+                player,
+                spell,
+                legal_targets,
+                can_finish,
+                ..
+            } = d
+            {
+                assert_eq!((player, spell), (p, pup));
+                assert!(can_finish);
+                assert!(legal_targets.contains(&Target::Object(v)));
+                engine::step(&mut s, Action::ChooseTarget(Target::Object(v))).unwrap();
+                issued = true;
+                break;
+            }
+            pass(&mut s, d);
+        }
+        assert!(issued);
+        finish(&mut s);
+        assert_eq!(s.objects.get(v).zone, Zone::Hand);
+        assert_eq!(s.objects.get(v).zone_change_count, old_generation + 1);
+        let recast = paid(&mut s, p, NAME, &[], 5);
+        assert_eq!(recast, v);
+        let new = s
+            .stack
+            .iter()
+            .find(|r| r.source == v && r.kind == StackItemKind::Spell)
+            .unwrap()
+            .clone();
+        assert_ne!(new.v4.stack_item_id, old.v4.stack_item_id);
+        assert!(new.v4.ability_source_contract.is_none());
+        assert!(!context_selected(
+            &s,
+            &super::super::crystal_prevention_v1::context(&new)
+        ));
+        let mut replay = restore(&s);
+        for b in [&mut s, &mut replay] {
+            finish(b);
+            assert_eq!(b.objects.get(v).zone, Zone::Battlefield);
+            assert_eq!(b.objects.get(v).zone_change_count, old_generation + 3);
+            assert_eq!(crate::planeswalker_v1::loyalty(b, v), Some(5));
+            assert!(
+                matches!(next(b),Decision::CastSpellOrPass{activatable_abilities,..}if activatable_abilities.contains(&(v,0)))
+            );
+            validate_state(b).unwrap();
+        }
+        assert_eq!(s, replay);
+        assert_eq!(s.state_hash(), replay.state_hash());
+    }
+}

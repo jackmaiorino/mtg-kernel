@@ -35,12 +35,15 @@ hand/library or world snapshot is stored in the emblem journal. Legacy consumers
 refuse selected public Vivien and retained journal semantics; hidden opponents'
 current card identities are not inspected by that refusal.
 
-Eight paid both-seat fixture groups cover private optional/answered look restore,
+Nine paid both-seat fixture groups cover private optional/answered look restore,
 short/empty/no-match libraries, all three destroy domains and target reentry,
 Season/paid loyalty/source departure/copied recipients/current control,
 Witness timestamps/later creatures/stacked emblems, journal/API tampering and
 unsigned loyalty/PT overflow, actual paid Time Stop disposal, and independently
-initialized hidden worlds. Counter, control, zone and integer-boundary setups
+initialized hidden worlds, plus genuine paid Pup bounce and recasting the same
+physical Vivien after a completed look. Historical selection binds an exact
+stack occurrence or whole captured ability-source contract, never the raw
+physical arena ID alone. Counter, control, zone and integer-boundary setups
 are explicitly native primitives. They are not claims of paid blink/control or
 counter-producing printings. No native runtime pass is claimed.
 

@@ -363,7 +363,14 @@ pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
         || rows(state).any(|(_,j)|matches!(j,JournalV1::Published{item:old,..} if old.v4.stack_item_id==item.v4.stack_item_id))
 }
 pub(crate) fn context_selected(state: &GameState, ctx: &ExecCtx) -> bool {
-    waiting(state,ctx) || rows(state).any(|(_,j)|matches!(j,JournalV1::Published{item,..} if Some(item.v4.stack_item_id)==ctx.stack_item_id || item.source==ctx.source))
+    // A physical arena slot is not an occurrence: an old paid activation must
+    // not select a later spell after the card leaves and is cast again.
+    // Retain exact historical occurrence/whole captured source-contract
+    // selection so erasing or substituting only the context stack ID cannot
+    // turn the actual old native program into an ownerless generic effect.
+    waiting(state,ctx) || rows(state).any(|(_,j)|matches!(j,JournalV1::Published{item,..}
+        if Some(item.v4.stack_item_id)==ctx.stack_item_id
+            || ctx.ability_source_contract.is_some() && ctx.ability_source_contract==item.v4.ability_source_contract))
 }
 pub(crate) fn waiting(state: &GameState, ctx: &ExecCtx) -> bool {
     state.stack.iter().any(|row| {
