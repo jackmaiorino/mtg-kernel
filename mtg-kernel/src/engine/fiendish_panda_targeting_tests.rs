@@ -5,6 +5,7 @@ use crate::policy_observation_v6::tests::{put, ready_state_for};
 fn source_for(state: &GameState, source: ObjectId) -> TargetingSource {
     let object = state.objects.get(source);
     TargetingSource {
+        types_override: None,
         object: source,
         card_def: object.card_def,
         zone: object.zone,

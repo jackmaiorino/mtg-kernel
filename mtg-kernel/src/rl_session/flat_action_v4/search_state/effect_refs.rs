@@ -54,6 +54,8 @@ impl Scan<'_> {
         use EffectOp::*;
         match op {
             AjaniLoyaltyV42 { .. }
+            | DrakeIncubationFromCaptureV1 { .. }
+            | DrakeCreateTokenFromPaidV1
             | FiendishPandaCounterFromCaptureV1 { .. }
             | ConquerorGainFromCaptureV49 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,
@@ -68,6 +70,7 @@ impl Scan<'_> {
                 self.creature_choice(kind)
             }
             Sequence(ops) | Choice { options: ops, .. } => ops.iter().any(|x| self.op(x)),
+            MayDiscardCardOtherwiseV1 { unpaid, .. } => self.op(unpaid),
             Conditional { then, else_, .. } => self.op(then) || self.op(else_),
             MayPayCostThen {
                 then, otherwise, ..
@@ -221,6 +224,7 @@ impl Scan<'_> {
             | DealDamageByControlledCreatureCount { .. }
             | ExileTargetPlayersGraveyards
             | RevealUntilCardTypeAndMill { .. }
+            | RevealUntilCardTypeToHandRandomBottomV1 { .. }
             | DealDamageDynamic { .. }
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
@@ -272,6 +276,7 @@ impl Scan<'_> {
             | LoseHalfLifeRoundedUp { .. }
             | CreateTokenTappedAndAttacking { .. }
             | AddPlusOneCounterToAbilitySource
+            | IncubationFromCombatDamageV1 { .. }
             | AddSoulCounterToAbilitySourceV1
             | LoseLifeEachOpponentEqualSourceSoulV1
             | ReturnTargetCreatureCardRestrictedWhileSourceControlled { .. }
@@ -316,6 +321,9 @@ impl Scan<'_> {
                         .as_ref()
                         .and_then(|candidate| candidate.expected_object)
                         .is_some_and(|b| self.b(&b))
+            }
+            DiscardPaymentV1 { choice, selected } => {
+                self.bs(&choice.hand) || self.bs(selected) || self.op(&choice.unpaid)
             }
             DiscardDraw { choice, selected } => {
                 self.bs(&choice.hand) || self.bs(selected) || self.fs(&choice.remaining)
@@ -560,6 +568,7 @@ impl Scan<'_> {
         match p {
             ChooseNewlyExiledCard { .. } => true,
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
+            DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),
             DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
             ExileBatch { choice } => {
                 self.fs(&choice.remaining)
@@ -976,7 +985,16 @@ pub(super) fn conflicts(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
     // Retained original-world mechanisms require their qualified sampler.
-    if crate::bloodthirsty_conqueror_v49::has_history(state)
+    if crate::drake_hatcher_v1::custody::relevant(state)
+        || state.engine.event_history.iter().any(|e| {
+            matches!(
+                e,
+                crate::event::CommittedEvent::DrakeJournalV1 { .. }
+                    | crate::event::CommittedEvent::DrakeHistoryRefV1 { .. }
+                    | crate::event::CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
+            )
+        })
+        || crate::bloodthirsty_conqueror_v49::has_history(state)
         || crate::doubling_season_v48::requires_successor(state)
         || crate::soul_counters_v1::has_history(state)
     {
@@ -1233,7 +1251,10 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
-            AjaniJournalV42 { .. }
+            DrakeJournalV1 { .. }
+            | DrakeHistoryRefV1 { .. }
+            | ConquerorGainReplayBorrowV49 { .. }
+            | AjaniJournalV42 { .. }
             | StromkirkEndStepObserversV1 { .. }
             | StromkirkTriggerCaptureV2 { .. }
             | StromkirkCollectedV2 { .. }

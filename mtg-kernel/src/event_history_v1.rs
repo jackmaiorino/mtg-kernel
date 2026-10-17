@@ -258,11 +258,15 @@ pub enum EventKindV1 {
     RavenousPaymentV1,
     RavenousRemovedV1,
     RavenousCompletedV1,
+    DrakeJournalV1,
+    DrakeHistoryRefV1,
+    ConquerorGainReplayBorrowV49,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 234;
-const _: () = assert!(EventKindV1::RavenousCompletedV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 237;
+const _: () =
+    assert!(EventKindV1::ConquerorGainReplayBorrowV49 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -582,6 +586,9 @@ impl CommittedEvent {
             Self::RavenousPaymentV1 { .. } => EventKindV1::RavenousPaymentV1,
             Self::RavenousRemovedV1 { .. } => EventKindV1::RavenousRemovedV1,
             Self::RavenousCompletedV1 { .. } => EventKindV1::RavenousCompletedV1,
+            Self::DrakeJournalV1 { .. } => EventKindV1::DrakeJournalV1,
+            Self::DrakeHistoryRefV1 { .. } => EventKindV1::DrakeHistoryRefV1,
+            Self::ConquerorGainReplayBorrowV49 { .. } => EventKindV1::ConquerorGainReplayBorrowV49,
         }
     }
 }

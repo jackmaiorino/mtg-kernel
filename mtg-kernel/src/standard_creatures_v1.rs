@@ -194,6 +194,14 @@ fn apply_counter_transfer(
     let charge = live.counters.charge.checked_add(scale(counters.charge)?)?;
     let net = live.counters.net.checked_add(scale(counters.net)?)?;
     let bait = live.counters.bait.checked_add(scale(counters.bait)?)?;
+    let incubation_scaled =
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.incubation)
+            .ok()?;
+    let incubation_placed =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller)
+            .replaced_count(incubation_scaled)
+            .ok()?;
+    let incubation = live.counters.incubation.checked_add(incubation_placed)?;
     let soul_scaled =
         crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.soul).ok()?;
     let soul_placed =
@@ -241,6 +249,7 @@ fn apply_counter_transfer(
     live.counters.net = net;
     live.counters.bait = bait;
     live.counters.soul = soul;
+    live.counters.incubation = incubation;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {
@@ -1050,7 +1059,10 @@ mod doubling_season_transfer_tests_v48 {
         }
     }
     #[test]
-    #[ignore = "future actual Doubling Season registration required"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_bait_transfer_original_world_balance_and_restore_refuse_counter_forgery_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -1148,7 +1160,6 @@ mod doubling_season_transfer_tests_v48 {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    #[ignore = "future actual Doubling Season registration required"]
     fn actual_shared_multikind_transfer_doubles_each_kind_and_restores() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -1175,6 +1186,7 @@ mod doubling_season_transfer_tests_v48 {
                     net: 1,
                     bait: 1,
                     soul: 1,
+                    incubation: 1,
                 },
                 extras: CounterExtrasV1 {
                     loyalty: 1,
@@ -1198,6 +1210,7 @@ mod doubling_season_transfer_tests_v48 {
                 assert_eq!(o.counters.net, 2);
                 assert_eq!(o.counters.bait, 2);
                 assert_eq!(o.counters.soul, 2);
+                assert_eq!(o.counters.incubation, 2);
                 assert_eq!(o.v4.lifelink_keyword_counters, 2);
                 assert_eq!(o.v4.time_counters_v1, 2);
                 assert_eq!(o.v4.creature_upgrade.as_ref().unwrap().finality, 2);

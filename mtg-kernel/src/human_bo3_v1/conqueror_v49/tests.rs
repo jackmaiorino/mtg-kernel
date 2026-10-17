@@ -126,7 +126,10 @@ fn pass(
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn real_human_paid_printing_saved_batch_gain_pridemate_side_effect_and_owned_replay_both_seats() {
     use crate::event::{self, ProposedEvent};
     use crate::mana::ManaColor;
@@ -279,7 +282,10 @@ fn real_human_paid_printing_saved_batch_gain_pridemate_side_effect_and_owned_rep
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn real_eight_occurrence_human_stage_safe_labels_private_origin_and_retry_after_restore_both_seats()
 {
     use crate::bloodthirsty_conqueror_v49::tests::future_printed;

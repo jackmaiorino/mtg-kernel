@@ -1475,6 +1475,21 @@ pub enum CommittedEvent {
     RavenousCompletedV1 {
         completed: Box<crate::ravenous_amulet_v1::CompletedV1>,
     },
+    /// Genuine Drake original input, capture, payment and operation custody.
+    DrakeJournalV1 {
+        record: Box<crate::drake_hatcher_v1::custody::RecordV1>,
+    },
+    /// Only inside a Drake operation snapshot: exact immutable outer record index.
+    /// Never admitted as an actual event or substitute for an absent original.
+    DrakeHistoryRefV1 {
+        index: u64,
+    },
+    /// Conditional history-only replay context for the original V49 gain.
+    /// Frozen V49/Panda journal and world payloads are unchanged.
+    ConquerorGainReplayBorrowV49 {
+        input_history_index: u64,
+        borrow: crate::linked_aura_operation_v1::PandaReplayBorrowV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3527,8 +3542,8 @@ fn commit_with_entry_batch_and_source_color(
         _ => None,
     };
     if let Some(snapshot) = source_color.filter(|snapshot| {
-        matches!(&committed, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, .. }
-            if *object == snapshot.source.source && *to != Zone::Battlefield)
+        matches!(&committed, CommittedEvent::ZoneChange { object, from, to, .. }
+            if *object == snapshot.source.source && *from == snapshot.source.zone && to != from)
     }) {
         crate::controlled_creature_grants_v1::log_departure_color(state, snapshot);
     }
@@ -5840,7 +5855,10 @@ mod season_time_entry_tests_v48 {
     use crate::policy_observation_v6::tests::{put, ready_state_for};
 
     #[test]
-    #[ignore = "future actual Doubling Season registration required"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_time_entry_primitive_preflights_original_board_before_mutation_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for seasons in [1, 6] {

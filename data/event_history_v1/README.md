@@ -29,6 +29,11 @@ their fields, reusing a harvested sibling's payload where the types match:
 `TokenAttachmentJournalV48`, `TokenCreationInputV48`,
 `TokenCreationReplacementV48` and `WildwoodTriggerCounteredV1`.
 
+The three appended samples for `DrakeJournalV1`, `DrakeHistoryRefV1` and
+`ConquerorGainReplayBorrowV49` are also hand-built from their declared fields.
+They exercise kind indexing and value serialization, not valid gameplay or
+custody. The original 234 samples retain their order and payloads.
+
 ## Adding a kind
 
 A new `CommittedEvent` variant fails

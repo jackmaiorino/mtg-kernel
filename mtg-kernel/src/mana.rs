@@ -363,14 +363,26 @@ pub fn can_pay_owned(
     state: &GameState,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources(player, state);
+    can_pay_owned_from_sources(pips, generic, player, state, &sources)
+}
+
+/// The resolution bridge may append explicitly activated one-shot sources.
+/// A plan containing them must never be handed directly to the tap-only payer.
+pub(crate) fn can_pay_owned_from_sources(
+    pips: &[Pip],
+    generic: u8,
+    player: PlayerId,
+    state: &GameState,
+    sources: &[ManaSource],
+) -> Option<PaymentPlan> {
     let pool = spell_floating_pool(state, player, false, false);
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
-    if !solve_pips(pips, 0, &sources, &mut used, &mut pool_remaining, &mut plan)
+    if !solve_pips(pips, 0, sources, &mut used, &mut pool_remaining, &mut plan)
         || !pay_generic(
             u32::from(generic),
-            &sources,
+            sources,
             &mut used,
             &mut pool_remaining,
             &mut plan,

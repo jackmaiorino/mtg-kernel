@@ -59,20 +59,24 @@ pub struct FactsV49 {
     pub trigger_order: Vec<TriggerOrderV49>,
 }
 pub fn producer_sha256() -> String {
-    let mut hash = Sha256::new();
-    for text in [
-        SCHEMA,
-        include_str!("conqueror_public_v49.rs"),
-        include_str!("sower_restriction_capture_v1.rs"),
-    ] {
-        hash.update((text.len() as u64).to_le_bytes());
-        hash.update(text.as_bytes());
-    }
-    hash.update(meaning::producer_sha256().as_bytes());
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for text in [
+            SCHEMA,
+            include_str!("conqueror_public_v49.rs"),
+            include_str!("sower_restriction_capture_v1.rs"),
+        ] {
+            hash.update((text.len() as u64).to_le_bytes());
+            hash.update(text.as_bytes());
+        }
+        hash.update(meaning::producer_sha256().as_bytes());
+        hash.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 fn source_ref(source: AbilitySourceContractV4) -> CardStableRefV1 {
     // Eligible observers are genuine original face-up front-face sources.
@@ -113,7 +117,65 @@ pub fn selected(item: &StackItem) -> bool {
         .and_then(conqueror::custody::binding)
         .is_some()
 }
+/// One full validation of one immutably borrowed original state. This is
+/// private construction-time evidence, never a cache, DTO or restored marker.
+pub(crate) struct ValidatedStateV49<'a> {
+    state: &'a GameState,
+}
+impl<'a> ValidatedStateV49<'a> {
+    pub(crate) fn new(state: &'a GameState) -> Result<Self, RlContractError> {
+        conqueror::validate(state).map_err(RlContractError)?;
+        Ok(Self { state })
+    }
+    pub(crate) fn require_state(&self, state: &GameState) -> Result<(), RlContractError> {
+        if !std::ptr::eq(self.state, state) {
+            return Err(RlContractError(
+                "Conqueror validation belongs to a different original state".into(),
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn pending_source_reference(
+        &self,
+        state: &GameState,
+        pending: &PendingTrigger,
+    ) -> Result<Option<CardStableRefV1>, RlContractError> {
+        self.require_state(state)?;
+        pending_source_reference_validated(self.state, pending)
+    }
+    pub(crate) fn stack_source_reference(
+        &self,
+        state: &GameState,
+        item: &StackItem,
+    ) -> Result<Option<CardStableRefV1>, RlContractError> {
+        self.require_state(state)?;
+        stack_source_reference_validated(self.state, item)
+    }
+}
+pub(crate) fn validate_with_proof(
+    state: &GameState,
+    proof: Option<&ValidatedStateV49<'_>>,
+) -> Result<(), RlContractError> {
+    match proof {
+        Some(proof) => proof.require_state(state),
+        None => conqueror::validate(state).map_err(RlContractError),
+    }
+}
 pub fn stack_source_reference(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    let Some(_) = item
+        .inline_effect
+        .as_ref()
+        .and_then(conqueror::custody::binding)
+    else {
+        return Ok(None);
+    };
+    conqueror::validate(state).map_err(RlContractError)?;
+    stack_source_reference_validated(state, item)
+}
+fn stack_source_reference_validated(
     state: &GameState,
     item: &StackItem,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
@@ -124,7 +186,6 @@ pub fn stack_source_reference(
     else {
         return Ok(None);
     };
-    conqueror::validate(state).map_err(RlContractError)?;
     if !state.stack.iter().any(|original| original == item) {
         return Err(RlContractError(
             "Conqueror source requires genuine complete live row".into(),
@@ -140,10 +201,19 @@ pub fn pending_source_reference(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
-    let Some(capture) = conqueror::custody::binding(&pending.effect) else {
+    let Some(_) = conqueror::custody::binding(&pending.effect) else {
         return Ok(None);
     };
     conqueror::validate(state).map_err(RlContractError)?;
+    pending_source_reference_validated(state, pending)
+}
+fn pending_source_reference_validated(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    let Some(capture) = conqueror::custody::binding(&pending.effect) else {
+        return Ok(None);
+    };
     if !waiting(state).any(|original| original == pending) {
         return Err(RlContractError(
             "Conqueror source requires genuine complete pending owner".into(),

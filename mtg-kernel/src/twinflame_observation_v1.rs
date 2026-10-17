@@ -111,65 +111,72 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    let mut h = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("twinflame_observation_v1.rs"),
-        include_str!("twinflame_tyrant_v1.rs"),
-        include_str!("twinflame_tyrant_v1/ordering.rs"),
-        include_str!("twinflame_tyrant_v1/sampling.rs"),
-        include_str!("twinflame_tyrant_v1/combat.rs"),
-        include_str!("twinflame_tyrant_v1/fiery.rs"),
-        include_str!("fiery_annihilation_v1.rs"),
-        include_str!("rules_meaning_fiery_v1.rs"),
-        include_str!("crystal_public_v1.rs"),
-        include_str!("crystal_barricade_v1.rs"),
-        include_str!("effect/crystal_prevention_v1.rs"),
-        include_str!("effect.rs"),
-        include_str!("event.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("rl.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("rl_session/twinflame_v38.rs"),
-        include_str!("akroma_family_public_v40.rs"),
-        include_str!("rl_session/akroma_v40.rs"),
-        include_str!("fishing_pole_v39/lifecycle.rs"),
-        include_str!("human_bo3_v1/twinflame_v38.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/life_ward_v8.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("sower_restriction_capture_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("source_power_activation_v1.rs"),
-        include_str!("fixed_source_damage_v3.rs"),
-        include_str!("equipment_damage_source_v4.rs"),
-        include_str!("trigger.rs"),
-        include_str!("legend_rule_v1.rs"),
-        include_str!("gorehorn_damage_v1.rs"),
-        include_str!("gorehorn_crystal_v1.rs"),
-        include_str!("raid_entry_custody_v1.rs"),
-        include_str!("rules_meaning_heartfire_v1.rs"),
-        include_str!("creature_stats_lki_v1.rs"),
-        include_str!("standard_legends_v1.rs"),
-        include_str!("rules_meaning_crystal_ordering_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("../build.rs"),
-        include_str!("card_def.rs"),
-        include_str!("policy_surface_v5.rs"),
-        include_str!("surface_v2.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-        include_str!("rl_session/flat_action_v4.rs"),
-        include_str!("policy_observation_v8.rs"),
-        include_str!("policy_observation_v7.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-        include_str!("rl_session/flat_action_v4.rs"),
-    ] {
-        h.update([0]);
-        h.update(source.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("twinflame_observation_v1.rs"),
+            include_str!("twinflame_tyrant_v1.rs"),
+            include_str!("twinflame_tyrant_v1/ordering.rs"),
+            include_str!("twinflame_tyrant_v1/sampling.rs"),
+            include_str!("twinflame_tyrant_v1/combat.rs"),
+            include_str!("twinflame_tyrant_v1/fiery.rs"),
+            include_str!("fiery_annihilation_v1.rs"),
+            include_str!("rules_meaning_fiery_v1.rs"),
+            include_str!("crystal_public_v1.rs"),
+            include_str!("crystal_barricade_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("effect.rs"),
+            include_str!("event.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("rl.rs"),
+            include_str!("rl_session.rs"),
+            include_str!("rl_session/twinflame_v38.rs"),
+            include_str!("akroma_family_public_v40.rs"),
+            include_str!("rl_session/akroma_v40.rs"),
+            include_str!("fishing_pole_v39/lifecycle.rs"),
+            include_str!("human_bo3_v1/twinflame_v38.rs"),
+            include_str!("human_bo3_v1/visible.rs"),
+            include_str!("human_bo3_v1/labels.rs"),
+            include_str!("human_bo3_v1/life_ward_v8.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("sower_restriction_capture_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("fixed_source_damage_v3.rs"),
+            include_str!("equipment_damage_source_v4.rs"),
+            include_str!("trigger.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("gorehorn_damage_v1.rs"),
+            include_str!("gorehorn_crystal_v1.rs"),
+            include_str!("raid_entry_custody_v1.rs"),
+            include_str!("rules_meaning_heartfire_v1.rs"),
+            include_str!("creature_stats_lki_v1.rs"),
+            include_str!("standard_legends_v1.rs"),
+            include_str!("rules_meaning_crystal_ordering_v1.rs"),
+            include_str!("card_def.rs"),
+            include_str!("../build.rs"),
+            include_str!("card_def.rs"),
+            include_str!("policy_surface_v5.rs"),
+            include_str!("surface_v2.rs"),
+            include_str!("rl_session/flat_action_v3.rs"),
+            include_str!("rl_session/flat_action_v4.rs"),
+            include_str!("policy_observation_v8.rs"),
+            include_str!("policy_observation_v7.rs"),
+            include_str!("rl_session/flat_action_v3.rs"),
+            include_str!("rl_session/flat_action_v4.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
+        ] {
+            h.update([0]);
+            h.update(source.as_bytes());
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 fn commitment(o: &TwinflameObservationV1) -> Result<String, RlContractError> {
     let mut v = serde_json::to_value(o)?;
@@ -476,6 +483,26 @@ pub(crate) fn parts_for_common_scope(
     substep: (u32, u32),
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<TwinflameObservationV1, RlContractError> {
+    parts_for_common_scope_with_common(
+        (scope, state),
+        surface,
+        actor,
+        step,
+        physical,
+        substep,
+        None,
+    )
+}
+pub(crate) fn parts_for_common_scope_with_common(
+    request: (crate::rl::CommonProjectionScopeV42, &GameState),
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    common: Option<&crate::rl::BorrowedCommonObservationV42<'_>>,
+) -> Result<TwinflameObservationV1, RlContractError> {
+    let (scope, state) = request;
     let mut parts = observe_inner_scoped(
         state,
         surface,
@@ -498,9 +525,11 @@ pub(crate) fn parts_for_common_scope(
                         | crate::rl::CommonProjectionScopeV42::ConquerorV49
                         | crate::rl::CommonProjectionScopeV42::FakeV50
                         | crate::rl::CommonProjectionScopeV42::RavenousV51
+                        | crate::rl::CommonProjectionScopeV42::PreparedV57
                 ),
             ),
             Some(scope),
+            common,
         ),
     )?;
     if !owns_family_menu(state) {
@@ -549,7 +578,7 @@ fn observe_inner_ajani_v42(
         step_index,
         physical_decision_id,
         substep,
-        (accepted_scope, None),
+        (accepted_scope, None, None),
     )
 }
 fn observe_inner_scoped(
@@ -562,14 +591,16 @@ fn observe_inner_scoped(
     accepted_scope: (
         (bool, bool, bool),
         Option<crate::rl::CommonProjectionScopeV42>,
+        Option<&crate::rl::BorrowedCommonObservationV42<'_>>,
     ),
 ) -> Result<TwinflameObservationV1, RlContractError> {
-    let ((accepted_union, accept_ajani, accept_faebloom), explicit_scope) = accepted_scope;
+    let ((accepted_union, accept_ajani, accept_faebloom), explicit_scope, common) = accepted_scope;
     let accept_fake = matches!(
         explicit_scope,
         Some(
             crate::rl::CommonProjectionScopeV42::FakeV50
                 | crate::rl::CommonProjectionScopeV42::RavenousV51
+                | crate::rl::CommonProjectionScopeV42::PreparedV57
         )
     );
     let (substep_index, substep_count) = substep;
@@ -628,7 +659,7 @@ fn observe_inner_scoped(
         }
     }
     let base = if accepted_union {
-        crate::rl::common_family_observation_storage_scoped(
+        crate::rl::common_family_observation_storage_from_borrowed(
             (
                 explicit_scope.unwrap_or(if accept_faebloom {
                     crate::rl::CommonProjectionScopeV42::FullFaebloomV43
@@ -644,6 +675,7 @@ fn observe_inner_scoped(
             step_index,
             physical_decision_id,
             (substep_index, substep_count),
+            common,
         )?
     } else {
         crate::rl::twinflame_observation_storage_v38(

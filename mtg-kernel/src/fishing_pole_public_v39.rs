@@ -54,30 +54,37 @@ pub struct FactsV39 {
     pub operations: Vec<OperationV39>,
 }
 pub fn producer_sha256_v39() -> String {
-    let mut hash = Sha256::new();
-    for text in [
-        SCHEMA,
-        include_str!("fishing_pole_public_v39.rs"),
-        include_str!("fishing_pole_v39.rs"),
-        include_str!("fishing_pole_v39/lifecycle.rs"),
-        include_str!("rules_meaning_fishing_pole_v39.rs"),
-        include_str!("engine.rs"),
-        include_str!("event.rs"),
-        include_str!("state.rs"),
-        include_str!("effect.rs"),
-        include_str!("card_def.rs"),
-        include_str!("trigger.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("rl.rs"),
-        include_str!("../build.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(text.as_bytes());
-    }
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for text in [
+            SCHEMA,
+            include_str!("fishing_pole_public_v39.rs"),
+            include_str!("fishing_pole_v39.rs"),
+            include_str!("fishing_pole_v39/lifecycle.rs"),
+            include_str!("rules_meaning_fishing_pole_v39.rs"),
+            include_str!("engine.rs"),
+            include_str!("event.rs"),
+            include_str!("state.rs"),
+            include_str!("effect.rs"),
+            include_str!("card_def.rs"),
+            include_str!("trigger.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("rl.rs"),
+            include_str!("../build.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
+        ] {
+            hash.update([0]);
+            hash.update(text.as_bytes());
+        }
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 fn stable(s: AbilitySourceContractV4) -> CardStableRefV1 {
     CardStableRefV1 {

@@ -27,36 +27,42 @@ pub struct MeaningV49 {
     pub frozen_public_model_sampler_admitted: bool,
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for text in [
-        SCHEMA,
-        include_str!("rules_meaning_bloodthirsty_conqueror_v49.rs"),
-        include_str!("bloodthirsty_conqueror_v49.rs"),
-        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        include_str!("event.rs"),
-        include_str!("trigger.rs"),
-        include_str!("effect.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("card_def.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("effect/crystal_prevention_v1.rs"),
-        include_str!("life_gain_turn_v1.rs"),
-        include_str!("fiendish_panda_v1.rs"),
-        include_str!("fiendish_panda_v1/custody.rs"),
-        include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
-        include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
-        include_str!("../build.rs"),
-    ] {
-        h.update([0]);
-        h.update(text.as_bytes());
-    }
-    h.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for text in [
+            SCHEMA,
+            include_str!("rules_meaning_bloodthirsty_conqueror_v49.rs"),
+            include_str!("bloodthirsty_conqueror_v49.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("event.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("card_def.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            include_str!("fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1/custody.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
+            include_str!("../build.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
+        ] {
+            h.update([0]);
+            h.update(text.as_bytes());
+        }
+        h.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV49, String> {
     if !cfg!(all(
@@ -76,7 +82,9 @@ pub fn meaning(selector: &SelectorV49, card_id: u16, root: RootV49) -> Result<Me
         return Err("Conqueror precise selector changed".into());
     }
     if !crate::bloodthirsty_conqueror_v49::owns_definition(card_id) {
-        return Err("Conqueror requires genuine exact Full definition and original root".into());
+        return Err(
+            "Conqueror requires genuine exact Partial or Full definition and original root".into(),
+        );
     }
     let (program, ordered_facts) = match root {
         RootV49::CreatureSpell => (
@@ -171,7 +179,10 @@ mod tests {
         not(feature = "standard-magezero-fixtures")
     ))]
     #[test]
-    #[ignore = "genuine Conqueror registration and native qualification belong to parent"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_printed_meaning_all_field_order_and_unknown_field_forgeries_refuse() {
         let card = crate::card_def::card_id_by_name("Bloodthirsty Conqueror").unwrap();
         let selector = live_selector().unwrap();

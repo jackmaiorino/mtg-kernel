@@ -93,7 +93,10 @@ fn registered_absence_hidden_hand_foreign_owner_retry_restore_and_current_facts_
 }
 
 #[test]
-#[ignore = "future actual Doubling Season registration required"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn genuine_printed_cast_and_replacement_facts_fixed_seat_owned_restore_both_seats() {
     use crate::event::{self, ProposedEvent};
     use crate::mana::ManaColor;
@@ -231,7 +234,10 @@ fn genuine_printed_cast_and_replacement_facts_fixed_seat_owned_restore_both_seat
 }
 
 #[test]
-#[ignore = "future actual Doubling Season registration required"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn genuine_created_token_attachment_human_exact_choice_private_binding_and_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (state, equipment) =
@@ -242,10 +248,43 @@ fn genuine_created_token_attachment_human_exact_choice_private_binding_and_resto
         let menu = projector.project_current(&session, first).unwrap();
         assert_eq!(menu.schema, "mtg-kernel-human-season-decision/v48");
         assert_eq!(menu.actions.len(), 2);
-        assert!(menu
-            .actions
+        let attachment = menu
+            .state
+            .extensions
+            .season
+            .attachment_menu
+            .as_ref()
+            .unwrap();
+        assert_eq!(attachment.equipment.name, "Viridian Longbow");
+        assert_eq!(attachment.equipment.controller, actor.into());
+        assert_eq!(attachment.chooser, actor.into());
+        assert_eq!(attachment.ordered_created.len(), 2);
+        assert_ne!(
+            attachment.ordered_created[0].handle,
+            attachment.ordered_created[1].handle
+        );
+        // Human labels include both decision-local handles. Check both exact
+        // attachment choices, including their distinct real token operands.
+        let mut labels: Vec<_> = attachment
+            .ordered_created
             .iter()
-            .all(|action| action.label.starts_with("Attach Longbow")));
+            .map(|token| {
+                assert_eq!(token.controller, actor.into());
+                assert_eq!(token.zone, Zone::Battlefield);
+                format!(
+                    "Attach Viridian Longbow [{}] to newly created {} [{}]",
+                    attachment.equipment.handle, token.name, token.handle
+                )
+            })
+            .collect();
+        labels.sort();
+        assert_eq!(
+            menu.actions
+                .iter()
+                .map(|action| &action.label)
+                .collect::<Vec<_>>(),
+            labels.iter().collect::<Vec<_>>()
+        );
         let snapshot = session.snapshot_v48();
         for _ in 0..3 {
             session.restore_v48(&snapshot).unwrap();
@@ -263,6 +302,13 @@ fn genuine_created_token_attachment_human_exact_choice_private_binding_and_resto
         }
         let e = expected(&session);
         let menu = projector.project_current(&session, e).unwrap();
+        assert_eq!(
+            menu.actions
+                .iter()
+                .map(|action| &action.label)
+                .collect::<Vec<_>>(),
+            labels.iter().collect::<Vec<_>>()
+        );
         projector
             .submit(
                 &mut session,

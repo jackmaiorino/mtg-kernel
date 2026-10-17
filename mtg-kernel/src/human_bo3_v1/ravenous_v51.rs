@@ -856,7 +856,7 @@ pub(super) fn project_base_with_handles(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<ProjectionWithHandles, Error> {
-    project_with_handles(observation, actions, human, families, true)
+    project_with_handles(observation, actions, human, families, true, None, None)
 }
 
 /// Shared by fixed-seat Human and actor-facing V3 transport. The complete
@@ -881,6 +881,74 @@ pub(super) fn project_exact_base_with_handles(
     Ok((state, actions, indexes, handles))
 }
 
+/// Complete safe inherited fields with V52 semantic traits participating in
+/// prompt-local canonical handles. This is private field reuse, not V51 admission.
+pub(super) fn project_elenda_base_with_handles(
+    observation: &RavenousObservationV51,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+    elenda: &crate::elenda_public_v52::FactsV52,
+) -> Result<
+    (
+        HumanVisibleStateRavenousV51,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let (state, actions, indexes, handles) = project_with_handles(
+        observation,
+        actions,
+        human,
+        families,
+        true,
+        Some(elenda),
+        None,
+    )?;
+    let state = exact_state::project(state, observation, &handles)?;
+    Ok((state, actions, indexes, handles))
+}
+
+/// Prepared V57 owns its complete artifact contract. Reuse only the inherited
+/// layout after that validator, never a predecessor artifact identity.
+pub(super) fn project_prepared_base_with_handles(
+    observation: &crate::prepared_observation_v57::PreparedObservationV57,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        Some(observation),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
 type ProjectionWithHandles = (
     HumanVisibleStateV1<HumanRavenousExtensionsV51>,
     Vec<HumanLegalActionV1>,
@@ -894,6 +962,8 @@ fn project_with_handles(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
     limited: bool,
+    elenda: Option<&crate::elenda_public_v52::FactsV52>,
+    prepared: Option<&crate::prepared_observation_v57::PreparedObservationV57>,
 ) -> Result<ProjectionWithHandles, Error> {
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
@@ -901,9 +971,17 @@ fn project_with_handles(
     if actions.is_empty() {
         return Err(Error::UnsupportedPrompt);
     }
-    observation
-        .validate_artifact()
-        .map_err(|_| Error::InvalidVisibleReference)?;
+    if let Some(prepared) = prepared {
+        crate::prepared_observation_v57::validate_artifact(prepared)
+            .map_err(|_| Error::InvalidVisibleReference)?;
+        if &prepared.common.common != observation || Some(&prepared.common.elenda) != elenda {
+            return Err(Error::InvalidVisibleReference);
+        }
+    } else {
+        observation
+            .validate_artifact()
+            .map_err(|_| Error::InvalidVisibleReference)?;
+    }
     let mut handles = Handles::from_parts(
         &observation.projection,
         &observation.own_hand,
@@ -995,6 +1073,9 @@ fn project_with_handles(
     for row in &observation.eaten.payments {
         handles.insert(&row.source_at_payment)?;
     }
+    let prepared_facts = prepared
+        .map(|obs| super::prepared_v57::facts(obs, &mut handles, true))
+        .transpose()?;
     let initial = state(observation, &mut handles, human, families)?;
     let mut unary = BTreeMap::<String, Vec<String>>::new();
     if let Some(row) = &initial.extensions.eaten.pending {
@@ -1180,18 +1261,41 @@ fn project_with_handles(
     fake_facts::unary(&initial.extensions.fake, &mut unary)?;
     ravenous_facts::unary(&initial.extensions.ravenous, &mut unary)?;
     exact_state::unary(observation, &handles, &mut unary)?;
+    if let Some(elenda) = elenda {
+        super::elenda_v52::unary(elenda, &handles, &mut unary)?;
+    }
+    if let Some(facts) = &prepared_facts {
+        super::prepared_v57::unary(facts, &mut unary)?;
+    }
     for rows in unary.values_mut() {
         rows.sort();
         rows.dedup();
     }
-    handles.canonicalize_parts(&initial, unary)?;
+    if let Some(facts) = &prepared_facts {
+        handles.canonicalize_parts_with_prepared(&initial, unary, facts)?;
+    } else {
+        handles.canonicalize_parts(&initial, unary)?;
+    }
     let state = state(observation, &mut handles, human, families)?;
     let mut choices = actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
             Ok((
-                if let Some(label) = fake_facts::label(action, observation, &handles, human)? {
+                if let Some(label) = prepared
+                    .map(|obs| super::prepared_v57::activation_label(obs, index, &handles))
+                    .transpose()?
+                    .flatten()
+                {
+                    label
+                } else if let Some(label) = prepared
+                    .map(|obs| super::prepared_v57::choice_label(obs, action, &handles))
+                    .transpose()?
+                    .flatten()
+                {
+                    label
+                } else if let Some(label) = fake_facts::label(action, observation, &handles, human)?
+                {
                     label
                 } else if limited {
                     match super::limited_common_v1::label(action, &handles, human)? {

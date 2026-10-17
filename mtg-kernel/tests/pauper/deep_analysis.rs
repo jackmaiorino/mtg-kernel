@@ -395,6 +395,10 @@ fn copied_flashback_draws_without_repaying_and_virtual_copy_never_enters_exile()
             parent_controller: original.controller,
             parent_stack_zone_change_count: original.zone_change_count,
             parent_was_copy: false,
+            source_types_v1: mtg_kernel::source_type_hexproof_v1::copy_projection(
+                original.card_def,
+                mtg_kernel::state::CastMethodV4::Normal,
+            ),
         }),
         plotted_turn: None,
         zone_change_count: 0,

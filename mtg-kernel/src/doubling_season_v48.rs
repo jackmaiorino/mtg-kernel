@@ -27,7 +27,7 @@ pub fn owns_definition(id: u16) -> bool {
 
 pub(crate) fn exact_definition(d: &crate::card_def::CardDef) -> bool {
     d.name == "Doubling Season"
-        && d.capability == CardCapability::Full
+        && matches!(d.capability, CardCapability::Partial | CardCapability::Full)
         && d.types == [CardType::Enchantment]
         && d.subtypes.is_empty()
         && d.supertypes.is_empty()
@@ -94,6 +94,9 @@ pub(crate) fn exact_definition(d: &crate::card_def::CardDef) -> bool {
         && d.as_enters_color_choice_v1.is_none()
         && d.chosen_color_creature_boost_v1.is_none()
         && d.damage_replacement_v1.is_none()
+        && d.starting_life_self_bonuses_v1.is_empty()
+        && d.source_type_hexproof_v1.is_none()
+        && d.other_controlled_nontoken_death_v1.is_none()
         && d.activated_abilities.is_empty()
         && d.token_counter_replacement_v48
             == Some(TokenCounterReplacementDefV48::DoubleEffectTokensAndControlledPermanentCounters)
@@ -1360,3 +1363,10 @@ pub(crate) fn expected_tokens(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod paid_counter_coexistence_tests;

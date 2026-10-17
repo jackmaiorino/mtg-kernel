@@ -64,9 +64,11 @@ fn digest(bytes: &[u8]) -> String {
 }
 pub fn producer_sha256_v1() -> String {
     let mut hash = Sha256::new();
+    let phoenix_producer = crate::phoenix_public_v56::producer_sha256();
     for source in [
         SCHEMA,
         include_str!("juggernaut_public_v1.rs"),
+        phoenix_producer.as_str(),
         include_str!("combat_static_rules_v1.rs"),
         include_str!("rules_meaning_juggernaut_v1.rs"),
         include_str!("engine.rs"),
@@ -95,6 +97,9 @@ pub fn producer_sha256_v1() -> String {
         include_str!("human_bo3_v1/visible.rs"),
         include_str!("human_bo3_v1/labels.rs"),
         include_str!("human_bo3_v1/life_ward_v8.rs"),
+        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+        include_str!("linked_aura_operation_v1.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -175,7 +180,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 fn combat_rows(state: &GameState) -> Result<Vec<CombatRuleV1>, RlContractError> {
+    combat_rows_for_scope(state, crate::rl::CommonProjectionScopeV42::ExistingV40)
+}
+fn combat_rows_for_scope(
+    state: &GameState,
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<Vec<CombatRuleV1>, RlContractError> {
     let mut rows = Vec::new();
+    // This fresh value is local to the same immutable state. Only Prepared's
+    // mandatory precise Phoenix family can represent a must-attack-only rule;
+    // the frozen Juggernaut row always requires its blocked subtype as well.
+    let mut phoenix = None;
     for player in &state.players {
         for source in &player.battlefield {
             // The existing public projector determines definition visibility.
@@ -183,6 +198,33 @@ fn combat_rows(state: &GameState) -> Result<Vec<CombatRuleV1>, RlContractError> 
             let reference = crate::rl::card_ref(state, *source)?;
             let def = &crate::card_def::CARD_DEFS[usize::from(reference.card_db_id)];
             if def.combat_static_rules == crate::card_def::CombatStaticRulesDef::NONE {
+                continue;
+            }
+            if scope == crate::rl::CommonProjectionScopeV42::PreparedV57
+                && crate::rules_meaning_phoenix_v56::selected_definition(def, reference.card_db_id)
+            {
+                if phoenix.is_none() {
+                    phoenix = Some(crate::phoenix_public_v56::capture(state)?);
+                }
+                let represented = phoenix.as_ref().is_some_and(|facts| {
+                    facts.meaning.card_id == reference.card_db_id
+                        && facts.current.iter().any(|row| {
+                            row.source.object == reference.arena_id
+                                && row.source.generation == reference.zone_change_count
+                                && row.source.owner == reference.owner
+                                && row.source.controller == reference.controller
+                                && row.source.zone == reference.zone
+                                && row.source.identity
+                                    == crate::phoenix_public_v56::IdentityV56::Known {
+                                        card_id: reference.card_db_id,
+                                    }
+                        })
+                });
+                if !represented {
+                    return Err(RlContractError(
+                        "Prepared Phoenix combat rule lacks its exact precise current row".into(),
+                    ));
+                }
                 continue;
             }
             let subtype = def
@@ -281,17 +323,38 @@ pub(crate) fn parts_for_common_scope(
     substep: (u32, u32),
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<JuggernautObservationV1, RlContractError> {
+    parts_for_common_scope_with_common(
+        (scope, state),
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        None,
+    )
+}
+pub(crate) fn parts_for_common_scope_with_common(
+    request: (crate::rl::CommonProjectionScopeV42, &GameState),
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+    common: Option<&crate::rl::BorrowedCommonObservationV42<'_>>,
+) -> Result<JuggernautObservationV1, RlContractError> {
+    let (scope, state) = request;
     let (substep_index, substep_count) = substep;
 
     validate_state(state).map_err(RlContractError)?;
-    let combat_rules = combat_rows(state)?;
-    let base = crate::rl::common_family_observation_storage_scoped(
+    let combat_rules = combat_rows_for_scope(state, scope)?;
+    let base = crate::rl::common_family_observation_storage_from_borrowed(
         (scope, state),
         surface,
         actor,
         step_index,
         physical_decision_id,
         (substep_index, substep_count),
+        common,
     )?;
     let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
     let base = storage.base;

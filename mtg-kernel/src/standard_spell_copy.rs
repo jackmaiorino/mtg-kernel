@@ -137,6 +137,7 @@ pub(crate) fn copy_snapshot_legal_targets(
         prefix,
         controller,
         Some(TargetingSource {
+            types_override: None,
             object: spell.source,
             card_def: source.card_def,
             zone: Zone::Stack,
@@ -201,6 +202,10 @@ fn materialize_validated_copy_snapshot(
             parent_controller: origin.controller,
             parent_stack_zone_change_count: origin.zone_change_count,
             parent_was_copy: spell.is_copy,
+            source_types_v1: crate::source_type_hexproof_v1::copy_projection(
+                origin.card_def,
+                spell.v4.cast_method.unwrap_or_default(),
+            ),
         }),
         plotted_turn: None,
         zone_change_count: 0,

@@ -36,6 +36,157 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+/// Optional test diagnostics. No world, decision, or operand enters this utility.
+/// Inclusive fixture/reference spans overlap their child spans and must not be
+/// summed. The policy span includes construction of its deterministic fixture.
+#[cfg(test)]
+pub(crate) mod test_timing_v1 {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::sync::OnceLock;
+    use std::time::Instant;
+
+    pub(crate) enum Phase {
+        NativeSurfaceApply,
+        NativeSurfaceAdvance,
+        PreparedObservePartsInclusive,
+        DrakeWorld,
+        DrakeReplayKeys,
+        DrakeActualEnclosingReplay,
+        FaebloomValidateState,
+        NumericNormalizeInclusive,
+        NativeModelForwardInclusive,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Fixture(FixturePhase),
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) enum FixturePhase {
+        ActionsInclusive,
+        EncodeInclusive,
+        PolicyForward,
+        ApplyInclusive,
+        ReferenceParityInclusive,
+        ReferenceStepInclusive,
+        SnapshotInclusive,
+        RestoreInclusive,
+        ModelApplyInclusive,
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    impl From<FixturePhase> for Phase {
+        fn from(phase: FixturePhase) -> Self {
+            Self::Fixture(phase)
+        }
+    }
+
+    impl Phase {
+        fn label(&self) -> &'static str {
+            match self {
+                Self::NativeSurfaceApply => "native.surface_apply",
+                Self::NativeSurfaceAdvance => "native.surface_advance",
+                Self::PreparedObservePartsInclusive => "prepared.observe_parts_inclusive",
+                Self::DrakeWorld => "drake.world",
+                Self::DrakeReplayKeys => "drake.replay_keys",
+                Self::DrakeActualEnclosingReplay => "drake.actual_enclosing_replay",
+                Self::FaebloomValidateState => "faebloom.validate_state",
+                Self::NumericNormalizeInclusive => "numeric.normalize_inclusive",
+                Self::NativeModelForwardInclusive => "model.forward_inclusive",
+                #[cfg(all(
+                    feature = "limited-fdn-fixtures",
+                    not(feature = "standard-magezero-fixtures")
+                ))]
+                Self::Fixture(phase) => match phase {
+                    FixturePhase::ActionsInclusive => "fixture.actions_inclusive",
+                    FixturePhase::EncodeInclusive => "fixture.encode_inclusive",
+                    FixturePhase::PolicyForward => "fixture.policy_forward",
+                    FixturePhase::ApplyInclusive => "fixture.apply_inclusive",
+                    FixturePhase::ReferenceParityInclusive => "reference.parity_inclusive",
+                    FixturePhase::ReferenceStepInclusive => "reference.step_inclusive",
+                    FixturePhase::SnapshotInclusive => "fixture.snapshot_inclusive",
+                    FixturePhase::RestoreInclusive => "fixture.restore_inclusive",
+                    FixturePhase::ModelApplyInclusive => "model.apply_inclusive",
+                },
+            }
+        }
+    }
+
+    pub(crate) struct Span {
+        phase: Phase,
+        started: Instant,
+    }
+
+    pub(crate) fn span(phase: impl Into<Phase>) -> Option<Span> {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        if !*ENABLED.get_or_init(|| {
+            std::env::var_os("MTG_FDN_TEST_TIMING_V1").is_some_and(|value| value == "1")
+        }) {
+            return None;
+        }
+        Some(Span {
+            phase: phase.into(),
+            started: Instant::now(),
+        })
+    }
+
+    impl Drop for Span {
+        fn drop(&mut self) {
+            static AGGREGATE: OnceLock<bool> = OnceLock::new();
+            if *AGGREGATE.get_or_init(|| {
+                std::env::var_os("MTG_FDN_TEST_TIMING_AGGREGATE_V1")
+                    .is_some_and(|value| value == "1")
+            }) {
+                aggregate(self.phase.label(), self.started.elapsed().as_nanos());
+                return;
+            }
+            eprintln!(
+                "fdn_test_timing_v1 phase={} count=1 elapsed_ns={}",
+                self.phase.label(),
+                self.started.elapsed().as_nanos()
+            );
+        }
+    }
+
+    /// Cumulative per-thread diagnostics, flushed at most once per30s.
+    /// A killed/unfinished span contributes nothing; nested totals overlap.
+    /// This contains only phase labels, counts and elapsed nanoseconds.
+    fn aggregate(phase: &'static str, elapsed_ns: u128) {
+        struct Totals {
+            last_flush: Instant,
+            phases: BTreeMap<&'static str, (u64, u128)>,
+        }
+        thread_local! {
+            static TOTALS: RefCell<Totals> = RefCell::new(Totals {
+                last_flush: Instant::now(),
+                phases: BTreeMap::new(),
+            });
+        }
+        TOTALS.with(|totals| {
+            let mut totals = totals.borrow_mut();
+            let row = totals.phases.entry(phase).or_default();
+            row.0 = row.0.saturating_add(1);
+            row.1 = row.1.saturating_add(elapsed_ns);
+            if totals.last_flush.elapsed().as_secs() >= 30 {
+                for (phase, (count, elapsed_ns)) in &totals.phases {
+                    eprintln!(
+                        "fdn_test_timing_aggregate_v1 phase={phase} count={count} elapsed_ns={elapsed_ns}"
+                    );
+                }
+                totals.last_flush = Instant::now();
+            }
+        });
+    }
+}
+
 pub(crate) mod ajani_v42;
 pub(crate) mod akroma_v40;
 pub(crate) mod arahbo_v31;
@@ -50,6 +201,9 @@ pub(crate) mod conqueror_v49;
 pub(crate) mod crystal_v22;
 pub(crate) mod divine_v44;
 pub(crate) mod eaten_v46;
+mod elenda_v52;
+mod prepared_v57;
+pub use prepared_v57::{PreparedDecisionV57, PreparedSessionV57, PreparedSnapshotV57};
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
 pub(crate) mod faebloom_v43;
@@ -66,10 +220,19 @@ pub(crate) mod krenko_v34;
 mod limited_common_v1;
 pub(crate) mod panda_v47;
 pub(crate) mod ravenous_v51;
+pub use elenda_v52::{ElendaDecisionV52, ElendaSessionV52, ElendaSnapshotV52};
 pub(crate) mod season_v48;
 pub(crate) mod strongbox_v32;
 pub(crate) mod twinflame_v38;
 pub(crate) mod zul_ashur_v35;
+
+pub(crate) fn prepared_candidates_v57(
+    origin: &PolicyDecisionV5,
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    prepared_v57::actual_candidates(origin, state, surface)
+}
 
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
@@ -1959,7 +2122,9 @@ fn flat_validate_origin_decision_common_scoped_v42(
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
-    if (if scope == crate::rl::CommonProjectionScopeV42::RavenousV51 {
+    if (if scope == crate::rl::CommonProjectionScopeV42::PreparedV57 {
+        crate::prepared_observation_v57::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::RavenousV51 {
         crate::ravenous_observation_v51::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::FakeV50 {
         crate::fake_observation_v50::validate_state(state)
@@ -3398,6 +3563,8 @@ fn flat_validate_current_binding_header_akroma_inner(
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
+                    | FlatActionContractModeV1::PreparedV57
             ))
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -3433,6 +3600,8 @@ fn flat_validate_current_binding_header_akroma_inner(
                 | FlatActionContractModeV1::ConquerorV49
                 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
         )
         && session
             .surface
@@ -4542,6 +4711,8 @@ fn flat_validate_expected_decision_numeric_domain(
                 | FlatActionContractModeV1::ConquerorV49
                 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
         )
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
@@ -4565,7 +4736,8 @@ fn flat_validate_expected_decision_numeric_domain(
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49 | FlatActionContractModeV1::FakeV50
-                | FlatActionContractModeV1::RavenousV51),
+                | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52 | FlatActionContractModeV1::PreparedV57),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
@@ -4708,6 +4880,8 @@ enum FlatActionContractModeV1 {
     ConquerorV49,
     FakeV50,
     RavenousV51,
+    ElendaV52,
+    PreparedV57,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7387,7 +7561,11 @@ impl FastActorSessionV1 {
     }
 
     pub fn restore_v1(&mut self, snapshot: &FastActorSessionSnapshotV1) {
-        if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+        if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+            let _ = self.prepared_restore_v57(snapshot);
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::ElendaV52 {
+            let _ = self.elenda_restore_v52(snapshot);
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
             let _ = self.ravenous_restore_v51(snapshot);
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             // Keep the frozen void signature. Invalid ownership refuses
@@ -7395,7 +7573,10 @@ impl FastActorSessionV1 {
             let _ = self.fake_restore_v50(snapshot);
         } else if !matches!(
             snapshot.0.flat_action_contract_mode,
-            FlatActionContractModeV1::FakeV50 | FlatActionContractModeV1::RavenousV51
+            FlatActionContractModeV1::FakeV50
+                | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
         ) {
             *self = snapshot.0.clone();
         }
@@ -7455,24 +7636,51 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
-        let ravenous_guard =
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-                crate::ravenous_observation_v51::validate_state(&self.state)
+        if !matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::ElendaV52 | FlatActionContractModeV1::PreparedV57
+        ) {
+            let actor = self.current.as_ref().map(|current| current.actor);
+            crate::elenda_public_v52::require_legacy_visible(&self.state, actor).map_err(
+                |error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error),
+            )?;
+        }
+        let ravenous_guard = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                crate::prepared_observation_v57::validate_state(&self.state)
             } else {
-                crate::ravenous_amulet_v1::require_legacy_consumer(
-                    &self.state,
-                    Some(
-                        self.current
-                            .as_ref()
-                            .map_or(self.state.priority_player, |current| current.actor),
-                    ),
-                )
-            };
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
+        } else {
+            crate::ravenous_amulet_v1::require_legacy_consumer(
+                &self.state,
+                Some(
+                    self.current
+                        .as_ref()
+                        .map_or(self.state.priority_player, |current| current.actor),
+                ),
+            )
+        };
         ravenous_guard
             .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
-        let fake_guard = if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51
-        {
-            crate::ravenous_observation_v51::validate_state(&self.state)
+        let fake_guard = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                // The first guard already validated this same immutable state;
+                // no world, surface, current decision or counter changed.
+                Ok(())
+            } else {
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
         } else {
@@ -7489,8 +7697,18 @@ impl FastActorSessionV1 {
         fake_guard
             .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
 
-        if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-            crate::ravenous_observation_v51::validate_state(&self.state)
+        if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                // Reuse that successful first guard before any mutation.
+                Ok(())
+            } else {
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
@@ -7506,6 +7724,8 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::ConquerorV49
                 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
         ) {
             crate::doubling_season_v48::require_legacy_visible(
                 &self.state,
@@ -7535,7 +7755,12 @@ impl FastActorSessionV1 {
                 )
             })?;
             let mut rederived = current.clone();
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+            if matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
+                    | FlatActionContractModeV1::PreparedV57
+            ) {
                 ravenous_v51::prepare_current(self, &mut rederived)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
                 fake_v50::prepare_current(self, &mut rederived)
@@ -7654,8 +7879,12 @@ impl FastActorSessionV1 {
                     next_environment_revision,
                 )
                 .expect("selected candidate was checked above");
-                self.surface
-                    .apply_fast_actor_current_candidate_in_place(&mut self.state, proof)
+                {
+                    #[cfg(test)]
+                    let _timing = test_timing_v1::span(test_timing_v1::Phase::NativeSurfaceApply);
+                    self.surface
+                        .apply_fast_actor_current_candidate_in_place(&mut self.state, proof)
+                }
             }
             #[cfg(test)]
             FastActorApplyPathV1::CloneReference => self
@@ -7708,19 +7937,49 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
-        let ravenous_guard =
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-                crate::ravenous_observation_v51::validate_state(&self.state)
+        if !matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::ElendaV52 | FlatActionContractModeV1::PreparedV57
+        ) {
+            // Before advancement the priority player need not be the actual
+            // chooser (for example a foreign-owned Aura's host choice). Only
+            // public board identities may select this prework refusal. The
+            // actor-aware knowledge check runs below after actual publication.
+            if let Err(error) = crate::elenda_public_v52::require_legacy_visible(&self.state, None)
+            {
+                self.current = None;
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:elenda_v52_required:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        }
+        let ravenous_guard = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                crate::prepared_observation_v57::validate_state(&self.state)
             } else {
-                crate::ravenous_amulet_v1::require_legacy_consumer(
-                    &self.state,
-                    Some(
-                        self.current
-                            .as_ref()
-                            .map_or(self.state.priority_player, |current| current.actor),
-                    ),
-                )
-            };
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
+        } else {
+            crate::ravenous_amulet_v1::require_legacy_consumer(
+                &self.state,
+                Some(
+                    self.current
+                        .as_ref()
+                        .map_or(self.state.priority_player, |current| current.actor),
+                ),
+            )
+        };
         if let Err(error) = ravenous_guard {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7733,9 +7992,17 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let fake_guard = if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51
-        {
-            crate::ravenous_observation_v51::validate_state(&self.state)
+        let fake_guard = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                crate::prepared_observation_v57::validate_state(&self.state)
+            } else {
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
         } else {
@@ -7762,8 +8029,17 @@ impl FastActorSessionV1 {
             return;
         }
 
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-            crate::ravenous_observation_v51::validate_state(&self.state)
+        if (if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                crate::prepared_observation_v57::validate_state(&self.state)
+            } else {
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
@@ -7791,6 +8067,8 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::ConquerorV49
                 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
         ) && crate::doubling_season_v48::require_legacy_visible(
             &self.state,
             self.state.priority_player,
@@ -7808,8 +8086,17 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-            crate::ravenous_observation_v51::validate_state(&self.state)
+        if (if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                crate::prepared_observation_v57::validate_state(&self.state)
+            } else {
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
@@ -7837,8 +8124,17 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-            crate::ravenous_observation_v51::validate_state(&self.state)
+        if (if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                crate::prepared_observation_v57::validate_state(&self.state)
+            } else {
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
@@ -7881,6 +8177,8 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
+                    | FlatActionContractModeV1::PreparedV57
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43
                 && crate::faebloom_observation_v43::validate_state(&self.state).is_err())
@@ -7909,6 +8207,8 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
+                    | FlatActionContractModeV1::PreparedV57
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
                 && crate::ajani_observation_v42::validate_state(&self.state).is_err())
@@ -7940,6 +8240,8 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
+                    | FlatActionContractModeV1::PreparedV57
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
                 && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
@@ -7971,8 +8273,17 @@ impl FastActorSessionV1 {
             return;
         }
         if (if self.is_common_v40() {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-                crate::ravenous_observation_v51::validate_state(&self.state)
+            if matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
+                    | FlatActionContractModeV1::PreparedV57
+            ) {
+                if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                    crate::prepared_observation_v57::validate_state(&self.state)
+                } else {
+                    crate::ravenous_observation_v51::validate_state(&self.state)
+                }
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
                 crate::fake_observation_v50::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
@@ -8114,6 +8425,8 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
+                    | FlatActionContractModeV1::PreparedV57
             )
         {
             self.current = None;
@@ -8142,10 +8455,13 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let surfaced = match self
-            .surface
-            .next_decision_owned(&mut self.state, self.environment_revision)
-        {
+        let surface_result = {
+            #[cfg(test)]
+            let _timing = test_timing_v1::span(test_timing_v1::Phase::NativeSurfaceAdvance);
+            self.surface
+                .next_decision_owned(&mut self.state, self.environment_revision)
+        };
+        let surfaced = match surface_result {
             Ok(decision) => decision,
             Err(_) => {
                 self.terminal = Some(halted_terminal(
@@ -8177,6 +8493,8 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
+                    | FlatActionContractModeV1::PreparedV57
             )
         {
             self.terminal = Some(halted_terminal(
@@ -8230,6 +8548,8 @@ impl FastActorSessionV1 {
                             | FlatActionContractModeV1::ConquerorV49
                             | FlatActionContractModeV1::FakeV50
                             | FlatActionContractModeV1::RavenousV51
+                            | FlatActionContractModeV1::ElendaV52
+                            | FlatActionContractModeV1::PreparedV57
                     ) =>
                 {
                     substeps
@@ -8290,12 +8610,39 @@ impl FastActorSessionV1 {
         };
         // Advancement can draw a formerly hidden printing or change the actor.
         // Check the actual publication view as well as the pre-advance state.
-        let ravenous_publication =
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-                crate::ravenous_observation_v51::validate_state(&self.state)
+        if !matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::ElendaV52 | FlatActionContractModeV1::PreparedV57
+        ) {
+            if let Err(error) =
+                crate::elenda_public_v52::require_legacy_visible(&self.state, Some(actor))
+            {
+                self.current = None;
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:elenda_v52_required:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        }
+        let ravenous_publication = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
+                | FlatActionContractModeV1::PreparedV57
+        ) {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+                crate::prepared_observation_v57::validate_state(&self.state)
             } else {
-                crate::ravenous_amulet_v1::require_legacy_consumer(&self.state, Some(actor))
-            };
+                crate::ravenous_observation_v51::validate_state(&self.state)
+            }
+        } else {
+            crate::ravenous_amulet_v1::require_legacy_consumer(&self.state, Some(actor))
+        };
         if let Err(error) = ravenous_publication {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -8308,7 +8655,11 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
+            prepared_v57::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::ElendaV52 {
+            elenda_v52::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
             ravenous_v51::actual_candidates(&surfaced, &self.state, &self.surface)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             fake_v50::actual_candidates(&surfaced, &self.state, &self.surface)
@@ -8612,7 +8963,9 @@ impl FastActorSessionV1 {
                     return;
                 }
             }
-            FlatActionContractModeV1::RavenousV51 => {
+            FlatActionContractModeV1::RavenousV51
+            | FlatActionContractModeV1::ElendaV52
+            | FlatActionContractModeV1::PreparedV57 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
                 if let Err(error) = ravenous_v51::prepare_current(self, &mut current) {
@@ -10347,7 +10700,7 @@ mod tests {
     use super::*;
     use crate::card_def::card_id_by_name;
     use crate::effect::EffectOp;
-    use crate::engine::{PendingOptionalCost, PendingOptionalCostSacrifice};
+    use crate::engine::PendingOptionalCost;
     use crate::policy_surface_v5::{
         reset_test_exact_surface_hash_calls, test_exact_surface_hash_calls,
     };
@@ -13052,14 +13405,19 @@ mod tests {
 
     #[test]
     fn flat_action_slice_encodes_and_consumes_detached_highway_robbery_cost_target() {
-        let mut state = GameState::new_from_libraries(&[], &[], card_name, 82_120);
+        use crate::engine::{self, Action};
+
+        let forest = card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest; 4], &[forest; 4], card_name, 82_120);
+        state.step = Step::Main1;
         let source_card = card_id_by_name("Highway Robbery").unwrap();
         let source = state.objects.push(GameObject {
             card_def: source_card,
             name: "Highway Robbery".to_string(),
             owner: PlayerId::P0,
             controller: PlayerId::P0,
-            zone: Zone::Stack,
+            zone: Zone::Hand,
             tapped: false,
             summoning_sick: false,
             damage: 0,
@@ -13068,19 +13426,92 @@ mod tests {
             v4: ObjectStateV4::from_card_def(source_card),
             spell_copy_origin: None,
             plotted_turn: None,
-            zone_change_count: 2,
+            zone_change_count: 0,
         });
+        state.players[0].hand.push(source);
         let first_land = add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
         let second_land = add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
-        state.engine.pending_optional_cost_sacrifice = Some(PendingOptionalCostSacrifice {
-            player: PlayerId::P0,
-            source,
-            remaining: 1,
-            chosen: Vec::new(),
-            then: EffectOp::Sequence(Vec::new()),
-            spell_resume: Some((source, Zone::Graveyard)),
-        });
+        // Pay and resolve the actual registered {1}{R} spell through its
+        // printed optional-cost program. Do not invent a stack origin, empty
+        // consequence or selected spell form for the detached-source fixture.
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        for land in [first_land, second_land] {
+            engine::step(&mut state, Action::ActivateManaAbility(land)).unwrap();
+        }
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        let mut offered = false;
+        for _ in 0..16 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                Decision::ChooseOptionalCost {
+                    player: PlayerId::P0,
+                    sacrifice_payable: true,
+                    ..
+                } => {
+                    offered = true;
+                    break;
+                }
+                other => panic!("expected genuine Highway Robbery payment, got {other:?}"),
+            }
+        }
+        assert!(offered);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+        assert!(state.objects.get(first_land).tapped && state.objects.get(second_land).tapped);
+        assert!(state.engine.event_history.iter().any(|event| matches!(event,
+            crate::event::CommittedEvent::SpellCast { spell, controller: PlayerId::P0 } if *spell == source)));
+        engine::step(
+            &mut state,
+            Action::ChooseOptionalCost(OptionalCostChoice::SacrificeLand),
+        )
+        .unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::ChooseCostTargets { source: actual, remaining: 1, candidates, .. }
+            if actual == source && candidates == vec![first_land, second_land]));
+        let payment = state
+            .engine
+            .pending_optional_cost_sacrifice
+            .as_ref()
+            .unwrap();
+        assert_eq!(payment.spell_resume, Some((source, Zone::Graveyard)));
+        assert_eq!(
+            payment.then,
+            EffectOp::DrawCards {
+                player: crate::effect::PlayerRef::Controller,
+                count: 2
+            }
+        );
+        let selected_types = crate::source_type_hexproof_v1::current_types(&state, source).unwrap();
+        assert_eq!(
+            selected_types.card_types(),
+            vec![crate::card_def::CardType::Sorcery]
+        );
+        // Explicit legacy-layout support primitive: detach only the genuine
+        // resolving row. Its paid finalized origin and native continuation
+        // remain unchanged, so departure still has selected-form authority.
+        let detached = state.stack.pop().expect("actual resolving spell row");
+        assert_eq!(detached.source, source);
+        assert!(detached.v4.source_contract.is_some());
         assert!(state.stack.is_empty());
+        assert_eq!(
+            crate::source_type_hexproof_v1::current_types(&state, source).unwrap(),
+            selected_types
+        );
+        let mut missing_form = state.clone();
+        missing_form
+            .objects
+            .get_mut(source)
+            .v4
+            .spell_cast_origin
+            .as_mut()
+            .unwrap()
+            .finalized_method = None;
+        assert!(crate::source_type_hexproof_v1::current_types(&missing_form, source).is_err());
 
         let mut session = FastActorSessionV1::reset_with_limits(82_120, 41_120, 256, 32_768);
         session.state = state;
@@ -13172,6 +13603,11 @@ mod tests {
         session
             .consume_current_flat_action_slice_v1(encoded.binding, 0)
             .unwrap();
+        assert_eq!(
+            session.state.players[0].hand.len(),
+            2,
+            "the actual paid consequence draws two"
+        );
         assert_eq!(session.state.objects.get(source).zone, Zone::Graveyard);
         assert!(session.state.players[0].graveyard.contains(&source));
         assert!(

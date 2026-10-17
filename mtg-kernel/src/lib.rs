@@ -55,6 +55,8 @@ pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
+pub mod elenda_observation_v52;
+pub mod elenda_public_v52;
 pub mod fake_your_own_death_v50;
 pub mod fiendish_panda_v1;
 pub mod game_outcome_observation_v41;
@@ -73,13 +75,18 @@ pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod panda_observation_v47;
 pub mod panda_public_v47;
+pub mod phoenix_public_v56;
 pub mod planeswalker_v1;
+pub mod rules_meaning_elenda_v52;
 pub mod rules_meaning_fake_your_own_death_v50;
 pub mod rules_meaning_fiendish_panda_v1;
 pub mod rules_meaning_game_outcome_protection_v1;
 pub mod rules_meaning_heraldic_banner_v1;
 pub mod rules_meaning_librarian_v1;
+pub mod rules_meaning_phoenix_v56;
 mod soul_shackled_zombie_v1;
+pub mod source_type_hexproof_v1;
+pub mod spinner_of_souls_v1;
 pub mod standard_cards_v1;
 pub mod standard_creature_choices_v1;
 pub mod standard_creatures_v1;
@@ -87,6 +94,7 @@ pub mod standard_creatures_v1;
 pub mod standard_keywords_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
 pub(crate) mod standard_statics_v1;
+pub mod starting_life_statics_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.
 pub mod canonical_json_v1;
@@ -201,6 +209,8 @@ pub mod kernel_native_search_opponent_v1;
 pub mod limited_common_session_v1;
 pub mod limited_common_session_v2;
 pub mod limited_common_session_v3;
+pub mod limited_elenda_session_v4;
+pub mod limited_prepared_session_v5;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;
 pub mod mana;
@@ -676,6 +686,7 @@ pub mod conqueror_observation_v49;
 pub mod conqueror_public_v49;
 pub mod controlled_creature_grants_v1;
 pub mod doubling_season_v48;
+pub mod drake_hatcher_v1;
 pub mod ravenous_amulet_v1;
 pub mod ravenous_observation_v51;
 pub mod ravenous_public_v51;
@@ -702,7 +713,33 @@ pub mod season_observation_v48;
 
 pub mod season_token_attachment_v48;
 
+pub mod current_mixed_policy_v1;
 pub mod fake_observation_v50;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "flamewake_phoenix_v1/paid_printing_tests.rs"]
+mod flamewake_phoenix_v1;
+
+pub mod drake_public_v53;
+pub mod optional_trigger_public_v1;
+mod optional_trigger_source_v1;
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod painful_quandary_v1;
+pub mod quandary_public_v55;
+pub mod rules_meaning_drake_hatcher_v53;
+pub mod rules_meaning_quandary_v55;
+pub mod rules_meaning_spinner_v54;
+pub mod spinner_public_v54;
+
+pub mod prepared_observation_v57;
 
 #[cfg(all(
     test,

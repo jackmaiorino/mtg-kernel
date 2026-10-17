@@ -417,3 +417,100 @@ fn paid_grim_tutor_search_reveals_amulet_only_to_v51_and_restores_real_choice_bo
         assert_eq!(gameplay(&session), finished);
     }
 }
+
+fn assert_borrowed_common_parity(session: &FastActorSessionV1) {
+    let before = gameplay(session);
+    let current = session.current.as_ref().unwrap();
+    let expected = expected(session);
+    let (actual, actions, binding) = session
+        .ravenous_current_decision_input_v51(expected, expected.acting_player)
+        .unwrap();
+    crate::elenda_public_v52::require_legacy_visible(&session.state, Some(current.actor)).unwrap();
+    let (rebuilt, mut families) =
+        crate::ravenous_observation_v51::observe_parts_complete_base_v52_fully_rebuilt(
+            &session.state,
+            &session.surface,
+            (current.actor, &current.origin_decision),
+            session.policy_step_count,
+            current.physical_decision_id,
+            (current.substep_index, current.substep_count),
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_vec(&actual).unwrap(),
+        serde_json::to_vec(&rebuilt).unwrap()
+    );
+    let candidates = normalized_origin_with_parts(session, current).unwrap().0;
+    let rebuilt_actions = candidates
+        .iter()
+        .map(|candidate| {
+            visible_semantic(
+                &session.state,
+                &rebuilt.projection,
+                candidate.semantic.clone(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(actions, rebuilt_actions);
+    let classified = rebuilt_actions
+        .iter()
+        .cloned()
+        .map(|semantic| super::super::fishing_pole_v39::classify(&session.state, semantic))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    for family in &mut families {
+        if let crate::akroma_family_public_v40::FamilyProjectionV40::Fishing(fishing) = family {
+            fishing.actions = classified.clone();
+        }
+    }
+    let rebuilt_binding = RavenousDecisionBindingV51 {
+        expected,
+        candidates,
+        observation: rebuilt,
+        families,
+    };
+    assert!(binding == rebuilt_binding);
+    session
+        .ravenous_validate_bound_decision_v51(expected, expected.acting_player, &rebuilt_binding)
+        .unwrap();
+    let mut forged = rebuilt_binding;
+    forged.families.reverse();
+    assert!(session
+        .ravenous_validate_bound_decision_v51(expected, expected.acting_player, &forged)
+        .is_err());
+    assert_eq!(before, gameplay(session));
+}
+
+#[test]
+fn borrowed_common_complete_paid_amulet_and_restored_binding_parity_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut session, amulet, _, forests) = fixture(actor);
+        for forest in &forests[..2] {
+            mana(&mut session, *forest);
+        }
+        act(
+            &mut session,
+            |action| matches!(action, ActionSemanticV1::CastSpell{source,..}if source.arena_id==amulet.0),
+        );
+        assert!(session.state.engine.pending_cast.is_none());
+        assert_eq!(session.state.players[actor.index()].mana_pool, [0; 6]);
+        assert!(forests[..2]
+            .iter()
+            .all(|id| session.state.objects.get(*id).tapped));
+        assert_borrowed_common_parity(&session);
+        let snapshot = session.snapshot_v1();
+        drain(&mut session);
+        assert_eq!(session.state.objects.get(amulet).zone, Zone::Battlefield);
+        assert_borrowed_common_parity(&session);
+        session.ravenous_restore_v51(&snapshot).unwrap();
+        assert_borrowed_common_parity(&session);
+        let before = gameplay(&session);
+        let mut foreign = fixture(actor).0.snapshot_v1();
+        // V51's raw backend binds snapshots to the episode, unlike the sealed
+        // Prepared owner. Exercise its actual foreign-episode contract.
+        foreign.0.episode_id += 1;
+        assert!(session.ravenous_restore_v51(&foreign).is_err());
+        assert_eq!(before, gameplay(&session));
+    }
+}

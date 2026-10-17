@@ -1199,9 +1199,7 @@ impl HumanConquerorProjectorV49 {
             .inner
             .conqueror_current_decision_input_v49(expected, self.human_seat)
             .map_err(|_| Error::StaleDecision)?;
-        let public = session
-            .public_observation(expected)
-            .map_err(|_| Error::StaleDecision)?;
+        let public = observation.clone();
         if let Some(pending) = &self.pending {
             if pending.authority == session.authority
                 && pending.expected == expected

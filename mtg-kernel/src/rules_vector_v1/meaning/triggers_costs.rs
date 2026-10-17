@@ -41,7 +41,10 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
-        TriggerCondition::OpponentLosesLifeBatchV49
+        TriggerCondition::OpponentCastsSpellV1 => out.atoms.push(Atom::Opaque),
+        TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(_)
+        | TriggerCondition::OpponentLosesLifeBatchV49
+        | TriggerCondition::OtherControlledNontokenCreatureDiesV1
         | TriggerCondition::OtherNontokenCreatureDies
         | TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1
         | TriggerCondition::FishingPoleEquippedCreatureUntappedV39
@@ -632,6 +635,9 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             // counters. Counter kind, variable quantity and the loyalty
             // activation restriction are outside the frozen cost vocabulary.
             out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::RemoveSourceCountersV1 { kind: _, count: _ } => {
             out.atoms.push(Atom::Opaque);
         }
         CostComponent::RemoveChargeCounterFromSelf => {

@@ -499,6 +499,12 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_DUAL_FULL_BATCH_V1: &str = "68f213db0a5ef3
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_DUAL_FULL_BATCH_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v88: actual retained452 export, Full IDs442..451.
+// Catalog identity alone does not establish gameplay or model/search qualification.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1: &str = "0d4666d37951a4fc";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -2241,6 +2247,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnFakePartialBatch,
     FdnRavenousPartialBatch,
     FdnDualFullBatch,
+    FdnSevenFullBatch,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2995,6 +3002,11 @@ fn classify_catalog_profile_from_identity_v1(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_DUAL_FULL_BATCH_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_DUAL_FULL_BATCH_V1,
             NativeRunCatalogProfileV1::FdnDualFullBatch,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1,
+            NativeRunCatalogProfileV1::FdnSevenFullBatch,
         ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_CELESTIAL_ARMOR_V1,
@@ -5932,6 +5944,16 @@ pub(crate) fn test_fixture_bytes_fdn_ravenous_partial_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_ravenous_partial_batch()
 }
 
+#[cfg(all(
+    test,
+    windows,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn test_fixture_bytes_fdn_dual_full_batch_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_dual_full_batch()
+}
+
 #[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_following_source_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_following_source_batch()
@@ -8502,20 +8524,20 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn fdn_dual_full_batch_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_seven_full_batch_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_DUAL_FULL_BATCH_V1
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_DUAL_FULL_BATCH_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1
         );
     }
 
@@ -8940,25 +8962,39 @@ mod tests {
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
 
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(super) fn fixture_bytes_fdn_dual_full_batch() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_DUAL_FULL_BATCH_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_DUAL_FULL_BATCH_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
     #[test]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn fdn_dual_full_batch_fixture_decodes_live_without_model_admission() {
+    fn fdn_seven_full_batch_fixture_decodes_live_without_model_admission() {
         let bytes = fixture_bytes();
         let validated = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(validated.canonical_bytes(), bytes);
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnDualFullBatch
+            NativeRunCatalogProfileV1::FdnSevenFullBatch
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_DUAL_FULL_BATCH_V1,
-            "68f213db0a5ef38c"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SEVEN_FULL_BATCH_V1,
+            "0d4666d37951a4fc"
         );
     }
 
@@ -8967,24 +9003,55 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn dual_engine_full_inventory_preserves_printing_ids() {
-        // v87 identity is pinned separately by the actual-export canary.
+    fn seven_engine_full_inventory_preserves_printing_ids() {
+        // v88 identity is pinned separately by the actual-export canary.
         let partials: Vec<_> = crate::card_def::CARD_DEFS
             .iter()
             .enumerate()
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 444);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 452);
         assert!(partials.is_empty());
-        for (id, name) in [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")] {
+        let mut playable = Vec::new();
+        for (id, name) in [
+            (442, "Fake Your Own Death"),
+            (443, "Ravenous Amulet"),
+            (444, "Elenda, Saint of Dusk"),
+            (445, "Flamewake Phoenix"),
+            (446, "Spinner of Souls"),
+            (447, "Painful Quandary"),
+            (448, "Drake Hatcher"),
+            (449, "Drake Token"),
+            (450, "Bloodthirsty Conqueror"),
+            (451, "Doubling Season"),
+        ] {
             assert_eq!(crate::card_def::card_id_by_name(name), Some(id));
             assert_eq!(
                 crate::card_def::CARD_DEFS[usize::from(id)].capability,
                 crate::card_def::CardCapability::Full
             );
-            assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_ok());
+            let definition = &crate::card_def::CARD_DEFS[usize::from(id)];
+            if id == 449 {
+                // Full token implementation permits actual token creation,
+                // while the unchanged deck preflight must reject token cards.
+                assert!(definition.is_token);
+                assert!(matches!(
+                    crate::card_def::preflight_fully_supported_deck(&[id]),
+                    Err(crate::card_def::DeckPreflightError::TokenInDeck {
+                        index: 0,
+                        card_def: 449,
+                        name: "Drake Token",
+                    })
+                ));
+            } else {
+                assert!(!definition.is_token, "{name}");
+                crate::card_def::preflight_fully_supported_deck(&[id]).unwrap();
+                playable.push(id);
+            }
         }
+        assert_eq!(playable, [442, 443, 444, 445, 446, 447, 448, 450, 451]);
+        crate::card_def::preflight_fully_supported_deck(&playable).unwrap();
     }
 
     #[test]
@@ -9028,6 +9095,28 @@ mod tests {
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_RAVENOUS_PARTIAL_BATCH_V1,
             "69edc2fbec6b9070"
+        );
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn fdn_dual_full_batch_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_dual_full_batch();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnDualFullBatch
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_DUAL_FULL_BATCH_V1,
+            "68f213db0a5ef38c"
         );
     }
 
@@ -9434,7 +9523,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnDualFullBatch
+                NativeRunCatalogProfileV1::FdnSevenFullBatch
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }

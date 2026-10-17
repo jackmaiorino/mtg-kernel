@@ -266,6 +266,7 @@ pub(crate) fn source_at(state: &GameState, index: u64) -> Result<StackSourceCont
     if item.kind != StackItemKind::Spell || item.v4.source_contract != Some(*source) {
         return Err("Faebloom capture changed its original spell".into());
     }
+    crate::source_type_hexproof_v1::validate_retained_spell_types(state, *source)?;
     Ok(*source)
 }
 fn pending_for(source: StackSourceContractV4, capture: u64) -> PendingTrigger {
@@ -747,6 +748,10 @@ fn matching(state: &GameState, predicate: impl Fn(&JournalV43) -> bool) -> Vec<(
         .collect()
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::FaebloomValidateState,
+    );
     // Captures alone are trigger events; every other receipt is private history.
     for e in &state.engine.event_log {
         if let Some(j) = journal(e) {

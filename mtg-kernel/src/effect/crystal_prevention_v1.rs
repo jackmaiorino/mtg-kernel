@@ -574,7 +574,9 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // countering an exact source or moving a legal graveyard target. ETB
         // triggers from the returned card are separately published roots.
         // Conqueror custody authenticates a mandatory gain-only root.
-        EffectOp::ConquerorGainFromCaptureV49 { .. } => true,
+        EffectOp::ConquerorGainFromCaptureV49 { .. }
+        | EffectOp::DrakeIncubationFromCaptureV1 { .. }
+        | EffectOp::DrakeCreateTokenFromPaidV1 => true,
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => true,
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1) => true,
@@ -583,6 +585,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
             ordinary_nondamage(then) && ordinary_nondamage(else_)
         }
         EffectOp::Choice { options, .. } => options.iter().all(ordinary_nondamage),
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } => ordinary_nondamage(unpaid),
         EffectOp::MayPayCostThen {
             then, otherwise, ..
         } => ordinary_nondamage(then) && otherwise.as_deref().is_none_or(ordinary_nondamage),
@@ -651,8 +654,10 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. }
         | EffectOp::AddPlusOnePlusOneCounters { .. }
         | EffectOp::AddPlusOneCounterToAbilitySource
+        | EffectOp::IncubationFromCombatDamageV1 { .. }
         | EffectOp::AddSoulCounterToAbilitySourceV1
         | EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
+        | EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { .. }
         | EffectOp::PumpControlled { .. }
         | EffectOp::PumpTargetUntilEndOfTurnDynamic { .. }
         | EffectOp::PumpTargetByControlledSubtypeCount { .. }

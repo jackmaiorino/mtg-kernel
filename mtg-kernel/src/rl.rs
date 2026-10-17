@@ -1895,6 +1895,10 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
@@ -1988,6 +1992,8 @@ pub fn observe_v2(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV2> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     crate::effect::temporary_control_v1::refuse_legacy_observation(state)
         .map_err(RlContractError)?;
@@ -2009,19 +2015,24 @@ enum ObservationTextModeV2 {
     // storage, together with its mandatory exact battlefield card roster.
     RavenousV51Artifact,
     FlatForbiddenElided,
+    PreparedV57Artifact,
 }
 
 impl ObservationTextModeV2 {
     fn kernel_version(self) -> String {
         match self {
-            Self::FullArtifact | Self::RavenousV51Artifact => KERNEL_VERSION.to_string(),
+            Self::FullArtifact | Self::RavenousV51Artifact | Self::PreparedV57Artifact => {
+                KERNEL_VERSION.to_string()
+            }
             Self::FlatForbiddenElided => String::new(),
         }
     }
 
     fn card_name(self, card_id: u16) -> String {
         match self {
-            Self::FullArtifact | Self::RavenousV51Artifact => card_name(card_id),
+            Self::FullArtifact | Self::RavenousV51Artifact | Self::PreparedV57Artifact => {
+                card_name(card_id)
+            }
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2156,6 +2167,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49(
         capabilities,
         accepted_planes,
         false,
+        None,
     )
 }
 
@@ -2169,8 +2181,16 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     capabilities: FamilyCapabilitiesWithFishingV40,
     accepted_planes: AcceptedPlanesV49,
     accept_fake: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
-    if text_mode != ObservationTextModeV2::RavenousV51Artifact {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(state)?;
+    }
+
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+    ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
@@ -2184,9 +2204,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     }
     let (accepted_planes, accept_conqueror) = accepted_planes;
     if accept_conqueror {
-        crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
+        crate::conqueror_public_v49::validate_with_proof(state, conqueror_proof)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
     let (
@@ -2359,6 +2379,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             accept_divine,
             accept_conqueror,
             accept_fake,
+            text_mode == ObservationTextModeV2::PreparedV57Artifact,
+            conqueror_proof,
         )?,
         combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_common_v2(
@@ -2378,6 +2400,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 (true, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
+                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                conqueror_proof,
             )?
         } else {
             engine_context_v2(
@@ -2418,6 +2442,8 @@ pub fn observe_policy_v5(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV5> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let mut observation = build_policy_observation_v5(PolicyObservationBuildV5 {
         state,
         surface,
@@ -2446,6 +2472,8 @@ pub(crate) fn observe_policy_v5_unhashed_for_flat_policy(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV5> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     build_policy_observation_v5(PolicyObservationBuildV5 {
         state,
         surface,
@@ -2722,6 +2750,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49(
         capabilities,
         accepted_planes,
         false,
+        None,
     )
 }
 
@@ -2735,7 +2764,12 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     capabilities: FamilyCapabilitiesWithFishingV40,
     accepted_planes: AcceptedPlanesV49,
     accept_fake: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(state)?;
+    }
+
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {
@@ -2746,9 +2780,9 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     }
     let (accepted_planes, accept_conqueror) = accepted_planes;
     if accept_conqueror {
-        crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
+        crate::conqueror_public_v49::validate_with_proof(state, conqueror_proof)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
     let (
@@ -2895,6 +2929,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
             accept_conqueror,
         ),
         accept_fake,
+        conqueror_proof,
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -2914,6 +2949,8 @@ pub fn observe_policy_v6(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV6> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let mut observation = build_policy_observation_v6(PolicyObservationBuildV5 {
         state,
         surface,
@@ -2937,6 +2974,8 @@ pub(crate) fn observe_policy_v6_unhashed_for_flat_policy(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV6> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     build_policy_observation_v6(PolicyObservationBuildV5 {
         state,
         surface,
@@ -2969,6 +3008,7 @@ fn build_policy_observation_common_v6(
 
 /// Shared storage has no schema or commitment identity. Only the existing
 /// gated entry point above may turn this into a predecessor observation.
+#[derive(Clone)]
 pub(crate) struct PolicyObservationStorageV6 {
     pub kernel_version: String,
     pub surface_version: u32,
@@ -3543,7 +3583,91 @@ pub(crate) enum CommonProjectionScopeV42 {
     ConquerorV49,
     FakeV50,
     RavenousV51,
+    PreparedV57,
 }
+
+/// Public construction operands confined to one immutable complete-family call.
+/// This is neither validation proof nor executable authority. The only factory
+/// runs the original complete builder, including all private checks, first.
+/// No world, surface, proof or input binding is cloned or retained across calls.
+pub(crate) struct BorrowedCommonObservationV42<'a> {
+    scope: CommonProjectionScopeV42,
+    state: &'a GameState,
+    surface: &'a PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    storage: PolicyObservationStorageV6,
+}
+impl<'a> BorrowedCommonObservationV42<'a> {
+    pub(crate) fn build(
+        request: (CommonProjectionScopeV42, &'a GameState),
+        surface: &'a PolicySurfaceV5,
+        actor: PlayerId,
+        step: u64,
+        physical: u64,
+        substep: (u32, u32),
+    ) -> Result<Self> {
+        let storage = common_family_observation_storage_scoped(
+            request, surface, actor, step, physical, substep,
+        )?;
+        Ok(Self {
+            scope: request.0,
+            state: request.1,
+            surface,
+            actor,
+            step,
+            physical,
+            substep,
+            storage,
+        })
+    }
+    pub(crate) fn projection(&self) -> &PublicObservationProjectionV5 {
+        &self.storage.projection
+    }
+    fn matches(
+        &self,
+        request: (CommonProjectionScopeV42, &GameState),
+        surface: &PolicySurfaceV5,
+        actor: PlayerId,
+        step: u64,
+        physical: u64,
+        substep: (u32, u32),
+    ) -> bool {
+        matches!(
+            self.scope,
+            CommonProjectionScopeV42::RavenousV51 | CommonProjectionScopeV42::PreparedV57
+        ) && self.scope == request.0
+            && std::ptr::eq(self.state, request.1)
+            && std::ptr::eq(self.surface, surface)
+            && self.actor == actor
+            && self.step == step
+            && self.physical == physical
+            && self.substep == substep
+    }
+}
+
+/// Families keep their own checks and transforms. Only an exact later read of
+/// an already successful immutable request can clone its public construction.
+/// Standalone, other-scope and foreign/mismatched requests take the old path.
+pub(crate) fn common_family_observation_storage_from_borrowed(
+    request: (CommonProjectionScopeV42, &GameState),
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    common: Option<&BorrowedCommonObservationV42<'_>>,
+) -> Result<PolicyObservationStorageV6> {
+    if let Some(common) =
+        common.filter(|c| c.matches(request, surface, actor, step, physical, substep))
+    {
+        return Ok(common.storage.clone());
+    }
+    common_family_observation_storage_scoped(request, surface, actor, step, physical, substep)
+}
+
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
     surface: &PolicySurfaceV5,
@@ -3557,6 +3681,40 @@ pub(crate) fn common_family_observation_storage_scoped(
         return akroma_family_observation_storage_v40(
             state, surface, actor, step, physical, substep,
         );
+    }
+    let conqueror_proof = if scope == CommonProjectionScopeV42::ConquerorV49 {
+        Some(crate::conqueror_observation_v49::validated_state(state).map_err(RlContractError)?)
+    } else {
+        None
+    };
+    common_family_observation_storage_with_proof(
+        request,
+        surface,
+        actor,
+        step,
+        physical,
+        substep,
+        conqueror_proof.as_ref(),
+    )
+}
+
+fn common_family_observation_storage_with_proof(
+    request: (CommonProjectionScopeV42, &GameState),
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
+) -> Result<PolicyObservationStorageV6> {
+    let (scope, state) = request;
+    if let Some(proof) = conqueror_proof {
+        if scope != CommonProjectionScopeV42::ConquerorV49 {
+            return Err(RlContractError(
+                "Conqueror proof changed its common projection scope".into(),
+            ));
+        }
+        proof.require_state(state)?;
     }
     match scope {
         CommonProjectionScopeV42::FullAjaniV42 => {
@@ -3572,12 +3730,16 @@ pub(crate) fn common_family_observation_storage_scoped(
         CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
         CommonProjectionScopeV42::PandaV47 => crate::panda_observation_v47::validate_state(state),
         CommonProjectionScopeV42::FakeV50 => crate::fake_observation_v50::validate_state(state),
+        CommonProjectionScopeV42::PreparedV57 => {
+            crate::prepared_observation_v57::validate_state(state)
+        }
         CommonProjectionScopeV42::RavenousV51 => {
             crate::ravenous_observation_v51::validate_state(state)
         }
-        CommonProjectionScopeV42::ConquerorV49 => {
-            crate::conqueror_observation_v49::validate_state(state)
-        }
+        CommonProjectionScopeV42::ConquerorV49 => match conqueror_proof {
+            Some(proof) => proof.require_state(state).map_err(|e| e.0),
+            None => crate::conqueror_observation_v49::validate_state(state),
+        },
         CommonProjectionScopeV42::SeasonV48 => crate::season_observation_v48::validate_state(state),
         CommonProjectionScopeV42::HunterV45 => crate::hunter_observation_v45::validate_state(state),
         CommonProjectionScopeV42::ExistingV40 => {
@@ -3596,6 +3758,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             | CommonProjectionScopeV42::ConquerorV49
             | CommonProjectionScopeV42::FakeV50
             | CommonProjectionScopeV42::RavenousV51
+            | CommonProjectionScopeV42::PreparedV57
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -3607,7 +3770,9 @@ pub(crate) fn common_family_observation_storage_scoped(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: if scope == CommonProjectionScopeV42::RavenousV51 {
+                text_mode: if scope == CommonProjectionScopeV42::PreparedV57 {
+                    ObservationTextModeV2::PreparedV57Artifact
+                } else if scope == CommonProjectionScopeV42::RavenousV51 {
                     ObservationTextModeV2::RavenousV51Artifact
                 } else {
                     ObservationTextModeV2::FullArtifact
@@ -3628,6 +3793,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                     matches!(
                         scope,
@@ -3638,6 +3804,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                     matches!(
                         scope,
@@ -3647,6 +3814,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                     matches!(
                         scope,
@@ -3655,6 +3823,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                     matches!(
                         scope,
@@ -3662,6 +3831,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                 ),
                 matches!(
@@ -3669,6 +3839,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                     CommonProjectionScopeV42::ConquerorV49
                         | CommonProjectionScopeV42::FakeV50
                         | CommonProjectionScopeV42::RavenousV51
+                        | CommonProjectionScopeV42::PreparedV57
                 ),
             ),
         ),
@@ -3686,9 +3857,149 @@ pub(crate) fn common_family_observation_storage_scoped(
         ),
         matches!(
             scope,
-            CommonProjectionScopeV42::FakeV50 | CommonProjectionScopeV42::RavenousV51
+            CommonProjectionScopeV42::FakeV50
+                | CommonProjectionScopeV42::RavenousV51
+                | CommonProjectionScopeV42::PreparedV57
         ),
+        conqueror_proof,
     )
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn genuine_paid_conqueror_projection_proof_keeps_original_state_rows_and_full_projection_both_seats(
+) {
+    use crate::bloodthirsty_conqueror_v49::tests::future_printed;
+    use crate::conqueror_public_v49::{self as public, ValidatedStateV49};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _) = future_printed::paid(actor);
+        for amount in [1, 2] {
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::life_loss(actor.opponent(), amount),
+            );
+        }
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::OrderTriggers { player, ref pending }
+                if player == actor && pending.len() == 2
+        ));
+        {
+            let before = serde_json::to_vec(&state).unwrap();
+            let proof = ValidatedStateV49::new(&state).unwrap();
+            let restored: GameState = serde_json::from_slice(&before).unwrap();
+            assert_eq!(restored, state);
+            let restored_proof = ValidatedStateV49::new(&restored).unwrap();
+            let surface = PolicySurfaceV5::new();
+            assert!(common_family_observation_storage_with_proof(
+                (CommonProjectionScopeV42::ConquerorV49, &restored),
+                &surface,
+                actor,
+                0,
+                0,
+                (0, 1),
+                Some(&proof),
+            )
+            .is_err());
+            for (pending, restored_pending) in state
+                .engine
+                .pending_triggers
+                .iter()
+                .zip(&restored.engine.pending_triggers)
+            {
+                let expected = public::pending_source_reference(&state, pending).unwrap();
+                assert!(expected.is_some());
+                assert_eq!(
+                    proof.pending_source_reference(&state, pending).unwrap(),
+                    expected
+                );
+                assert!(proof
+                    .pending_source_reference(&restored, restored_pending)
+                    .is_err());
+                assert_eq!(
+                    restored_proof
+                        .pending_source_reference(&restored, restored_pending)
+                        .unwrap(),
+                    expected
+                );
+                let mut foreign = pending.clone();
+                foreign.controller = actor.opponent();
+                assert!(public::pending_source_reference(&state, &foreign).is_err());
+                assert!(proof.pending_source_reference(&state, &foreign).is_err());
+            }
+            let mut forged = restored.clone();
+            forged.engine.pending_triggers[0].controller = actor.opponent();
+            let forged_before = serde_json::to_vec(&forged).unwrap();
+            assert!(ValidatedStateV49::new(&forged).is_err());
+            assert!(
+                public::pending_source_reference(&forged, &forged.engine.pending_triggers[0])
+                    .is_err()
+            );
+            assert_eq!(serde_json::to_vec(&forged).unwrap(), forged_before);
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), before);
+        }
+        for published in [false, true] {
+            if published {
+                engine::step(&mut state, Action::OrderTriggers(vec![0, 1])).unwrap();
+                assert!(state.engine.pending_triggers.is_empty());
+                let proof = ValidatedStateV49::new(&state).unwrap();
+                let rows = state
+                    .stack
+                    .iter()
+                    .filter(|item| public::selected(item))
+                    .collect::<Vec<_>>();
+                assert_eq!(rows.len(), 2);
+                for item in rows {
+                    assert_eq!(
+                        proof.stack_source_reference(&state, item).unwrap(),
+                        public::stack_source_reference(&state, item).unwrap()
+                    );
+                    let mut foreign = item.clone();
+                    foreign.controller = actor.opponent();
+                    assert!(proof.stack_source_reference(&state, &foreign).is_err());
+                    assert!(public::stack_source_reference(&state, &foreign).is_err());
+                }
+            }
+            let before = serde_json::to_vec(&state).unwrap();
+            let surface = PolicySurfaceV5::new();
+            let proven = common_family_observation_storage_scoped(
+                (CommonProjectionScopeV42::ConquerorV49, &state),
+                &surface,
+                actor,
+                0,
+                0,
+                (0, 1),
+            )
+            .unwrap()
+            .into_legacy();
+            // The unchanged full-validation fallback builds every field, not
+            // a normalized or partial comparison of selected source handles.
+            let full = common_family_observation_storage_with_proof(
+                (CommonProjectionScopeV42::ConquerorV49, &state),
+                &surface,
+                actor,
+                0,
+                0,
+                (0, 1),
+                None,
+            )
+            .unwrap()
+            .into_legacy();
+            assert_eq!(proven, full);
+            assert_eq!(
+                serde_json::to_vec(&proven).unwrap(),
+                serde_json::to_vec(&full).unwrap()
+            );
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            assert!(observe_v1(&state, actor, 0).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
 }
 
 pub(crate) fn akroma_family_observation_storage_v40(
@@ -4077,6 +4388,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49(
         accept_cerberus,
         accepted_statics,
         false,
+        None,
     )
 }
 
@@ -4090,7 +4402,12 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     accept_cerberus: bool,
     accepted_statics: FamilyCapabilitiesWithFishingV40,
     accept_fake: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PolicyObservationStorageV6> {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(request.0.state)?;
+    }
+
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(request.0.state)?;
     } else {
@@ -4101,10 +4418,13 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     }
     let (request, (accepted_planes, accept_conqueror)) = request;
     if accept_conqueror {
-        crate::bloodthirsty_conqueror_v49::validate(request.state).map_err(RlContractError)?;
+        crate::conqueror_public_v49::validate_with_proof(request.state, conqueror_proof)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(request.state)
-            .map_err(RlContractError)?;
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(
+            request.state,
+            Some(request.acting_player),
+        )
+        .map_err(RlContractError)?;
     }
     let (
         request,
@@ -4260,6 +4580,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
         accept_conqueror,
         accept_fake,
+        conqueror_proof,
     )?;
     let (mut base, policy_surface_context) =
         build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
@@ -4302,6 +4623,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
                 accept_conqueror,
             ),
             accept_fake,
+            conqueror_proof,
         )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
@@ -4382,6 +4704,8 @@ pub fn observe_policy_v8(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<crate::policy_observation_v8::ObservationV8> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let base = build_policy_observation_common_v6(
         PolicyObservationBuildV5 {
             state,
@@ -4419,6 +4743,8 @@ pub(crate) fn observe_policy_v8_unhashed_for_flat_policy(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<crate::policy_observation_v8::ObservationV8> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let base = build_policy_observation_common_v6(
         PolicyObservationBuildV5 {
             state,
@@ -4617,6 +4943,7 @@ fn policy_observation_extensions_conqueror_inner_v49(
         accepted_sources,
         accept_conqueror,
         false,
+        None,
     )
 }
 
@@ -4630,8 +4957,16 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PolicyObservationExtensionsV6> {
-    if text_mode != ObservationTextModeV2::RavenousV51Artifact {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(state)?;
+    }
+
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+    ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
@@ -4783,6 +5118,8 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
+                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                conqueror_proof,
             )?;
             let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
                 .is_some_and(|cost| cost.iter().any(|component| matches!(component,
@@ -4818,6 +5155,8 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                     (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                     accept_conqueror,
                     accept_fake,
+                    text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                    conqueror_proof,
                 )?,
                 stack_item_kind: item.kind.into(),
             });
@@ -4848,6 +5187,8 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
+                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                conqueror_proof,
             )?,
             stack_item_kind: pending.resolving_item.kind.into(),
         });
@@ -4897,8 +5238,11 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                             ));
                         }
                         if seen.insert(id) {
-                            if text_mode != ObservationTextModeV2::RavenousV51Artifact
-                                && crate::ravenous_amulet_v1::definition(object.card_def)
+                            if !matches!(
+                                text_mode,
+                                ObservationTextModeV2::RavenousV51Artifact
+                                    | ObservationTextModeV2::PreparedV57Artifact
+                            ) && crate::ravenous_amulet_v1::definition(object.card_def)
                             {
                                 return Err(RlContractError(
                                     "known Ravenous search candidate requires V51".into(),
@@ -5146,6 +5490,8 @@ pub(crate) fn core_policy_action_candidates_v5(
     decision: &PolicyDecisionV5,
     state: &GameState,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::elenda_public_v52::require_legacy_visible(state, decision.actor(state))
+        .map_err(RlContractError)?;
     core_policy_action_candidates_hunter_scoped_v45(decision, state, false)
 }
 /// Distinct V51 entry point. Prior consumer entry points retain their modes.
@@ -5163,6 +5509,7 @@ pub(crate) fn policy_observation_extensions_ravenous_v51(
         (true, true, true, true),
         true,
         true,
+        None,
     )
 }
 
@@ -5189,6 +5536,7 @@ pub(crate) fn policy_observation_extensions_fake_v50(
         (true, true, true, true),
         true,
         true,
+        None,
     )
 }
 pub(crate) fn policy_observation_extensions_conqueror_v49(
@@ -5263,7 +5611,7 @@ pub(crate) fn core_policy_action_candidates_fake_scoped_v50(
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
     }
     if accept_panda {
@@ -5443,6 +5791,11 @@ fn core_surface_action_candidates_v1(
     decision: &SurfaceDecision,
     state: &GameState,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    crate::elenda_public_v52::require_legacy_visible(
+        state,
+        PolicyDecisionV5::Surface(decision.clone()).actor(state),
+    )
+    .map_err(RlContractError)?;
     core_surface_action_candidates_hunter_scoped_v45(decision, state, false)
 }
 fn core_surface_action_candidates_hunter_scoped_v45(
@@ -5503,8 +5856,11 @@ fn core_surface_action_candidates_fake_scoped_v50(
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
-            .map_err(RlContractError)?;
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(
+            state,
+            PolicyDecisionV5::Surface(decision.clone()).actor(state),
+        )
+        .map_err(RlContractError)?;
     }
     if accept_panda {
         crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
@@ -8428,6 +8784,7 @@ fn effect_target_ref_visible(
 }
 
 fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
+    crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     let object = state
         .objects
         .try_get(id)
@@ -8479,8 +8836,10 @@ fn public_card_v2(
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     if object.counters.soul != 0
-        && !(text_mode == ObservationTextModeV2::RavenousV51Artifact
-            && object.zone == Zone::Battlefield)
+        && !(matches!(
+            text_mode,
+            ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+        ) && object.zone == Zone::Battlefield)
     {
         return Err(RlContractError(
             "public counter schema cannot represent soul counters".into(),
@@ -8496,11 +8855,46 @@ pub(crate) fn public_card_v51_base(state: &GameState, id: ObjectId) -> Result<Ca
     public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::FullArtifact)
 }
 
+/// Layout-compatible fields are subordinate to V57's complete native-width roster.
+pub(crate) fn public_card_prepared_compat_v57(
+    state: &GameState,
+    id: ObjectId,
+) -> Result<CardPublicV2> {
+    public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::PreparedV57Artifact)
+}
+pub(crate) fn policy_observation_extensions_prepared_v57(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    crate::prepared_observation_v57::validate_state(state).map_err(RlContractError)?;
+    policy_observation_extensions_conqueror_inner_v49_fake_v50(
+        state,
+        actor,
+        ObservationTextModeV2::PreparedV57Artifact,
+        true,
+        true,
+        (true, true, true, true),
+        true,
+        true,
+        None,
+    )
+}
+pub(crate) fn core_policy_action_candidates_prepared_v57(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::prepared_observation_v57::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_fake_scoped_v50(decision, state, true, true, true, true)
+}
+
 fn public_card_v2_non_soul_fields(
     state: &GameState,
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPublicV2> {
+    if text_mode != ObservationTextModeV2::PreparedV57Artifact {
+        crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
+    }
     let object = state
         .objects
         .try_get(id)
@@ -8511,7 +8905,9 @@ fn public_card_v2_non_soul_fields(
             text_mode.card_name(projected_card_def(state, id, object.zone_change_count))
         } else if matches!(
             text_mode,
-            ObservationTextModeV2::FullArtifact | ObservationTextModeV2::RavenousV51Artifact
+            ObservationTextModeV2::FullArtifact
+                | ObservationTextModeV2::RavenousV51Artifact
+                | ObservationTextModeV2::PreparedV57Artifact
         ) && (object.v4.face_index == 1
             || card_effective_identity_v1(state, id).is_some()
             || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
@@ -8586,6 +8982,11 @@ fn private_card(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPrivateV1> {
+    // Callers have already selected an actor-authorized identity: own hand,
+    // known hand/library, or a visible choice. Do not scan concealed zones.
+    if text_mode != ObservationTextModeV2::PreparedV57Artifact {
+        crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
+    }
     let object = state
         .objects
         .try_get(id)
@@ -9524,9 +9925,12 @@ fn engine_context_v2_conqueror_inner_v49(
         accepted_sources,
         accept_conqueror,
         false,
+        false,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn engine_context_v2_conqueror_inner_v49_fake_v50(
     state: &GameState,
     acting_player: PlayerId,
@@ -9534,7 +9938,13 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
+    accept_prepared: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<EngineContextV2> {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(state)?;
+    }
+
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {
@@ -9761,6 +10171,8 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     (accept_inspiration, accept_fishing),
                     (true, accept_hunter, accept_panda),
                     accept_fake,
+                    accept_prepared,
+                    conqueror_proof,
                 )?
             } else {
                 pending_effect_semantic_v4(
@@ -9798,13 +10210,22 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     .flat_map(|pending| pending.waiting_triggers()),
             )
             .map(|p| {
+                let prepared_source = if accept_prepared {
+                    crate::prepared_observation_v57::pending_source_reference(state, p)?
+                } else {
+                    None
+                };
                 let fake_source = if accept_fake {
                     crate::fake_your_own_death_v50::public_v50::pending_source_reference(state, p)?
                 } else {
                     None
                 };
                 let conqueror_source = if accept_conqueror {
-                    crate::conqueror_public_v49::pending_source_reference(state, p)?
+                    if let Some(proof) = conqueror_proof {
+                        proof.pending_source_reference(state, p)?
+                    } else {
+                        crate::conqueror_public_v49::pending_source_reference(state, p)?
+                    }
                 } else {
                     None
                 };
@@ -9814,7 +10235,10 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     None
                 };
                 Ok(PendingTriggerSemanticV2 {
-                    source: if let Some(source) = fake_source.or(conqueror_source).or(panda_source)
+                    source: if let Some(source) = prepared_source
+                        .or(fake_source)
+                        .or(conqueror_source)
+                        .or(panda_source)
                     {
                         Some(source)
                     } else if accept_hunter
@@ -9883,9 +10307,12 @@ fn pending_effect_semantic_v4_akroma_inner(
         capabilities,
         accepted_sources,
         false,
+        false,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     state: &GameState,
     acting_player: PlayerId,
@@ -9893,7 +10320,13 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     capabilities: (bool, bool),
     accepted_sources: (bool, bool, bool),
     accept_fake: bool,
+    accept_prepared: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PendingEffectSemanticV4> {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(state)?;
+    }
+
     let (accept_akroma, accept_hunter, accept_panda) = accepted_sources;
     let (accept_inspiration, accept_fishing) = capabilities;
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
@@ -9926,6 +10359,8 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                 (accept_akroma, false, accept_hunter, accept_panda),
                 false,
                 accept_fake,
+                accept_prepared,
+                conqueror_proof,
             )?),
             controller: pending.resolving_item.controller.into(),
             choice: Some(PendingEffectChoiceSemanticV4::Targets {
@@ -9992,6 +10427,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardPaymentV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
@@ -10031,6 +10467,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardPaymentV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
@@ -10157,6 +10594,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardPaymentV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
                                 ..
@@ -10257,6 +10695,8 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
             (accept_akroma, false, accept_hunter, accept_panda),
             false,
             accept_fake,
+            accept_prepared,
+            conqueror_proof,
         )?),
         controller: pending.resolving_item.controller.into(),
         choice,
@@ -10649,6 +11089,7 @@ fn stack_item_public_v1(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stack_public_conqueror_v49_fake_v50(
     state: &GameState,
     acting_player: PlayerId,
@@ -10657,7 +11098,13 @@ fn stack_public_conqueror_v49_fake_v50(
     accept_divine: bool,
     accept_conqueror: bool,
     accept_fake: bool,
+    accept_prepared: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<Vec<StackItemPublicV2>> {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(state)?;
+    }
+
     state
         .stack
         .iter()
@@ -10672,6 +11119,8 @@ fn stack_public_conqueror_v49_fake_v50(
                 accepted_sources,
                 (accept_divine, accept_conqueror),
                 accept_fake,
+                accept_prepared,
+                conqueror_proof,
             )
         })
         .collect()
@@ -10687,7 +11136,13 @@ fn stack_item_public_conqueror_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accepted_roots: (bool, bool),
     accept_fake: bool,
+    accept_prepared: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<StackItemPublicV2> {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(state)?;
+    }
+
     let (accept_divine, accept_conqueror) = accepted_roots;
     if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
         return Err(RlContractError(
@@ -10733,6 +11188,8 @@ fn stack_item_public_conqueror_v49_fake_v50(
             accepted_sources,
             accept_conqueror,
             accept_fake,
+            accept_prepared,
+            conqueror_proof,
         )?,
         controller: item.controller.into(),
         // Announced stack targets are public historical facts. Project the
@@ -10993,6 +11450,8 @@ fn akroma_historical_source_ref_fake_scoped_v50(
             (true, false, false, false),
             false,
             true,
+            false,
+            None,
         )
     } else {
         stack_source_ref_union_v40(state, item, true, (true, false, false, false))
@@ -11023,9 +11482,12 @@ fn stack_source_ref_conqueror_v49(
         accepted_sources,
         accept_conqueror,
         false,
+        false,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stack_source_ref_conqueror_v49_fake_v50(
     state: &GameState,
     item: &StackItem,
@@ -11033,7 +11495,19 @@ fn stack_source_ref_conqueror_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
+    accept_prepared: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<CardStableRefV1> {
+    if let Some(proof) = conqueror_proof {
+        proof.require_state(state)?;
+    }
+
+    if accept_prepared {
+        if let Some(source) = crate::prepared_observation_v57::stack_source_reference(state, item)?
+        {
+            return Ok(source);
+        }
+    }
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {
@@ -11047,7 +11521,12 @@ fn stack_source_ref_conqueror_v49_fake_v50(
         }
     }
     if accept_conqueror {
-        if let Some(source) = crate::conqueror_public_v49::stack_source_reference(state, item)? {
+        let source = if let Some(proof) = conqueror_proof {
+            proof.stack_source_reference(state, item)?
+        } else {
+            crate::conqueror_public_v49::stack_source_reference(state, item)?
+        };
+        if let Some(source) = source {
             return Ok(source);
         }
     }
@@ -12770,5 +13249,157 @@ mod soul_counter_representation_v1_tests {
         assert!(public_card(&state, source).is_err());
         assert!(public_card_v2(&state, source, ObservationTextModeV2::FullArtifact).is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod borrowed_common_observation_v42_tests {
+    use super::*;
+
+    fn same_result(
+        left: Result<PolicyObservationStorageV6>,
+        right: Result<PolicyObservationStorageV6>,
+    ) {
+        match (left, right) {
+            (Ok(left), Ok(right)) => assert_eq!(
+                serde_json::to_vec(&left.into_legacy()).unwrap(),
+                serde_json::to_vec(&right.into_legacy()).unwrap(),
+            ),
+            (Err(left), Err(right)) => assert_eq!(left.0, right.0),
+            _ => panic!("borrowed construction and full construction disagree"),
+        }
+    }
+
+    #[test]
+    fn exact_request_reuses_only_public_storage_and_all_foreign_requests_fully_rebuild_both_seats()
+    {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let state = crate::extra_turn_v1::tests::ready(actor);
+            let surface = PolicySurfaceV5::new();
+            let legacy_frame = BorrowedCommonObservationV42::build(
+                (CommonProjectionScopeV42::DivineV44, &state),
+                &surface,
+                actor,
+                3,
+                7,
+                (0, 1),
+            )
+            .unwrap();
+            assert!(!legacy_frame.matches(
+                (CommonProjectionScopeV42::DivineV44, &state),
+                &surface,
+                actor,
+                3,
+                7,
+                (0, 1),
+            ));
+            same_result(
+                common_family_observation_storage_from_borrowed(
+                    (CommonProjectionScopeV42::DivineV44, &state),
+                    &surface,
+                    actor,
+                    3,
+                    7,
+                    (0, 1),
+                    Some(&legacy_frame),
+                ),
+                common_family_observation_storage_scoped(
+                    (CommonProjectionScopeV42::DivineV44, &state),
+                    &surface,
+                    actor,
+                    3,
+                    7,
+                    (0, 1),
+                ),
+            );
+            for scope in [
+                CommonProjectionScopeV42::PreparedV57,
+                CommonProjectionScopeV42::RavenousV51,
+            ] {
+                let frame = BorrowedCommonObservationV42::build(
+                    (scope, &state),
+                    &surface,
+                    actor,
+                    3,
+                    7,
+                    (0, 1),
+                )
+                .unwrap();
+                assert!(frame.matches((scope, &state), &surface, actor, 3, 7, (0, 1)));
+                let original = serde_json::to_vec(&state).unwrap();
+                let restored: GameState = serde_json::from_slice(&original).unwrap();
+                let mut foreign = restored.clone();
+                foreign.players[actor.opponent().index()].life -= 1;
+                let foreign_surface = surface.clone();
+                let other_scope = if scope == CommonProjectionScopeV42::PreparedV57 {
+                    CommonProjectionScopeV42::RavenousV51
+                } else {
+                    CommonProjectionScopeV42::PreparedV57
+                };
+                let requests = [
+                    (scope, &state, &surface, actor, 3, 7, (0, 1)),
+                    (scope, &restored, &surface, actor, 3, 7, (0, 1)),
+                    (scope, &foreign, &surface, actor, 3, 7, (0, 1)),
+                    (scope, &state, &foreign_surface, actor, 3, 7, (0, 1)),
+                    (other_scope, &state, &surface, actor, 3, 7, (0, 1)),
+                    (scope, &state, &surface, actor.opponent(), 3, 7, (0, 1)),
+                    (scope, &state, &surface, actor, 4, 7, (0, 1)),
+                    (scope, &state, &surface, actor, 3, 8, (0, 1)),
+                    (scope, &state, &surface, actor, 3, 7, (1, 2)),
+                    (scope, &state, &surface, actor, 3, 7, (0, 0)),
+                ];
+                for (index, (scope, world, surface, actor, step, physical, substep)) in
+                    requests.into_iter().enumerate()
+                {
+                    assert_eq!(
+                        frame.matches((scope, world), surface, actor, step, physical, substep),
+                        index == 0
+                    );
+                    same_result(
+                        common_family_observation_storage_from_borrowed(
+                            (scope, world),
+                            surface,
+                            actor,
+                            step,
+                            physical,
+                            substep,
+                            Some(&frame),
+                        ),
+                        common_family_observation_storage_scoped(
+                            (scope, world),
+                            surface,
+                            actor,
+                            step,
+                            physical,
+                            substep,
+                        ),
+                    );
+                    same_result(
+                        common_family_observation_storage_from_borrowed(
+                            (scope, world),
+                            surface,
+                            actor,
+                            step,
+                            physical,
+                            substep,
+                            None,
+                        ),
+                        common_family_observation_storage_scoped(
+                            (scope, world),
+                            surface,
+                            actor,
+                            step,
+                            physical,
+                            substep,
+                        ),
+                    );
+                }
+                assert_eq!(original, serde_json::to_vec(&state).unwrap());
+            }
+        }
     }
 }

@@ -86,6 +86,8 @@ pub fn producer_sha256() -> String {
         include_str!("rl_variable_cast_v1.rs"),
         include_str!("policy_observation_variable_cast_v1.rs"),
         include_str!("faebloom_observation_v43.rs"),
+        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         h.update([0]);
         h.update(s.as_bytes());
@@ -115,6 +117,13 @@ pub fn commitment(value: &ConquerorObservationV49) -> Result<String, RlContractE
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    validated_state(state).map(|_| ())
+}
+/// Keep every preliminary guard in its original order, then retain the final
+/// Conqueror validation only for this immutable construction's shared builders.
+pub(crate) fn validated_state(
+    state: &GameState,
+) -> Result<crate::conqueror_public_v49::ValidatedStateV49<'_>, String> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -129,8 +138,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::eaten_public_v46::validate_state(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;
     crate::doubling_season_v48::validate_token_journals(state)?;
-    crate::bloodthirsty_conqueror_v49::validate(state)?;
-    Ok(())
+    crate::conqueror_public_v49::ValidatedStateV49::new(state).map_err(|e| e.0)
 }
 pub fn observe_v49(
     state: &GameState,
