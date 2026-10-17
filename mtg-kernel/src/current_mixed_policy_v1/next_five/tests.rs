@@ -297,7 +297,7 @@ fn all_five_genuine_paid_casts_use_sealed_native_order_and_distinct_artifacts_bo
             let target = put(&mut raw, actor.opponent(), "Drake Token", Zone::Battlefield);
             let spell = put(&mut raw, actor, name, Zone::Hand);
             let id = raw.objects.get(spell).card_def;
-            assert!(card_def::preflight_fully_supported_deck(&[id]).is_err());
+            assert!(card_def::preflight_fully_supported_deck(&[id]).is_ok());
             let mut owner = own(raw);
             check_artifact(&owner);
             let is_goblin = name == "Goblin Negotiation";
