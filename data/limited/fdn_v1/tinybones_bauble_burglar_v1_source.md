@@ -73,3 +73,13 @@ numeric model, sampler, Human or transport admission is granted. Frozen V88
 catalog/profile literals are unchanged; a new actual export is required before
 any future profile binding. Integration must preserve root's later compiler and
 closed numeric repairs by normal composition.
+
+A native illegal-announcement reversal also rebinds positive stash restored
+from original Exile LKI when announcement used an independent exile permission.
+The appended receipt keeps the original Stack source, actual returned generation
+and exact counter count. It does not invent a Tinybones play occurrence or revive
+a stale independent grant. A thirteenth source group combines the genuine paid
+stash input, independent-permission announcement, explicitly labelled native
+abort, serialized restore, forged/erased receipt refusal and a genuinely paid
+fresh own-turn retry. This is not observed public cancellation reachability.
+The original twelve source group bodies and ordinary no-stash bytes are retained.

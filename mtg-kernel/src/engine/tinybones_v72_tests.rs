@@ -712,3 +712,103 @@ fn foreign_paid_adventure_retains_actual_caster_permission_after_stash_and_sourc
         validate_state(&restore(&s)).unwrap();
     }
 }
+
+#[test]
+fn paid_stash_independent_permission_native_abort_rebinds_restore_and_own_turn_retry_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (mut s, tiny, card) = setup(p, "Lightning Bolt");
+        stashed(&mut s, p, tiny, card);
+        let original_generation = s.objects.get(card).zone_change_count;
+        turn(&mut s, p.opponent());
+        // An independent exile-permission input primitive, not a Tinybones
+        // own-turn permission. The following cast announcement is genuine.
+        s.engine.exile_play_permissions.push(PlayPermission {
+            without_mana_cost: FreeCastV1(false),
+            object: card,
+            holder: p,
+            zone_change_generation: original_generation,
+            play_or_cast: PlayOrCast::Cast,
+            expiry: PlayPermissionExpiry::UntilHoldersNextEndStep,
+        });
+        priority(&mut s, p);
+        let taps = tapped(&s, p);
+        let mana = s.players[p.index()].mana_pool;
+        let casts = s.players[p.index()].spells_cast_this_turn;
+        act(&mut s, Action::CastSpell(card));
+        let pending = s.engine.pending_cast.take().unwrap();
+        assert!(
+            matches!(pending.source_contract.spell_cast_origin.unwrap().route,SpellCastRouteV4::ExilePermission{holder,..}if holder==p)
+        );
+        assert_eq!(s.objects.get(card).controller, p);
+        assert_eq!(s.objects.get(card).owner, p.opponent());
+        assert_eq!(s.objects.get(card).counters.stash, 0);
+        // Explicit native illegal-announcement reversal primitive. No public
+        // cancellation action or normal abort reachability is claimed here.
+        abort_cast(&mut s, pending, CastMethodV4::Normal);
+        assert_eq!(s.objects.get(card).zone, Zone::Exile);
+        assert_eq!(s.objects.get(card).controller, p.opponent());
+        assert_eq!(
+            s.objects.get(card).zone_change_count,
+            original_generation + 2
+        );
+        assert_eq!(s.objects.get(card).counters.stash, 1);
+        assert_eq!(
+            s.counter_lki_for(card, original_generation).unwrap().stash,
+            1
+        );
+        assert_eq!(tapped(&s, p), taps);
+        assert_eq!(s.players[p.index()].mana_pool, mana);
+        assert_eq!(s.players[p.index()].spells_cast_this_turn, casts);
+        validate_state(&restore(&s)).unwrap();
+        assert!(mana_grant(&s, card, p).is_some());
+        assert!(!play_allowed(&s, card, p));
+        // The old independent permission remains generation-bound and cannot
+        // be silently revived. Tinybones will grant a fresh own-turn route.
+        assert!(!castable_spells(p, &s).contains(&card));
+        let mut forged = restore(&s);
+        let returned = forged
+            .engine
+            .event_history
+            .iter_mut()
+            .find_map(|e| match e {
+                CommittedEvent::TinybonesV72 { journal } => match journal.as_mut() {
+                    JournalV72::IndependentStashAborted { returned, .. } => Some(returned),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .unwrap();
+        returned.expected_zone_change_count += 1;
+        let unchanged = forged.clone();
+        assert!(step(&mut forged, Action::Pass).is_err());
+        assert_eq!(forged, unchanged);
+        let mut missing = restore(&s);
+        missing.engine.event_history.retain(|e| !matches!(e,CommittedEvent::TinybonesV72{journal}if matches!(journal.as_ref(),JournalV72::IndependentStashAborted{..})));
+        let unchanged = missing.clone();
+        assert!(step(&mut missing, Action::Pass).is_err());
+        assert_eq!(missing, unchanged);
+        let mut restored = restore(&s);
+        turn(&mut s, p);
+        turn(&mut restored, p);
+        assert_eq!(s, restored);
+        assert!(play_allowed(&s, card, p));
+        let before = tapped(&s, p);
+        let row = cast(&mut s, p, card, Some(Target::Player(p.opponent())));
+        assert!(matches!(
+            row.v4
+                .source_contract
+                .unwrap()
+                .spell_cast_origin
+                .unwrap()
+                .route,
+            SpellCastRouteV4::TinybonesExileV72 { .. }
+        ));
+        assert_eq!(row.controller, p);
+        assert_eq!(row.v4.source_contract.unwrap().owner, p.opponent());
+        assert_eq!(tapped(&s, p) - before, 1);
+        finish(&mut s);
+        assert_eq!(s.objects.get(card).zone, Zone::Graveyard);
+        assert!(s.players[p.opponent().index()].graveyard.contains(&card));
+        validate_state(&restore(&s)).unwrap();
+    }
+}
