@@ -217,6 +217,10 @@ jobs:
           - limited-v5
           - limited-v6
           - limited-v7
+          - limited-v8
+          - limited-v9
+          - limited-v10
+          - limited-v11
           - limited-model
           - limited-model-1
           - limited-model-2
@@ -245,7 +249,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-v6"},{"os":"windows-2025","group":"limited-v7"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"limited-model-8"},{"os":"windows-2025","group":"limited-model-9"},{"os":"windows-2025","group":"limited-model-10"},{"os":"windows-2025","group":"limited-model-11"},{"os":"windows-2025","group":"limited-model-12"},{"os":"windows-2025","group":"limited-model-13"},{"os":"windows-2025","group":"limited-model-14"},{"os":"windows-2025","group":"limited-model-15"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-v6"},{"os":"windows-2025","group":"limited-v7"},{"os":"windows-2025","group":"limited-v8"},{"os":"windows-2025","group":"limited-v9"},{"os":"windows-2025","group":"limited-v10"},{"os":"windows-2025","group":"limited-v11"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"limited-model-8"},{"os":"windows-2025","group":"limited-model-9"},{"os":"windows-2025","group":"limited-model-10"},{"os":"windows-2025","group":"limited-model-11"},{"os":"windows-2025","group":"limited-model-12"},{"os":"windows-2025","group":"limited-model-13"},{"os":"windows-2025","group":"limited-model-14"},{"os":"windows-2025","group":"limited-model-15"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -514,6 +518,21 @@ jobs:
           # Partial-family correctness is covered by the genuine Rust fixtures.
           MTG_LIMITED_NEXT_FIVE_TIMING_V6=1 python python/tools/check_limited_next_five_client_v6.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_next_five_env_v6$binary_suffix"
 
+      - name: Validate GR native, complete facts, candidates and sealed owner
+        if: ${{ !cancelled() && matrix.group == 'limited-v7' }}
+        run: |
+          status=0
+          for filter in \
+            alesha_v1:: \
+            nine_lives_familiar_v1:: \
+            graveyard_return_public_v61:: \
+            graveyard_return_observation_v61:: \
+            graveyard_return_candidates_v61:: \
+            rl_session::graveyard_return_v61::; do
+            python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --nocapture "$filter" || status=1
+          done
+          exit "$status"
+
       - name: Validate GraveyardReturn V61 Limited V7 wire and process plumbing
         if: ${{ !cancelled() && matrix.group == 'limited-v7' }}
         run: |
@@ -528,6 +547,131 @@ jobs:
           # Seed-123 basic-Full-deck plumbing only. GR printings remain Partial;
           # this process replay is not GR gameplay or strength admission.
           MTG_LIMITED_GRAVEYARD_RETURN_TIMING_V7=1 python python/tools/check_limited_graveyard_return_client_v7.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_graveyard_return_env_v7$binary_suffix"
+
+      # These source-only successors retain Partial metadata. Run the real
+      # compiled wire/owner/native cases, without duplicating the complete model
+      # and Human subtrees in the existing shards. A failed module does not
+      # suppress later cases; each exact case keeps the existing 1800s bound
+      # and up to four children.
+
+      - name: Build limited-v8 declared JSONL binary
+        if: ${{ !cancelled() && matrix.group == 'limited-v8' }}
+        run: cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_call_env_v8
+
+      - name: Validate Call V62 and early native printings
+        if: ${{ !cancelled() && matrix.group == 'limited-v8' }}
+        run: |
+          status=0
+          for filter in \
+            valkyries_call_v1:: \
+            effect::perforating_artist_v1:: \
+            niv_mizzet_visionary_v1:: \
+            engine::embercleave_v1_tests:: \
+            banner_of_kinship_v1:: \
+            standard_cards_v1::drakuseth_tests:: \
+            zimone_paradox_sculptor_v1:: \
+            valkyries_call_public_v62:: \
+            niv_mizzet_public_v63:: \
+            embercleave_public_v65:: \
+            chosen_type_public_v66:: \
+            drakuseth_public_v67:: \
+            call_observation_v62:: \
+            rl_session::call_v62:: \
+            limited_call_session_v8:: \
+            bloodthirsty_conqueror_v49::tests::future_printed:: \
+            bloodthirsty_conqueror_v49::tests::ordinary_losses_before_paid_entry_and_after_departure_keep_owned_input_completeness_both_seats \
+            bloodthirsty_conqueror_v49::tests::registered_catalog_without_actual_observer_keeps_ordinary_loss_and_legacy_projection_both_seats; do
+            python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --nocapture "$filter" || status=1
+          done
+          exit "$status"
+
+      - name: Validate Call V8 real-process plumbing
+        if: ${{ !cancelled() && matrix.group == 'limited-v8' }}
+        run: |
+          binary_suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then
+            binary_suffix=".exe"
+          fi
+          # Natural seed-123 basic-deck replay is plumbing, not Call gameplay
+          # or Full admission; genuine paid mechanics run in the Rust cases.
+          python python/tools/check_limited_call_client_v8.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_call_env_v8$binary_suffix"
+
+      - name: Build limited-v9 declared JSONL binary
+        if: ${{ !cancelled() && matrix.group == 'limited-v9' }}
+        run: cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_end_turn_env_v9
+
+      - name: Validate EndTurn V68 and native trigger printings
+        if: ${{ !cancelled() && matrix.group == 'limited-v9' }}
+        run: |
+          status=0
+          for filter in \
+            effect::sphinxs_tutelage_v1_tests:: \
+            effect::consuming_aberration_v1_tests:: \
+            effect::lathril_v1_tests:: \
+            effect::curator_v1:: \
+            effect::kykar_v1:: \
+            effect::greatwurm_v1:: \
+            engine::time_stop_v1:: \
+            end_turn_observation_v68:: \
+            rl_session::end_turn_v68:: \
+            limited_end_turn_session_v9:: \
+            rl::borrowed_common_observation_v42_tests::; do
+            python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --nocapture "$filter" || status=1
+          done
+          exit "$status"
+
+      - name: Build limited-v10 declared JSONL binary
+        if: ${{ !cancelled() && matrix.group == 'limited-v10' }}
+        run: cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_genesis_wave_env_v10
+
+      - name: Validate Genesis V69 and native copy/cast printings
+        if: ${{ !cancelled() && matrix.group == 'limited-v10' }}
+        run: |
+          status=0
+          for filter in \
+            effect::electroduplicate_v1_tests:: \
+            engine::progenitus_v1_tests:: \
+            effect::standard_exile::etali_primal_storm_tests:: \
+            leyline_axe_v1:: \
+            engine::fiend_artisan_v1_tests:: \
+            engine::imprisoned_moon_v1_tests:: \
+            effect::thousand_year_storm_v1_tests:: \
+            effect::genesis_wave_v1:: \
+            genesis_wave_observation_v69:: \
+            rl_session::genesis_wave_v69:: \
+            limited_genesis_wave_session_v10::; do
+            python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --nocapture "$filter" || status=1
+          done
+          exit "$status"
+
+      - name: Build limited-v11 declared JSONL binary
+        if: ${{ !cancelled() && matrix.group == 'limited-v11' }}
+        run: cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_vivien_env_v11
+
+      - name: Validate Vivien V70, Muldrotha and native continuation prerequisites
+        if: ${{ !cancelled() && matrix.group == 'limited-v11' }}
+        run: |
+          status=0
+          for filter in \
+            effect::vivien_reid_v1:: \
+            vivien_observation_v70:: \
+            rl_session::vivien_v70:: \
+            limited_vivien_session_v11:: \
+            engine::muldrotha_v1:: \
+            effect::loot_v1:: \
+            engine::ordinary_cleanup_discard_tests:: \
+            snack_wide_life_v59:: \
+            snack_wide_public_v59:: \
+            engine::wide_cast_x_v59_tests:: \
+            cast_identity_v1:: \
+            engine::mandatory_cast_cost_v1:: \
+            effect::sphinx_lore_v1:: \
+            engine::omniscience_cast_v1:: \
+            engine::harvester_cast_reversal_v1_tests:: \
+            drake_hatcher_v1::; do
+            python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --nocapture "$filter" || status=1
+          done
+          exit "$status"
 
       # Enumerate the compiled subtree in each job and partition exact names.
       # Give each exact case its own 30-minute bound with at most four children,
