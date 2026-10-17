@@ -262,6 +262,96 @@ pub(super) fn record_paid(
         });
     Ok(Some(index))
 }
+fn validated_paid(
+    state: &GameState,
+    i: usize,
+    expected: Option<(StackSourceContractV4, StackItemId)>,
+) -> Result<&PaidV1, String> {
+    let Some(CommittedEvent::GreatwurmCounterPaymentV1 {
+        paid,
+        input_history_index,
+    }) = state.engine.event_history.get(i)
+    else {
+        return Err("counter payment receipt erased".into());
+    };
+    let input = usize::try_from(*input_history_index).map_err(|_| "counter input width")?;
+    if input>=i || !matches!(state.engine.event_history.get(input),Some(CommittedEvent::GreatwurmCounterInputV1{input})if input==paid)
+        || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::GreatwurmCounterInputV1{input}if input.stack_item_id==paid.stack_item_id)).count()!=1 {
+        return Err("counter payment differs from its original selected input".into());
+    }
+    if expected.is_some_and(|(source, item)| paid.source != source || paid.stack_item_id != item)
+        || state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::GreatwurmCounterPaymentV1{paid:p,..} if p.stack_item_id == paid.stack_item_id)).count() != 1 {
+        return Err("counter payment source/controller/receipt binding changed".into());
+    }
+    for (n, unit) in paid.units.iter().enumerate() {
+        let used = paid.units[..=n].iter().filter(|u| *u == unit).count() as u32;
+        if unit.permanent.expected_zone != Zone::Battlefield
+            || paid.original_counts[n] < used
+            || paid.units.iter().enumerate().any(|(m, other)| {
+                other == unit && paid.original_counts[m] != paid.original_counts[n]
+            })
+        {
+            return Err("counter payment units/counts changed".into());
+        }
+    }
+    Ok(paid)
+}
+
+/// Chronological debit for the existing bait ledger. This shares the original
+/// independent selection/payment checks, never trusts the live counter alone,
+/// and does not supply spell execution or permission authority.
+pub(crate) fn bait_cost_balance(
+    state: &GameState,
+    at: usize,
+    object: ObjectId,
+    generation: u32,
+) -> Result<Option<(i32, i32)>, String> {
+    if !matches!(state.engine.event_history.get(at), Some(CommittedEvent::GreatwurmCounterPaymentV1 { paid, .. })
+        if paid.units.iter().any(|unit| unit.kind == native::CounterKindV1::Bait
+            && unit.permanent.object == object && unit.permanent.expected_zone_change_count == generation))
+    {
+        return Ok(None);
+    }
+    let paid = validated_paid(state, at, None)?;
+    let origin = paid
+        .source
+        .spell_cast_origin
+        .ok_or("bait cost cast origin absent")?;
+    if !native::definition(paid.source.card_def)
+        || paid.source.zone != Zone::Stack
+        || paid.source.owner != paid.source.controller
+        || paid.source.spell_copy_origin.is_some()
+        || paid.source.cast_method != CastMethodV4::Normal
+        || paid.source.finalized_cast_binding.is_some()
+        || origin.origin_zone != Zone::Graveyard
+        || origin.finalized_method.is_some()
+        || !matches!(origin.route, SpellCastRouteV4::GreatwurmGraveyardV1 { holder, graveyard_generation }
+            if holder == paid.source.controller && graveyard_generation == origin.origin_zone_change_count)
+    {
+        return Err("bait cost lost original printed graveyard source".into());
+    }
+    let mut before = None;
+    let mut removed = 0_i32;
+    for (n, unit) in paid.units.iter().enumerate() {
+        if unit.kind == native::CounterKindV1::Bait
+            && unit.permanent.object == object
+            && unit.permanent.expected_zone_change_count == generation
+        {
+            before = Some(i32::try_from(paid.original_counts[n]).map_err(|_| "bait input width")?);
+            removed += 1;
+        }
+    }
+    before
+        .map(|before| {
+            let after = before
+                .checked_sub(removed)
+                .filter(|after| *after >= 0)
+                .ok_or("bait cost overspent original count")?;
+            Ok((before, after))
+        })
+        .transpose()
+}
+
 pub(super) fn validate_finalized(
     state: &GameState,
     item: &StackItem,
@@ -290,18 +380,6 @@ pub(super) fn validate_finalized(
     }
     let i = usize::try_from(paid_index.ok_or("printed graveyard cost receipt missing")?)
         .map_err(|_| "counter receipt index width")?;
-    let Some(CommittedEvent::GreatwurmCounterPaymentV1 {
-        paid,
-        input_history_index,
-    }) = state.engine.event_history.get(i)
-    else {
-        return Err("counter payment receipt erased".into());
-    };
-    let input = usize::try_from(*input_history_index).map_err(|_| "counter input width")?;
-    if input>=i || !matches!(state.engine.event_history.get(input),Some(CommittedEvent::GreatwurmCounterInputV1{input})if input==paid)
-        || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::GreatwurmCounterInputV1{input}if input.stack_item_id==paid.stack_item_id)).count()!=1 {
-        return Err("counter payment differs from its original selected input".into());
-    }
     let mut expected = source;
     expected.finalized_cast_binding = None;
     expected
@@ -309,20 +387,6 @@ pub(super) fn validate_finalized(
         .as_mut()
         .ok_or("cast origin missing")?
         .finalized_method = None;
-    if paid.source != expected || paid.stack_item_id != item.v4.stack_item_id
-        || state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::GreatwurmCounterPaymentV1{paid:p,..} if p.stack_item_id == paid.stack_item_id)).count() != 1 {
-        return Err("counter payment source/controller/receipt binding changed".into());
-    }
-    for (n, unit) in paid.units.iter().enumerate() {
-        let used = paid.units[..=n].iter().filter(|u| *u == unit).count() as u32;
-        if unit.permanent.expected_zone != Zone::Battlefield
-            || paid.original_counts[n] < used
-            || paid.units.iter().enumerate().any(|(m, other)| {
-                other == unit && paid.original_counts[m] != paid.original_counts[n]
-            })
-        {
-            return Err("counter payment units/counts changed".into());
-        }
-    }
+    validated_paid(state, i, Some((expected, item.v4.stack_item_id)))?;
     Ok(())
 }

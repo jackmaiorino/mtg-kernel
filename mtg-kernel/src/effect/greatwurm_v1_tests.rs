@@ -243,7 +243,8 @@ fn exact_partial_printing_paid_hand_and_all_predecessor_refusals_both_seats() {
         let w = paid(&mut s, p);
         assert!(engine::has_effective_keyword(&s, w, Keywords::TRAMPLE));
         assert!(refuse_legacy(&s).is_err());
-        assert!(crate::drake_public_v53::capture(&s).is_err());
+        // The V53 appendix is not a whole-world legacy consumer gate.
+        assert!(crate::rl::observe_v1(&s, p, 0).is_err());
         let _ = restore(&s);
     }
 }
@@ -315,7 +316,7 @@ fn genuine_paid_cast_accepts_every_native_counter_kind_without_narrowing_both_se
                 CounterKindV1::Oil => o.counters.oil = 6,
                 CounterKindV1::Charge => o.counters.charge = 6,
                 CounterKindV1::Net => o.counters.net = 6,
-                CounterKindV1::Bait => o.counters.bait = 6,
+                CounterKindV1::Bait => {}
                 CounterKindV1::Soul => o.counters.soul = 6,
                 CounterKindV1::Incubation => o.counters.incubation = 6,
                 CounterKindV1::Revival => o.counters.revival = 6,
@@ -334,6 +335,29 @@ fn genuine_paid_cast_accepts_every_native_counter_kind_without_narrowing_both_se
                 crate::planeswalker_v1::add_loyalty_counters_checked_v1(&mut s, donor, u32::MAX)
                     .unwrap();
             }
+            if kind == CounterKindV1::Bait {
+                // Existing authenticated placement primitive, not a printed
+                // bait producer. Raw bait injection must remain refused.
+                let mut raw = restore(&s);
+                raw.objects.get_mut(donor).counters.bait = 6;
+                let original = raw.clone();
+                assert!(crate::fishing_pole_v39::lifecycle::validate_state(&raw).is_err());
+                assert_eq!(raw, original);
+                crate::standard_creatures_v1::apply_counter_transfer(
+                    &mut s,
+                    donor,
+                    p,
+                    crate::standard_creatures_v1::CounterTransferV1 {
+                        counters: crate::state::Counters {
+                            bait: 6,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                crate::fishing_pole_v39::lifecycle::validate_state(&s).unwrap();
+            }
             let old = count(&s, donor, kind).unwrap();
             let before = tapped(&s, p);
             begin_graveyard(&mut s, p, w);
@@ -342,6 +366,34 @@ fn genuine_paid_cast_accepts_every_native_counter_kind_without_narrowing_both_se
             }
             publish_graveyard(&mut s, p, w, before);
             assert_eq!(count(&s, donor, kind).unwrap(), old - 6);
+            if kind == CounterKindV1::Bait {
+                crate::fishing_pole_v39::lifecycle::validate_state(&s).unwrap();
+                let at = s
+                    .engine
+                    .event_history
+                    .iter()
+                    .position(|e| {
+                        matches!(e, event::CommittedEvent::GreatwurmCounterPaymentV1 { .. })
+                    })
+                    .unwrap();
+                for mode in 0..4 {
+                    let mut bad = restore(&s);
+                    let event::CommittedEvent::GreatwurmCounterPaymentV1 { paid, .. } =
+                        &mut bad.engine.event_history[at]
+                    else {
+                        unreachable!()
+                    };
+                    match mode {
+                        0 => paid.units[0].kind = CounterKindV1::Oil,
+                        1 => paid.original_counts[0] += 1,
+                        2 => paid.units[0].permanent.expected_zone_change_count += 1,
+                        _ => paid.units[0].permanent.object = w,
+                    }
+                    let original = bad.clone();
+                    assert!(crate::fishing_pole_v39::lifecycle::validate_state(&bad).is_err());
+                    assert_eq!(bad, original);
+                }
+            }
             finish(&mut s);
         }
     }
@@ -680,8 +732,22 @@ fn mixed_counter_units_pay_one_atomic_cost_and_hidden_worlds_do_not_change_menu_
             c.oil = 1;
             c.lore = 1;
             c.net = 1;
-            c.bait = 1;
             c.fellowship = 1;
+            // Keep the six distinct units, with bait entering through its real
+            // native transfer journal rather than an unauthenticated assignment.
+            crate::standard_creatures_v1::apply_counter_transfer(
+                s,
+                da,
+                p,
+                crate::standard_creatures_v1::CounterTransferV1 {
+                    counters: crate::state::Counters {
+                        bait: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         }
         begin_graveyard(&mut a, p, wa);
         begin_graveyard(&mut b, p, wb);
@@ -768,6 +834,11 @@ fn paid_counterspell_keeps_six_removed_counters_and_all_mana_paid_both_seats() {
 fn genuine_paid_copy_and_witness_suppression_use_effective_observer_and_departure_lki_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p);
+        // Automatic generic payment can use Islands. Leave actual blue sources
+        // for Witness after the genuine 4GG and 4UU payments in this same turn.
+        for _ in 0..4 {
+            put(&mut s, p, "Island", Zone::Battlefield);
+        }
         let w = paid(&mut s, p);
         cast(&mut s, p, "Self-Reflection", &[Target::Object(w)], 6);
         finish(&mut s);
