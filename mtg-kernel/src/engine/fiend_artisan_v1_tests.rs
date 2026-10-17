@@ -337,7 +337,7 @@ fn answer(s: &mut GameState, target: Option<ObjectId>) {
         } else {
             let changed_x = if pending.ctx.x_value == 0 { 1 } else { 0 };
             let frame = pending.frames.last_mut().unwrap();
-            let EffectFrame::SearchLibraryCardsToDestination {
+            let effect::EffectFrame::SearchLibraryCardsToDestination {
                 filter,
                 max_targets,
                 ..
