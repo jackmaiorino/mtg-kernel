@@ -4257,7 +4257,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::HASTE");
         }
-        "Niv-Mizzet, Visionary" => keywords.push("Keywords::FLYING"),
+        "Niv-Mizzet, Visionary" | "Curator of Destinies" => keywords.push("Keywords::FLYING"),
         "Lathril, Blade of the Elves" => keywords.push("Keywords::MENACE"),
         "Herald of Eternal Dawn"
             if cfg!(all(
