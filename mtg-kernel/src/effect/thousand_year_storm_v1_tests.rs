@@ -138,7 +138,10 @@ fn cast_choices(
                 chosen += 1;
             }
             Decision::OrderTriggers { .. } => answer(s, d),
-            Decision::CastSpellOrPass { player, .. } if player == p => {
+            Decision::CastSpellOrPass { .. } => {
+                // A newly published Storm trigger gives the active player
+                // priority. Completion is the exact paid spell row, not which
+                // player receives the next native priority window.
                 assert_eq!(chosen, targets.len());
                 assert!(s.engine.pending_cast.is_none());
                 let row = s
@@ -148,6 +151,16 @@ fn cast_choices(
                     .unwrap();
                 assert_eq!(row.controller, p);
                 assert!(!row.is_copy);
+                assert_eq!(row.targets, targets);
+                assert_eq!(row.v4.target_contracts.len(), targets.len());
+                assert_eq!(
+                    s.stack
+                        .iter()
+                        .filter(|r| r.v4.stack_item_id == row.v4.stack_item_id)
+                        .count(),
+                    1
+                );
+                engine::validated_stack_item_target_spec(row, s).unwrap();
                 assert_eq!(s.objects.get(object).zone, Zone::Stack);
                 assert_eq!(taps(s, p) - before, cost);
                 return object;
@@ -352,8 +365,11 @@ fn actual_two_target_copies_keep_original_slots_and_optional_new_targets_restore
         let mut s = ready(p, "Island");
         let a = cast(&mut s, p, "Llanowar Elves", &[], 1);
         finish(&mut s);
+        // Each creature is genuinely paid during its controller's own main phase.
+        crate::policy_observation_v6::tests::advance_to_next_main_for(&mut s, p.opponent());
         let b = cast(&mut s, p.opponent(), "Llanowar Elves", &[], 1);
         finish(&mut s);
+        crate::policy_observation_v6::tests::advance_to_next_main_for(&mut s, p);
         bolt(&mut s, p);
         paid_storm(&mut s, p);
         cast(
@@ -667,8 +683,11 @@ fn paid_run_away_swap_cannot_keep_duplicate_and_historical_departure_uses_real_l
             let extra = put(&mut s, p, "Ajani's Pridemate", Zone::Battlefield); // Initial native roster primitive.
             let a = cast(&mut s, p, "Llanowar Elves", &[], 1);
             finish(&mut s);
+            // Each creature is genuinely paid during its controller's own main phase.
+            crate::policy_observation_v6::tests::advance_to_next_main_for(&mut s, p.opponent());
             let b = cast(&mut s, p.opponent(), "Llanowar Elves", &[], 1);
             finish(&mut s);
+            crate::policy_observation_v6::tests::advance_to_next_main_for(&mut s, p);
             bolt(&mut s, p);
             paid_storm(&mut s, p);
             let original = cast(
