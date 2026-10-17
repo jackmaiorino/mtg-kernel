@@ -1433,6 +1433,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/linked_aura_operation_v1/genesis_current_slots_v69.rs",
                     include_str!("../linked_aura_operation_v1/genesis_current_slots_v69.rs"),
                 ),
+                (
+                    "mtg-kernel/src/engine/muldrotha_v1.rs",
+                    include_str!("../engine/muldrotha_v1.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

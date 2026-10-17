@@ -3636,6 +3636,7 @@ mod tests {
                 (486, "Time Stop"),
                 (487, "Genesis Wave"),
                 (488, "Vivien Reid"),
+                (489, "Muldrotha, the Gravetide"),
             ]
         } else {
             &[]

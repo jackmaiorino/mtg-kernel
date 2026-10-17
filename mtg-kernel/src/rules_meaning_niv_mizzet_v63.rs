@@ -112,6 +112,7 @@ pub fn producer_sha256() -> String {
             include_str!("starting_life_statics_v1.rs"),
             include_str!("standard_keywords_v1.rs"),
             include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("engine/muldrotha_v1.rs"),
             include_str!("resolution_cast_v1.rs"),
             include_str!("effect/harvester_v1.rs"),
             include_str!("leyline_axe_v1.rs"),

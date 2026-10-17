@@ -90,6 +90,7 @@ pub fn producer_sha256() -> String {
             include_str!("counter_target_effects_v1.rs"),
             include_str!("zimone_paradox_sculptor_v1.rs"),
             include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("engine/muldrotha_v1.rs"),
             include_str!("resolution_cast_v1.rs"),
             include_str!("progenitus_v1.rs"),
             include_str!("controlled_creature_grants_v1.rs"),

@@ -2051,6 +2051,15 @@ pub enum CommittedEvent {
     VivienReidV1 {
         journal: Box<crate::effect::vivien_reid_v1::JournalV1>,
     },
+    MuldrothaOptionsV1 {
+        options: crate::engine::muldrotha_v1::OptionsV1,
+    },
+    MuldrothaSelectedV1 {
+        pending: crate::engine::muldrotha_v1::PendingV1,
+    },
+    MuldrothaPlayedV1 {
+        played: crate::engine::muldrotha_v1::PlayedV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

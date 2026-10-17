@@ -248,6 +248,7 @@ pub fn producer_sha256() -> String {
             include_str!("human_bo3_v1/next_five_v59.rs"),
             include_str!("../../python/tools/limited_next_five_session_v6.py"),
             include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("engine/muldrotha_v1.rs"),
             include_str!("resolution_cast_v1.rs"),
             include_str!("progenitus_v1.rs"),
             include_str!("source_power_activation_v1.rs"),
