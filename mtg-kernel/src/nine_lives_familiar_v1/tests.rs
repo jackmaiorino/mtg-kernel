@@ -68,10 +68,29 @@ fn paid_cast(state: &mut GameState, actor: PlayerId, spell: ObjectId, target: Op
     );
     engine::step(state, Action::CastSpell(spell)).unwrap();
     if let Some(target) = target {
-        let choice = engine::advance_until_decision(state);
+        let mut choice = engine::advance_until_decision(state);
+        if let Decision::ChooseSpellMode {
+            player,
+            spell: pending,
+            mode_count,
+            legal_modes,
+        } = &choice
+        {
+            // Employment's real Treasure makes both Abrade modes viable.
+            // These death fixtures explicitly choose its creature-damage mode.
+            assert_eq!(
+                card_def::CARD_DEFS[state.objects.get(spell).card_def as usize].name,
+                "Abrade"
+            );
+            assert_eq!((*player, *pending, *mode_count), (actor, spell, 2));
+            assert_eq!(legal_modes.as_slice(), &[0, 1]);
+            engine::step(state, Action::ChooseSpellMode(0)).unwrap();
+            choice = engine::advance_until_decision(state);
+        }
         assert!(
-            matches!(choice, Decision::ChooseTargets { legal_targets, .. }
-            if legal_targets.contains(&Target::Object(target)))
+            matches!(&choice, Decision::ChooseTargets { player, spell: pending, legal_targets, .. }
+            if *player == actor && *pending == spell && legal_targets.contains(&Target::Object(target))),
+            "expected the paid spell's original target choice: {choice:?}"
         );
         engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
     }
@@ -152,8 +171,13 @@ fn legacy_observation_refuses_paid_native_revival_counters_both_seats() {
         let familiar = put(&mut state, actor, "Nine-Lives Familiar", Zone::Hand);
         paid_cast(&mut state, actor, familiar, None);
         assert_eq!(state.objects.get(familiar).counters.revival, 8);
+        let before = state.clone();
         let error = crate::rl::observe_v1(&state, actor, 0).unwrap_err();
-        assert!(error.0.contains("revival counters"), "{error}");
+        assert_eq!(
+            error.0,
+            "graveyard return rules require the distinct V61 consumer"
+        );
+        assert_eq!(state, before);
     }
 }
 
