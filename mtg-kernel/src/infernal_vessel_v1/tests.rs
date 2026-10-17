@@ -84,6 +84,20 @@ fn cast(s: &mut GameState, actor: PlayerId, spell: ObjectId, target: Option<Obje
             matches!(engine::advance_until_decision(s),Decision::ChooseTargets{legal_targets,..}if legal_targets.contains(&Target::Object(target)))
         );
         engine::step(s, Action::ChooseTarget(Target::Object(target))).unwrap();
+        if card_def::CARD_DEFS[s.objects.get(spell).card_def as usize].target_spec
+            == card_def::TargetSpec::CreatureThenUpToOneAttachedEquipment
+        {
+            // Fiery's creature is mandatory, but its attached Equipment target
+            // is optional. Finish that actual target stage before paying.
+            assert!(matches!(engine::advance_until_decision(s),
+                Decision::ChooseTargets { player, spell: announced, remaining: 1, can_finish: true, .. }
+                    if player == actor && announced == spell));
+            assert_eq!(
+                s.engine.pending_cast.as_ref().unwrap().targets_chosen,
+                vec![Target::Object(target)]
+            );
+            engine::step(s, Action::FinishEffectSelection).unwrap();
+        }
     }
     // Native Step announces the cast/target; Advance finalizes the pending
     // cast, pays its actual quote and publishes the original spell before
