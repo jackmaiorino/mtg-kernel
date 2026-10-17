@@ -6,7 +6,10 @@ the public evaluator with the baseline P2 semantics: best-of-three matches,
 keep-seven opening, 10,000 physical decisions, game one read, the case's
 starting player choosing play. The only differences from P2 are the fresh
 seed namespace (``spy-reset-pilot-v1/eval``) and the common runtime profile
-(resolution-boundary-v1) on every game. Search is never used.
+(resolution-boundary-v1) on every game. Search is never used. ``--seed-namespace
+sd1-panel-v1`` builds the same panel on search-evidence distillation's fresh
+seeds (collab LANES/search-evidence-distillation-20261016 section 6); the plan
+then records its namespace. Without it every plan is as before.
 
 Spy-own cases (216 per checkpoint and opponent) run in their own shards with
 captured decisions, so ``labels`` can replay their game one through the
@@ -18,6 +21,7 @@ reservation).
 
 CLI:
   build   --id ID --candidate SRC.json --opponent-name T1|H --opponent OPP.json --decks DECKS --out DIR --shards N
+          [--seed-namespace sd1-panel-v1]
   jobs    --plan DIR/plan.json --out JOBS.jsonl     label-replay jobs for Spy-own cases
 """
 from __future__ import annotations
@@ -37,8 +41,8 @@ SCHEMA = "spy-reset-pilot-v1/public-panel"
 MAX_DECISIONS = npp.MAX_DECISIONS
 
 
-def cases() -> list[dict]:
-    return [{"own": o, "other": t, "repeat": k, "seat": seat, "seed": pilot.panel_seed(o, t, k),
+def cases(namespace: str = pilot.PANEL_NS) -> list[dict]:
+    return [{"own": o, "other": t, "repeat": k, "seat": seat, "seed": pilot.panel_seed(o, t, k, namespace),
              "starting_player": (k + o + t) % 2}
             for o in range(pilot.DECKS) for t in range(pilot.DECKS)
             for k in range(pilot.PANEL_REPEATS) for seat in (0, 1)]
@@ -56,9 +60,9 @@ def wrap(source: dict) -> dict:
 
 
 def build(checkpoint_id: str, candidate: dict, opponent_name: str, opponent: dict, decks: list[dict],
-          out: Path, shards: int) -> dict:
+          out: Path, shards: int, namespace: str = pilot.PANEL_NS) -> dict:
     out = Path(out)
-    all_cases = cases()
+    all_cases = cases(namespace)
     requests = []
     for seat in (0, 1):
         for spy, count in ((True, 2), (False, shards)):
@@ -83,6 +87,8 @@ def build(checkpoint_id: str, candidate: dict, opponent_name: str, opponent: dic
             "schedule_sha256": npp.sha256_bytes(json.dumps(
                 {"cases": all_cases, "opponent": opponent, "max_decisions": MAX_DECISIONS,
                  "runtime_rules": pilot.RUNTIME_RULES}, sort_keys=True).encode())}
+    if namespace != pilot.PANEL_NS:
+        plan["seed_namespace"] = namespace
     npp.write_json(out / "plan.json", plan)
     return plan
 
@@ -135,13 +141,14 @@ def main(argv=None) -> int:
     for name in ("--candidate", "--opponent", "--decks", "--out"):
         b.add_argument(name, type=Path, required=True)
     b.add_argument("--shards", type=int, required=True)
+    b.add_argument("--seed-namespace", choices=pilot.PANEL_NAMESPACES, default=pilot.PANEL_NS)
     j = sub.add_parser("jobs")
     j.add_argument("--plan", type=Path, required=True)
     j.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     if a.op == "build":
         plan = build(a.id, json.loads(a.candidate.read_text()), a.opponent_name, json.loads(a.opponent.read_text()),
-                     json.loads(a.decks.read_text()), a.out, a.shards)
+                     json.loads(a.decks.read_text()), a.out, a.shards, a.seed_namespace)
         print(json.dumps({"requests": len(plan["requests"]), "cases": plan["cases"]}))
     else:
         jobs = label_jobs(a.plan)

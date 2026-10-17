@@ -1366,6 +1366,120 @@ mod tests {
         }
     }
 
+    /// SD1's root map (`root_rebuild.rs`) is the executor's own mapping at a
+    /// new root: at fixture decisions, every storage edge maps to the live
+    /// candidate a fresh repaired-key cursor executes for it (`Cursor::live`),
+    /// and some live menus are not in storage order.
+    #[test]
+    fn root_rebuild_map_is_the_new_root_cursors_mapping() {
+        let mut s = game(11);
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "root-map".into(),
+        };
+        let (mut checked, mut reordered) = (0, 0);
+        while let Some(d) = decision(&s) {
+            if checked == 40 {
+                break;
+            }
+            if d.legal_action_count >= 2 && d.acting_player == crate::rl::PlayerSeatV1::P0 {
+                let rm = super::super::root_rebuild::root_map(&s, d).unwrap();
+                let mut keyer = Keyer::new(KeyMode::Repaired, KeyStats::default());
+                let st = keyer.step(&s, d).unwrap();
+                let (key, pk, pe, cn) = keyer.storage(&st);
+                let mut tree = Tree::default();
+                let node = super::super::tree::Node::new(&key, pk, pe, cn.clone(), 1, &seeds);
+                tree.nodes.insert(key, node);
+                let mut cursor = Cursor::new(tree, 0, KeyMode::Repaired, false);
+                let (lookup, hit) = cursor.lookup(&s, d).unwrap();
+                assert_eq!(lookup, Lookup::Unsupported);
+                let hit = hit.unwrap();
+                assert_eq!(rm.map.len(), d.legal_action_count as usize);
+                for (e, &l) in rm.map.iter().enumerate() {
+                    assert_eq!(l, cursor.live(&hit, e).unwrap());
+                }
+                let mut sorted = rm.map.clone();
+                sorted.sort_unstable();
+                assert!(sorted.into_iter().eq(0..d.legal_action_count));
+                reordered += usize::from(rm.map.iter().enumerate().any(|(e, &l)| l != e as u32));
+                checked += 1;
+            }
+            s.step(d.episode_id, d.step, 0).unwrap();
+        }
+        assert!(checked >= 20, "too few focal decisions");
+        assert!(reordered > 0, "every live menu was already in edge order");
+    }
+
+    /// SD1's root rebuild (`root_rebuild.rs`) keeps a record the executor
+    /// wrote: `budget_case` plays the fixture game from its opening with
+    /// repaired keys, the 128,000-transition initial search and a ceiling one
+    /// full refresh above it (the formal ceiling has no partial refresh), so
+    /// a refresh runs; the rebuild keeps the game, and every new root's
+    /// frozen choice maps through its root map to the action played there.
+    #[test]
+    #[ignore = "native qualification: a complete fixture game with 192,000 search transitions; minutes in release, hours in debug: run with cargo test --release"]
+    fn root_rebuild_keeps_an_executor_written_search_game() {
+        let (policy, sh, mut src) = plain_control_fixture(0, 0, 100_000, 200_000);
+        src.id = "root-rebuild-s0-p0".into();
+        src.search_root = "root-rebuild".into();
+        let total = ANCHOR_BUDGET + REFRESH_BUDGET;
+        let (row, rebuilt) = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(256 << 20)
+                .spawn_scoped(scope, || {
+                    let row = budget_case(
+                        &sh,
+                        &policy,
+                        &src,
+                        total,
+                        KeyMode::Repaired,
+                        false,
+                        None,
+                        Recording::Disabled,
+                        "fixture",
+                    )
+                    .unwrap();
+                    let rebuilt = super::super::root_rebuild::game(&sh.spec, &row, None);
+                    (row, rebuilt)
+                })
+                .unwrap()
+                .join()
+                .unwrap()
+        });
+        let game = &row["game"];
+        assert_eq!(game["valid"], true, "{}", game["invalid_reason"]);
+        let searches = game["searches"].as_array().unwrap();
+        assert!(searches.len() >= 2, "no refresh ran");
+        assert!(rebuilt["void"].is_null(), "{}", rebuilt["void"]);
+        let new_roots: Vec<&Value> = game["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["chooser"] == "new_root")
+            .collect();
+        let roots = rebuilt["roots"].as_array().unwrap();
+        assert_eq!(roots.len(), new_roots.len());
+        for (r, d) in roots.iter().zip(&new_roots) {
+            assert_eq!((&r["step"], &r["search"]), (&d["step"], &d["search"]));
+            let x = r["frozen_choice"].as_u64().unwrap() as usize;
+            assert_eq!(r["map"][x], r["action"]);
+            assert_eq!(
+                game["actions"][r["step"].as_u64().unwrap() as usize],
+                r["action"]
+            );
+        }
+        let refreshed = roots.iter().filter(|r| r["search"] != 0).count();
+        assert!(refreshed > 0, "no refresh root executed an edge");
+        eprintln!(
+            "root rebuild kept {}: {} searches, {} new roots ({refreshed} after a refresh), choosers {}, views {:?}",
+            row["id"],
+            searches.len(),
+            roots.len(),
+            rebuilt["choosers"],
+            roots.iter().map(|r| r["view"].as_str().unwrap()).collect::<Vec<_>>()
+        );
+    }
+
     /// Live plain and opponent policies are separate from the search roles:
     /// a search between two live decisions leaves the live draws exactly as
     /// a reference with no search.

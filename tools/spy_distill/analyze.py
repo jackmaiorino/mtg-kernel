@@ -86,8 +86,10 @@ def checkpoint_ids() -> set:
     return {f"{lineage}-{role}" for lineage in LINEAGES for role in ROLES}
 
 
-def load(index: dict, allowed: set | None = None) -> dict:
-    """data[(checkpoint, opponent)][(own, other, repeat, seat)] = case record."""
+def load(index: dict, allowed: set | None = None, namespace: str = pilot.PANEL_NS) -> dict:
+    """data[(checkpoint, opponent)][(own, other, repeat, seat)] = case record.
+    ``namespace`` is the panel's seed namespace (the frozen panel's unless
+    given)."""
     allowed = checkpoint_ids() if allowed is None else allowed
     data = {}
     expected_cases = {(o, t, k, s) for o in range(DECKS) for t in range(DECKS)
@@ -111,7 +113,7 @@ def load(index: dict, allowed: set | None = None) -> dict:
                     or case_key in cases):
                 raise ValueError(f"{panel['rows']}: duplicate or unknown case {case_key}")
             if (r.get("panel") != expected_panel or r.get("checkpoint_sha256") != expected_hash
-                    or r.get("seed") != pilot.panel_seed(*case_key[:3])):
+                    or r.get("seed") != pilot.panel_seed(*case_key[:3], namespace)):
                 raise ValueError(f"{panel['rows']}: panel, checkpoint or seed differs")
             if (type(r["complete"]) is not bool
                     or (r["complete"] and (type(r["score"]) not in (int, float) or r["score"] not in (0, 0.5, 1)))

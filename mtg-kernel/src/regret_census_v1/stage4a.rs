@@ -27,6 +27,12 @@
 //! in `s4a-budget`, with `BUDGET_TOTAL=0`, mean backup and no interchange.
 //! It uses the case's guide policy seeds and never constructs a search.
 //! Unset or `search-v1` preserves the existing search and row format.
+//! `s4a-root-rebuild` replays recorded `s4a-budget` search games without
+//! search (`BUDGET_ROWS`, as `s4a-budget-replay`), checks each record (and,
+//! with `S4A_ROOT_SCHEDULE`, every case field it carries against that frozen
+//! schedule) and rebuilds every new-root decision's map from storage edges
+//! to live actions along the executor's own keying
+//! (`stage4a/root_rebuild.rs`).
 //! In `s4a-budget` and `s4a-diag`, `S4A_BACKUP=bestline-m<m>` (m = 3 or 8)
 //! uses the opt-in best-line backup (`stage4a/tree.rs` `BestLine`); unset or
 //! `mean` is the formal backup, and rows carry `"backup"` only when it is on.
@@ -53,6 +59,7 @@ mod refresh;
 mod replay_labels;
 mod reuse_witness;
 mod root_allocation;
+mod root_rebuild;
 mod seeds;
 mod sharing;
 mod tree;
@@ -95,6 +102,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-canon-offline"
             | "s4a-budget"
             | "s4a-budget-replay"
+            | "s4a-root-rebuild"
             | "s4a-search-profile"
             | "s4a-utility-root"
             | "s4a-utility-root-inspect"
@@ -1225,6 +1233,33 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
+    if cfg.mode == "s4a-root-rebuild" {
+        // Search-evidence distillation (SD1) stage 1: BUDGET_ROWS lists
+        // recorded s4a-budget search-arm files (one path per line). Every
+        // budget_game row of the spec's lineage in each file is replayed
+        // without search, checked, and its new_root maps rebuilt
+        // (`stage4a/root_rebuild.rs`); one root_rebuild row per game, with
+        // `void` null or the reason the game is void. A listed file that
+        // cannot be read, or a line of one that is not JSON, writes a void
+        // row and the run continues; a missing or unreadable list and every
+        // schedule error stop the run.
+        let path = std::env::var("BUDGET_ROWS").map_err(|_| "BUDGET_ROWS is required")?;
+        // Optional: the frozen schedule (JSONL of cases, as BUDGET_CASES)
+        // whose case each record's carried case fields must equal.
+        let schedule = match std::env::var("S4A_ROOT_SCHEDULE") {
+            Ok(p) => {
+                use sha2::{Digest, Sha256};
+                let bytes = std::fs::read(&p).map_err(|e| format!("{p}: {e}"))?;
+                let sha256 = format!("{:x}", Sha256::digest(&bytes));
+                let text = String::from_utf8(bytes).map_err(|e| format!("{p}: {e}"))?;
+                Some(root_rebuild::Schedule::parse(&text, sha256)?)
+            }
+            Err(_) => None,
+        };
+        let list = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+        let out = root_rebuild::rows(&sh.spec, &list, schedule.as_ref());
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
     if cfg.mode == "s4a-budget" {
         // Total-budget screen (collab LANES/search-budget-discovery-plan-20261011):
         // BUDGET_CASES is JSONL of source cases (ordinary openings); this
@@ -1489,6 +1524,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-canon-offline"
         | "s4a-budget"
         | "s4a-budget-replay"
+        | "s4a-root-rebuild"
         | "s4a-search-profile"
         | "s4a-utility-root"
         | "s4a-utility-root-inspect" => return run_bank_mode(cfg, policy),
