@@ -929,7 +929,7 @@ pub(crate) mod temporary_control_v1;
 use standard_exile::{ExileBatchChoice, ExilePlayChoice, HideawayChoice};
 
 use crate::card_def::{
-    CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
+    self, CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
     PermanentFilterDef, Subtype,
 };
 use crate::event;
@@ -938,7 +938,7 @@ use crate::mana::{Cost, ManaColor};
 use crate::state::{
     AbilitySourceContractV4, GameState, InitiativeTriggerBindingV1, InitiativeTriggerKindV1,
     LinkedExileRecordV4, MonarchTriggerBindingV1, ObjectLinkV4, PaidCostRefV4, StackItem,
-    StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
+    StackItemKind, StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
 pub mod crystal_prevention_v1;
@@ -5073,6 +5073,11 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
 /// wrong-shape actions byte-for-byte nonmutating.
 pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let fiend_artisan = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| fiend_artisan_v1::selected(state, &p.resolving_item));
     let hunter_answer = crate::high_society_hunter_custody_v45::prepare_answer(state)?;
     let inspiration_answer =
         inspiration_resolution_v1::prepare_answer(state, InspirationInputKindV1::Target(target))?;
@@ -5178,7 +5183,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         selected.append(legal);
     }
     if selected.len() == usize::from(*max_targets) {
-        complete_resumable_target_selection(continuation)?;
+        complete_resumable_target_selection(continuation, fiend_artisan)?;
     }
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
@@ -5192,6 +5197,11 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
 /// final card auto-completes and this action is never legal there.
 pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let fiend_artisan = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| fiend_artisan_v1::selected(state, &p.resolving_item));
     let hunter_answer = crate::high_society_hunter_custody_v45::prepare_answer(state)?;
     let inspiration_answer =
         inspiration_resolution_v1::prepare_answer(state, InspirationInputKindV1::Finish)?;
@@ -5256,7 +5266,10 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             .map_err(|error| error.to_string())?;
         drop(token);
     }
-    complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())?;
+    complete_resumable_target_selection(
+        state.engine.pending_effect.as_mut().unwrap(),
+        fiend_artisan,
+    )?;
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
     inspiration_resolution_v1::record_answer(state, inspiration_answer)?;
@@ -5268,6 +5281,25 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
 /// pure continuation transition and making post-action snapshots stable.
 pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let curator_pile = match state.engine.pending_effect.as_ref() {
+        Some(p) => match p.choice.as_ref() {
+            Some(PendingEffectChoice::ChooseBoolean {
+                purpose:
+                    EffectBooleanChoicePurpose::CuratorPileV1 {
+                        face_down_count,
+                        face_up_count,
+                    },
+                ..
+            }) => Some(curator_v1::prepare_pile_answer(
+                state,
+                p,
+                *face_down_count,
+                *face_up_count,
+            )?),
+            _ => None,
+        },
+        None => None,
+    };
     let retain_optional_decline = state
         .engine
         .pending_effect
@@ -5352,16 +5384,11 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
         } => {
             path.push(u16::from(value));
             match purpose {
-                EffectBooleanChoicePurpose::CuratorPileV1 {
-                    face_down_count,
-                    face_up_count,
-                } => {
-                    curator_v1::pile_answer(
-                        state,
-                        &mut continuation,
-                        face_down_count,
-                        face_up_count,
-                        value,
+                EffectBooleanChoicePurpose::CuratorPileV1 { .. } => {
+                    curator_v1::answer(
+                        continuation,
+                        curator_pile.ok_or("Curator pile preflight absent")?,
+                        curator_v1::AnswerV1::Pile(value),
                     )?;
                 }
                 EffectBooleanChoicePurpose::ExilePlay { choice } => {
@@ -5808,6 +5835,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
 
 fn complete_resumable_target_selection(
     continuation: &mut EffectContinuation,
+    fiend_artisan: bool,
 ) -> Result<(), String> {
     let choice = continuation
         .choice
@@ -6643,7 +6671,7 @@ fn complete_resumable_target_selection(
                     path: canonical_path.clone(),
                     canonical_path,
                 });
-            if fiend_artisan_v1::selected(state, &continuation.resolving_item) {
+            if fiend_artisan {
                 continuation.answered_choice_guard =
                     Some(EffectAnsweredChoiceGuard::StandardSelection {
                         frame: Box::new(continuation.frames.last().unwrap().clone()),
@@ -27302,7 +27330,7 @@ pub(crate) mod blasphemous_edict_v1 {
             .iter()
             .filter(|b| !ordered.contains(b))
             .copied()
-            .chain(ordered)
+            .chain(ordered.iter().copied())
             .collect::<Vec<_>>();
         // Both controllers choose before any sacrifice. The physical owners
         // then order their actual graveyard destinations, including stolen cards.

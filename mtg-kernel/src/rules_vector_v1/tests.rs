@@ -1772,7 +1772,7 @@ fn edict_native_conditional_cost_and_simultaneous_choices_remain_opaque_in_froze
     assert!(atoms(&actual).contains(&Atom::Read(ReadAtom {
         player: RelF::EachPlayer,
         zone: Some(ZoneF::Battlefield),
-        obj: Some(ObjF::Creature),
+        obj: Some(ObjF::Typed(CardTypeF::Creature)),
         agg: AggF::AtLeast(13)
     })));
     assert_eq!(

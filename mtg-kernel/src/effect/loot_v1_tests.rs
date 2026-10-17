@@ -170,7 +170,7 @@ fn select(s: &mut GameState, card: Option<ObjectId>) {
         .as_ref()
         .is_some_and(|p| p.choice.is_some())
     {
-        engine::step(s, Action::FinishEffectTargets).unwrap();
+        engine::step(s, Action::FinishEffectSelection).unwrap();
     }
     finish_stack(s);
 }
@@ -530,7 +530,7 @@ fn genuine_paid_private_candidates_unknown_prefix_and_public_api_tamper_refuse_b
             .as_ref()
             .is_some_and(|p| p.choice.is_some())
         {
-            engine::step(&mut s, Action::FinishEffectTargets).unwrap();
+            engine::step(&mut s, Action::FinishEffectSelection).unwrap();
         }
         let mut bad = restore(&s);
         bad.engine

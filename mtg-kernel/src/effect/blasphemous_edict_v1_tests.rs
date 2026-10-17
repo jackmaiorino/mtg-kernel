@@ -1,6 +1,7 @@
 //! Genuine FDN57 native Partial fixtures. Board rosters are labelled native
 //! setup; every Edict, response and observer described as paid is really cast.
 use super::*;
+use crate::card_def::TargetSpec;
 use crate::{
     card_def::{self, card_id_by_name, CardCapability, Keywords},
     engine::{self, Action, CastMode, Decision},
