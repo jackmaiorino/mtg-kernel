@@ -56,7 +56,7 @@ fn pinned_legal_domain_is_complete_unique_and_index_stable() {
 fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
     let mut canonical = BTreeSet::new();
     let mut noncreature = 0;
-    for id in 0..=Subtype::Sphinx.stable_id() {
+    for id in 0..=Subtype::Vivien.stable_id() {
         let native = native_subtype(id).expect("all native IDs have explicit mappings");
         assert_eq!(native.stable_id(), id);
         assert_eq!(
@@ -79,10 +79,13 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
     assert_eq!(CreatureTypeV60::Sphinx.choice_index(), 271);
     assert!(!Subtype::CREATURE_TYPES.contains(&Subtype::Sphinx));
     assert!(!Subtype::Sphinx.is_creature_type());
-    assert_eq!(noncreature, 33);
+    assert_eq!(Subtype::Vivien.stable_id(), 155);
+    assert_eq!(native_subtype(155), Some(Subtype::Vivien));
+    assert_eq!(canonical_native_type(Subtype::Vivien), None);
+    assert_eq!(noncreature, 34);
     assert_eq!(canonical.len(), 116);
-    assert!(native_subtype(155).is_none());
-    assert!(Subtype::from_stable_id(155).is_none());
+    assert!(native_subtype(156).is_none());
+    assert!(Subtype::from_stable_id(156).is_none());
     assert!(Subtype::from_stable_id(u16::MAX).is_none());
     for (alias, normal, expected) in [
         (Subtype::BirdAllCaps, Subtype::Bird, CreatureTypeV60::Bird),
