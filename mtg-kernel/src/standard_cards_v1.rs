@@ -212,6 +212,7 @@ pub enum StandardTargetV1 {
     CreatureCardPutIntoGraveyardThisTurnV1,
     /// Imprisoned in the Moon's exact battlefield union.
     CreatureLandOrPlaneswalkerV1,
+    ArtifactEnchantmentOrFlyingCreatureV1,
 }
 
 impl StandardTargetV1 {
@@ -358,6 +359,12 @@ pub(crate) fn target_matches(
     }
     let has = |card_type| crate::engine::object_has_type(state, object, card_type);
     match target {
+        StandardTargetV1::ArtifactEnchantmentOrFlyingCreatureV1 => {
+            has(CardType::Artifact)
+                || has(CardType::Enchantment)
+                || has(CardType::Creature)
+                    && crate::engine::has_effective_keyword(state, object, Keywords::FLYING)
+        }
         StandardTargetV1::CreatureLandOrPlaneswalkerV1 => {
             has(CardType::Creature) || has(CardType::Land) || has(CardType::Planeswalker)
         }
@@ -628,6 +635,7 @@ pub enum StandardOpV1 {
     DoubleAllCountersOnTargets,
     /// CR 724. Only an authentic native resolving Time Stop may run this leaf.
     EndTurnV1,
+    VivienReidEmblemV1,
 }
 
 impl StandardOpV1 {
@@ -780,6 +788,12 @@ pub(crate) fn register_reflection_delayed_sacrifice(
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::VivienReidEmblemV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         StandardOpV1::EndTurnV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

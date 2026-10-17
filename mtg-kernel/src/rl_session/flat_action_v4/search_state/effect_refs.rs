@@ -1074,6 +1074,18 @@ fn conflicts_in_scope(
     {
         return true;
     }
+    if state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::VivienReidV1])
+        || state
+            .engine
+            .event_log
+            .iter()
+            .any(|e| matches!(e, crate::event::CommittedEvent::VivienReidV1 { .. }))
+    {
+        return true;
+    }
     if crate::engine::ordinary_cleanup_v1::validate(state).is_err()
         || crate::engine::ordinary_cleanup_v1::conflicts(state, pool)
     {
@@ -1431,7 +1443,8 @@ fn conflicts_in_scope(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            OrdinaryCleanupStageV1 { .. }
+            VivienReidV1 { .. }
+            | OrdinaryCleanupStageV1 { .. }
             | TimeStopJournalV1 { .. }
             | SphinxsTutelageDrawV1 { .. }
             | SphinxsTutelageCollectedV1 { .. }

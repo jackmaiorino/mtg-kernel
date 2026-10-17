@@ -2043,6 +2043,9 @@ pub enum CommittedEvent {
         // None is the original virtual-copy disposition, never a GY move.
         departure: Option<Zone>,
     },
+    VivienReidV1 {
+        journal: Box<crate::effect::vivien_reid_v1::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

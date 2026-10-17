@@ -2803,6 +2803,7 @@ pub enum LibraryPickFilterV1 {
     /// Loot: the physical library owner is the captured resolving controller.
     /// Choices admit no responses, so the effective land scene remains fixed.
     CreatureManaValueAtMostControlledLands,
+    CreatureOrLandV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -4347,6 +4348,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if vivien_reid_v1::recipe(op)
+        || vivien_reid_v1::selected(state, &resolving_item)
+        || vivien_reid_v1::context_selected(state, ctx)
+    {
+        return Err("Vivien requires its genuine native row".into());
+    }
     if genesis_wave_v1::recipe(op)
         || genesis_wave_v1::selected(state, &resolving_item)
         || genesis_wave_v1::waiting(state, ctx)
@@ -4477,6 +4484,13 @@ fn begin_resumable_resolution_with_native_row_v1(
     inspiration_owner: Option<&InspirationResolutionOwnerV1>,
     native_row: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
+    if native_row.is_none()
+        && (vivien_reid_v1::recipe(op)
+            || vivien_reid_v1::selected(state, &resolving_item)
+            || vivien_reid_v1::context_selected(state, ctx))
+    {
+        return Err("Vivien requires its native row owner".into());
+    }
     if native_row.is_none()
         && (curator_v1::selected(state, &resolving_item)
             || curator_v1::waiting_item(state, &resolving_item)
@@ -4664,6 +4678,12 @@ fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
             || source_token_copy_v1::waiting(state, &p.ctx)
     }) {
         return Err("source copy has no public continuation".into());
+    }
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        vivien_reid_v1::selected(state, &p.resolving_item)
+            || vivien_reid_v1::context_selected(state, &p.ctx)
+    }) {
+        return Err("Vivien requires its native resume owner".into());
     }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         sphinx_lore_v1::selected(state, &p.resolving_item)
@@ -10199,6 +10219,8 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    vivien_reid_v1::validate_state(state)?;
+    vivien_reid_v1::validate_pending(state)?;
     fiend_artisan_v1::validate_pending(state)?;
     if state
         .engine
@@ -15437,6 +15459,9 @@ fn drive_resumable_inner_with_native_row_v1(
                         controller_artifact_count(state, player)
                     }
                 };
+                if rule.selection.is_some_and(|s|s.filter==LibraryPickFilterV1::CreatureOrLandV1) {
+                    vivien_reid_v1::validate_continuation(state,&continuation)?;
+                }
                 if pick_x {
                     rule.pick = u8::try_from(continuation.ctx.x_value).unwrap_or(u8::MAX);
                 }
@@ -18385,6 +18410,10 @@ fn library_partition_matching_prefix(
                 None => true,
                 Some(selection) => match selection.filter {
                     LibraryPickFilterV1::Any => true,
+                    LibraryPickFilterV1::CreatureOrLandV1 => {
+                        definition.has_type(CardType::Creature)
+                            || definition.has_type(CardType::Land)
+                    }
                     LibraryPickFilterV1::CreatureManaValueAtMostControlledLands => {
                         definition.has_type(CardType::Creature)
                             && usize::from(definition.mana_value)
@@ -19259,6 +19288,33 @@ fn execute_with_native_row_v1(
     native_proof: Option<&NativeExecutionProofV1<'_>>,
 ) {
     if state.engine.halted.is_some() {
+        return;
+    }
+    if (vivien_reid_v1::recipe(op)
+        || vivien_reid_v1::context_selected(state, ctx)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| vivien_reid_v1::selected(state, &p.resolving_item)))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
+    if *op == vivien_reid_v1::emblem() {
+        let result = native_proof
+            .ok_or("Vivien emblem has no lexical proof".to_string())
+            .and_then(|p| vivien_reid_v1::install(state, p.owner, ctx));
+        if result.is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         return;
     }
     if matches!(
@@ -26453,7 +26509,11 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // Only a current actual published row selects its source. Caller-supplied
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
+pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if vivien_reid_v1::waiting(state, ctx) {
+        return true;
+    }
     if genesis_wave_v1::waiting(state, ctx) {
         return true;
     }
@@ -26507,7 +26567,8 @@ fn distinct_published_program_v1(state: &GameState, item: &StackItem) -> bool {
     {
         return false;
     }
-    item.inline_effect.as_ref().is_some_and(loot_v1::is_recipe)
+    (vivien_reid_v1::selected(state, item) && item.inline_effect == Some(vivien_reid_v1::look()))
+        || item.inline_effect.as_ref().is_some_and(loot_v1::is_recipe)
         || event::lathril_item_selected_v1(state, item)
         || tutelage_item_v1(state, item)
         || (aberration_family_item_v1(item) && !authenticated_aberration_ward_v1(state, item))

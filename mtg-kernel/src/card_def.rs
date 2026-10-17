@@ -350,6 +350,8 @@ pub enum Subtype {
     Drake,
     /// Appended for Curator of Destinies without changing legacy choice lists.
     Sphinx,
+    /// Planeswalker type; appended without changing existing subtype IDs.
+    Vivien,
 }
 
 impl Subtype {
@@ -835,6 +837,7 @@ impl Subtype {
             152 => Subtype::Phoenix,
             153 => Subtype::Drake,
             154 => Subtype::Sphinx,
+            155 => Subtype::Vivien,
             _ => return None,
         })
     }
@@ -999,6 +1002,7 @@ impl Subtype {
             Subtype::Phoenix => true,
             Subtype::Drake => true,
             Subtype::Sphinx => true,
+            Subtype::Vivien => false,
         }
     }
 
@@ -3148,7 +3152,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                488
+                489
             } else {
                 192
             }
@@ -3631,6 +3635,7 @@ mod tests {
                 (485, "Thousand-Year Storm"),
                 (486, "Time Stop"),
                 (487, "Genesis Wave"),
+                (488, "Vivien Reid"),
             ]
         } else {
             &[]

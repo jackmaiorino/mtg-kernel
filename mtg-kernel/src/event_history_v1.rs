@@ -328,11 +328,12 @@ pub enum EventKindV1 {
     OrdinaryCleanupStageV1,
     GenesisWaveProgressV1,
     GenesisWaveFinishedV1,
+    VivienReidV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 304;
-const _: () = assert!(EventKindV1::GenesisWaveFinishedV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 305;
+const _: () = assert!(EventKindV1::VivienReidV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -736,6 +737,7 @@ impl CommittedEvent {
             Self::OrdinaryCleanupStageV1 { .. } => EventKindV1::OrdinaryCleanupStageV1,
             Self::GenesisWaveProgressV1 { .. } => EventKindV1::GenesisWaveProgressV1,
             Self::GenesisWaveFinishedV1 { .. } => EventKindV1::GenesisWaveFinishedV1,
+            Self::VivienReidV1 { .. } => EventKindV1::VivienReidV1,
         }
     }
 }

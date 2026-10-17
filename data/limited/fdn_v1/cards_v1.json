@@ -8920,6 +8920,41 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Vivien Reid",
+      "mana_cost": "{3}{G}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Vivien"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 5,
+      "mechanics": [
+        "loyalty_look4_optional_creature_or_land_reveal_random_bottom",
+        "loyalty_destroy_artifact_enchantment_or_flying_creature",
+        "persistent_timestamped_emblem_plus2_plus2_vigilance_trample_indestructible"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/v/VivienReid.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_vivien_reid_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

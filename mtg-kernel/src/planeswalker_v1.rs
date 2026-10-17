@@ -123,9 +123,11 @@ pub(crate) fn quote_loyalty_change_v48(
     origin: crate::doubling_season_v48::CounterOriginV48,
 ) -> Result<u32, String> {
     let counters = loyalty(state, object).ok_or("loyalty ledger absent")?;
+    let exact = crate::doubling_season_v48::requires_successor(state)
+        || crate::effect::vivien_reid_v1::definition(state.objects.get(object).card_def);
     let counters = if delta >= 0 {
         let controller = state.objects.get(object).controller;
-        let original = if crate::doubling_season_v48::requires_successor(state) {
+        let original = if exact {
             crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, delta as u32)
         } else {
             Ok(crate::standard_cards_v1::scale_counters(state, controller, delta) as u32)
@@ -142,7 +144,7 @@ pub(crate) fn quote_loyalty_change_v48(
         });
         let amount = amount?;
         // Retain the legacy saturation only on catalogs without the new source.
-        if crate::doubling_season_v48::requires_successor(state) {
+        if exact {
             counters
                 .checked_add(amount)
                 .ok_or("loyalty counter storage overflow")?

@@ -90,6 +90,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 matches!(
                     r.filter,
                     crate::effect::LibraryPickFilterV1::CreatureManaValueAtMostControlledLands
+                        | crate::effect::LibraryPickFilterV1::CreatureOrLandV1
                 )
             }) =>
         {
