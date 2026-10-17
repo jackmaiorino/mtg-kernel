@@ -11394,9 +11394,9 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
     {
         return drain_pending_discard_or_decide(state);
     }
-    if effect::validate_pending_effect_choice(state).is_err() {
+    if let Err(_error) = effect::validate_pending_effect_choice(state) {
         #[cfg(test)]
-        eprintln!("native_continuation::pending_boundary_validation_rejected");
+        eprintln!("native_continuation::pending_boundary_validation_rejected: {_error}");
         let source = state
             .engine
             .pending_effect
