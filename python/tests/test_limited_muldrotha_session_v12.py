@@ -84,6 +84,53 @@ class LimitedMuldrothaClientV12Tests(unittest.TestCase):
             with self.assertRaises(LimitedSessionError):
                 self.validate(bad)
 
+    def test_burnished_hart_native_creature_artifact_menu_accepts_actual_human_label_order(self):
+        d = self.permission()
+        play = d["state"]["muldrotha"]["plays"][0]
+        play["card"]["name"] = "Burnished Hart"
+        play["current_original"] = deepcopy(play["card"])
+        creature = play["permissions"][0]
+        artifact = deepcopy(creature)
+        artifact["permanent_type"] = "Artifact"
+        # Genuine native menu: Creature0, Artifact1. The Rust Human projector
+        # sorts its actual labels to Artifact1, Creature0 and retains indexes.
+        play["permissions"] = [creature, artifact]
+        row = deepcopy(d["action_meanings"][0])
+        d["action_meanings"] = [deepcopy(row), deepcopy(row)]
+        d["action_meanings"][0]["muldrotha_permission"] = dict(occurrence=0, menu_index=1, permission=deepcopy(artifact))
+        d["action_meanings"][1]["muldrotha_permission"] = dict(occurrence=0, menu_index=0, permission=deepcopy(creature))
+        d["actions"] = [dict(action_index=i, label=f"Use the {kind} permission from Muldrotha, the Gravetide")
+                        for i, kind in enumerate(("Artifact", "Creature"))]
+        self.validate(d)
+        for change in (
+            lambda d: d["action_meanings"][1].update(muldrotha_permission=deepcopy(d["action_meanings"][0]["muldrotha_permission"])),
+            lambda d: d["action_meanings"][0]["muldrotha_permission"].update(menu_index=2),
+            lambda d: d["action_meanings"][0]["muldrotha_permission"].update(menu_index=0),
+        ):
+            bad=deepcopy(d)
+            change(bad)
+            with self.assertRaises(LimitedSessionError):self.validate(bad)
+
+    def test_native_ordinary_zero_can_sort_after_typed_permission_without_rebinding(self):
+        d = self.permission()
+        play = d["state"]["muldrotha"]["plays"][0]
+        # Ordinary/native Greatwurm and Muldrotha routes are distinct. This is
+        # a transport-only menu fixture and does not qualify that printing.
+        play["card"]["name"] = "Quilled Greatwurm"
+        play["current_original"] = deepcopy(play["card"])
+        play["ordinary_available"] = True
+        permission=deepcopy(play["permissions"][0])
+        row=deepcopy(d["action_meanings"][0])
+        d["action_meanings"] = [deepcopy(row),deepcopy(row)]
+        d["action_meanings"][0]["muldrotha_permission"] = dict(occurrence=0, menu_index=1, permission=permission)
+        d["action_meanings"][1]["muldrotha_permission"] = dict(occurrence=0, menu_index=0, permission=None)
+        d["actions"] = [dict(action_index=0,label="Use the Creature permission from Muldrotha, the Gravetide"),
+                        dict(action_index=1,label="Use the ordinary graveyard play route")]
+        self.validate(d)
+        bad=deepcopy(d)
+        bad["action_meanings"][1]["muldrotha_permission"]["menu_index"]=1
+        with self.assertRaises(LimitedSessionError):self.validate(bad)
+
     def test_land_cannot_use_artifact_budget_and_no_implicit_ordinary_route(self):
         d = self.permission()
         d["state"]["muldrotha"]["plays"][0]["land"] = True

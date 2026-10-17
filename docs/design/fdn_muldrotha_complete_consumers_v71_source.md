@@ -51,9 +51,9 @@ forgery, stale/foreign owners, Human handles, Limited V12 and independent hidden
 worlds. Named initial resources, graveyard operands and source-departure events
 are setup primitives. These fixtures remain UNCOMPILED and UNRUN.
 
-Observed checks:137 affected Limited parser/process mock tests,104 metadata/deck
-tests and6 frozen-target tests pass on Python3.13.14. The six new V12 tests are
-included in137 and are parser mocks, not gameplay. Both canonical flat-policy
+Observed checks:139 affected Limited parser/process mock tests,104 metadata/deck
+tests and6 frozen-target tests pass on Python3.13.14. The eight V12 tests are
+included in139 and are parser mocks, not gameplay. Both canonical flat-policy
 generators --check pass unchanged. Pinned Rustfmt1.94.1 and diff checks pass.
 Static source checks retain old scope/source enum prefixes, frozen286/24 files,
 registry IDs/capabilities, all237 sample payload bytes, canonical ordered source
@@ -61,3 +61,11 @@ child prefixes and unchanged sampler exclusions. No new event kind appends in
 this V71 lane. Semantic child source closure includes all new owners and V12
 transport. No Full, model, sampler, runtime or playing-strength admission is
 claimed. Native compilation and execution remain the parent's CI work.
+
+Named source review repair: Python V12 binds each original native menu_index
+to its declared permission and requires complete unique menu coverage, while
+allowing the genuine lexical Human action order. Added Burnished Hart
+Artifact1/Creature0 and ordinary0-after-typed1 transport mocks. Eight V12 tests
+and139 affected transport cases pass after the repair. The earlier247-case
+receipt belongs to a07e6d565. Published b4c0db6 and Tinybones reversal0cdf52ba
+are normally composed. All Rust remains uncompiled and unrun.

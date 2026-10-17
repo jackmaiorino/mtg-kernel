@@ -66,10 +66,20 @@ def _validate_muldrotha_visible(visible,actor,annotations,actions):
     if choice:
         p=choice[0]
         if p["controller"]!=actor or len(annotations)!=len(p["permissions"])+p["ordinary_available"]:fail("Muldrotha genuine menu shape changed")
-        for i,a in enumerate(annotations):
-            _shape(a["muldrotha_permission"],ACTION,"Muldrotha permission action")
-            permission=None if p["ordinary_available"]and i==0 else p["permissions"][i-p["ordinary_available"]]
-            if not _same_json_value(a["muldrotha_permission"],dict(occurrence=p["occurrence"],menu_index=i,permission=permission)):fail("Muldrotha original permission action changed")
+        # Human actions are sorted by their displayed label. The sealed Rust
+        # projector carries each original native menu index in its annotation.
+        # Bind by that declared index, never the displayed action ordinal.
+        menu_count=len(p["permissions"])+p["ordinary_available"]
+        seen=set()
+        for a in annotations:
+            binding=a["muldrotha_permission"]
+            _shape(binding,ACTION,"Muldrotha permission action")
+            index=binding["menu_index"]
+            if index>=menu_count or index in seen:fail("Muldrotha menu coverage changed")
+            seen.add(index)
+            permission=None if p["ordinary_available"]and index==0 else p["permissions"][index-p["ordinary_available"]]
+            if not _same_json_value(binding,dict(occurrence=p["occurrence"],menu_index=index,permission=permission)):fail("Muldrotha original permission action changed")
+        if seen!=set(range(menu_count)):fail("Muldrotha menu coverage changed")
     elif any(a["muldrotha_permission"]is not None for a in annotations):fail("foreign Muldrotha permission action")
     _validate_references([visible,annotations])
 
