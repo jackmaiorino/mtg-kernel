@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import platform
 import re
 import shutil
@@ -22,6 +22,37 @@ REMOTE = os.environ.get('COMPUTE_HOST_SSH', 'compute-host')
 REMOTE_INPUT = "C:/mtg-node/public-device-placement-001"
 HOSTNAMES = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
 DISK_RESERVE_BYTES = 60 * 1024**3
+REMOTE_INPUT_ENV = "MTG_PUBLIC_TRAINING_REMOTE_INPUT_ROOT"
+
+
+def host_binding(host, placements):
+    """Resolve an optional remote Windows binding, without changing old receipts.
+
+    A computehost placement may supply remote_binding={expected_hostname,
+    input_root}. The SSH alias still selects transport; this binding checks the
+    actual destination and selects its already-staged inputs/runtime.
+    """
+    default = dict(expected_hostname=HOSTNAMES[host], input_root=REMOTE_INPUT)
+    bindings = []
+    for placement in placements:
+        if "remote_binding" not in placement:
+            bindings.append(default)
+            continue
+        binding = placement["remote_binding"]
+        if host != "computehost" or not isinstance(binding, dict) or set(binding) != {"expected_hostname", "input_root"}:
+            raise ValueError("explicit remote hostname and input root required")
+        hostname, root = binding["expected_hostname"], binding["input_root"]
+        if not isinstance(hostname, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}", hostname):
+            raise ValueError("invalid expected remote Windows hostname")
+        if not isinstance(root, str) or any(ord(c) < 32 for c in root):
+            raise ValueError("invalid remote input root")
+        path = PureWindowsPath(root)
+        if not path.is_absolute() or not re.fullmatch(r"[A-Za-z]:", path.drive) or ".." in path.parts:
+            raise ValueError("absolute local Windows remote input root required")
+        bindings.append(dict(expected_hostname=hostname.upper(), input_root=path.as_posix()))
+    if any(binding != bindings[0] for binding in bindings[1:]):
+        raise ValueError("remote placements disagree on host/input binding")
+    return bindings[0] if bindings else default
 
 
 def read(path):
@@ -77,8 +108,14 @@ def process_telemetry(child, ordinal):
 
 def worker(spec):
     placement = spec["placement"]
-    if platform.node().upper() != HOSTNAMES[placement["host"]]:
+    binding = host_binding(placement["host"], [placement])
+    if platform.node().upper() != binding["expected_hostname"]:
         raise ValueError("worker running on the wrong host")
+    if "remote_binding" in placement:
+        root = PureWindowsPath(binding["input_root"])
+        if (PureWindowsPath(os.environ.get(REMOTE_INPUT_ENV, "")) != root
+                or PureWindowsPath(os.environ.get("CUDA_PATH", "")) != root/"runtime"):
+            raise ValueError("worker remote input/runtime binding differs")
     if os.environ.get("CUDA_VISIBLE_DEVICES"):
         raise ValueError("explicit CUDA remapping needs separate qualification")
     if gpu_uuid(placement["gpu_ordinal"]) != placement["gpu_uuid"]:
@@ -193,6 +230,7 @@ def require_disk_reserve(free_bytes):
 
 
 def preflight(host, placements, target_drive):
+    binding = host_binding(host, placements)
     drive = str(target_drive).upper()
     if not re.fullmatch(r"[A-Z]", drive):
         raise ValueError("single target drive letter required")
@@ -207,7 +245,7 @@ if (-not $disk) {throw 'target volume unavailable'}
     else:
         encoded=base64.b64encode(script.encode("utf-16le")).decode()
         result=json.loads(subprocess.check_output(["powershell","-NoProfile","-EncodedCommand",encoded],text=True))
-    if result["host"].upper() != HOSTNAMES[host] or result["active"]:
+    if result["host"].upper() != binding["expected_hostname"] or result["active"]:
         raise ValueError("placement has a different host or competing native owner")
     require_disk_reserve(result.get("disk_free_bytes"))
     rows={int(parts[0]):parts for parts in ([x.strip() for x in row.split(',')] for row in result["gpu"])}
@@ -265,6 +303,10 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
                 request=dict(path=str(Path(native_folder)/"request.json"),sha256=pin(folder/"request.json")["sha256"]))
         write(local/"group.json",group)
         if host == "computehost":
+            binding = host_binding(host, [job["placement"] for job in group["jobs"].values()])
+            input_root = binding["input_root"].replace("'", "''")
+            binding_environment = (f"$env:{REMOTE_INPUT_ENV}=$inputRoot\n"
+                                   if any("remote_binding" in job["placement"] for job in group["jobs"].values()) else "")
             ssh_ps(f"if (Test-Path -LiteralPath '{remote_root}') {{throw 'remote destination exists'}}; New-Item -ItemType Directory -Path '{remote_root}/jobs' | Out-Null")
             shutil.copy2(__file__,local/"worker.py")
             for name in group["jobs"]:
@@ -274,8 +316,8 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
                 subprocess.run(["scp","-q",str(local/name),f"{REMOTE}:{remote_root}/{name}"],check=True,timeout=60)
             ps=f'''$ErrorActionPreference='Stop'
 $root='{remote_root}'
-$inputRoot='{REMOTE_INPUT}'
-$created=@()
+$inputRoot='{input_root}'
+{binding_environment}$created=@()
 try {{
  foreach ($drive in @('D','E')) {{
   if (Test-Path -LiteralPath "${{drive}}:/") {{throw 'existing drive mapping; preserve owner'}}
