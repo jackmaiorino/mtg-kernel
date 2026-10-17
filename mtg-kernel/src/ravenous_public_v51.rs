@@ -353,11 +353,6 @@ pub fn battlefield(state: &GameState) -> Result<BattlefieldV51, RlContractError>
     Ok(BattlefieldV51 { facts, cards })
 }
 
-pub(crate) fn battlefield_prepared_v57(
-    state: &GameState,
-) -> Result<BattlefieldV51, RlContractError> {
-    battlefield_complete_scope(state, crate::rl::CommonProjectionScopeV42::PreparedV57)
-}
 pub(crate) fn battlefield_complete_scope(
     state: &GameState,
     scope: crate::rl::CommonProjectionScopeV42,

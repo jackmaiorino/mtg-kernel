@@ -683,9 +683,9 @@ pub(crate) mod alesha_optional_v1 {
             || item.kind != StackItemKind::TriggeredAbility
             || source.source != item.source
             || source.controller != item.controller
-            || !crate::card_def::CARD_DEFS
+            || crate::card_def::CARD_DEFS
                 .get(usize::from(source.card_def))
-                .is_some_and(|d| d.name == "Alesha, Who Laughs at Fate")
+                .is_none_or(|d| d.name != "Alesha, Who Laughs at Fate")
         {
             return Err("Alesha optional root/source/controller changed".into());
         }
@@ -9328,7 +9328,7 @@ fn validate_answered_choice_guard(
             }
             if pending.choice.is_some()
                 || pending.frames.last() != Some(&**frame)
-                || !matches!(
+                || !(matches!(
                     **frame,
                     EffectFrame::WardPayment { .. }
                         | EffectFrame::ConvokeLook { .. }
@@ -9347,14 +9347,14 @@ fn validate_answered_choice_guard(
                             ordered: Some(_),
                             ..
                         }
-                ) && !(aberration_continuation_v1(pending)
+                ) || (aberration_continuation_v1(pending)
                     && matches!(
                         **frame,
                         EffectFrame::RevealedLibraryToGraveyardBatch {
                             order_resolved: true,
                             ..
                         }
-                    ))
+                    )))
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
             }
@@ -12641,7 +12641,7 @@ fn drive_resumable_inner_with_native_row_v1(
         ) {
             resolution_answer = Some(frame.clone());
         }
-        if matches!(
+        if (matches!(
             frame,
             EffectFrame::WardPayment { .. }
                 | EffectFrame::ConvokeLook { .. }
@@ -12667,15 +12667,13 @@ fn drive_resumable_inner_with_native_row_v1(
                     order_resolved: true,
                     ..
                 }
-            ))
-        {
-            if continuation.answered_choice_guard.take()
+            )))
+            && continuation.answered_choice_guard.take()
                 != Some(EffectAnsweredChoiceGuard::StandardSelection {
                     frame: Box::new(frame.clone()),
                 })
-            {
-                return Err("Standard selection answer changed before execution".into());
-            }
+        {
+            return Err("Standard selection answer changed before execution".into());
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
@@ -27217,7 +27215,7 @@ pub(crate) mod blasphemous_edict_v1 {
         Ok(())
     }
     fn chooser(choice: &ChoiceV1) -> PlayerId {
-        if choice.phase % 2 == 0 {
+        if choice.phase.is_multiple_of(2) {
             choice.active
         } else {
             choice.active.opponent()

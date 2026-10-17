@@ -576,7 +576,7 @@ pub fn validate_artifact(value: &EndTurnObservationV68) -> Result<(), RlContract
                 || complete.card.zone != base.stable.zone
                 || serde_json::to_value(&complete.card.identity)
                     .map_err(|e| RlContractError(e.to_string()))?
-                    != serde_json::to_value(&card.reference.identity)
+                    != serde_json::to_value(card.reference.identity)
                         .map_err(|e| RlContractError(e.to_string()))?
             {
                 return Err(RlContractError(

@@ -824,10 +824,12 @@ fn trigger_occurrence(
 }
 fn order_label(
     common: &crate::ravenous_observation_v51::RavenousObservationV51,
-    _trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,
+    trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,
     action: &ActionSemanticV1,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
+    let _ = trigger_order;
     if let ActionSemanticV1::OrderTriggers {
         actor,
         pending_sources,

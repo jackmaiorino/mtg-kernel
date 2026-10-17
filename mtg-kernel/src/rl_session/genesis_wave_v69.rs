@@ -378,7 +378,7 @@ impl GenesisWaveDecisionV69 {
             .and_then(|i| self.binding.public_to_original.get(i))
             .and_then(|i| u32::try_from(*i).ok())
     }
-    pub fn family_projections_v69(
+    pub(crate) fn family_projections_v69(
         &self,
     ) -> &[crate::akroma_family_public_v40::FamilyProjectionV40] {
         &self.binding.families

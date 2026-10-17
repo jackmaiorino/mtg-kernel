@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub mod jodah;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+// Preserve the existing Copy program payload and its serialized representation.
+#[allow(clippy::large_enum_variant)]
 pub enum LegendEffectV1 {
     CountersOnControlledCreatures,
     ProtectControlledLegendaryCreatures,
