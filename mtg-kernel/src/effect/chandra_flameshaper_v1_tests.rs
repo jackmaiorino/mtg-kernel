@@ -682,8 +682,7 @@ fn genuine_paid_allocation_exile_and_public_api_forgeries_refuse_readonly_and_hi
                 .unwrap();
             if let E::ChandraFlameshaperV74 { journal } = &mut bad.engine.event_history[capture] {
                 if let JournalV74::Exiled { public, .. } = journal.as_mut() {
-                    public[0].card_db_id =
-                        crate::card_def::card_id_by_name("Island").unwrap().into();
+                    public[0].card_db_id = crate::card_def::card_id_by_name("Island").unwrap();
                 }
             }
             refuses(&bad);

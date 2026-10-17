@@ -455,11 +455,13 @@ fn choice_slot(s: &GameState, kind: &str) -> u16 {
     choice
         .options
         .iter()
-        .position(|option| match (kind, option) {
-            ("double", PreventionV1::Multiplier(_))
-            | ("numeric", PreventionV1::Replacement(_))
-            | ("crystal", PreventionV1::Barricade(_)) => true,
-            _ => false,
+        .position(|option| {
+            matches!(
+                (kind, option),
+                ("double", PreventionV1::Multiplier(_))
+                    | ("numeric", PreventionV1::Replacement(_))
+                    | ("crystal", PreventionV1::Barricade(_))
+            )
         })
         .unwrap() as u16
 }

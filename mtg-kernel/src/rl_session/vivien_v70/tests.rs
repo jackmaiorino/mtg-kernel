@@ -113,7 +113,7 @@ impl Pair {
         }
         panic!("paid Vivien did not enter")
     }
-    pub(crate) fn to_look(&mut self) {
+    pub(crate) fn advance_to_look(&mut self) {
         for _ in 0..16 {
             if self
                 .own
@@ -187,7 +187,7 @@ fn genuine_paid_vivien_owner_cast_loyalty_optional_look_and_restore_native_parit
                 Some(6)
             );
             pair.restore();
-            pair.to_look();
+            pair.advance_to_look();
             pair.restore();
             let before = pair.own.fixture_state_v70().players[p.index()].hand.len();
             if choose {
@@ -286,7 +286,7 @@ fn genuine_paid_vivien_independent_hidden_worlds_keep_complete_public_packet_bot
             let mut pair = Pair::new(s);
             pair.cast(v, p);
             pair.act(|a|matches!(a,A::ActivateAbility{source,ability_index:0,..}if source.arena_id==v.0));
-            pair.to_look();
+            pair.advance_to_look();
             pair
         };
         let a = make("Island");

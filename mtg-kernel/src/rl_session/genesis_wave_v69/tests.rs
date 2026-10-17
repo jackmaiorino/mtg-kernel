@@ -106,7 +106,7 @@ impl Pair {
             .iter()
             .any(|e| matches!(e,crate::event::CommittedEvent::SpellCast{spell,..}if *spell==wave)));
     }
-    pub(crate) fn to_subset(&mut self) {
+    pub(crate) fn advance_to_subset(&mut self) {
         for _ in 0..32 {
             if self
                 .own
@@ -160,7 +160,7 @@ fn genuine_paid_wave_owner_original_indices_subset_aura_remainder_and_restore_bo
         let mut pair = Pair::new(s);
         pair.cast(wave, p, 4);
         pair.restore();
-        pair.to_subset();
+        pair.advance_to_subset();
         pair.restore();
         let d = pair.own.decision_v69().unwrap();
         let w = &d.observation().genesis_wave.waves[0];
@@ -219,7 +219,7 @@ fn genuine_paid_wave_owner_foreign_forged_and_callback_failure_are_readonly_both
         let (s, wave, _) = ready(p, "Island");
         let mut pair = Pair::new(s);
         pair.cast(wave, p, 4);
-        pair.to_subset();
+        pair.advance_to_subset();
         let d = pair.own.decision_v69().unwrap();
         let before = pair.own.fixture_state_v69().clone();
         let counts = pair.own.fixture_counts_v69();
@@ -261,7 +261,7 @@ fn genuine_paid_wave_owner_zero_subset_and_entry_color_keep_native_batch_both_se
             let (s, wave, _) = ready(p, "Island");
             let mut pair = Pair::new(s);
             pair.cast(wave, p, x);
-            pair.to_subset();
+            pair.advance_to_subset();
             pair.act(|a| matches!(a, A::FinishEffectSelection { .. }));
             for _ in 0..32 {
                 if pair
@@ -297,7 +297,7 @@ fn genuine_paid_wave_owner_zero_subset_and_entry_color_keep_native_batch_both_se
         let wave = put(&mut s, p, "Genesis Wave", Zone::Hand);
         let mut pair = Pair::new(s);
         pair.cast(wave, p, 3);
-        pair.to_subset();
+        pair.advance_to_subset();
         for name in ["Heraldic Banner", "Llanowar Elves"] {
             let id = card_def::card_id_by_name(name).unwrap();
             pair.act(|a|matches!(a,A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.card_db_id==id));

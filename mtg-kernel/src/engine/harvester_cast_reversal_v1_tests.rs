@@ -75,7 +75,7 @@ fn genuine_paid_harvester_native_cast_abort_rebinds_original_hand_and_graveyard_
                 &[forest; 40],
                 &[forest; 40],
                 crate::rl::card_name,
-                110_479_14,
+                11_047_914,
                 actor,
             );
             state.step = Step::Main1;

@@ -233,7 +233,7 @@ fn genuine_paid_liliana_hidden_original_and_changed_journal_refuse_readonly_afte
         };
         let mut value = serde_json::to_value(input.as_ref()).unwrap();
         value["source"]["zone_change_count"] = u32::MAX.into();
-        *input = Box::new(serde_json::from_value(value).unwrap());
+        **input = serde_json::from_value(value).unwrap();
         let mut decoded: GameState =
             serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
         let unchanged = decoded.clone();

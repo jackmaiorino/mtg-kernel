@@ -303,7 +303,7 @@ fn genuine_paid_chandra_revealed_original_and_source_later_hidden_and_forged_rec
         };
         let mut value = serde_json::to_value(input.as_ref()).unwrap();
         value["source"]["zone_change_count"] = u32::MAX.into();
-        *input = Box::new(serde_json::from_value(value).unwrap());
+        **input = serde_json::from_value(value).unwrap();
         let mut decoded: GameState =
             serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
         let unchanged = decoded.clone();

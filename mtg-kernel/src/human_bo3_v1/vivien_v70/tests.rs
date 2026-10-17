@@ -49,7 +49,7 @@ fn genuine_paid_vivien_human_loyalty_private_look_prompt_restore_and_opponent_na
         pair.act(
             |a| matches!(a,A::ActivateAbility{source,ability_index:0,..}if source.arena_id==v.0),
         );
-        pair.to_look();
+        pair.advance_to_look();
         let world = pair.own.fixture_state_v70().clone();
         let mut native = FastActorSessionV1::from_vivien_v70_fixture_state(world.clone());
         let mut s = HumanVivienSessionV70::from_session(

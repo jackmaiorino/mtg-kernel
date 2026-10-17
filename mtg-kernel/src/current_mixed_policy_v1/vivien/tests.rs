@@ -13,7 +13,7 @@ fn genuine_paid_vivien_numeric_full_packet_index_parity_restore_and_foreign_refu
         pair.act(
             |a| matches!(a,A::ActivateAbility{source,ability_index:0,..}if source.arena_id==wave.0),
         );
-        pair.to_look();
+        pair.advance_to_look();
         let before = pair.own.fixture_state_v70().clone();
         let mut model = VivienSession::from_vivien(pair.own);
         let FastActorResponseV1::Decision(e) = model.current_response() else {

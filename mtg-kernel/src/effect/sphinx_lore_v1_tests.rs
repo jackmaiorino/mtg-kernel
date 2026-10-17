@@ -246,10 +246,9 @@ fn pay_existing(
     card: ObjectId,
     granted: bool,
     targets: &[Target],
-    x: u16,
-    kick: bool,
-    discard: Option<ObjectId>,
+    selections: (u16, bool, Option<ObjectId>),
 ) -> StackItem {
+    let (x, kick, discard) = selections;
     priority(s, p);
     assert!(
         matches!(next(s),Decision::CastSpellOrPass{castable_spells,..}if castable_spells.contains(&card))
@@ -388,9 +387,7 @@ fn paid_attack_target_response_source_death_installs_original_controller_and_pai
             bolt,
             true,
             &[Target::Player(p.opponent())],
-            0,
-            false,
-            None,
+            (0, false, None),
         );
         assert!(castrow.is_flashback);
         assert!(matches!(
@@ -428,9 +425,7 @@ fn actual_deep_analysis_printed_and_granted_costs_remain_distinct_with_restore_b
                 card,
                 granted,
                 &[Target::Player(p)],
-                0,
-                false,
-                None,
+                (0, false, None),
             );
             assert!(row.is_flashback);
             assert_eq!(tapped(&s, p) - before, if granted { 4 } else { 2 });
@@ -465,9 +460,7 @@ fn actual_lava_dart_granted_mana_never_inherits_printed_mountain_sacrifice_both_
                 card,
                 granted,
                 &[Target::Player(p.opponent())],
-                0,
-                false,
-                None,
+                (0, false, None),
             );
             assert!(row.is_flashback);
             assert_eq!(tapped(&s, p) - before, usize::from(granted));
@@ -527,9 +520,7 @@ fn paid_counter_fizzle_and_native_copy_departure_keep_flashback_costs_and_exile_
                 card,
                 true,
                 &[Target::Object(target)],
-                0,
-                false,
-                None,
+                (0, false, None),
             );
             assert_eq!(tapped(&s, p) - before, 1);
             let mut copy = None;
@@ -598,9 +589,7 @@ fn granted_additional_discard_x_and_kicker_use_complete_native_costs_both_seats(
                 card,
                 true,
                 &targets,
-                1,
-                name == "Burst Lightning",
-                Some(discard),
+                (1, name == "Burst Lightning", Some(discard)),
             );
             assert_eq!(
                 tapped(&s, p) - before,
@@ -892,7 +881,14 @@ fn unaffordable_installed_base_preserves_genuine_printed_flashback_without_new_c
         main2(&mut s, p);
         let before = tapped(&s, p);
         let life = s.players[p.index()].life;
-        let row = pay_existing(&mut s, p, card, false, &[Target::Player(p)], 0, false, None);
+        let row = pay_existing(
+            &mut s,
+            p,
+            card,
+            false,
+            &[Target::Player(p)],
+            (0, false, None),
+        );
         assert_eq!(tapped(&s, p) - before, 2);
         assert_eq!(s.players[p.index()].life, life - 3);
         assert_eq!(

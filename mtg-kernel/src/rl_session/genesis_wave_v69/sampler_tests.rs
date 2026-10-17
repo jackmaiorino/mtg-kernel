@@ -94,7 +94,7 @@ fn genuine_paid_wave_sampler_pre_reveal_and_active_subset_keep_public_slots_and_
                 != pair.own.fixture_state_v69().players[p.index()].library;
         }
         assert!(changed, "pre-reveal unknown library must remain eligible");
-        pair.to_subset();
+        pair.advance_to_subset();
         let before = pair.own.fixture_state_v69().players[p.index()]
             .library
             .clone();
@@ -127,7 +127,7 @@ fn genuine_paid_wave_sampler_aura_remainder_terminal_and_history_order_independe
     for p in [PlayerId::P0, PlayerId::P1] {
         let (mut pair, wave, host) = scene(p);
         pair.cast(wave, p, 2);
-        pair.to_subset();
+        pair.advance_to_subset();
         pair.act(|a|matches!(a,A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.card_db_id==crate::card_def::card_id_by_name("Witness Protection").unwrap()));
         pair.act(|a| matches!(a, A::FinishEffectSelection { .. }));
         let original = pair.own.decision_v69().unwrap();
@@ -209,7 +209,7 @@ fn genuine_paid_wave_sampler_as_enters_preserves_parent_receipts_and_exact_deriv
         let wave = put(&mut s, p, "Genesis Wave", Zone::Hand);
         let mut pair = Pair::new(s);
         pair.cast(wave, p, 3);
-        pair.to_subset();
+        pair.advance_to_subset();
         pair.act(|a|matches!(a,A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.card_db_id==crate::card_def::card_id_by_name("Heraldic Banner").unwrap()));
         pair.act(|a| matches!(a, A::FinishEffectSelection { .. }));
         let d = pair.own.decision_v69().unwrap();
