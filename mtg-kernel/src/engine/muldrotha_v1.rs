@@ -131,7 +131,14 @@ pub(super) fn permissions(
                 source,
                 permanent_type,
             };
-            if d.has_type(permanent_type) && !spent(state, p, state.turn_key_v1()) {
+            if d.has_type(permanent_type)
+                && (if d.is_playable_land() {
+                    permanent_type == CardType::Land
+                } else {
+                    permanent_type != CardType::Land
+                })
+                && !spent(state, p, state.turn_key_v1())
+            {
                 out.push(p);
             }
         }
@@ -160,6 +167,11 @@ fn options(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
                 || p.source.zone != Zone::Battlefield
                 || p.source.controller != options.controller
                 || !d.has_type(p.permanent_type)
+                || (if options.land {
+                    p.permanent_type != CardType::Land
+                } else {
+                    p.permanent_type == CardType::Land
+                })
                 || ![
                     CardType::Land,
                     CardType::Creature,
@@ -332,30 +344,11 @@ fn route_index(source: StackSourceContractV4) -> Option<u64> {
         _ => None,
     }
 }
-pub(super) fn validate_contract(
+fn selected_permission(
     state: &GameState,
     source: StackSourceContractV4,
-) -> Result<(), String> {
+) -> Result<PermissionV1, String> {
     let index = route_index(source).ok_or("Muldrotha original cast route absent")?;
-    let o = options(state, index)?;
-    let origin = source.spell_cast_origin.ok_or("Muldrotha origin absent")?;
-    if o.land
-        || source.source != o.card.object
-        || source.card_def != o.card_def
-        || source.owner != o.controller
-        || source.controller != o.controller
-        || source.zone != Zone::Stack
-        || o.card.expected_zone_change_count.checked_add(1) != Some(source.zone_change_count)
-        || origin.origin_zone != Zone::Graveyard
-        || origin.origin_zone_change_count != o.card.expected_zone_change_count
-        || !matches!(
-            source.cast_method,
-            CastMethodV4::Normal | CastMethodV4::Alternative
-        )
-    {
-        return Err("Muldrotha cast physical source/form/incarnation changed".into());
-    }
-    // The actual choice receipt is independent of mutable pending/source copies.
     let selections: Vec<_> = state
         .engine
         .event_history
@@ -372,8 +365,58 @@ pub(super) fn validate_contract(
     let [choice] = selections.as_slice() else {
         return Err("Muldrotha original selection absent or duplicated".into());
     };
-    if selected(state, *choice)?.is_none() {
-        return Err("Muldrotha route used ordinary permission".into());
+    selected(state, *choice)?.ok_or("Muldrotha route used ordinary permission".into())
+}
+fn form_matches(def: &card_def::CardDef, permission: PermissionV1, method: CastMethodV4) -> bool {
+    permission.permanent_type != CardType::Land
+        && !def.is_playable_land()
+        && matches!(
+            method,
+            CastMethodV4::Normal | CastMethodV4::Alternative | CastMethodV4::Bestow
+        )
+        && (method != CastMethodV4::Bestow || supported_bestow(def).is_some())
+        && crate::source_type_hexproof_v1::spell_types(def, method)
+            .is_ok_and(|types| types.contains(permission.permanent_type))
+}
+/// Only the authenticated Muldrotha route constrains these forms. Other
+/// independently owned graveyard, hand and exile permissions keep their menus.
+pub(super) fn form_allowed(state: &GameState, pending: &PendingCast, method: CastMethodV4) -> bool {
+    route_index(pending.source_contract).is_none()
+        || selected_permission(state, pending.source_contract).is_ok_and(|permission| {
+            card_def::CARD_DEFS
+                .get(pending.source_contract.card_def as usize)
+                .is_some_and(|def| form_matches(def, permission, method))
+        })
+}
+pub(super) fn grants_permanent_form(state: &GameState, pending: &PendingCast) -> bool {
+    route_index(pending.source_contract).is_some()
+        && validate_contract(state, pending.source_contract).is_ok()
+        && form_allowed(state, pending, CastMethodV4::Normal)
+}
+pub(super) fn validate_contract(
+    state: &GameState,
+    source: StackSourceContractV4,
+) -> Result<(), String> {
+    let index = route_index(source).ok_or("Muldrotha original cast route absent")?;
+    let o = options(state, index)?;
+    let origin = source.spell_cast_origin.ok_or("Muldrotha origin absent")?;
+    if o.land
+        || source.source != o.card.object
+        || source.card_def != o.card_def
+        || source.owner != o.controller
+        || source.controller != o.controller
+        || source.zone != Zone::Stack
+        || o.card.expected_zone_change_count.checked_add(1) != Some(source.zone_change_count)
+        || origin.origin_zone != Zone::Graveyard
+        || origin.origin_zone_change_count != o.card.expected_zone_change_count
+    {
+        return Err("Muldrotha cast physical source/form/incarnation changed".into());
+    }
+    // The actual choice receipt is independent of mutable pending/source copies.
+    let permission = selected_permission(state, source)?;
+    let def = &card_def::CARD_DEFS[source.card_def as usize];
+    if !form_matches(def, permission, source.cast_method) {
+        return Err("Muldrotha chosen type does not authorize the permanent spell form".into());
     }
     Ok(())
 }
@@ -405,6 +448,16 @@ pub(super) fn validate_pending(state: &GameState, p: &PendingCast) -> Result<(),
         || p.greatwurm_v1.is_some()
         || !active(state, permission.source, p.controller)
         || spent(state, permission, o.turn)
+        || p.mode_chosen.is_some()
+            && !form_allowed(
+                state,
+                p,
+                finalized_cast_method(
+                    p,
+                    p.source_contract.cast_method,
+                    &card_def::CARD_DEFS[p.source_contract.card_def as usize],
+                ),
+            )
     {
         return Err("Muldrotha pending route changed".into());
     }
@@ -417,6 +470,17 @@ pub(super) fn record_cast(state: &mut GameState, p: &PendingCast) -> Result<(), 
     // The ordinary payment plan has just committed atomically. Its legitimate
     // additional costs may sacrifice the permission source itself.
     validate_contract(state, p.source_contract)?;
+    if !form_allowed(
+        state,
+        p,
+        finalized_cast_method(
+            p,
+            p.source_contract.cast_method,
+            &card_def::CARD_DEFS[p.source_contract.card_def as usize],
+        ),
+    ) {
+        return Err("Muldrotha payment changed the chosen permanent type or spell form".into());
+    }
     let o = options(state, index)?.clone();
     let choice = state
         .engine

@@ -11,7 +11,11 @@ Elemental Avatar. Its active static permission applies only during its
 controller's turns, to physical permanent cards in that player's own
 graveyard. The native pre-announcement menu identifies the exact Muldrotha
 battlefield incarnation and one unused permanent type. A multitype card
-spends only that choice. Distinct source incarnations have independent
+spends only that choice. Land plays consume only Land, including artifact
+lands. Spell choices are checked against the final spell form: Bestow may
+consume Enchantment, and a Creature choice cannot authorize its Aura-only
+form. Nonpermanent Adventure and Omen forms are excluded. Distinct source
+incarnations have independent
 budgets; control changes preserve an incarnation's spent types, reentry
 gets a new incarnation, and each new turn gets a fresh budget. Source
 ability suppression removes future permission.
@@ -36,12 +40,16 @@ original 237 sample payloads are unchanged; the three new kinds have no
 fabricated samples. Shared native meaning digests include the new child
 source, directly or through the existing Genesis Wave source closure.
 
-Thirteen native Rust source groups cover both seats and genuinely paid
+Seventeen native Rust source groups cover both seats and genuinely paid
 casts: exact printing, all five represented permanent types, multitype
 choices, land allowance, countering, source departure/reentry/control,
 actual next-turn reset, suppression, distinct Greatwurm cost route,
 serialized restore, stale/erased/foreign ownership and independent prepaid
-hidden worlds. Initial resources, initial graveyards, control changes and
+hidden worlds. The four repair groups add genuinely paid Loot with Seat
+of the Synod, Fang Dragon and Sagu Wildling permanent forms, Nyxborn Hydra
+Bestow for XGG with target-loss fallback, and normal Hydra for XG after
+refusing Bestow under a Creature budget. These check original spell-form
+choices and readonly refusals, as well as successful payment. Initial resources, initial graveyards, control changes and
 negative mutations are identified setup/boundary primitives. The multiple
 source case genuinely pays for a second Muldrotha from the graveyard, checks
 independent type/source budgets at the actual legend choice, then pays

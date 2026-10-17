@@ -99,11 +99,33 @@ fn pay(
     permission: Option<(ObjectId, CardType)>,
     target: Option<Target>,
 ) -> StackItem {
+    pay_form(s, p, card, permission, target, 0, 0)
+}
+fn pay_form(
+    s: &mut GameState,
+    p: PlayerId,
+    card: ObjectId,
+    permission: Option<(ObjectId, CardType)>,
+    target: Option<Target>,
+    form: u8,
+    x: u16,
+) -> StackItem {
     priority(s, p);
     assert!(
         matches!(next(s),Decision::CastSpellOrPass { castable_spells,.. } if castable_spells.contains(&card))
     );
     step(s, Action::CastSpell(card)).unwrap();
+    complete_cast(s, p, card, permission, target, form, x)
+}
+fn complete_cast(
+    s: &mut GameState,
+    p: PlayerId,
+    card: ObjectId,
+    permission: Option<(ObjectId, CardType)>,
+    target: Option<Target>,
+    form: u8,
+    x: u16,
+) -> StackItem {
     for _ in 0..48 {
         let a = match next(s) {
             Decision::ChooseEffectOption {
@@ -130,6 +152,13 @@ fn pay(
                             0
                         }
                     }
+                } else if s
+                    .engine
+                    .pending_cast
+                    .as_ref()
+                    .is_some_and(|p| p.selected_x_v59().is_none())
+                {
+                    x
                 } else {
                     0
                 };
@@ -142,6 +171,10 @@ fn pay(
                 Action::ChooseTarget(t)
             }
             Decision::ChooseKicker { .. } => Action::ChooseKicker(false),
+            Decision::ChooseSpellMode { legal_modes, .. } => {
+                assert!(legal_modes.contains(&form));
+                Action::ChooseSpellMode(form)
+            }
             Decision::CastSpellOrPass { player, .. } => {
                 assert_eq!(player, p);
                 assert!(s.engine.pending_cast.is_none());
@@ -556,5 +589,199 @@ fn independent_prepaid_hidden_worlds_have_same_public_permission_choices_both_se
         let extra_a = put(&mut a, p, "Burnished Hart", Zone::Graveyard);
         let extra_b = put(&mut b, p, "Burnished Hart", Zone::Graveyard);
         assert_eq!(permissions(&a, extra_a, p), permissions(&b, extra_b, p));
+    }
+}
+
+fn choose_permission(
+    s: &mut GameState,
+    p: PlayerId,
+    card: ObjectId,
+    source: ObjectId,
+    kind: CardType,
+) {
+    priority(s, p);
+    step(s, Action::CastSpell(card)).unwrap();
+    assert!(matches!(next(s), Decision::ChooseEffectOption { source, .. } if source == card));
+    let pending = s.engine.muldrotha_v1.0.unwrap();
+    let o = options(s, pending.options_history_index).unwrap();
+    let index = o
+        .permissions
+        .iter()
+        .position(|q| q.source.source == source && q.permanent_type == kind)
+        .unwrap();
+    let index = u16::try_from(index + usize::from(o.ordinary)).unwrap();
+    let mut r = restore(s);
+    step(&mut r, Action::ChooseEffectOption(index)).unwrap();
+    step(s, Action::ChooseEffectOption(index)).unwrap();
+    assert_eq!(*s, r);
+}
+
+#[test]
+fn genuine_loot_extra_land_allowance_cannot_use_artifact_budget_for_seat_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p, "Forest");
+        let m = paid(&mut s, p);
+        let loot = put(&mut s, p, "Loot, Exuberant Explorer", Zone::Hand);
+        let before = tapped(&s, p);
+        pay(&mut s, p, loot, None, None);
+        assert_eq!(tapped(&s, p) - before, 3);
+        finish(&mut s);
+        assert_eq!(effect::loot_v1::land_allowance(&s, p), 2);
+        let seat = put(&mut s, p, "Seat of the Synod", Zone::Graveyard);
+        let forest = put(&mut s, p, "Forest", Zone::Graveyard);
+        let ps = permissions(&s, seat, p);
+        assert_eq!(ps.len(), 1);
+        assert_eq!(ps[0].permanent_type, CardType::Land);
+        priority(&mut s, p);
+        step(&mut s, Action::PlayLand(seat)).unwrap();
+        assert!(matches!(
+            next(&mut s),
+            Decision::ChooseEffectOption {
+                option_count: 1,
+                ..
+            }
+        ));
+        let before = s.clone();
+        assert!(step(&mut s, Action::ChooseEffectOption(1)).is_err());
+        assert_eq!(s, before);
+        step(&mut s, Action::ChooseEffectOption(0)).unwrap();
+        assert_eq!(s.objects.get(seat).zone, Zone::Battlefield);
+        assert_eq!(s.players[p.index()].lands_played_this_turn, 1);
+        assert_eq!(effect::loot_v1::land_allowance(&s, p), 2);
+        assert!(permissions(&s, forest, p).is_empty());
+        assert!(!land_drop_candidates(p, &s).contains(&forest));
+        let before = s.clone();
+        assert!(step(&mut s, Action::PlayLand(forest)).is_err());
+        assert_eq!(s, before);
+        let hand = put(&mut s, p, "Forest", Zone::Hand);
+        step(&mut s, Action::PlayLand(hand)).unwrap();
+        assert_eq!(s.players[p.index()].lands_played_this_turn, 2);
+        let pick = cast(&mut s, p, "Goldvein Pick", m, CardType::Artifact, 2);
+        finish(&mut s);
+        assert_eq!(s.objects.get(pick).zone, Zone::Battlefield);
+        validate_state(&s).unwrap();
+    }
+}
+
+#[test]
+fn adventure_and_omen_cards_pay_for_permanent_only_and_refuse_nonpermanent_form_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for (name, cost) in [("Fang Dragon", 7), ("Sagu Wildling", 5)] {
+            let mut s = ready(p, "Forest");
+            let m = paid(&mut s, p);
+            let card = put(&mut s, p, name, Zone::Graveyard);
+            choose_permission(&mut s, p, card, m, CardType::Creature);
+            let pending = s.engine.pending_cast.as_ref().unwrap();
+            let def = &card_def::CARD_DEFS[id(name) as usize];
+            assert_eq!(viable_pending_spell_forms(def, pending, &s), vec![0]);
+            assert!(pending_has_graveyard_creature_permission(pending, &s));
+            assert!(!form_allowed(&s, pending, CastMethodV4::Omen));
+            let before = s.clone();
+            assert!(step(&mut s, Action::ChooseSpellMode(1)).is_err());
+            assert_eq!(s, before);
+            let before = tapped(&s, p);
+            let row = complete_cast(&mut s, p, card, Some((m, CardType::Creature)), None, 0, 0);
+            assert_eq!(tapped(&s, p) - before, cost);
+            assert_eq!(row.v4.cast_method, Some(CastMethodV4::Normal));
+            assert_eq!(row.mode_chosen, 0);
+            let mut r = restore(&s);
+            finish(&mut s);
+            finish(&mut r);
+            assert_eq!(s, r);
+            assert_eq!(s.objects.get(card).zone, Zone::Battlefield);
+            assert!(object_has_type(&s, card, CardType::Creature));
+            validate_state(&s).unwrap();
+        }
+    }
+}
+
+#[test]
+fn bestow_uses_real_xgg_enchantment_budget_and_survives_target_loss_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for lose_target in [false, true] {
+            let mut s = ready(p, "Forest");
+            let m = paid(&mut s, p);
+            let host = put(&mut s, p, "Llanowar Elves", Zone::Hand);
+            pay(&mut s, p, host, None, None);
+            finish(&mut s);
+            let hydra = put(&mut s, p, "Nyxborn Hydra", Zone::Graveyard);
+            let before = tapped(&s, p);
+            let row = pay_form(
+                &mut s,
+                p,
+                hydra,
+                Some((m, CardType::Enchantment)),
+                Some(Target::Object(host)),
+                1,
+                3,
+            );
+            assert_eq!(tapped(&s, p) - before, 5);
+            assert_eq!(row.v4.cast_method, Some(CastMethodV4::Bestow));
+            assert_eq!(row.v4.x_value, 3);
+            let types = crate::source_type_hexproof_v1::spell_types(
+                &card_def::CARD_DEFS[id("Nyxborn Hydra") as usize],
+                CastMethodV4::Bestow,
+            )
+            .unwrap();
+            assert!(types.contains(CardType::Enchantment));
+            assert!(!types.contains(CardType::Creature));
+            if lose_target {
+                // Native target-departure primitive after actual successful payment.
+                event::propose_and_commit(
+                    &mut s,
+                    ProposedEvent::zone_change(host, Zone::Graveyard),
+                );
+            }
+            let mut r = restore(&s);
+            finish(&mut s);
+            finish(&mut r);
+            assert_eq!(s, r);
+            assert_eq!(s.objects.get(hydra).zone, Zone::Battlefield);
+            assert_eq!(s.objects.get(hydra).counters.plus1_plus1, 3);
+            assert_eq!(object_has_type(&s, hydra, CardType::Creature), lose_target);
+            assert!(object_has_type(&s, hydra, CardType::Enchantment));
+            assert_eq!(
+                s.objects.get(hydra).v4.attached_to.map(|link| link.object),
+                (!lose_target).then_some(host)
+            );
+            let another = put(&mut s, p, "Nyxborn Hydra", Zone::Graveyard);
+            let ps = permissions(&s, another, p);
+            assert_eq!(ps.len(), 1);
+            assert_eq!(ps[0].permanent_type, CardType::Creature);
+            validate_state(&s).unwrap();
+        }
+    }
+}
+
+#[test]
+fn creature_budget_cannot_choose_or_relabel_bestow_and_pays_normal_hydra_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p, "Forest");
+        let m = paid(&mut s, p);
+        let hydra = put(&mut s, p, "Nyxborn Hydra", Zone::Graveyard);
+        choose_permission(&mut s, p, hydra, m, CardType::Creature);
+        let pending = s.engine.pending_cast.as_ref().unwrap();
+        let def = &card_def::CARD_DEFS[id("Nyxborn Hydra") as usize];
+        assert_eq!(viable_pending_spell_forms(def, pending, &s), vec![0]);
+        assert!(!form_allowed(&s, pending, CastMethodV4::Bestow));
+        let before = s.clone();
+        assert!(step(&mut s, Action::ChooseSpellMode(1)).is_err());
+        assert_eq!(s, before);
+        let before = tapped(&s, p);
+        let row = complete_cast(&mut s, p, hydra, Some((m, CardType::Creature)), None, 0, 2);
+        assert_eq!(tapped(&s, p) - before, 3);
+        let mut bad = row.v4.source_contract.unwrap();
+        // Explicit forged finalized-form operand, preserving original permission.
+        bad.cast_method = CastMethodV4::Bestow;
+        bad.spell_cast_origin.as_mut().unwrap().finalized_method = Some(CastMethodV4::Bestow);
+        assert!(validate_contract(&s, bad).is_err());
+        finish(&mut s);
+        assert!(object_has_type(&s, hydra, CardType::Creature));
+        assert_eq!(s.objects.get(hydra).counters.plus1_plus1, 2);
+        let another = put(&mut s, p, "Nyxborn Hydra", Zone::Graveyard);
+        let ps = permissions(&s, another, p);
+        assert_eq!(ps.len(), 1);
+        assert_eq!(ps[0].permanent_type, CardType::Enchantment);
+        validate_state(&s).unwrap();
     }
 }

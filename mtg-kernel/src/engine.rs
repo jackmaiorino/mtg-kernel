@@ -8182,6 +8182,7 @@ fn viable_pending_spell_forms(
                 source,
                 state,
             ) && resolution_cast_v1::form_allowed(state, pending.spell, method)
+                && muldrotha_v1::form_allowed(state, pending, method)
                 && pending_cast_form_timing_ok(types, keywords, pending, state)
                 && pending_cast_quote_v1(
                     def,
@@ -8470,12 +8471,12 @@ fn pending_has_graveyard_creature_permission(pending: &PendingCast, state: &Game
             .spell_cast_origin
             .is_some_and(|origin| {
                 origin.origin_zone == Zone::Graveyard
-                    && crate::standard_cards_v1::graveyard_cast_granted(
+                    && (crate::standard_cards_v1::graveyard_cast_granted(
                         state,
                         pending.spell,
                         pending.controller,
                         origin.origin_zone_change_count,
-                    )
+                    ) || muldrotha_v1::grants_permanent_form(state, pending))
             })
 }
 
@@ -8711,7 +8712,10 @@ fn is_castable_now(
             };
             let bestow_ok = || {
                 supported_bestow(def).is_some_and(|bestow| {
-                    matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
+                    (matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
+                        || muldrotha_v1::permissions(state, id, player)
+                            .iter()
+                            .any(|p| p.permanent_type == CardType::Enchantment))
                         && cast_form_timing_ok(
                             &[CardType::Enchantment],
                             Keywords::NONE,
