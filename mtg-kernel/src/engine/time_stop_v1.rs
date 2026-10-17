@@ -1673,6 +1673,26 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("../current_mixed_policy_v1/tinybones.rs"),
                 ),
                 (
+                    "mtg-kernel/src/human_bo3_v1/tinybones_v72.rs",
+                    include_str!("../human_bo3_v1/tinybones_v72.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_tinybones_v13.rs",
+                    include_str!("../human_bo3_v1/limited_tinybones_v13.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_tinybones_session_v13.rs",
+                    include_str!("../limited_tinybones_session_v13.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_tinybones_env_v13.rs",
+                    include_str!("../bin/kernel_limited_tinybones_env_v13.rs"),
+                ),
+                (
+                    "python/tools/limited_tinybones_session_v13.py",
+                    include_str!("../../../python/tools/limited_tinybones_session_v13.py"),
+                ),
+                (
                     "mtg-kernel/src/liliana_observation_v73.rs",
                     include_str!("../liliana_observation_v73.rs"),
                 ),
