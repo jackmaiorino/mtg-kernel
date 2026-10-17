@@ -10079,6 +10079,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if time_stop_v1::validate(state)
         .and_then(|_| ordinary_cleanup_v1::validate(state))
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
+        .and_then(|()| effect::vivien_reid_v1::validate_state(state))
         .is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -19176,6 +19177,7 @@ fn checked_effective_stat(
         Ok(())
     };
     add(effect::fiend_artisan_v1::bonus(state, id)?)?;
+    add(effect::vivien_reid_v1::bonus(state, id))?;
     add(bestow_host_counter_bonus(state, id))?;
     add(select(controlled_subtype_boost(state, id)))?;
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -19393,6 +19395,9 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                     .has(kw)
         })
     {
+        return true;
+    }
+    if effect::vivien_reid_v1::grants_keyword(state, id, kw) {
         return true;
     }
     if crate::controlled_creature_grants_v1::grants_keyword(state, id, kw) {
@@ -20724,6 +20729,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     time_stop_v1::validate(state)?;
     ordinary_cleanup_v1::validate(state)?;
     effect::genesis_wave_v1::validate_state(state)?;
+    effect::vivien_reid_v1::validate_state(state)?;
     crate::leyline_axe_v1::validate(state)?;
     validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
@@ -24296,6 +24302,16 @@ fn finalize_activation(state: &mut GameState) {
         }
     };
     frozen.ajani_payment_owner = ajani_payment_owner;
+    frozen.vivien_payment = match effect::vivien_reid_v1::record_input(state, &pending) {
+        Ok(input) => input,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    };
     let ability = &ability;
     let mut discarded = Vec::new();
     if ability
@@ -24437,6 +24453,7 @@ struct FrozenActivationSource {
     payment_history_start: usize,
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
+    vivien_payment: Option<u64>,
     ravenous_payment: Option<crate::ravenous_amulet_v1::PaymentOwnerV1>,
     drake_payment: Option<crate::drake_hatcher_v1::custody::PaymentOwnerV1>,
 }
@@ -24477,6 +24494,7 @@ fn freeze_activation_source(
         payment_history_start: state.engine.event_history.len(),
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
+        vivien_payment: None,
         ravenous_payment: None,
         drake_payment: None,
     }
@@ -24591,6 +24609,13 @@ fn push_paid_activation(
         },
     });
     if effect::fiend_artisan_v1::record_paid(state, stack_item_id, frozen.fiend_input).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    if effect::vivien_reid_v1::record_paid(state, stack_item_id, frozen.vivien_payment).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,

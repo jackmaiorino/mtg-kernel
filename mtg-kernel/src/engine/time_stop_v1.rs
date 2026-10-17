@@ -1375,6 +1375,40 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/cast_identity_v1.rs",
                     include_str!("../cast_identity_v1.rs"),
                 ),
+                (
+                    "mtg-kernel/build_standard_v1.rs",
+                    include_str!("../../build_standard_v1.rs"),
+                ),
+                ("mtg-kernel/src/card_def.rs", include_str!("../card_def.rs")),
+                ("mtg-kernel/src/effect.rs", include_str!("../effect.rs")),
+                (
+                    "mtg-kernel/src/planeswalker_v1.rs",
+                    include_str!("../planeswalker_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rules_vector_v1/meaning/mod.rs",
+                    include_str!("../rules_vector_v1/meaning/mod.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rules_vector_v1/meaning/targets.rs",
+                    include_str!("../rules_vector_v1/meaning/targets.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/vivien_reid_v1.rs",
+                    include_str!("../effect/vivien_reid_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/squad_rallier_resolution_v1.rs",
+                    include_str!("../effect/squad_rallier_resolution_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/creature_types_v60.rs",
+                    include_str!("../creature_types_v60.rs"),
+                ),
+                (
+                    "mtg-kernel/src/optional_trigger_public_v1.rs",
+                    include_str!("../optional_trigger_public_v1.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

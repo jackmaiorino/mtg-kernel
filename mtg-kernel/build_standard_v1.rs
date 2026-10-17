@@ -31,6 +31,12 @@ const fn loyalty(
     }
 }
 
+const VIVIEN_REID: [ActivatedAbilityRecipe; 3] = [
+    loyalty(&[Loyalty(1)], Program("crate::effect::vivien_reid_v1::look"), "None"),
+    loyalty(&[Loyalty(-3)], Program("crate::effect::vivien_reid_v1::destroy"), "StandardV1(crate::standard_cards_v1::StandardTargetV1::ArtifactEnchantmentOrFlyingCreatureV1)"),
+    loyalty(&[Loyalty(-8)], Program("crate::effect::vivien_reid_v1::emblem"), "None"),
+];
+
 const TEFERI: [ActivatedAbilityRecipe; 3] = [
     loyalty(&[Loyalty(0)], DrawCards(1), "None"),
     loyalty(
@@ -363,6 +369,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
         "Chandra, Hope's Beacon" => &CHANDRA,
+        "Vivien Reid" => &VIVIEN_REID,
         "Fable of the Mirror-Breaker" => &REFLECTION_OF_KIKI_JIKI,
         "Repurposing Bay" => &REPURPOSING_BAY,
         "Clay-Fired Bricks" => &CLAY_FIRED_BRICKS,
@@ -433,6 +440,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
 /// `standard_cards_v1::controlled_boost`.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Vivien Reid" => "loyalty_plus1:look4_optional_creature_or_land_reveal_random_bottom;loyalty_minus3:destroy_artifact_enchantment_or_flying_creature;loyalty_minus8:timestamped_persistent_emblem_controlled_creatures_plus2_plus2_vigilance_trample_indestructible",
         "Thousand Moons Smithy" => "etb:create_gnome_soldier;precombat_main:may_tap_five_artifact_creatures_transform;back:cast_artifact_creature_using_source_mana:create_gnome_soldier",
         "Gnome Soldier Token" => "power_toughness:count_artifact_or_creature_controlled",
         "Etali, Primal Conqueror" => "etb:each_player_exile_until_nonland_cast_any_free;9GP_transform_sorcery;back:combat_damage_player:that_many_poison",
