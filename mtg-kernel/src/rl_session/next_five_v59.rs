@@ -694,7 +694,7 @@ impl NextFiveDecisionV59 {
         self.expected
     }
     /// Actor-authorized inherited family DTOs, without executable bindings.
-    pub fn family_projections_v59(
+    pub(crate) fn family_projections_v59(
         &self,
     ) -> &[crate::akroma_family_public_v40::FamilyProjectionV40] {
         &self.binding.families

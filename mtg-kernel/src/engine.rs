@@ -3493,9 +3493,9 @@ pub(crate) fn alesha_raid_source_power(
     source: AbilitySourceContractV4,
 ) -> Option<i32> {
     if source.zone != Zone::Battlefield
-        || !card_def::CARD_DEFS
+        || card_def::CARD_DEFS
             .get(usize::from(source.card_def))
-            .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+            .is_none_or(|definition| definition.name != "Alesha, Who Laughs at Fate")
     {
         return None;
     }
@@ -3542,9 +3542,7 @@ pub(crate) fn alesha_raid_source_power(
     else {
         return None;
     };
-    let Some(receipt_index) = departure_index.checked_add(1) else {
-        return None;
-    };
+    let receipt_index = departure_index.checked_add(1)?;
     let Some(crate::event::CommittedEvent::AleshaPowerLkiV1 {
         source: receipt_source,
         card_def: receipt_card_def,
@@ -14990,9 +14988,9 @@ fn validate_bound_trigger_source_objects(
             });
             if contract.source != source
                 || contract.zone != Zone::Battlefield
-                || !card_def::CARD_DEFS
+                || card_def::CARD_DEFS
                     .get(usize::from(contract.card_def))
-                    .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+                    .is_none_or(|definition| definition.name != "Alesha, Who Laughs at Fate")
                 || (!live_exact
                     && alesha_raid_source_power(state, contract) != Some(*source_power_lki))
             {
@@ -15015,9 +15013,9 @@ fn validate_bound_trigger_source_objects(
                 .map(|counters| counters.revival);
             if contract.source != source
                 || contract.zone != Zone::Battlefield
-                || !card_def::CARD_DEFS
+                || card_def::CARD_DEFS
                     .get(usize::from(contract.card_def))
-                    .is_some_and(|definition| definition.name == "Nine-Lives Familiar")
+                    .is_none_or(|definition| definition.name != "Nine-Lives Familiar")
                 || graveyard.object != source
                 || contract.zone_change_count.checked_add(1) != Some(graveyard.zone_change_count)
                 || *revival_counters < 0
@@ -15035,9 +15033,9 @@ fn validate_bound_trigger_source_objects(
             };
             if contract.source != source
                 || contract.zone != Zone::Battlefield
-                || !card_def::CARD_DEFS
+                || card_def::CARD_DEFS
                     .get(usize::from(contract.card_def))
-                    .is_some_and(|definition| definition.name == "Nine-Lives Familiar")
+                    .is_none_or(|definition| definition.name != "Nine-Lives Familiar")
                 || graveyard.object != source
                 || contract.zone_change_count.checked_add(1) != Some(graveyard.zone_change_count)
                 || *revival_counters < 0
@@ -15115,9 +15113,9 @@ fn validate_bound_trigger_source_objects(
             if contract.source != source
                 || contract != *captured_source
                 || contract.zone != Zone::Battlefield
-                || !card_def::CARD_DEFS
+                || card_def::CARD_DEFS
                     .get(usize::from(contract.card_def))
-                    .is_some_and(|definition| definition.name == "Valkyrie's Call")
+                    .is_none_or(|definition| definition.name != "Valkyrie's Call")
                 || history_source != captured_source
                 || !expected_capture
                 || !collected_once
@@ -16631,6 +16629,14 @@ pub(crate) fn apply_live_stack_spell_departure(
     Ok(true)
 }
 
+type ResolutionOwnersV1<'a> = (
+    Option<&'a effect::VampireGourmandResolutionOwnerV1>,
+    Option<&'a effect::crystal_prevention_v1::OwnerV1>,
+    Option<&'a effect::InspirationResolutionOwnerV1>,
+    Option<&'a crate::high_society_hunter_custody_v45::OwnerV45>,
+    Option<effect::NativeExecutionOwnerV1>,
+);
+
 fn execute_resolving_program(
     state: &mut GameState,
     item: &StackItem,
@@ -16638,13 +16644,7 @@ fn execute_resolving_program(
     program: &EffectOp,
     squad_owner: Option<&effect::SquadRallierResolutionOwnerV1>,
     frenzied_owner: Option<&effect::FrenziedGoblinResolutionOwnerV1>,
-    extra_owners: (
-        Option<&effect::VampireGourmandResolutionOwnerV1>,
-        Option<&effect::crystal_prevention_v1::OwnerV1>,
-        Option<&effect::InspirationResolutionOwnerV1>,
-        Option<&crate::high_society_hunter_custody_v45::OwnerV45>,
-        Option<effect::NativeExecutionOwnerV1>,
-    ),
+    extra_owners: ResolutionOwnersV1<'_>,
 ) -> ResolutionProgress {
     let (gourmand_owner, crystal_owner, inspiration_owner, hunter_owner, native_row) = extra_owners;
     if crystal_owner.is_none() && !effect::contains_player_choice(program) {
@@ -24007,7 +24007,7 @@ fn finalize_owned_cast(
         omniscience_cast_v1,
         sphinx_lore_cast_v1,
         greatwurm_payment_v1,
-        x_value: x_value,
+        x_value,
         chosen_creature_cost,
         variable_targeting_kicked: (def.target_spec == TargetSpec::KickerControlledCreatures)
             .then_some(was_kicked),
