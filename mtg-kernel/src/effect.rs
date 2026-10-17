@@ -16,6 +16,7 @@
 //! crate-level invariants in `lib.rs`).
 
 pub(crate) mod curator_v1;
+pub(crate) mod genesis_wave_v1;
 pub(crate) mod greatwurm_v1;
 pub(crate) mod harvester_v1;
 pub(crate) mod kykar_v1;
@@ -2759,6 +2760,8 @@ pub enum EffectOp {
     ThousandYearStormCaptureV1 {
         cast: u64,
     },
+    /// Definition-owned revealed subset and simultaneous permanent entry.
+    GenesisWaveV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -3236,6 +3239,10 @@ pub enum EffectFrame {
         choice: curator_v1::ChoiceV1,
         answer: curator_v1::AnswerV1,
     },
+    GenesisWaveV1 {
+        choice: genesis_wave_v1::ChoiceV1,
+        cards: Vec<EffectObjectBinding>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -3612,6 +3619,9 @@ pub enum EffectTargetSelectionPurpose {
         original: Vec<EffectObjectBinding>,
         library_prefix: bool,
         preserve_known_identity: bool,
+    },
+    GenesisWaveCardsV1 {
+        choice: genesis_wave_v1::ChoiceV1,
     },
 }
 
@@ -4215,7 +4225,9 @@ pub(crate) fn contains_nonland_sacrifice_payment_v1(op: &EffectOp) -> bool {
 pub fn contains_player_choice(op: &EffectOp) -> bool {
     if matches!(
         op,
-        EffectOp::AleshaRaidReturn { .. } | EffectOp::FiendArtisanSearchV1
+        EffectOp::AleshaRaidReturn { .. }
+            | EffectOp::FiendArtisanSearchV1
+            | EffectOp::GenesisWaveV1
     ) {
         return true;
     }
@@ -4335,6 +4347,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if genesis_wave_v1::recipe(op)
+        || genesis_wave_v1::selected(state, &resolving_item)
+        || genesis_wave_v1::waiting(state, ctx)
+    {
+        return Err("Genesis Wave requires its actual native row".into());
+    }
     if fiend_artisan_v1::selected(state, &resolving_item)
         || fiend_artisan_v1::waiting(state, ctx)
         || *op == EffectOp::FiendArtisanSearchV1
@@ -4545,6 +4563,14 @@ fn begin_resumable_resolution_with_native_row_v1(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| genesis_wave_v1::pending_selected(state, p))
+    {
+        return Err("Genesis Wave has no public resume authority".into());
+    }
     if state
         .engine
         .pending_effect
@@ -5836,6 +5862,9 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::GenesisWaveCardsV1 { choice } => {
+            genesis_wave_v1::answer(continuation, choice, objects);
+        }
         EffectTargetSelectionPurpose::CuratorCardsV1 { choice } => {
             curator_v1::answer(continuation, choice, curator_v1::AnswerV1::Cards(objects))?;
         }
@@ -9187,6 +9216,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
                         | EffectFrame::CuratorV1 { .. }
+                        | EffectFrame::GenesisWaveV1 { .. }
                         | EffectFrame::BlasphemousEdictV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
@@ -9238,6 +9268,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
                         | EffectFrame::CuratorV1 { .. }
+                        | EffectFrame::GenesisWaveV1 { .. }
                         | EffectFrame::BlasphemousEdictV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
@@ -10303,6 +10334,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     thousand_year_storm_v1::validate_continuation(state, pending)?;
     blasphemous_edict_v1::validate(state, pending)?;
+    if genesis_wave_v1::pending_selected(state, pending) {
+        return genesis_wave_v1::validate(state, pending);
+    }
     if curator_v1::pending_selected(state, pending) {
         return curator_v1::validate(state, pending);
     }
@@ -10559,6 +10593,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
                     crystal_prevention_v1::validate_discard_choice(state, pending)?
+                }
+                EffectTargetSelectionPurpose::GenesisWaveCardsV1 { .. } => {
+                    return Err("Genesis Wave purpose requires its native root".into());
                 }
                 EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => {
                     return Err("Curator purpose requires its native root".into())
@@ -12542,6 +12579,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 | EffectFrame::DiscardPaymentV1 { .. }
                 | EffectFrame::NonlandSacrificePaymentV1 { .. }
                 | EffectFrame::CuratorV1 { .. }
+                | EffectFrame::GenesisWaveV1 { .. }
                 | EffectFrame::BlasphemousEdictV1 { .. }
                 | EffectFrame::AleshaRaidAnswerV1 { .. }
                 | EffectFrame::SphinxsTutelageMillV1 {
@@ -12567,6 +12605,12 @@ fn drive_resumable_inner_with_native_row_v1(
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::GenesisWaveV1 { choice, cards } => {
+                    if genesis_wave_v1::apply(state, &mut continuation, choice, cards)? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
                 EffectFrame::CuratorV1 { choice, answer } => {
                     if curator_v1::apply(state, &mut continuation, choice, answer)? {
                         state.engine.pending_effect = Some(continuation);
@@ -16107,6 +16151,13 @@ fn drive_resumable_inner_with_native_row_v1(
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::GenesisWaveV1 => {
+                let owner = native_row.ok_or("Genesis Wave lost its native root owner")?;
+                if owner.item != continuation.resolving_item || owner.ctx != continuation.ctx
+                    || *owner.root != EffectOp::GenesisWaveV1 || !path.is_empty() || !continuation.frames.is_empty()
+                { return Err("Genesis Wave changed its exact native row/context/root".into()); }
+                if genesis_wave_v1::start(state, &mut continuation)? { state.engine.pending_effect=Some(continuation); return Ok(ResumableProgress::Suspended); }
+            }
             EffectOp::CuratorDestiniesV1 { .. } => {
                 if native_row.is_none() {return Err("Curator driver lost native proof".into())}
                 if curator_v1::start(state,&mut continuation)? {state.engine.pending_effect=Some(continuation);return Ok(ResumableProgress::Suspended)}
@@ -19301,6 +19352,15 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
+    if (genesis_wave_v1::recipe(op) || genesis_wave_v1::waiting(state, ctx))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if (*op == EffectOp::FiendArtisanSearchV1 || fiend_artisan_v1::waiting(state, ctx))
         && native_proof.is_none_or(|p| p.ctx != ctx)
     {
@@ -19425,6 +19485,12 @@ fn execute_with_native_row_v1(
             }
         }
         EffectOp::BindCuratorDestiniesV1 | EffectOp::CuratorDestiniesV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::GenesisWaveV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -26200,6 +26266,7 @@ pub(crate) fn acquire_tutelage_resume_v1(
         return Ok(None);
     }
     if !tutelage_item_v1(state, &pending.resolving_item)
+        && !genesis_wave_v1::pending_selected(state, pending)
         && !curator_v1::pending_selected(state, pending)
         && !pending
             .ctx
@@ -26387,6 +26454,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if genesis_wave_v1::waiting(state, ctx) {
+        return true;
+    }
     if thousand_year_storm_v1::waiting(state, ctx) {
         return true;
     }

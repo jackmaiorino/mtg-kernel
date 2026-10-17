@@ -2028,6 +2028,13 @@ pub enum CommittedEvent {
     TimeStopJournalV1 {
         journal: Box<crate::engine::time_stop_v1::JournalV1>,
     },
+    GenesisWaveProgressV1 {
+        item: Box<crate::state::StackItem>,
+        choice: Box<crate::effect::genesis_wave_v1::ChoiceV1>,
+    },
+    GenesisWaveFinishedV1 {
+        stack_item_id: crate::ids::StackItemId,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -8362,7 +8362,8 @@ fn maximum_payable_x(
         crate::rules_meaning_next_five_v59::FamilyV59::Goblin,
         pending.source_contract.card_def,
         def,
-    ) {
+    ) || effect::genesis_wave_v1::definition(pending.source_contract.card_def)
+    {
         maximum_monotone_x_v59(u16::MAX, payable)
     } else {
         // Retain the frozen query domain and descending order for other roots.
@@ -10069,7 +10070,10 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
-    if time_stop_v1::validate(state).is_err() {
+    if time_stop_v1::validate(state)
+        .and_then(|()| effect::genesis_wave_v1::validate_state(state))
+        .is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         state.engine.halted = Some((mechanic, ObjectId(0)));
         return Decision::Halted {
@@ -11768,6 +11772,7 @@ pub(crate) fn validate_pending_cast(
             pending.source_contract.card_def,
             def,
         )
+        && !effect::genesis_wave_v1::definition(pending.source_contract.card_def)
     {
         return Err("wide cast X requires the exact Goblin recipe".into());
     }
@@ -20662,6 +20667,7 @@ fn action_matches_pending_activation_stage(
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     time_stop_v1::validate(state)?;
+    effect::genesis_wave_v1::validate_state(state)?;
     crate::leyline_axe_v1::validate(state)?;
     validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;

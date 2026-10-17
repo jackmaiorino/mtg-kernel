@@ -497,6 +497,51 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
     result
 }
 
+/// A selected spell's erased local pending row is valid only inside its own
+/// exact enclosing entry operation. This query grants no execution authority;
+/// the existing complete checkpoint replay/validation remains mandatory.
+pub(crate) fn owns_entry_row_checkpoint_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> bool {
+    let scope = &state.engine.linked_aura_operation_v1;
+    let original = |world: &GameState, operation: &OperationV1| {
+        matches!(operation, OperationV1::Advance | OperationV1::Step(_))
+            && world
+                .engine
+                .pending_effect
+                .as_ref()
+                .is_some_and(|p| p.resolving_item == *item)
+            && world
+                .stack
+                .iter()
+                .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+                .eq(std::iter::once(item))
+    };
+    scope.runtime.as_ref().is_some_and(|r| {
+        r.checkpoint.is_some()
+            && matches!(r.operation, OperationV1::Advance | OperationV1::Step(_))
+            && r.original_stack
+                .iter()
+                .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+                .eq(std::iter::once(item))
+    }) || scope
+        .pending_general_v36
+        .as_ref()
+        .is_some_and(|p| original(&p.original, &p.operation))
+        || scope
+            .pending_kinship_v1
+            .as_ref()
+            .is_some_and(|p| original(&p.original, &p.operation))
+}
+pub(crate) fn entry_checkpoint_in_flight_v1(state: &GameState) -> bool {
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .is_some_and(|r| r.checkpoint.is_some())
+}
 pub fn has_pending(state: &GameState) -> bool {
     state
         .engine
@@ -660,6 +705,13 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn potential_operation(state: &GameState) -> bool {
+    if state
+        .stack
+        .iter()
+        .any(|row| crate::effect::genesis_wave_v1::selected(state, row))
+    {
+        return true;
+    }
     if state
         .stack
         .iter()

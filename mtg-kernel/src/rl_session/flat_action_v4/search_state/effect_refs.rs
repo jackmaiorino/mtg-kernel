@@ -81,7 +81,7 @@ impl Scan<'_> {
             | BindSphinxLoreV1
             | SphinxLoreV1 { .. }
             | HarvesterExileAndCopyV1
-            | FiendArtisanSearchV1 => true,
+            | FiendArtisanSearchV1 | GenesisWaveV1 => true,
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
@@ -363,7 +363,8 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
-            CuratorV1 { .. }
+            GenesisWaveV1 { .. }
+            | CuratorV1 { .. }
             | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
             | AleshaRaidAnswerV1 { .. }
@@ -620,7 +621,8 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
-            CuratorCardsV1 { .. }
+            GenesisWaveCardsV1 { .. }
+            | CuratorCardsV1 { .. }
             | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
             | SphinxsTutelageMillOrderV1 { .. } => true,
@@ -1080,6 +1082,8 @@ pub(super) fn conflicts(
         .engine
         .event_history
         .scan_for_v1(&[
+            EventKindV1::GenesisWaveProgressV1,
+            EventKindV1::GenesisWaveFinishedV1,
             EventKindV1::SphinxsTutelageDrawV1,
             EventKindV1::SphinxsTutelageCollectedV1,
             EventKindV1::SphinxsTutelagePublishedV1,
@@ -1159,6 +1163,8 @@ pub(super) fn conflicts(
             matches!(
                 event,
                 crate::event::CommittedEvent::TimeStopJournalV1 { .. }
+                    | crate::event::CommittedEvent::GenesisWaveProgressV1 { .. }
+                    | crate::event::CommittedEvent::GenesisWaveFinishedV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
@@ -1343,6 +1349,7 @@ pub(super) fn conflicts(
             | CuratorCollectedV1 { .. }
             | CuratorPublishedV1 { .. }
             | CuratorFinishedV1 { .. }
+            | GenesisWaveProgressV1 { .. } | GenesisWaveFinishedV1 { .. }
             | CuratorProgressV1 { .. }
             | KykarExiledV1 { .. }
             | KykarDelayedCollectedV1 { .. }

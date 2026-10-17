@@ -1908,6 +1908,8 @@ pub fn observe_v1(
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -2229,6 +2231,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -2696,6 +2700,7 @@ fn public_restricted_mana_v1(
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -5179,6 +5184,8 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     }
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -11243,6 +11250,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
+                            crate::effect::EffectTargetSelectionPurpose::GenesisWaveCardsV1 { .. } => return Err(RlContractError("Genesis Wave requires its distinct complete consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
