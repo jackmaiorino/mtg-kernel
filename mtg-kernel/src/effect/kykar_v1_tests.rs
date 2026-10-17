@@ -1198,3 +1198,118 @@ fn genuine_native_spell_copies_of_paid_spirit_copy_spells_keep_ancestry_and_rest
         }
     }
 }
+
+#[test]
+fn paid_off_turn_madness_resolution_priority_with_and_without_kykar_restore_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for with_kykar in [false, true] {
+            let mut s = ready(p);
+            // Legal initial resources and hand, followed only by real casts,
+            // turns, discard and the resulting native Madness offer.
+            put(&mut s, p.opponent(), "Swamp", Zone::Battlefield);
+            let temper = put(&mut s, p, "Fiery Temper", Zone::Hand);
+            let generation = s.objects.get(temper).zone_change_count;
+            let kykar = with_kykar.then(|| paid(&mut s, p));
+            for _ in 0..180 {
+                let d = next(&mut s);
+                if s.active_player == p.opponent()
+                    && s.step == Step::Main1
+                    && matches!(d, Decision::CastSpellOrPass { player, .. } if player == p.opponent())
+                {
+                    break;
+                }
+                pass(&mut s, d);
+            }
+            assert_eq!((s.active_player, s.step), (p.opponent(), Step::Main1));
+            cast(&mut s, p.opponent(), "Burglar Rat", &[], 2);
+            for _ in 0..32 {
+                let d = next(&mut s);
+                if let Decision::Discard { player, count, .. } = d {
+                    assert_eq!((player, count), (p, 1));
+                    assert!(s.players[p.index()].hand.contains(&temper));
+                    engine::step(&mut s, Action::Discard(vec![temper])).unwrap();
+                    break;
+                }
+                pass(&mut s, d);
+            }
+            assert_eq!(s.objects.get(temper).zone, Zone::Exile);
+            assert_eq!(s.objects.get(temper).zone_change_count, generation + 1);
+            for _ in 0..32 {
+                let d = next(&mut s);
+                if let Decision::ChooseMadnessCast { player, card } = d {
+                    assert_eq!((player, card), (p, temper));
+                    break;
+                }
+                pass(&mut s, d);
+            }
+            assert!(
+                matches!(next(&mut s), Decision::ChooseMadnessCast { player, card }
+                if (player, card) == (p, temper))
+            );
+            let round = s.engine.priority_round;
+            let taps = tapped(&s, p);
+            let life = s.players[p.opponent().index()].life;
+            let mut replay = restore(&s);
+            for branch in [&mut s, &mut replay] {
+                engine::step(branch, Action::ChooseMadnessCast(true)).unwrap();
+                assert_eq!(branch.engine.priority_round, round);
+                assert!(
+                    matches!(next(branch), Decision::ChooseTargets { player, legal_targets, .. }
+                    if player == p && legal_targets.contains(&Target::Player(p.opponent())))
+                );
+                engine::step(branch, Action::ChooseTarget(Target::Player(p.opponent()))).unwrap();
+                let d = next(branch);
+                assert_eq!(branch.engine.priority_round, round + 1);
+                assert_eq!(branch.priority_player, p.opponent());
+                assert_eq!(tapped(branch, p) - taps, 1);
+                assert_eq!(branch.players[p.index()].mana_pool, [0; 6]);
+                let row = branch
+                    .stack
+                    .iter()
+                    .find(|row| row.source == temper)
+                    .unwrap();
+                assert_eq!((row.kind, row.controller), (StackItemKind::Spell, p));
+                assert_eq!(
+                    row.v4.cast_method,
+                    Some(crate::state::CastMethodV4::Madness)
+                );
+                assert_eq!(row.targets, [Target::Player(p.opponent())]);
+                let source = row.v4.source_contract.unwrap();
+                assert_eq!((source.owner, source.controller), (p, p));
+                assert_eq!(source.zone_change_count, generation + 2);
+                assert_eq!(
+                    source.spell_cast_origin.unwrap().route,
+                    crate::state::SpellCastRouteV4::Madness
+                );
+                engine::validated_stack_item_target_spec(row, branch).unwrap();
+                if let Some(k) = kykar {
+                    assert!(
+                        matches!(d, Decision::ChooseTriggerMode { player, source, mode_count: 2, legal_modes }
+                        if player == p && source == k && legal_modes.contains(&1))
+                    );
+                    engine::step(branch, Action::ChooseTriggerMode(1)).unwrap();
+                    assert!(
+                        matches!(next(branch), Decision::CastSpellOrPass { player, .. }
+                        if player == p.opponent())
+                    );
+                    let trigger = branch.stack.last().unwrap();
+                    assert_eq!((trigger.source, trigger.controller), (k, p));
+                    assert_eq!(trigger.inline_effect, Some(EffectOp::KykarSpiritV1));
+                } else {
+                    assert!(matches!(d, Decision::CastSpellOrPass { player, .. }
+                        if player == p.opponent()));
+                }
+                assert_eq!(branch.engine.priority_round, round + 1);
+                assert_eq!(branch.priority_player, p.opponent());
+            }
+            assert_eq!(s, replay);
+            finish(&mut s);
+            finish(&mut replay);
+            assert_eq!(s, replay);
+            assert_eq!(s.objects.get(temper).zone, Zone::Graveyard);
+            assert_eq!(s.objects.get(temper).zone_change_count, generation + 3);
+            assert_eq!(s.players[p.opponent().index()].life, life - 3);
+            assert_eq!(spirit_objects(&s, p).len(), usize::from(with_kykar));
+        }
+    }
+}

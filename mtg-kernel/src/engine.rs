@@ -24289,8 +24289,15 @@ fn finalize_owned_cast(
     // *before* anyone gets priority again, same as `play_land`'s land-drop
     // trigger check.
     collect_and_queue_triggers(state);
-    state.engine.priority_passes = [false, false];
-    state.priority_player = pending.controller;
+    if cast_method == CastMethodV4::Madness {
+        // This cast completes the resolving Madness offer, rather than an
+        // action taken with priority. Match the declined/aborted offer's
+        // resolution boundary before placing any cast-generated triggers.
+        reset_priority(state);
+    } else {
+        state.engine.priority_passes = [false, false];
+        state.priority_player = pending.controller;
+    }
     Ok(())
 }
 
