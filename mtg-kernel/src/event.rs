@@ -5857,6 +5857,8 @@ pub(crate) fn commit_goblin_excess_tokens_owned(
     }
     Ok(())
 }
+// Each distinct lexical permit authenticates its own native token producer.
+#[allow(clippy::too_many_arguments)]
 fn batch_with_aura_token_hosts_v1(
     state: &mut GameState,
     events: Vec<ProposedEvent>,

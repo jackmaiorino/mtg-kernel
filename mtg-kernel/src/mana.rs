@@ -732,6 +732,11 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
     pips: &[Pip],
     generic: u32,

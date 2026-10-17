@@ -1250,10 +1250,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     .filter(|r| r.v4.stack_item_id == item.v4.stack_item_id)
                     .collect::<Vec<_>>();
                 if finished.is_empty() {
-                    if live.len() != 1 || *live[0] != **item {
-                        if !time_stop_v1::disposed(state, item)? {
-                            return Err("Tinybones original publication erased or altered".into());
-                        }
+                    if (live.len() != 1 || *live[0] != **item)
+                        && !time_stop_v1::disposed(state, item)?
+                    {
+                        return Err("Tinybones original publication erased or altered".into());
                     }
                 } else if !live.is_empty() {
                     return Err("Tinybones finished publication remains live".into());
