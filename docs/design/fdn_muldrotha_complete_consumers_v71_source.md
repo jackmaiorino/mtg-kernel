@@ -30,7 +30,7 @@ private libraries or executable contracts enter public DTOs or numeric input.
 Inherited Vivien facts retain their actual V70 identity. V71 common and Elenda
 compatibility slots have distinct V71 identities, with exact inherited counter
 and current-form semantics. Older observations are never relabeled. Unknown
-later families, Tinybones/Liliana native history and unsupported Stash counters
+later families, Tinybones/Liliana/Chandra native history and unsupported Stash counters
 refuse. Existing legacy graveyard routes, timings, payments and Greatwurm remain
 unchanged. Normal production deck reset still requires Full cards; Partial489
 is not admitted by a test fixture shortcut.
@@ -38,10 +38,9 @@ is not admitted by a test fixture shortcut.
 Human references use opaque handles. Limited V12 has a separate protocol,
 binary and strict Python grammar, original candidate ordinals and monotonic
 prompt/restore authority. Current-world decision-local library projections keep
-the inherited positionless ordering and original private index map. There is
-no V71 sampled-world API or new sampler admission; existing native-history
-sampler exclusions remain. No private current-world search qualification is
-claimed for an unsupported printing or mechanism.
+the inherited positionless ordering and original private index map. A separate V71 sampled-clone API now retains this complete binding in a fresh
+lineage. Existing other-family refusals remain. No private current-world search
+qualification is claimed for an unsupported printing or mechanism.
 
 Ten genuine paid both-seat Rust fixture groups prepare source/type budgets,
 actual ordinary mana payments, land drops without stack or mana charges,
@@ -69,3 +68,45 @@ Artifact1/Creature0 and ordinary0-after-typed1 transport mocks. Eight V12 tests
 and139 affected transport cases pass after the repair. The earlier247-case
 receipt belongs to a07e6d565. Published b4c0db6 and Tinybones reversal0cdf52ba
 are normally composed. All Rust remains uncompiled and unrun.
+
+Follow-on sampler and production source: a distinct V71 scope reuses the actual
+V69/Call whole-object current-slot machinery. Native Muldrotha validates every
+original options/selection/play journal and refuses pools containing any
+historically named physical source or played card. Known cards, factual
+journals, exact menus, type budgets, paid spell forms/costs and original native
+pair vectors remain fixed. The sampled owner revalidates its complete public
+and executable binding before publication and uses a new owner lineage.
+Numeric sampled owners freshly encode that backend and require packet equality.
+Their production reset delegates to the unchanged Full-only deck preflight.
+Unsupported whole-world entry checkpoints, private library-choice resampling,
+Vivien native journals and other unqualified families retain strict refusals.
+Older scopes do not gain a Muldrotha history permission.
+
+Three new paid both-seat sampler groups, one paid numeric derived-owner group,
+one paid Human lexical-menu group and one Full-deck reset/refusal group are
+source-prepared, bringing V71 to15 paid groups plus one reset group. Independent
+native clones preserve the actual current counters and issued origins for
+parity; no fabricated counters or issuers stand in for payment. All16 Rust
+groups are UNCOMPILED and UNRUN.
+
+CI source adds limited-v12 on the existing OS matrix, its declared binary build
+and exact native/public/owner/sampler/Human/wire fixture filters. Muldrotha's
+native filter moves from V11 to V12, avoiding duplicate execution. Numeric
+fixtures remain in the existing complete current-mixed-model aggregate. The
+embedded V12 Python authority now selects Rust CI when edited alone. This is
+workflow wiring only, not observed build or runtime success.
+
+Latest composition includes published ed579609, including Chandra493 and the
+Standard Fellowship inline-effect fix. Strict Chandra refusal remains. The
+canonical Time Stop/Genesis child lists, including Liliana exactly once, are
+unchanged by the sampler follow-on. Additional actual SelectedPayment fixtures
+sample before each Bestow form/X/target/payment stage and compare a native clone
+with its genuine current counts, origins and original action index.
+
+Observed follow-on checks:139 Limited transport mocks,105 deck/metadata cases
+and6 frozen-target cases pass,250 total. Both canonical generators --check pass;
+pinned formatting, diff checks, CI matrix/filter checks and Bash syntax pass.
+Old private sampling-scope enum prefixes and old-scope branch truth tables are
+preserved, with an explicit Muldrotha-history refusal outside V71. Registry,
+frozen target, original sample bytes and rl.rs consumer source guards remain
+identical to ed579609. Rust source and all16 V71 fixture groups are still UNRUN.

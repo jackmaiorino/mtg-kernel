@@ -196,7 +196,7 @@ fn active_source(state: &GameState, player: PlayerId) -> Option<AbilitySourceCon
 /// An independently authorized foreign stashed spell may use the current
 /// controller's actual Tinybones on another turn as well. The stash issuer is
 /// deliberately absent: any current printed source grants the static ability.
-pub(super) fn mana_grant(
+pub(crate) fn mana_grant(
     state: &GameState,
     card: ObjectId,
     controller: PlayerId,
@@ -324,7 +324,7 @@ pub(super) fn foreign_adventure_finished(state: &mut GameState, item: &StackItem
     }
     let exiled = binding(state, item.source);
     let move_history_index = state.engine.event_history.iter().rposition(|e| {
-        matches!(e, CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Exile } if *object == item.source)
+        matches!(e, CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Exile, .. } if *object == item.source)
     }).expect("actual Adventure departure retained its zone event") as u64;
     push(
         state,
@@ -369,7 +369,7 @@ fn adventure_binding(
                 || source.zone_change_count.checked_add(1)
                     != Some(exiled.expected_zone_change_count)
                 || *move_history_index >= at
-                || !matches!(state.engine.event_history.get(*move_history_index as usize), Some(CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Exile }) if *object == source.source)
+                || !matches!(state.engine.event_history.get(*move_history_index as usize), Some(CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Exile, .. }) if *object == source.source)
             {
                 return Err("foreign Adventure changed its original cast/departure".into());
             }
@@ -797,7 +797,7 @@ pub(super) fn countered(state: &mut GameState, item: &StackItem) -> Result<(), S
     }
     Ok(())
 }
-pub(super) fn play_allowed(state: &GameState, card: ObjectId, actor: PlayerId) -> bool {
+pub(crate) fn play_allowed(state: &GameState, card: ObjectId, actor: PlayerId) -> bool {
     actor == state.active_player
         && state.objects.try_get(card).is_some_and(|o| {
             o.zone == Zone::Exile

@@ -542,11 +542,11 @@ fn capture(state: &GameState, index: u64) -> Result<(u64, &[EffectObjectBinding]
         if original[i].zone != Zone::Library
             || original[i].arena_id != old.object.0
             || original[i].zone_change_count != old.expected_zone_change_count
-            || original[i].owner != item.controller
-            || original[i].controller != item.controller
+            || original[i].owner != item.controller.into()
+            || original[i].controller != item.controller.into()
             || public[i].card_db_id != original[i].card_db_id
-            || public[i].owner != item.controller
-            || public[i].controller != item.controller
+            || public[i].owner != item.controller.into()
+            || public[i].controller != item.controller.into()
             || card_def::CARD_DEFS
                 .get(public[i].card_db_id as usize)
                 .is_none()

@@ -812,3 +812,6 @@ fn paid_stash_independent_permission_native_abort_rebinds_restore_and_own_turn_r
         validate_state(&restore(&s)).unwrap();
     }
 }
+
+#[path = "tinybones_public_v72_tests.rs"]
+mod public_foundation;

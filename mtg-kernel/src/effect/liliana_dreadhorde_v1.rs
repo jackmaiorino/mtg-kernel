@@ -893,7 +893,7 @@ fn stage(
         .iter()
         .filter(|b| !ordered.contains(b))
         .copied()
-        .chain(ordered)
+        .chain(ordered.iter().copied())
         .collect::<Vec<_>>();
     let input = state.engine.event_history.len() as u64;
     append(

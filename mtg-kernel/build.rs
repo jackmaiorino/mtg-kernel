@@ -1986,19 +1986,25 @@ fn main() {
             && c.engine_capability != EngineCapabilityJson::Full
             && !(env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some()
                 && !standard_magezero_fixtures()
-                && c.name == "Kykar Spirit Token"
                 && c.engine_capability == EngineCapabilityJson::Partial
                 && c.mana_cost.is_empty()
                 && c.mana_value == 0
-                && c.colors == ["W"]
                 && c.types == ["Creature"]
-                && c.subtypes == ["Spirit"]
                 && c.supertypes.is_empty()
-                && c.power == Some(1)
-                && c.toughness == Some(1)
-                && c.mechanics == ["flying"]
                 && !c.is_land
-                && c.produces_mana.is_empty())
+                && c.produces_mana.is_empty()
+                && ((c.name == "Kykar Spirit Token"
+                    && c.colors == ["W"]
+                    && c.subtypes == ["Spirit"]
+                    && c.power == Some(1)
+                    && c.toughness == Some(1)
+                    && c.mechanics == ["flying"])
+                    || (c.name == "Zombie Token"
+                        && c.colors == ["B"]
+                        && c.subtypes == ["Zombie"]
+                        && c.power == Some(2)
+                        && c.toughness == Some(2)
+                        && c.mechanics.is_empty())))
         {
             panic!(
                 "cards_v1.json: token {:?} must be explicitly full so CreateToken cannot materialize unsupported behavior",

@@ -9,6 +9,7 @@ enum SamplingScopeV68 {
     EndTurn,
     Call,
     GenesisWave,
+    Muldrotha,
 }
 fn conflicts(
     state: &GameState,
@@ -27,6 +28,9 @@ fn conflicts_in_scope(
         SamplingScopeV68::Call => super::effect_refs::op_conflicts_call_v62(state, pool, op),
         SamplingScopeV68::GenesisWave => {
             super::effect_refs::op_conflicts_genesis_wave_v69(state, pool, op)
+        }
+        SamplingScopeV68::Muldrotha => {
+            super::effect_refs::op_conflicts_muldrotha_v71(state, pool, op)
         }
         SamplingScopeV68::EndTurn => super::effect_refs::op_conflicts_end_turn_v68(state, pool, op),
         SamplingScopeV68::Legacy => super::effect_refs::op_conflicts(state, pool, op),
@@ -105,6 +109,9 @@ fn conflicts_in_scope(
         SamplingScopeV68::Call => super::effect_refs::conflicts_call_v62(state, pool, plan),
         SamplingScopeV68::GenesisWave => {
             super::effect_refs::conflicts_genesis_wave_v69(state, pool, plan)
+        }
+        SamplingScopeV68::Muldrotha => {
+            super::effect_refs::conflicts_muldrotha_v71(state, pool, plan)
         }
     } {
         return true;
@@ -372,6 +379,30 @@ pub(super) fn redeterminize_genesis_wave_v69(
         SamplingScopeV68::GenesisWave,
     )
 }
+pub(super) fn redeterminize_muldrotha_v71(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::muldrotha_observation_v71::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
+    // Entry checkpoints retain whole original worlds. V69's replay derivation
+    // cannot authenticate a V71 world, so this scope preserves that refusal.
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some()
+        || crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true)
+        || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true)
+    {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(
+        state,
+        actor,
+        seed,
+        None,
+        true,
+        SamplingScopeV68::Muldrotha,
+    )
+}
 fn current_unknown_slots(
     state: &GameState,
     actor: PlayerId,
@@ -479,9 +510,10 @@ fn redeterminize_with_library_plan_inner(
         }
         if match scope {
             SamplingScopeV68::Legacy => conflicts(state, &pool, plan),
-            SamplingScopeV68::EndTurn | SamplingScopeV68::Call | SamplingScopeV68::GenesisWave => {
-                conflicts_in_scope(state, &pool, plan, scope)
-            }
+            SamplingScopeV68::EndTurn
+            | SamplingScopeV68::Call
+            | SamplingScopeV68::GenesisWave
+            | SamplingScopeV68::Muldrotha => conflicts_in_scope(state, &pool, plan, scope),
         } {
             return Err(if classified {
                 Error::HiddenReferenceConflict

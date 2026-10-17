@@ -80,7 +80,7 @@ jobs:
             # also relevant because they determine which tests execute.
             # Other non-embedded python, docs, and markdown are irrelevant.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -221,6 +221,7 @@ jobs:
           - limited-v9
           - limited-v10
           - limited-v11
+          - limited-v12
           - limited-model
           - limited-model-1
           - limited-model-2
@@ -249,7 +250,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-v6"},{"os":"windows-2025","group":"limited-v7"},{"os":"windows-2025","group":"limited-v8"},{"os":"windows-2025","group":"limited-v9"},{"os":"windows-2025","group":"limited-v10"},{"os":"windows-2025","group":"limited-v11"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"limited-model-8"},{"os":"windows-2025","group":"limited-model-9"},{"os":"windows-2025","group":"limited-model-10"},{"os":"windows-2025","group":"limited-model-11"},{"os":"windows-2025","group":"limited-model-12"},{"os":"windows-2025","group":"limited-model-13"},{"os":"windows-2025","group":"limited-model-14"},{"os":"windows-2025","group":"limited-model-15"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-v6"},{"os":"windows-2025","group":"limited-v7"},{"os":"windows-2025","group":"limited-v8"},{"os":"windows-2025","group":"limited-v9"},{"os":"windows-2025","group":"limited-v10"},{"os":"windows-2025","group":"limited-v11"},{"os":"windows-2025","group":"limited-v12"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"limited-model-8"},{"os":"windows-2025","group":"limited-model-9"},{"os":"windows-2025","group":"limited-model-10"},{"os":"windows-2025","group":"limited-model-11"},{"os":"windows-2025","group":"limited-model-12"},{"os":"windows-2025","group":"limited-model-13"},{"os":"windows-2025","group":"limited-model-14"},{"os":"windows-2025","group":"limited-model-15"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -648,7 +649,7 @@ jobs:
         if: ${{ !cancelled() && matrix.group == 'limited-v11' }}
         run: cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_vivien_env_v11
 
-      - name: Validate Vivien V70, Muldrotha and native continuation prerequisites
+      - name: Validate Vivien V70 and native continuation prerequisites
         if: ${{ !cancelled() && matrix.group == 'limited-v11' }}
         run: |
           status=0
@@ -657,7 +658,6 @@ jobs:
             vivien_observation_v70:: \
             rl_session::vivien_v70:: \
             limited_vivien_session_v11:: \
-            engine::muldrotha_v1:: \
             effect::loot_v1:: \
             engine::ordinary_cleanup_discard_tests:: \
             snack_wide_life_v59:: \
@@ -669,6 +669,24 @@ jobs:
             engine::omniscience_cast_v1:: \
             engine::harvester_cast_reversal_v1_tests:: \
             drake_hatcher_v1::; do
+            python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --nocapture "$filter" || status=1
+          done
+          exit "$status"
+
+      - name: Build limited-v12 declared JSONL binary
+        if: ${{ !cancelled() && matrix.group == 'limited-v12' }}
+        run: cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_muldrotha_env_v12
+
+      - name: Validate Muldrotha V71 native, owner, sampled worlds and transports
+        if: ${{ !cancelled() && matrix.group == 'limited-v12' }}
+        run: |
+          status=0
+          for filter in \
+            engine::muldrotha_v1:: \
+            muldrotha_public_v71:: \
+            rl_session::muldrotha_v71:: \
+            human_bo3_v1::muldrotha_v71:: \
+            limited_muldrotha_session_v12::; do
             python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --nocapture "$filter" || status=1
           done
           exit "$status"
