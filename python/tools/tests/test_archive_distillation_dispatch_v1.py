@@ -312,7 +312,7 @@ class FileProtocol(Fixture):
         self.assertFalse((root/'prefix-w1').exists())
 
     def test_root_exit_zero_with_lingering_descendant_is_not_success(self):
-        self.script.write_text(FAKE_NATIVE+'\nimport subprocess\nsubprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"])\n')
+        self.script.write_text(FAKE_NATIVE+'\nimport subprocess\nsubprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"],creationflags=subprocess.CREATE_NO_WINDOW)\n')
         with self.assertRaisesRegex(ValueError,'descendants remain'):
             self.invoke('lingering',True)
         result=dispatch.read(self.artifacts/'lingering'/'result.json')
@@ -326,7 +326,7 @@ class FileProtocol(Fixture):
             guard=dispatch.Guard(self.plan,self.artifacts/'tree',True)
             try:
                 # Parent exits; descendant CPU remains in the job's accumulated accounting.
-                code='import subprocess,sys; p=subprocess.Popen([sys.executable,"-c","sum(range(300000)); import time; time.sleep(.1)"]); p.wait()'
+                code='import subprocess,sys; p=subprocess.Popen([sys.executable,"-c","sum(range(300000)); import time; time.sleep(.1)"],creationflags=subprocess.CREATE_NO_WINDOW); p.wait()'
                 with (self.root/'child.log').open('w') as log:
                     child=guard.spawn([sys.executable,'-c',code],log,log)
                     child.wait(timeout=10)

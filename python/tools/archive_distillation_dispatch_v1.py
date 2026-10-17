@@ -220,6 +220,229 @@ class Accounting(ctypes.Structure):
         (n, ctypes.c_ulong) for n in ("faults", "total", "active", "terminated")]
 
 
+class LaunchAccounting:
+    """Caller-owned, single-launch Windows job; excludes coordinator CPU.
+
+    Construct with the Guard's exact cores, pass to ``Guard.spawn``, then wait
+    on the returned Popen and call ``quiet``. Keep this object open until the
+    final sample is saved. ``close`` kills only this launch if still active;
+    such cleanup is never reported as a natural drain. Windows charges CPU
+    after job assignment; any startup CPU before assignment is unattributed
+    launch overhead. The coordinator is never assigned to this nested job.
+    ``seconds`` measures admission to observation, including pauses and drain;
+    use the returned quiet/drain sample as the completed-work wall endpoint.
+    """
+    def __init__(self, cores):
+        require(WINDOWS, "per-launch accounting requires Windows job objects")
+        require(cores and len(set(cores)) == len(cores)
+                and all(type(core) is int and 0 <= core < min(64, os.cpu_count() or 1) for core in cores),
+                "distinct valid launch accounting cores required")
+        self.cores = tuple(sorted(cores))
+        self.tree = slots.Tree(list(self.cores), "below_normal", contain_self=False)
+        self._lock = threading.RLock()
+        self._coordinator = os.getpid()
+        self._guard = None
+        self._used = self._in_flight = self._closed = self._closing = False
+        self._operation = None
+        self._natural = self._termination_requested = self._resumed = False
+        self._started = None
+        self._last = self._final = None
+        self._errors = []
+        self.pid = self.creation_time = self.launch_error = None
+
+    @property
+    def errors(self):
+        with self._lock:
+            return copy.deepcopy(self._errors)
+
+    @property
+    def last_sample(self):
+        with self._lock:
+            return copy.deepcopy(self._last)
+
+    @property
+    def final_sample(self):
+        with self._lock:
+            return copy.deepcopy(self._final)
+
+    def _error(self, phase, error):
+        with self._lock:
+            self._errors.append(dict(phase=phase, error=str(error), kind=type(error).__name__))
+
+    def sample(self):
+        with self._lock:
+            if self._closed:
+                require(self._final is not None, "launch accounting closed without a valid final sample")
+                return copy.deepcopy(self._final)
+            value = Accounting()
+            try:
+                require(slots._QueryInformationJobObject(self.tree.job, 1, ctypes.byref(value),
+                        ctypes.sizeof(value), None), "cannot query launch accounting: "+str(ctypes.get_last_error()))
+                require(value.user >= 0 and value.kernel >= 0, "invalid launch CPU counters")
+            except BaseException as error:
+                self._error("query", error)
+                raise
+            result = dict(schema="per-launch-cpu-accounting/v1", pid=self.pid, creation_time=self.creation_time,
+                user_100ns=value.user, kernel_100ns=value.kernel, cpu_100ns=value.user+value.kernel,
+                cpu_seconds=(value.user+value.kernel)/1e7, active_processes=value.active,
+                total_processes=value.total, terminated_processes=value.terminated,
+                seconds=0.0 if self._started is None else time.monotonic()-self._started,
+                natural_drain=self._natural, termination_requested=self._termination_requested,
+                used=self._used, closed=False)
+            self._last = result
+            return copy.deepcopy(result)
+
+    def _reserve(self, guard):
+        with self._lock:
+            require(os.getpid() == self._coordinator and not self._closed and not self._closing
+                    and not self._used and self._guard is None and not self._termination_requested
+                    and self._operation is None, "fresh open caller-owned launch accounting required")
+            require(self.cores == tuple(sorted(guard.plan["cpu_affinity"]))
+                    and self.tree.cores == list(self.cores) and self.tree.priority == "below_normal",
+                    "launch accounting must use Guard's exact cores and BelowNormal priority")
+            empty = self.sample()
+            require(empty["active_processes"] == empty["total_processes"] == 0, "launch accounting job is not empty")
+            self._guard, self._used, self._in_flight = guard, True, True
+            self._started = time.monotonic()
+
+    def _bind(self, child):
+        with self._lock:
+            self.pid = child.pid  # Retain the created PID even if identity lookup fails.
+            require(self._in_flight and not self._closed, "launch accounting is not admitting a child")
+            self.creation_time = slots.creation_time(child.pid)
+            require(self.creation_time is not None, "launch identity unavailable")
+            return self.creation_time
+
+    def _adopt(self):
+        with self._lock:
+            require(self._in_flight and not self._closed, "launch accounting is not admitting a child")
+            self.tree.adopt(self.pid, self.creation_time)
+
+    def _running(self):
+        with self._lock:
+            self._resumed, self._in_flight = True, False
+
+    def _failed(self, error):
+        with self._lock:
+            self.launch_error, self._in_flight = str(error), False
+            self._error("launch", error)
+
+    def _cleanup_child(self, child, error):
+        # Called outside Guard's transition/slot locks. A failed nested adopt
+        # can leave the root in Guard only, so kill that exact Popen as well.
+        for phase, action in (("root_kill", child.kill), ("job_drain", lambda: self._drain(5)),
+                              ("root_wait", lambda: child.wait(timeout=5))):
+            try:
+                action()
+            except BaseException as cleanup:
+                self._error(phase, cleanup)
+                error.add_note("per-launch "+phase+" cleanup failed: "+str(cleanup))
+
+    @staticmethod
+    def _timeout(timeout):
+        require(type(timeout) in (int, float) and 0 <= timeout <= 60, "bounded launch drain timeout required")
+
+    def quiet(self, timeout=1):
+        """Verify this launch drained naturally; peers need not be idle."""
+        self._timeout(timeout)
+        with self._lock:
+            require(not self._in_flight and self._resumed and not self._closed and self._operation is None,
+                    "running open launch accounting required")
+            self._operation = "quiet"
+            guard = self._guard
+        try:
+            until = time.monotonic()+timeout
+            while True:
+                guard.check()  # Never acquire Guard/slot locks while holding owner lock.
+                current = self.sample()
+                if current["active_processes"] == 0:
+                    break
+                require(time.monotonic() < until, "launch descendants remain after root exit")
+                time.sleep(.01)
+            with self._lock:
+                require(not self._termination_requested and self.launch_error is None, "launch required termination or failed")
+                self._natural = True
+                self._final = self.sample()
+                return copy.deepcopy(self._final)
+        except BaseException as error:
+            self._error("quiet", error)
+            raise
+        finally:
+            with self._lock:
+                self._operation = None
+
+    def _drain(self, timeout):
+        self._timeout(timeout)
+        with self._lock:
+            require(not self._closed, "launch accounting is closed")
+            self._termination_requested, self._natural = True, False
+            require(slots._TerminateJobObject(self.tree.job, 1), "cannot terminate owned launch job")
+        until = time.monotonic()+timeout
+        while True:
+            current = self.sample()
+            if current["active_processes"] == 0:
+                with self._lock:
+                    self._final = current
+                return current
+            require(time.monotonic() < until, "owned launch job did not terminate")
+            time.sleep(.01)
+
+    def terminate_and_drain(self, timeout=5):
+        with self._lock:
+            require(not self._in_flight and self._operation is None, "launch admission or operation is in flight")
+            self._operation = "terminate"
+        try:
+            return self._drain(timeout)
+        except BaseException as error:
+            self._error("terminate_and_drain", error)
+            raise
+        finally:
+            with self._lock:
+                self._operation = None
+
+    def close(self):
+        with self._lock:
+            if self._closed:
+                return self.sample()
+            require(not self._in_flight and self._operation is None, "launch admission or operation is in flight")
+            self._closing = True
+            self._operation = "close"
+        failure = None
+        try:
+            current = self.sample()
+            final = self._drain(5) if current["active_processes"] else current
+            with self._lock:
+                self._final = final
+        except BaseException as error:
+            failure = error
+            self._error("close", error)
+            with self._lock:
+                self._final = None
+                self._termination_requested, self._natural = True, False
+        finally:
+            with self._lock:
+                # KILL_ON_JOB_CLOSE is a last-resort cleanup if querying failed.
+                try:
+                    closed = bool(slots._CloseHandle(self.tree.job))
+                    require(closed, "cannot close owned launch job")
+                except BaseException as cleanup:
+                    closed = False
+                    self._error("close_handle", cleanup)
+                    if failure is None:
+                        failure = cleanup
+                    else:
+                        failure.add_note("per-launch close_handle cleanup failed: "+str(cleanup))
+                self._closed, self._closing = bool(closed), False
+                self._operation = None
+                if closed:
+                    self.tree.job = None
+                    if self._final is not None:
+                        self._final["closed"] = True
+        if failure is not None:
+            raise failure
+        return self.sample()
+
+
 class Guard:
     """One contained job accumulates CPU for all descendants, including exited ones.
 
@@ -331,40 +554,71 @@ class Guard:
                 self.tree.kill()
                 return
 
-    def spawn(self, command, stdout, stderr):
-        if self.pause_on_reservation:
-            return self._spawn_pausing(command, stdout, stderr)
+    def spawn(self, command, stdout, stderr, *, accounting=None):
+        if accounting is not None:
+            require(isinstance(accounting, LaunchAccounting), "LaunchAccounting owner required")
+            accounting._reserve(self)  # Reject reuse/core mismatch before Popen.
+        try:
+            if self.pause_on_reservation:
+                return self._spawn_pausing(command, stdout, stderr, accounting=accounting)
+            return self._spawn_direct(command, stdout, stderr, accounting=accounting)
+        except BaseException as error:
+            if accounting is not None:
+                accounting._failed(error)
+            raise
+
+    def _adopt_launch(self, child, accounting):
+        creation = slots.creation_time(child.pid) if accounting is None else accounting._bind(child)
+        self.tree.adopt(child.pid, creation)
+        if accounting is not None:
+            accounting._adopt()
+
+    def _spawn_direct(self, command, stdout, stderr, *, accounting=None):
         self.check()
         # Assign while suspended so no native work or descendant can escape containment.
         child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS | 4,
             env=dict(os.environ, CUDA_VISIBLE_DEVICES="", VSCMD_SKIP_SENDTELEMETRY="1"))
         try:
-            self.tree.adopt(child.pid, slots.creation_time(child.pid))
+            self._adopt_launch(child, accounting)
             require(slots._NtResumeProcess(int(child._handle)) >= 0, "cannot resume contained native child")
-        except BaseException:
-            child.kill(); child.wait()
+            if accounting is not None:
+                accounting._running()
+        except BaseException as error:
+            if accounting is None:
+                child.kill(); child.wait()
+            else:
+                accounting._cleanup_child(child, error)
             raise
         return child
 
-    def _spawn_pausing(self, command, stdout, stderr):
+    def _spawn_pausing(self, command, stdout, stderr, *, accounting=None):
         while True:
             self.check()
+            failure = None
             with self.transition_lock, slots.Mutex():
                 if not self._pause_resources():
                     child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
                         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS | 4,
                         env=dict(os.environ, CUDA_VISIBLE_DEVICES="", VSCMD_SKIP_SENDTELEMETRY="1"))
                     try:
-                        self.tree.adopt(child.pid, slots.creation_time(child.pid))
+                        self._adopt_launch(child, accounting)
                         self._pause_resources(allow_resume=True)
                         # Remove CREATE_SUSPENDED's initial count only. A new
                         # conflict has already added its own tracked pause.
                         require(slots._NtResumeProcess(int(child._handle)) >= 0, "cannot resume contained native child")
-                    except BaseException:
-                        child.kill(); child.wait()
-                        raise
-                    return child
+                        if accounting is not None:
+                            accounting._running()
+                    except BaseException as error:
+                        if accounting is None:
+                            child.kill(); child.wait()
+                            raise
+                        failure = error
+                    if failure is None:
+                        return child
+            if failure is not None:
+                accounting._cleanup_child(child, failure)
+                raise failure
             time.sleep(.05)
 
     def close(self):
