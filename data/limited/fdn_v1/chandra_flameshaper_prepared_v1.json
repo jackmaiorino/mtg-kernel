@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "admission": "native_partial_source_only",
+  "source_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "registration_dependency": "Actual Tinybones490 plus Liliana491/Zombie492 b5ebbe67080f023513899799f257ec4ab891772c",
+  "card_db_id": 493,
+  "printing": {
+    "name": "Chandra, Flameshaper",
+    "set": "FDN",
+    "collector_number": "81",
+    "scryfall_id": "a22d21ec-0fb3-4574-a803-6442ec13167e",
+    "oracle_id": "818f908c-9af6-4edc-bb0e-193bc830e2e4",
+    "rarity": "mythic"
+  },
+  "cards": [
+    {
+      "name": "Chandra, Flameshaper",
+      "engine_capability": "partial",
+      "mana_cost": "{5}{R}{R}",
+      "mana_value": 7,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Chandra"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_chandra_flameshaper_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "native_loyalty_plus_two_red_three_top_three_choose_one_play_this_turn",
+        "native_loyalty_copy_creature_copiable_haste_end_step_sacrifice",
+        "native_prepaid_divide_eight_zero_to_eight_creature_planeswalker_targets"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ChandraFlameshaper.java",
+      "is_token": false
+    }
+  ],
+  "qualification": "Native source and eleven genuine paid/native fixture groups only. Rust uncompiled and unrun. No Full, consumer, model, sampler, Human or transport admission."
+}

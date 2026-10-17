@@ -1592,6 +1592,14 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("../../../python/tools/limited_muldrotha_session_v12.py"),
                 ),
                 (
+                    "mtg-kernel/src/effect/chandra_flameshaper_v1.rs",
+                    include_str!("../effect/chandra_flameshaper_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/crystal_prevention_v1.rs",
+                    include_str!("../effect/crystal_prevention_v1.rs"),
+                ),
+                (
                     "mtg-kernel/src/rules_meaning_tinybones_v72.rs",
                     include_str!("../rules_meaning_tinybones_v72.rs"),
                 ),
