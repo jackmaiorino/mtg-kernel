@@ -221,6 +221,64 @@ fn candidate(b: EffectObjectBinding) -> EffectTargetCandidate {
         expected_object: Some(b),
     }
 }
+// The journal's original future library is a factual input, not a current
+// instruction operand. Only revealed slots can affect this spell's remaining
+// choices. Keep their exact positions/incarnations and the complete cardinality;
+// unknown future slots remain free current hidden input for determinization.
+fn same_revealed_layout(
+    expected: &[EffectObjectBinding],
+    actual: &[EffectObjectBinding],
+    revealed: &[EffectObjectBinding],
+) -> bool {
+    expected.len() == actual.len()
+        && actual
+            .iter()
+            .map(|b| b.object)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == actual.len()
+        && expected.iter().zip(actual).all(|(before, now)| {
+            before.expected_zone == Zone::Library
+                && now.expected_zone == Zone::Library
+                && (!(revealed.contains(before) || revealed.contains(now)) || before == now)
+        })
+}
+fn current_library_matches(
+    state: &GameState,
+    player: PlayerId,
+    expected: &[EffectObjectBinding],
+    revealed: &[EffectObjectBinding],
+) -> bool {
+    let actual = bind_library_exact(state, player);
+    same_revealed_layout(expected, &actual, revealed)
+        && state
+            .known_library_cards(player, player)
+            .iter()
+            .all(|known| {
+                let i = known.position as usize;
+                expected
+                    .get(i)
+                    .zip(actual.get(i))
+                    .is_some_and(|(before, now)| before == now)
+            })
+        && actual.iter().all(|b| {
+            state.objects.try_get(b.object).is_some_and(|o| {
+                o.owner == player
+                    && o.zone == Zone::Library
+                    && o.zone_change_count == b.expected_zone_change_count
+            })
+        })
+}
+/// Only active public operands select exclusions. Immutable historical future
+/// libraries never filter the current whole-object permutation.
+pub(crate) fn sampler_bindings_v69(choice: &ChoiceV1) -> Vec<EffectObjectBinding> {
+    choice
+        .prefix
+        .iter()
+        .copied()
+        .chain(choice.attachments.iter().map(|(_, host)| *host))
+        .collect()
+}
 fn validate_data(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> Result<(), String> {
     validate_public_snapshots(c, p.ctx.x_value)?;
     row_context(state, p)?;
@@ -263,7 +321,7 @@ fn validate_data(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> Res
                 *entry_start,
                 *entry_end,
             )?;
-            if bind_library_exact(state, player) != *remaining_library
+            if !current_library_matches(state, player, remaining_library, &c.prefix)
                 || canonical_subset(&c.prefix, cards)? != *cards
                 || *cards
                     != c.prefix
@@ -276,7 +334,7 @@ fn validate_data(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> Res
             }
         }
         _ => {
-            if bind_library_exact(state, player) != c.original_library {
+            if !current_library_matches(state, player, &c.original_library, &c.prefix) {
                 return Err(
                     "Genesis Wave original library changed before simultaneous entry".into(),
                 );
@@ -428,13 +486,15 @@ fn validate_entry_record(
         remaining_library, ..
     } = &c.phase
     {
-        if *remaining_library
-            != c.original_library
+        if !same_revealed_layout(
+            &c.original_library
                 .iter()
                 .copied()
                 .filter(|b| !entering.contains(b))
-                .collect::<Vec<_>>()
-        {
+                .collect::<Vec<_>>(),
+            remaining_library,
+            &c.prefix,
+        ) {
             return Err("Genesis Wave entry changed an unrelated library member".into());
         }
     }
@@ -1352,6 +1412,26 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                 (
                     "mtg-kernel/src/cast_identity_v1.rs",
                     include_str!("../cast_identity_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/flat_action_v4.rs",
+                    include_str!("../rl_session/flat_action_v4.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/flat_action_v4/search_state.rs",
+                    include_str!("../rl_session/flat_action_v4/search_state.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/flat_action_v4/search_state/sampler.rs",
+                    include_str!("../rl_session/flat_action_v4/search_state/sampler.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/flat_action_v4/search_state/effect_refs.rs",
+                    include_str!("../rl_session/flat_action_v4/search_state/effect_refs.rs"),
+                ),
+                (
+                    "mtg-kernel/src/linked_aura_operation_v1/genesis_current_slots_v69.rs",
+                    include_str!("../linked_aura_operation_v1/genesis_current_slots_v69.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());

@@ -546,6 +546,43 @@ impl GenesisWaveSessionV69 {
         }
         Ok(fresh)
     }
+    /// Sample only current unknown slots, preserving the complete issued Genesis Wave
+    /// decision and every factual native journal. The clone owns a fresh lineage.
+    pub fn sampled_clone_v69(
+        &self,
+        decision: &GenesisWaveDecisionV69,
+        seed: u64,
+    ) -> Result<Self, RlContractError> {
+        let before = self.validated_current(decision)?;
+        let actor = self
+            .inner
+            .current
+            .as_ref()
+            .ok_or_else(|| RlContractError("V69 sampling has no current decision".into()))?
+            .actor;
+        let mut inner = self.inner.clone();
+        super::flat_action_v4::redeterminize_genesis_wave_v69(&mut inner.state, actor, seed)
+            .map_err(|error| RlContractError(format!("V69 current-slot sampling:{error:?}")))?;
+        let mut current = inner
+            .current
+            .take()
+            .ok_or_else(|| RlContractError("V69 sampled current decision absent".into()))?;
+        prepare_current(&inner, &mut current).map_err(binding_error)?;
+        inner.flat_action_cache_spare = None;
+        inner.flat_action_cache_spare_v2 = None;
+        inner.current = Some(current);
+        let sampled = Self {
+            inner,
+            owner: std::sync::Arc::new(()),
+            generation: self.generation,
+        };
+        if sampled.fresh_binding()? != before {
+            return Err(RlContractError(
+                "V69 sampled complete public/native binding changed".into(),
+            ));
+        }
+        Ok(sampled)
+    }
     pub fn validate_decision_v69(
         &self,
         decision: &GenesisWaveDecisionV69,
@@ -611,3 +648,30 @@ impl GenesisWaveSessionV69 {
     not(feature = "standard-magezero-fixtures")
 ))]
 pub(crate) mod tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod sampler_tests;
+
+/// Disposable native entry replay input only; no owner/capability is created.
+pub(crate) fn derive_entry_hidden_input_v69(
+    original: &GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<GameState, String> {
+    let mut derived = original.clone();
+    super::flat_action_v4::redeterminize_genesis_wave_v69(&mut derived, actor, seed)
+        .map_err(|e| format!("Genesis current-slot input:{e:?}"))?;
+    crate::effect::validate_pending_effect_choice(&derived)?;
+    Ok(derived)
+}
+pub(crate) fn same_entry_hidden_pool_v69(
+    original: &GameState,
+    current: &GameState,
+    actor: PlayerId,
+) -> bool {
+    super::flat_action_v4::same_current_unknown_pool_v69(original, current, actor)
+}

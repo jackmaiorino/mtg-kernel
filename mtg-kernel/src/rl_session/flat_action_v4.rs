@@ -102,6 +102,20 @@ pub(super) fn redeterminize_call_v62(
 ) -> Result<(), search_state::V4SearchStateErrorV1> {
     search_state::redeterminize_call_v62(state, actor, seed)
 }
+pub(super) fn same_current_unknown_pool_v69(
+    before: &crate::state::GameState,
+    current: &crate::state::GameState,
+    actor: crate::ids::PlayerId,
+) -> bool {
+    search_state::same_current_unknown_pool_v69(before, current, actor)
+}
+pub(super) fn redeterminize_genesis_wave_v69(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_genesis_wave_v69(state, actor, seed)
+}
 pub(super) fn redeterminize_end_turn_v68(
     state: &mut crate::state::GameState,
     actor: crate::ids::PlayerId,
