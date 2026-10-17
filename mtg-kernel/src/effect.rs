@@ -10432,6 +10432,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::garruks_uprising_v1::validate_state(state)?;
     crate::arahbo_v1::validate_state(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
+    validate_electroduplicate_live_stack_v1(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
     crate::cerberus_capture_v1::validate_state(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
@@ -27951,6 +27952,23 @@ fn electroduplicate_definition_v1(id: u16) -> bool {
         })
 }
 
+fn validate_electroduplicate_live_stack_v1(state: &GameState) -> Result<(), String> {
+    for item in &state.stack {
+        // Mutable row kind/flags cannot hide a definition-owned spell.
+        if state
+            .objects
+            .try_get(item.source)
+            .is_some_and(|source| electroduplicate_definition_v1(source.card_def))
+            || item
+                .v4
+                .source_contract
+                .is_some_and(|source| electroduplicate_definition_v1(source.card_def))
+        {
+            crate::engine::validated_stack_item_target_spec(item, state)?;
+        }
+    }
+    Ok(())
+}
 fn electroduplicate_item_v1(state: &GameState, item: &StackItem) -> bool {
     event::copied_token_item_selected_v1(state, item)
         || item.kind == StackItemKind::Spell
