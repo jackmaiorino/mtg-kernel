@@ -77,6 +77,9 @@ impl Owner {
             | Source::GenesisWaveV69 => {
                 unreachable!("V61 uses its separate typed-candidate owner fixture")
             }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
+            }
         }
     }
     fn current(&self) -> FastActorResponseV1 {
@@ -173,6 +176,9 @@ impl Harness {
             | Source::GenesisWaveV69 => {
                 unreachable!("V61 uses its separate typed-candidate owner fixture")
             }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
+            }
         };
         Self {
             source,
@@ -210,6 +216,9 @@ impl Harness {
             | Source::EndTurnV68
             | Source::GenesisWaveV69 => {
                 unreachable!("V61 uses its separate typed-candidate owner fixture")
+            }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
             }
         }
     }
@@ -295,6 +304,9 @@ impl Harness {
             | Source::EndTurnV68
             | Source::GenesisWaveV69 => {
                 unreachable!("V61 uses its separate typed-candidate owner fixture")
+            }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
             }
         };
         (

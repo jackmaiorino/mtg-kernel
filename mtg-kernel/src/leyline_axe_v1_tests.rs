@@ -1,7 +1,7 @@
 //! Actual native Leyline482. Library/land/host operands are labelled setup;
 //! opening draws, London choices, casting, equip and response payments are native.
 use super::*;
-use crate::{engine, engine::Target, policy_observation_v6::tests::put};
+use crate::{engine, policy_observation_v6::tests::put, state::Target};
 
 const AXE: &str = "Leyline Axe";
 fn id(name: &str) -> u16 {

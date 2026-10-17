@@ -614,13 +614,12 @@ fn pile_choice(state: &GameState, entry: u64, down: u8, up: u8) -> Result<Choice
     }
     Ok(c.clone())
 }
-pub(crate) fn pile_answer(
+pub(crate) fn prepare_pile_answer(
     state: &GameState,
-    p: &mut EffectContinuation,
+    p: &EffectContinuation,
     down: u8,
     up: u8,
-    value: bool,
-) -> Result<(), String> {
+) -> Result<ChoiceV1, String> {
     let Some(EffectOp::CuratorDestiniesV1 {
         entry_history_index: entry,
     }) = p.resolving_item.inline_effect
@@ -629,7 +628,7 @@ pub(crate) fn pile_answer(
     };
     let c = pile_choice(state, entry, down, up)?;
     validate_choice(state, p, &c)?;
-    answer(p, c, AnswerV1::Pile(value))
+    Ok(c)
 }
 fn stage(state: &mut GameState, p: &mut EffectContinuation, c: ChoiceV1) -> Result<bool, String> {
     validate_choice_data(state, p, &c)?;
