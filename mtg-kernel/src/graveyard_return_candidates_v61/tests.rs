@@ -333,8 +333,28 @@ fn paid_search(actor: PlayerId, reversed: bool) -> GameState {
         matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
     );
     engine::step(&mut state, Action::ActivateAbility(ent, 0)).unwrap();
+    // Activation first stages its original source. The native driver then
+    // pays forestcycling and publishes the ability before returning priority.
+    assert!(state
+        .engine
+        .pending_activation
+        .as_ref()
+        .is_some_and(|p| p.source == ent && p.ability_index == 0));
+    assert_eq!(state.objects.get(ent).zone, Zone::Hand);
+    assert!(
+        matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+    );
+    assert!(state.engine.pending_activation.is_none());
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
     assert_eq!(state.objects.get(ent).zone, Zone::Graveyard);
+    let published = state.stack.last().unwrap();
+    assert_eq!(
+        published.kind,
+        crate::state::StackItemKind::ActivatedAbility
+    );
+    assert_eq!(published.source, ent);
+    assert_eq!(published.v4.activated_ability_index, Some(0));
+    assert_eq!(published.discarded, vec![ent]);
     for _ in 0..24 {
         let d = engine::advance_until_decision(&mut state);
         if matches!(d, Decision::ChooseEffectTargets { .. }) {

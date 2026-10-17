@@ -151,6 +151,28 @@ fn cast(
         owner,
         |a| matches!(a,A::CastSpell{source:row,..}if row.arena_id==source.0),
     );
+    let modes = owner.decision_v61().unwrap();
+    if modes
+        .actions()
+        .iter()
+        .any(|a| matches!(a, A::ChooseSpellMode { .. }))
+    {
+        // Employment's real Treasure makes both Abrade modes available.
+        // Choose the actual creature-damage mode before the original target.
+        assert_eq!(
+            card_def::CARD_DEFS[usize::from(world(owner).objects.get(source).card_def)].name,
+            "Abrade"
+        );
+        assert_eq!(modes.actions().len(), 2);
+        for mode_index in 0..2 {
+            assert!(modes.actions().iter().any(|a| matches!(a,
+                A::ChooseSpellMode { actor: seat, source: row, mode_index: mode, mode_count: 2 }
+                    if *seat == actor.into() && row.arena_id == source.0 && *mode == mode_index)));
+        }
+        act(owner, |a| {
+            matches!(a, A::ChooseSpellMode { mode_index: 0, .. })
+        });
+    }
     if let Some(target) = target {
         act(
             owner,
@@ -226,7 +248,7 @@ fn genuine_paid_alesha_attack_target_response_removal_optional_accept_decline_an
                 let alesha = put(&mut state, actor, "Alesha, Who Laughs at Fate", Zone::Hand);
                 let target = put(&mut state, actor, "Vampire Nighthawk", Zone::Hand);
                 let abrade = put(&mut state, actor, "Abrade", Zone::Hand);
-                let murder = put(&mut state, actor.opponent(), "Murder", Zone::Hand);
+                let downfall = put(&mut state, actor.opponent(), "Hero's Downfall", Zone::Hand);
                 let mut owner = own(state);
                 cast(&mut owner, alesha, None, 3);
                 drain(&mut owner);
@@ -260,7 +282,7 @@ fn genuine_paid_alesha_attack_target_response_removal_optional_accept_decline_an
                 );
                 assert!(world(&owner).stack.iter().any(|item| item.source == alesha));
                 if remove {
-                    cast(&mut owner, murder, Some(alesha), 3);
+                    cast(&mut owner, downfall, Some(alesha), 3);
                 }
                 for _ in 0..100 {
                     if owner.decision_v61().unwrap().actions().iter().any(|a|matches!(a,A::ChooseEffectBoolean{source,..}if source.arena_id==alesha.0)){break;}
