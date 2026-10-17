@@ -446,7 +446,7 @@ fn validate_entry_record(
             }
             _ => None,
         })
-        .last()
+        .next_back()
         .ok_or("Genesis Wave entry has no earlier native progress")?;
     if start <= previous
         || state.engine.event_history.len() != end
@@ -1698,8 +1698,10 @@ pub(crate) fn public_facts_v69(
         .filter(|p| pending_selected(state, p))
     {
         validate(state, p)?;
-        if !ids.contains_key(&p.resolving_item.v4.stack_item_id) {
-            ids.insert(p.resolving_item.v4.stack_item_id, rows.len());
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            ids.entry(p.resolving_item.v4.stack_item_id)
+        {
+            entry.insert(rows.len());
             rows.push((&p.resolving_item, None, false, None));
         }
     }

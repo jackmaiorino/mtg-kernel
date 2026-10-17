@@ -163,12 +163,13 @@ pub struct CaptureV1 {
 }
 // A private pre-materialization wave roster. Merely setting is_combat on a
 // proposal cannot bind it: only the engine's actual wave-finish callback can.
+type WaveSourceV1 = (
+    crate::state::AbilitySourceContractV4,
+    Vec<crate::state::AbilitySourceContractV4>,
+    Vec<(Target, i32)>,
+);
 pub(crate) struct WaveV1 {
-    sources: Vec<(
-        crate::state::AbilitySourceContractV4,
-        Vec<crate::state::AbilitySourceContractV4>,
-        Vec<(Target, i32)>,
-    )>,
+    sources: Vec<WaveSourceV1>,
 }
 pub(crate) fn capture_wave(
     state: &GameState,
@@ -183,21 +184,17 @@ pub(crate) fn capture_wave(
     let observers = state
         .objects
         .iter()
-        .filter_map(|(id, o)| {
-            (o.zone == Zone::Battlefield
+        .filter(|&(id, o)| {
+            o.zone == Zone::Battlefield
                 && o.controller == state.active_player
                 && o.v4.face_down_v1.is_none()
                 && o.v4.face_index == 0
                 && definition(o.card_def)
-                && crate::continuous_characteristics_v1::printed_abilities_active(state, id))
-            .then(|| crate::state::AbilitySourceContractV4::capture(state, id))
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
         })
+        .map(|(id, _)| crate::state::AbilitySourceContractV4::capture(state, id))
         .collect::<Vec<_>>();
-    let mut sources: Vec<(
-        crate::state::AbilitySourceContractV4,
-        Vec<crate::state::AbilitySourceContractV4>,
-        Vec<(Target, i32)>,
-    )> = vec![];
+    let mut sources: Vec<WaveSourceV1> = vec![];
     if observers.is_empty() {
         return Ok(WaveV1 { sources });
     }
