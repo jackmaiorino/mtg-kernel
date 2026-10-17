@@ -108,12 +108,24 @@ fn taps(owner: &GraveyardReturnSession, actor: PlayerId) -> usize {
         })
         .count()
 }
-fn cast(owner: &mut GraveyardReturnSession, actor: PlayerId, source: ObjectId, mana: usize) {
+fn cast(
+    owner: &mut GraveyardReturnSession,
+    actor: PlayerId,
+    source: ObjectId,
+    target: Option<ObjectId>,
+    mana: usize,
+) {
     let before = taps(owner, actor);
     act(
         owner,
         |a| matches!(a, A::CastSpell { source: row, .. } if row.arena_id == source.0),
     );
+    if let Some(target) = target {
+        act(
+            owner,
+            |a| matches!(a, A::ChooseTarget { target: TargetRefV1::Object { object }, .. } if object.arena_id == target.0),
+        );
+    }
     let state = owner.fixture_state();
     assert!(state.engine.pending_cast.is_none());
     assert_eq!(state.objects.get(source).zone, Zone::Stack);
@@ -136,13 +148,13 @@ fn paid_both_printings_cast_entry_complete_rules_and_finite_numeric_native_parit
             crate::rules_meaning_graveyard_return_v61::validate(meaning).unwrap();
             assert!(meaning.ordered_rules.len() >= 3);
         }
-        cast(&mut owner, actor, alesha, 3);
+        cast(&mut owner, actor, alesha, None, 3);
         drain(&mut owner);
         assert_eq!(
             owner.fixture_state().objects.get(alesha).zone,
             Zone::Battlefield
         );
-        cast(&mut owner, actor, familiar, 3);
+        cast(&mut owner, actor, familiar, None, 3);
         assert_eq!(
             owner.fixture_state().objects.get(familiar).counters.revival,
             0
@@ -173,7 +185,7 @@ fn paid_both_printings_cast_entry_complete_rules_and_finite_numeric_native_parit
 fn paid_alesha_original_raid_target_costless_accept_decline_and_numeric_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for accept in [false, true] {
-            let (state, _alesha, target) = native::raid_ready(actor);
+            let (state, _alesha, target) = native::raid_ready_with_kill(actor, "Lightning Bolt");
             let mut owner = own(state);
             act(
                 &mut owner,
@@ -242,9 +254,9 @@ fn paid_familiar_death_original_schedule_and_next_endstep_numeric_replay_both_se
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = native::ready(actor);
         let familiar = native::paid(&mut state, actor, "Nine-Lives Familiar", None);
-        let breath = put(&mut state, actor, "Breath Weapon", Zone::Hand);
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         let mut owner = own(state);
-        cast(&mut owner, actor, breath, 3);
+        cast(&mut owner, actor, bolt, Some(familiar), 1);
         drain(&mut owner);
         assert_eq!(
             owner.fixture_state().objects.get(familiar).zone,
