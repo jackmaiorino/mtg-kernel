@@ -389,6 +389,9 @@ pub fn feature_identity() -> String {
             include_str!("effect/chandra_flameshaper_public_v74.rs"),
             include_str!("effect/chandra_flameshaper_v1.rs"),
             include_str!("rules_meaning_chandra_v74.rs"),
+            include_str!("rl_session/flat_action_v4.rs"),
+            include_str!("rl_session/flat_action_v4/search_state.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

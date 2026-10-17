@@ -1489,6 +1489,92 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     Ok(())
 }
+/// The current-slot sampler never relocates a physical card named by factual
+/// Tinybones custody, even when that older incarnation is no longer current.
+/// This is a conservative refusal, not a hidden-identity placement constraint.
+pub(crate) fn sampler_conflicts_v72(state: &GameState, pool: &[ObjectId]) -> Result<bool, String> {
+    validate_state(state)?;
+    let raw = |id: ObjectId| pool.contains(&id);
+    let ability =
+        |a: AbilitySourceContractV4| raw(a.source) || a.attached_to.is_some_and(|r| raw(r.object));
+    let source = |s: StackSourceContractV4| {
+        raw(s.source)
+            || s.spell_copy_origin.is_some_and(|o| raw(o.parent))
+            || s.finalized_cast_binding.is_some_and(|b| {
+                b.chosen_creature_cost.is_some_and(|r| raw(r.object))
+                    || b.mandatory_additional_cost.is_some()
+            })
+    };
+    let stack = |s: &StackItem| {
+        raw(s.source)
+            || s.targets
+                .iter()
+                .any(|t| matches!(t,Target::Object(id)if raw(*id)))
+            || s.v4.target_contracts.iter().any(|t| match t {
+                crate::state::StackTargetContractV4::Player(_) => false,
+                crate::state::StackTargetContractV4::Object { object, .. } => raw(*object),
+                crate::state::StackTargetContractV4::StackItem { source, .. } => raw(*source),
+            })
+            || s.discarded.iter().any(|id| raw(*id))
+            || s.v4.paid_cost_refs.iter().any(|r| raw(r.object))
+            || s.v4.ability_source_contract.is_some_and(ability)
+            || s.v4.granted_by.is_some_and(ability)
+            || s.v4.source_contract.is_some_and(source)
+            || s.v4.hidden_ability_source.is_some_and(|r| raw(r.object))
+            || s.v4.madness_source_contract.is_some_and(|r| raw(r.source))
+            || s.v4
+                .cauldron_grant
+                .0
+                .as_ref()
+                .is_some_and(|r| ability(r.host) || ability(r.donor))
+    };
+    Ok(state.engine.event_history.iter().any(|e| {
+        let CommittedEvent::TinybonesV72 { journal } = e else {
+            return false;
+        };
+        match journal.as_ref() {
+            JournalV72::Discarded(d) => {
+                ability(d.card) || d.observers.iter().any(|a| ability(*a)) || raw(d.outcome.object)
+            }
+            JournalV72::Published { item, .. } => stack(item),
+            JournalV72::Stashed { exiled, .. } => raw(exiled.object),
+            JournalV72::Finished { .. } => false,
+            JournalV72::Play(p) => ability(p.card) || ability(p.source),
+            JournalV72::Announced { source: s, .. } | JournalV72::Paid { source: s, .. } => {
+                source(*s)
+            }
+            JournalV72::Land { source: s, .. } => ability(*s),
+            JournalV72::Aborted { returned, .. } => raw(returned.object),
+            JournalV72::ForeignAdventure {
+                original, exiled, ..
+            } => stack(original) || raw(exiled.object),
+            JournalV72::AdventureAborted {
+                original, returned, ..
+            }
+            | JournalV72::IndependentStashAborted {
+                original, returned, ..
+            } => source(*original) || raw(returned.object),
+        }
+    }))
+}
+/// Bind a suspended stash leaf to its original native discard and observer.
+pub(crate) fn sampler_stash_conflicts_v72(
+    state: &GameState,
+    pool: &[ObjectId],
+    index: u64,
+    observer: u32,
+) -> Result<bool, String> {
+    let d = discard(state, index)?;
+    let source = d
+        .observers
+        .get(observer as usize)
+        .ok_or("Tinybones sampler observer absent")?;
+    Ok(pool.contains(&d.card.source)
+        || pool.contains(&d.outcome.object)
+        || pool.contains(&source.source)
+        || source.attached_to.is_some_and(|r| pool.contains(&r.object)))
+}
+
 pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
     if state.engine.event_history.has_any(&[EventKindV1::TinybonesV72]) || state.objects.iter().any(|(id,o)|crate::optional_trigger_public_v1::reference(state,id,viewer).is_some_and(|r|matches!(r.identity,crate::optional_trigger_public_v1::IdentityV1::Known{card_id}if definition(card_id))) || viewer.is_some_and(|v|o.v4.face_down_v1.is_some_and(|f|f.lookers&(1<<v.index())!=0)&&definition(o.card_def))) {Err("Tinybones requires a distinct complete V72 consumer".into())}else{Ok(())}
 }

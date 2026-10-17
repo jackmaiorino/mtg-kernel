@@ -30,6 +30,13 @@ pub(super) fn redeterminize_muldrotha_v71(
 ) -> Result<(), V4SearchStateErrorV1> {
     sampler::redeterminize_muldrotha_v71(state, actor, seed)
 }
+pub(super) fn redeterminize_tinybones_v72(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_tinybones_v72(state, actor, seed)
+}
 pub(super) fn redeterminize_genesis_wave_v69(
     state: &mut GameState,
     actor: PlayerId,

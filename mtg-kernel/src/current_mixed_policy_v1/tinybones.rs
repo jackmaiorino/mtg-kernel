@@ -95,6 +95,32 @@ impl TinybonesSession {
         .map_err(|e| Error::Projection(format!("{e:?}")))
     }
 
+    /// A derived numeric owner always has a fresh lineage and freshly encodes
+    /// the genuine sampled backend. Original decisions never authorize it.
+    pub fn sampled_clone(&self, decision: &TinybonesDecision, seed: u64) -> Result<Self> {
+        if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
+            return Err(Error::StaleBinding);
+        }
+        self.inner
+            .validate_decision_v72(&decision.backend)
+            .map_err(|_| Error::StaleBinding)?;
+        if packet_from_current(
+            decision.backend.candidates_v72(),
+            decision.backend.actions(),
+        )? != decision.packet
+        {
+            return Err(Error::StaleBinding);
+        }
+        let inner = self
+            .inner
+            .sampled_clone_v72(&decision.backend, seed)
+            .map_err(|e| Error::Projection(e.to_string()))?;
+        let sampled = Self::from_tinybones(inner);
+        if sampled.encode(decision.backend.expected())?.packet != decision.packet {
+            return Err(Error::StaleBinding);
+        }
+        Ok(sampled)
+    }
     pub fn current_response(&self) -> FastActorResponseV1 {
         self.inner.response()
     }

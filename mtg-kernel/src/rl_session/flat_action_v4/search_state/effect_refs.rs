@@ -82,12 +82,13 @@ impl Scan<'_> {
             | BindSphinxLoreV1
             | SphinxLoreV1 { .. }
             | HarvesterExileAndCopyV1
-            | TinybonesStashV72 { .. }
             | LilianaZombieV1
             | LilianaSacrificeV1 { .. }
             | FiendArtisanSearchV1 => true,
             KaitoCunningV75{..}|ChandraFlameshaperV74{..}=>true,
-            GenesisWaveV1 => !matches!(self.scope, ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha),
+            TinybonesStashV72 {discard,observer} => self.scope != ReferenceScopeV68::Tinybones
+                || crate::engine::tinybones_v72::sampler_stash_conflicts_v72(self.state,self.pool,*discard,*observer).unwrap_or(true),
+            GenesisWaveV1 => !matches!(self.scope, ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha | ReferenceScopeV68::Tinybones),
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
@@ -379,7 +380,9 @@ impl Scan<'_> {
             GenesisWaveV1 { choice, cards } => {
                 !matches!(
                     self.scope,
-                    ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha
+                    ReferenceScopeV68::GenesisWave
+                        | ReferenceScopeV68::Muldrotha
+                        | ReferenceScopeV68::Tinybones
                 ) || self.bs(&crate::effect::genesis_wave_v1::sampler_bindings_v69(
                     choice,
                 )) || self.bs(cards)
@@ -646,7 +649,9 @@ impl Scan<'_> {
             GenesisWaveCardsV1 { choice } => {
                 !matches!(
                     self.scope,
-                    ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha
+                    ReferenceScopeV68::GenesisWave
+                        | ReferenceScopeV68::Muldrotha
+                        | ReferenceScopeV68::Tinybones
                 ) || self.bs(&crate::effect::genesis_wave_v1::sampler_bindings_v69(
                     choice,
                 ))
@@ -975,6 +980,18 @@ pub(super) fn op_conflicts_muldrotha_v71(
     }
     .op(op)
 }
+pub(super) fn op_conflicts_tinybones_v72(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Tinybones,
+    }
+    .op(op)
+}
 pub(super) fn op_conflicts_end_turn_v68(
     state: &GameState,
     pool: &[ObjectId],
@@ -1131,6 +1148,7 @@ enum ReferenceScopeV68 {
     Call,
     GenesisWave,
     Muldrotha,
+    Tinybones,
 }
 
 pub(super) fn conflicts(
@@ -1168,6 +1186,13 @@ pub(super) fn conflicts_muldrotha_v71(
 ) -> bool {
     conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Muldrotha)
 }
+pub(super) fn conflicts_tinybones_v72(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Tinybones)
+}
 fn conflicts_in_scope(
     state: &GameState,
     pool: &[ObjectId],
@@ -1181,14 +1206,23 @@ fn conflicts_in_scope(
             .iter()
             .any(|event| matches!(event, crate::event::CommittedEvent::AleshaPowerLkiV1 { .. }))
         && [PlayerId::P0, PlayerId::P1].into_iter().any(|viewer| {
-            crate::graveyard_return_public_v61::capture_complete_call_v62(state, viewer).is_err()
+            if scope == ReferenceScopeV68::Tinybones {
+                crate::graveyard_return_public_v61::capture_tinybones_compat_v72(state, viewer)
+                    .is_err()
+            } else {
+                crate::graveyard_return_public_v61::capture_complete_call_v62(state, viewer)
+                    .is_err()
+            }
         })
     {
         return true;
     }
     if matches!(
         scope,
-        ReferenceScopeV68::EndTurn | ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha
+        ReferenceScopeV68::EndTurn
+            | ReferenceScopeV68::GenesisWave
+            | ReferenceScopeV68::Muldrotha
+            | ReferenceScopeV68::Tinybones
     ) && crate::engine::time_stop_v1::sampler_conflicts_v68(state, pool).unwrap_or(true)
     {
         return true;
@@ -1197,14 +1231,24 @@ fn conflicts_in_scope(
         EventKindV1::MuldrothaOptionsV1,
         EventKindV1::MuldrothaSelectedV1,
         EventKindV1::MuldrothaPlayedV1,
-    ]) && (scope != ReferenceScopeV68::Muldrotha
-        || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, pool).unwrap_or(true))
+    ]) && (!matches!(
+        scope,
+        ReferenceScopeV68::Muldrotha | ReferenceScopeV68::Tinybones
+    ) || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, pool).unwrap_or(true))
+    {
+        return true;
+    }
+    if state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::TinybonesV72])
+        && (scope != ReferenceScopeV68::Tinybones
+            || crate::engine::tinybones_v72::sampler_conflicts_v72(state, pool).unwrap_or(true))
     {
         return true;
     }
     if state.engine.event_history.has_any(&[
         EventKindV1::VivienReidV1,
-        EventKindV1::TinybonesV72,
         EventKindV1::LilianaDreadhordeV1,
         EventKindV1::ChandraFlameshaperV74,
         EventKindV1::KaitoCunningV75,
@@ -1347,6 +1391,7 @@ fn conflicts_in_scope(
                     ReferenceScopeV68::EndTurn
                         | ReferenceScopeV68::GenesisWave
                         | ReferenceScopeV68::Muldrotha
+                        | ReferenceScopeV68::Tinybones
                 );
             }
             if matches!(
@@ -1356,7 +1401,9 @@ fn conflicts_in_scope(
             ) {
                 return !matches!(
                     scope,
-                    ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha
+                    ReferenceScopeV68::GenesisWave
+                        | ReferenceScopeV68::Muldrotha
+                        | ReferenceScopeV68::Tinybones
                 );
             }
             matches!(
