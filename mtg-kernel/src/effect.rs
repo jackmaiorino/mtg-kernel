@@ -2774,6 +2774,11 @@ pub enum EffectOp {
     ChandraFlameshaperV74 {
         ability_index: u8,
     },
+    /// Exact native Kaito ability/trigger leaf; no public execution authority.
+    KaitoCunningV75 {
+        kind: u8,
+        origin: Option<u64>,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4388,6 +4393,12 @@ pub fn begin_resumable_resolution(
     if *op == EffectOp::LilianaZombieV1 {
         return Err("Liliana Zombie requires its genuine native row".into());
     }
+    if kaito_cunning_v75::recipe(op)
+        || kaito_cunning_v75::selected(state, &resolving_item)
+        || kaito_cunning_v75::context_selected(state, ctx)
+    {
+        return Err("Kaito requires its original native row owner".into());
+    }
     if chandra_flameshaper_v1::recipe(op)
         || chandra_flameshaper_v1::selected(state, &resolving_item)
         || chandra_flameshaper_v1::context_selected(state, ctx)
@@ -4539,6 +4550,13 @@ fn begin_resumable_resolution_with_native_row_v1(
                 .is_some_and(|c| crate::engine::tinybones_v72::definition(c.card_def)))
     {
         return Err("Tinybones requires its actual lexical native row".into());
+    }
+    if native_row.is_none()
+        && (kaito_cunning_v75::recipe(op)
+            || kaito_cunning_v75::selected(state, &resolving_item)
+            || kaito_cunning_v75::context_selected(state, ctx))
+    {
+        return Err("Kaito requires its original native row owner".into());
     }
     if native_row.is_none()
         && (chandra_flameshaper_v1::recipe(op)
@@ -4741,6 +4759,12 @@ fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
             || source_token_copy_v1::waiting(state, &p.ctx)
     }) {
         return Err("source copy has no public continuation".into());
+    }
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        kaito_cunning_v75::selected(state, &p.resolving_item)
+            || kaito_cunning_v75::context_selected(state, &p.ctx)
+    }) {
+        return Err("Kaito requires its consumed private resume owner".into());
     }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         chandra_flameshaper_v1::selected(state, &p.resolving_item)
@@ -10326,6 +10350,8 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    kaito_cunning_v75::validate_state(state)?;
+    kaito_cunning_v75::validate_pending(state)?;
     chandra_flameshaper_v1::validate_state(state)?;
     chandra_flameshaper_v1::validate_pending(state)?;
     vivien_reid_v1::validate_state(state)?;
@@ -19433,6 +19459,33 @@ fn execute_with_native_row_v1(
     if state.engine.halted.is_some() {
         return;
     }
+    if (kaito_cunning_v75::recipe(op)
+        || kaito_cunning_v75::context_selected(state, ctx)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| kaito_cunning_v75::selected(state, &p.resolving_item)))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
+    if matches!(op, EffectOp::KaitoCunningV75 { .. }) {
+        let result = native_proof
+            .ok_or("Kaito lexical proof absent".to_string())
+            .and_then(|proof| kaito_cunning_v75::execute(op, ctx, state, proof));
+        if result.is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        return;
+    }
     if (matches!(op, EffectOp::TinybonesStashV72 { .. })
         || crate::engine::tinybones_v72::waiting(state, ctx)
         || chandra_flameshaper_v1::recipe(op)
@@ -19733,7 +19786,7 @@ fn execute_with_native_row_v1(
                 ctx.source,
             ));
         }
-        EffectOp::ChandraFlameshaperV74 { .. } => {
+        EffectOp::KaitoCunningV75 { .. } | EffectOp::ChandraFlameshaperV74 { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -26706,10 +26759,12 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 pub(crate) mod chandra_flameshaper_v1;
+pub(crate) mod kaito_cunning_v75;
 pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
-    if crate::engine::tinybones_v72::waiting(state, ctx)
+    if kaito_cunning_v75::waiting(state, ctx)
+        || crate::engine::tinybones_v72::waiting(state, ctx)
         || liliana_dreadhorde_v1::waiting(state, ctx)
         || chandra_flameshaper_v1::context_selected(state, ctx)
     {
@@ -28015,6 +28070,7 @@ fn execute_copied_token_sacrifice_v1(
 /// This does not inspect any hidden hand/library identity.
 pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
     chandra_flameshaper_v1::require_legacy(state, None)?;
+    kaito_cunning_v75::require_legacy(state, None)?;
     standard_exile::refuse_top_batch_legacy(state)?;
     crate::leyline_axe_v1::require_legacy_absence(state)?;
     harvester_v1::require_legacy_absence(state)?;
@@ -28059,7 +28115,7 @@ mod electroduplicate_v1_tests;
 
 // This copy permit never confers Kykar's separate printed token-creation mode.
 // Its original removed cast, native spell copy, or Replication row is borrowed for one batch.
-// Fiend Artisan is the other exact closed blueprint; generic raw creation stays refused.
+// Fiend Artisan and Kaito's exact Ninja are additional closed blueprints; raw creation stays refused.
 pub(crate) struct SpiritCopyPermitV1<'a, 'b> {
     proof: &'a NativeExecutionProofV1<'b>,
     proposal: event::ProposedEvent,
@@ -28085,7 +28141,9 @@ impl SpiritCopyPermitV1<'_, '_> {
     }
 }
 fn closed_copy_definition_v1(id: u16) -> bool {
-    kykar_v1::token_definition(id) || fiend_artisan_v1::definition(id)
+    kykar_v1::token_definition(id)
+        || fiend_artisan_v1::definition(id)
+        || kaito_cunning_v75::token_definition(id)
 }
 fn spirit_copy_target_v1(state: &GameState, ctx: &ExecCtx) -> bool {
     ctx.target_contracts.iter().any(|c| {
@@ -28106,7 +28164,7 @@ fn spirit_copy_item_v1(state: &GameState, item: &StackItem) -> bool {
         })
         && item.v4.target_contracts.iter().any(|c| {
             matches!(c,StackTargetContractV4::Object{card_def,..}
-            if fiend_artisan_v1::definition(*card_def))
+            if fiend_artisan_v1::definition(*card_def)||kaito_cunning_v75::token_definition(*card_def))
         })
     {
         return true;

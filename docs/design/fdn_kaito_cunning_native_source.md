@@ -39,10 +39,27 @@ filter. It preserves the old Standard target prefix, retains max1/min0 and the
 controller relation, and leaves the frozen rules-vector facets opaque for the
 new domain. No existing printing selects it yet.
 
-Remaining work is authentic loyalty publication and lexical native execution,
-combat capture, draw/discard continuation custody, persistent emblem triggers,
-private Ninja issuance, legacy refusal and paid both-seat fixtures covering
-all branches, source departure, target loss, restore and forgery rejection.
+The unregistered native source now implements independent pre-cost payment and
+exact full-row publication, lexical execution and consumed continuation owners,
+pre-batch combat observer capture authenticated by the actual combat-wave finish,
+source-independent persistent emblem capture at actual casts, and a distinct
+private Ninja batch permit. The +1 uses the existing exact-incarnation evasion
+rule, native draw and actual bound discard. Independent original discard input
+and departure records precede its uninterrupted native resume. The current
+private event log is checked against the complete original capture inventory.
+Raw token creation, public effect execution and prior consumers still refuse.
+The existing closed native-copy permit additionally accepts this exact Ninja
+blueprint for real Self-Reflection, Electroduplicate and Replication ancestry.
+
+The shared semantic source digest preserves its original ordered inputs and
+appends the actual Kaito child once. All changed production source is included
+in that digest. Existing event/effect prefixes and the237 sample bytes remain
+unchanged; one appended kind is pending a genuine native sample.
+
+Remaining work before registration is the genuine paid both-seat fixture set
+covering all branches, source departure, target loss, restore, copy/Season,
+independent hidden worlds and read-only forgery rejection. This source-only
+checkpoint is not runtime qualification or complete consumer admission.
 Register494/495 only after actual490 through493 exist. Add complete V75 owning
 consumers in their own coherent follow-up before any consumer admission.
 

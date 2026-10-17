@@ -10125,7 +10125,10 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if time_stop_v1::validate(state)
         .and_then(|_| ordinary_cleanup_v1::validate(state))
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
-        .and_then(|()| effect::chandra_flameshaper_v1::validate_state(state))
+        .and_then(|()| {
+            effect::kaito_cunning_v75::validate_state(state)
+                .and_then(|()| effect::chandra_flameshaper_v1::validate_state(state))
+        })
         .and_then(|()| effect::vivien_reid_v1::validate_state(state))
         .and_then(|()| effect::liliana_dreadhorde_v1::validate_state(state))
         .and_then(|()| muldrotha_v1::validate_state(state))
@@ -11184,9 +11187,28 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
     } else {
         None
     };
+    let kaito_discard = if effect::kaito_cunning_v75::discard_selected(state) {
+        match effect::kaito_cunning_v75::record_discard_input(state, &pending_discard, &chosen) {
+            Ok(input) => Some(input),
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
+        }
+    } else {
+        None
+    };
     state.engine.pending_discard = None;
     for &id in &chosen {
         commit_discarded_card(state, id);
+    }
+    if let Some(input) = kaito_discard {
+        if effect::kaito_cunning_v75::record_discard_finished(state, input).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            return;
+        }
     }
     match pending_discard.resume {
         DiscardResume::FinishEffectContinuation { .. } => {
@@ -11652,6 +11674,14 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let kaito_owner = match effect::kaito_cunning_v75::acquire_resume(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let chandra_owner = match effect::chandra_flameshaper_v1::acquire_resume(state, &item) {
         Ok(owner) => owner,
         Err(_) => {
@@ -11703,6 +11733,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         effect::resume_owned_frenzied_goblin_resolution(state, owner)
     } else if let Some(owner) = gourmand_owner.as_ref() {
         effect::resume_owned_vampire_gourmand_resolution(state, owner)
+    } else if let Some(owner) = kaito_owner {
+        effect::kaito_cunning_v75::resume(state, owner)
     } else if let Some(owner) = chandra_owner {
         effect::chandra_flameshaper_v1::resume(state, owner)
     } else if let Some(owner) = fiend_owner {
@@ -14820,6 +14852,19 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     {
         crate::effect::greatwurm_v1::publish(state, &item)?;
     }
+    if let Some(item) = state
+        .stack
+        .last()
+        .filter(|r| {
+            matches!(
+                r.inline_effect,
+                Some(EffectOp::KaitoCunningV75 { kind: 3 | 4, .. })
+            )
+        })
+        .cloned()
+    {
+        effect::kaito_cunning_v75::publish(state, &item)?;
+    }
     if state.stack.last().is_some_and(|item| {
         matches!(
             item.inline_effect,
@@ -15012,6 +15057,7 @@ fn validate_bound_trigger_source_objects(
 ) -> Result<(), String> {
     crate::effect::source_token_copy_v1::validate_root(state, effect, source_contract)?;
     crate::effect::sphinx_lore_v1::validate_root(state, effect, source_contract)?;
+    crate::effect::kaito_cunning_v75::validate_root(state, effect, source_contract)?;
     crate::effect::greatwurm_v1::validate_root(state, effect, source_contract)?;
     crate::effect::kykar_v1::validate_root(state, effect, source_contract)?;
     match effect {
@@ -15263,6 +15309,20 @@ fn triggered_stack_item_expected_target_spec(
             crate::effect::sphinx_lore_v1::validate_published(state, item)?;
         }
         return Ok(Some(crate::effect::sphinx_lore_v1::target_spec()));
+    }
+    if matches!(inline_effect, EffectOp::KaitoCunningV75 { kind: 3 | 4, .. })
+        || item.kind == StackItemKind::TriggeredAbility
+            && effect::kaito_cunning_v75::selected(state, item)
+    {
+        effect::kaito_cunning_v75::validate_trigger(state, item)?;
+        if state
+            .stack
+            .iter()
+            .any(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            effect::kaito_cunning_v75::validate_publication(state, item)?;
+        }
+        return Ok(None);
     }
     if crate::effect::greatwurm_v1::selected(state, item)
         || crate::effect::greatwurm_v1::definition(source_card_def)
@@ -16532,6 +16592,7 @@ pub(crate) fn counter_stack_item_by_id(
         &item,
         effect::FrenziedGoblinOutcomeV1::Countered,
     )?;
+    effect::kaito_cunning_v75::record_not_resolved(state, &item, true)?;
     effect::chandra_flameshaper_v1::record_not_resolved(state, &item, true)?;
     crate::source_power_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
@@ -16620,6 +16681,7 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
 /// to the graveyard here rather than applying its successful post-resolution
 /// departure (library shuffle, or exile-with-permission).
 fn finish_failed_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
+    effect::kaito_cunning_v75::record_not_resolved(state, item, false)?;
     effect::chandra_flameshaper_v1::record_not_resolved(state, item, false)?;
     if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Omen) {
         let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
@@ -20263,6 +20325,10 @@ pub(crate) fn commit_combat_damage_events_inner(
     false
 }
 pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start: usize) {
+    if crate::effect::kaito_cunning_v75::bind_wave(state, event_start).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return;
+    }
     if crate::effect::greatwurm_v1::bind_wave(state, event_start).is_err() {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return;
@@ -20838,7 +20904,8 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     time_stop_v1::validate(state)?;
     ordinary_cleanup_v1::validate(state)?;
     effect::genesis_wave_v1::validate_state(state)?;
-    effect::chandra_flameshaper_v1::validate_state(state)?;
+    effect::kaito_cunning_v75::validate_state(state)
+        .and_then(|()| effect::chandra_flameshaper_v1::validate_state(state))?;
     effect::vivien_reid_v1::validate_state(state)?;
     effect::liliana_dreadhorde_v1::validate_state(state)?;
     muldrotha_v1::validate_state(state)?;
@@ -24499,6 +24566,16 @@ fn finalize_activation(state: &mut GameState) {
             return;
         }
     };
+    frozen.kaito_payment = match effect::kaito_cunning_v75::record_input(state, &pending) {
+        Ok(input) => input,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    };
     frozen.vivien_payment = match effect::vivien_reid_v1::record_input(state, &pending) {
         Ok(input) => input,
         Err(_) => {
@@ -24661,6 +24738,7 @@ struct FrozenActivationSource {
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
     vivien_payment: Option<u64>,
+    kaito_payment: Option<u64>,
     liliana_payment: Option<u64>,
     chandra_payment: Option<u64>,
     ravenous_payment: Option<crate::ravenous_amulet_v1::PaymentOwnerV1>,
@@ -24704,6 +24782,7 @@ fn freeze_activation_source(
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
         vivien_payment: None,
+        kaito_payment: None,
         liliana_payment: None,
         chandra_payment: None,
         ravenous_payment: None,
@@ -24829,6 +24908,13 @@ fn push_paid_activation(
     if effect::chandra_flameshaper_v1::record_paid(state, stack_item_id, frozen.chandra_payment)
         .is_err()
     {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    if effect::kaito_cunning_v75::record_paid(state, stack_item_id, frozen.kaito_payment).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,

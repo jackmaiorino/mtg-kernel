@@ -86,7 +86,7 @@ impl Scan<'_> {
             | LilianaZombieV1
             | LilianaSacrificeV1 { .. }
             | FiendArtisanSearchV1 => true,
-            ChandraFlameshaperV74{..}=>true,
+            KaitoCunningV75{..}|ChandraFlameshaperV74{..}=>true,
             GenesisWaveV1 => self.scope != ReferenceScopeV68::GenesisWave,
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
@@ -1175,6 +1175,7 @@ fn conflicts_in_scope(
         EventKindV1::TinybonesV72,
         EventKindV1::LilianaDreadhordeV1,
         EventKindV1::ChandraFlameshaperV74,
+        EventKindV1::KaitoCunningV75,
     ]) || state.engine.event_log.iter().any(|e| {
         matches!(
             e,
@@ -1182,6 +1183,7 @@ fn conflicts_in_scope(
                 | crate::event::CommittedEvent::TinybonesV72 { .. }
                 | crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }
                 | crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
+                | crate::event::CommittedEvent::KaitoCunningV75 { .. }
         )
     }) {
         return true;
@@ -1560,7 +1562,7 @@ fn conflicts_in_scope(
             | TinybonesV72 { .. }
             | LilianaDreadhordeV1 { .. }
             | MuldrothaOptionsV1 { .. } | MuldrothaSelectedV1 { .. } | MuldrothaPlayedV1 { .. }
-            | ChandraFlameshaperV74{..}
+            | KaitoCunningV75{..} | ChandraFlameshaperV74{..}
             | VivienReidV1 { .. }
             | OrdinaryCleanupStageV1 { .. }
             | TimeStopJournalV1 { .. }
