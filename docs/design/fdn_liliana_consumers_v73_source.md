@@ -93,3 +93,38 @@ unittest cases then ran successfully without an environment change. This is a
 source checkpoint, not Rust runtime, model, sampler, transport or Full admission.
 Actual V72 numeric690a5cc is now available for the next checkpoint. Tinybones
 Human/V13 is still a dependency for the distinct Liliana Human/V14 adapters.
+
+The numeric checkpoint normally composes actual canonicalfbea0c54, including
+Tinybones5f48a1f/aa26 and numeric690a5cc. Composition preserves the canonical
+Time Stop source-input order, then appends the actual V73 children once.
+The distinct Liliana numeric Source follows the existing enum prefix. Its
+private normalizer encodes the complete exact V73 observation and typed action
+rows, including inherited Tinybones meaning, full eighteen-counter current
+forms, original loyalty quotes, original scenes/selections and current draw
+roles. Exact Liliana meaning and the registered black2/2 Zombie492 descriptor
+are closed source-owned routes; no baseline or Full cast permission is inferred.
+
+The numeric owner transfers only an actual sealed V73 backend. Fresh complete
+packet equality is rechecked inside the backend's pre-mutation callback; public
+ordinals map to the original native executable index only inside that owner.
+Foreign/stale snapshots and decisions, replaced numeric state/actions, invalid
+indices and changed typed source packets refuse before a native step. Shared
+reference normalization retains physical/incarnation relations and private-world
+visibility without adding raw history indices or world payloads.
+
+Four new paid both-seat numeric source groups exercise all three native loyalty
+roots and real choices, exact Zombie outcomes, original source departure and
+concealment, independent native continuation/payment/state/count parity, opaque
+restore, stale/foreign/forged packet refusal, finite deterministic fixture-model
+outputs, public equality across independent private worlds, and distinct exact
+native i32 boundary operands. Together with the original8 native,4 read-only
+and7 owning groups, all23 Liliana source groups remain UNCOMPILED and UNRUN.
+
+Observed checks again pass:112 affected deck/booster Python unittest cases,
+both canonical policy-golden generators --check, pinned Rust1.94.1 edition2021
+formatting and diff checks. Static checks retain Time Stop's136 and Genesis
+Wave's77 current ordered source inputs, appending only the actual numeric child;
+the numeric Source prefix, registry, event schemas and native fixture file are
+unchanged. There is no runtime/model/sampler/Full admission. Human transport,
+distinct LimitedV14, their wire/Python/CI coverage and later sampling/production
+adapters remain pending the actual Tinybones Human/V13 predecessor checkpoint.
