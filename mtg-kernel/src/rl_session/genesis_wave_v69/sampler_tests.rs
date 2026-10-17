@@ -33,7 +33,7 @@ fn sampled(owner: &GenesisWaveSessionV69, seed: u64) -> GenesisWaveSessionV69 {
     let clone = owner.sampled_clone_v69(&decision, seed).unwrap();
     let repeat = owner.sampled_clone_v69(&decision, seed).unwrap();
     assert_eq!(clone.fixture_state_v69(), repeat.fixture_state_v69());
-    assert_eq!(clone.fresh_binding().unwrap(), decision.binding);
+    assert!(clone.fresh_binding().unwrap() == decision.binding);
     assert!(!std::sync::Arc::ptr_eq(&clone.owner, &owner.owner));
     assert_eq!(
         clone.fixture_state_v69().engine.event_history,
