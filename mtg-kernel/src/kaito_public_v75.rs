@@ -469,3 +469,71 @@ pub fn validate_current(s: &GameState, v: PlayerId, f: &FactsV75) -> Result<(), 
     }
     Ok(())
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivationCostV75 {
+    #[serde(deserialize_with = "strict")]
+    pub source: crate::rl::CardStableRefV1,
+    pub ability_index: u8,
+    pub before: u32,
+    pub after: u32,
+    pub paid_before_publication: bool,
+    pub countering_refunds_cost: bool,
+}
+pub(crate) fn activation_cost(
+    f: &FactsV75,
+    a: &crate::rl::ActionSemanticV1,
+) -> Result<Option<ActivationCostV75>, String> {
+    let crate::rl::ActionSemanticV1::ActivateAbility {
+        actor,
+        source,
+        ability_index,
+        granted_ability,
+    } = a
+    else {
+        return Ok(None);
+    };
+    if source.card_db_id != 494 {
+        return Ok(None);
+    }
+    if !granted_ability.is_none()
+        || *actor != source.controller
+        || source.zone != crate::state::Zone::Battlefield
+    {
+        return Err("V75 activation changed its original source/grant".into());
+    }
+    let c = f
+        .battlefield
+        .iter()
+        .flatten()
+        .find(|c| {
+            c.card.object == source.arena_id
+                && c.card.generation == source.zone_change_count
+                && c.card.owner == source.owner
+                && c.card.controller == source.controller
+                && c.card.zone == source.zone
+        })
+        .ok_or("V75 loyalty candidate has no exact current permanent")?;
+    if !c.form.printed_abilities_active
+        || c.card.identity != (public::IdentityV1::Known { card_id: 494 })
+    {
+        return Err("V75 loyalty printed ability inactive".into());
+    }
+    let before = c.counters.loyalty;
+    let after = match ability_index {
+        0 => before.checked_add(1),
+        1 => before.checked_sub(2),
+        2 => before.checked_sub(9),
+        _ => None,
+    }
+    .ok_or("V75 loyalty quote exceeds native u32")?;
+    Ok(Some(ActivationCostV75 {
+        source: source.clone(),
+        ability_index: *ability_index,
+        before,
+        after,
+        paid_before_publication: true,
+        countering_refunds_cost: false,
+    }))
+}

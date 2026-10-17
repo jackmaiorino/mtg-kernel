@@ -271,6 +271,22 @@ pub(crate) fn candidates_chandra_v74(
         true,
     )
 }
+pub(crate) fn candidates_kaito_v75(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_kaito_v75(
+        state,
+        surface,
+        decision,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
 
 fn candidates_current_scope(
     state: &GameState,
@@ -430,6 +446,26 @@ fn candidates_current_scope_chandra_v74(
         accept_graveyard_return,
         accept_call,
         Some(crate::rl::CommonProjectionScopeV42::ChandraV74),
+    )
+}
+fn candidates_current_scope_kaito_v75(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        state,
+        surface,
+        decision,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::KaitoV75),
     )
 }
 
@@ -645,8 +681,9 @@ fn candidates_current_scope_inner_v68(
                 }
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
-                let old = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::ChandraV74)
-                {
+                let old = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::KaitoV75) {
+                    crate::rl::core_policy_action_candidates_kaito_v75(decision, state)?
+                } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::ChandraV74) {
                     crate::rl::core_policy_action_candidates_chandra_v74(decision, state)?
                 } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::LilianaV73) {
                     crate::rl::core_policy_action_candidates_liliana_v73(decision, state)?

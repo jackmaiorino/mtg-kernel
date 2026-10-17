@@ -639,6 +639,7 @@ pub(crate) fn parts_for_common_scope_with_common(
             | crate::rl::CommonProjectionScopeV42::TinybonesV72
             | crate::rl::CommonProjectionScopeV42::LilianaV73
             | crate::rl::CommonProjectionScopeV42::ChandraV74
+            | crate::rl::CommonProjectionScopeV42::KaitoV75
     );
 
     validate_state(state).map_err(RlContractError)?;

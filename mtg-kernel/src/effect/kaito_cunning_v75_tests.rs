@@ -834,3 +834,6 @@ fn genuine_paid_full_u32_loyalty_cost_keeps_exact_payment_and_overflow_quote_rea
         assert_eq!(ninja_count(&s, p), 1);
     }
 }
+
+#[path = "kaito_owner_v75_tests.rs"]
+pub(crate) mod owner_v75_tests;

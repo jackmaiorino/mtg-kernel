@@ -1574,6 +1574,22 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/current_mixed_policy_v1/chandra.rs",
                     include_str!("../current_mixed_policy_v1/chandra.rs"),
                 ),
+                (
+                    "mtg-kernel/src/kaito_observation_v75.rs",
+                    include_str!("../kaito_observation_v75.rs"),
+                ),
+                (
+                    "mtg-kernel/src/kaito_candidates_v75.rs",
+                    include_str!("../kaito_candidates_v75.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/kaito_v75.rs",
+                    include_str!("../rl_session/kaito_v75.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/kaito.rs",
+                    include_str!("../current_mixed_policy_v1/kaito.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());
