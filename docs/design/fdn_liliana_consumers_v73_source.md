@@ -128,3 +128,54 @@ the numeric Source prefix, registry, event schemas and native fixture file are
 unchanged. There is no runtime/model/sampler/Full admission. Human transport,
 distinct LimitedV14, their wire/Python/CI coverage and later sampling/production
 adapters remain pending the actual Tinybones Human/V13 predecessor checkpoint.
+
+The Human/V14 checkpoint normally composes actual TinyHuman/V13c29359a1 with
+the earlier V73 owner/numeric checkpoints on a separate owned branch. It uses
+the committed closed Human base projector, original public-to-native action
+mapping, opaque snapshots and retry/generation state machine. The new fixed-seat
+Human facade and distinct schema14 actor server/CLI/client preserve every
+inherited Tinybones/ordinary field and earlier-family semantics. Chandra, Kaito
+and other unsupported later families retain their native projection refusals.
+Partial491/492 still cannot enter through the ordinary Full-only deck reset.
+
+Liliana Human fields include all original paid loyalty/publication roles, exact
+Zombie outcomes, APNAP scene/type snapshots, exact current selection prefixes
+and physical-owner graveyard orders, keeper unions and actual simultaneous
+completion, prebatch observer/death bindings and current draw inventory. The
+original source carries both its originally public identity and an anonymous
+object/incarnation relation, allowing an animated Liliana's own death to bind
+to that same original observer after source departure. Historical scene/death
+relations carry no printing guessed from a newer hidden incarnation. The
+mandatory current roster preserves all18 native counter widths/current forms.
+
+A narrow private TinyHuman refactor returns its existing immutable facts with
+the per-prompt anonymous map. Static comparison preserves every original facts
+statement and returned DTO field; V72's existing entry point discards the extra
+private map and returns the same public value. V73 reuses that map and roster.
+No mutable native authority or raw private history/world index is exposed.
+The actual root48bf1951 GrantedAbilityPublicV1 repair is carried byte-for-byte:
+the loyalty helper uses !is_none(), preserving rejection of granted abilities.
+
+Five new paid both-seat Human groups and three paid wire groups compare original
+indices/state/counts against independent native streams. They cover all three
+loyalty roots, the multi-type keeper union, original source departure and later
+concealment, animated-self/token deaths and sourcegone draw roles, retry/restore
+and foreign/changed packet refusal, Full-only reset refusal, private-world
+invariance and exact wide counters. All31 Liliana Rust source groups, including
+the unchanged original8 native bodies, remain UNCOMPILED and UNRUN. Seven new
+Python parser/process mocks exercise distinct V14 state, shape, source roles,
+choice cardinality/context, keeper unions, death/draw binding, exact loyalty
+widths, complete printed meaning and predecessor-schema refusal. Mocks are not
+native or runtime qualification.
+
+Observed checks pass:153 Limited transport Python cases and112 deck/booster
+cases, both canonical flat-policy generators --check, pinned1.94.1 edition2021
+formatting and diff checks. Static checks preserve Time Stop's142 and Genesis
+Wave's78 current source-input prefixes and append five actual V73/V14 children.
+The actual V14 binary and native/owner/numeric/Human/wire filters are wired into
+the existing limited-v12 CI group and bounds. Shared Python shard discovery
+includes the new mock module. Actual logs and the compact source receipt are
+retained under fdn110-pending-receipts and E:/storage-records/fdn110 with identical
+bytes. No heavy Rust, remote/Haley, paid or research execution was performed.
+Runtime, model/sampler admission and later sampled-world/production integration
+remain separate work; this source checkpoint grants none of those claims.

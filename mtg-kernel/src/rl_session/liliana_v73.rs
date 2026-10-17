@@ -356,6 +356,11 @@ impl LilianaDecisionV73 {
     pub fn actions(&self) -> &[ActionSemanticV1] {
         &self.actions
     }
+    pub(crate) fn family_projections_v73(
+        &self,
+    ) -> &[crate::akroma_family_public_v40::FamilyProjectionV40] {
+        &self.binding.families
+    }
     /// Original native header/count. Public ordinals index actions(), not the
     /// native vector; the private map is applied only inside step_v73.
     pub fn expected(&self) -> FastActorDecisionV1 {

@@ -1708,6 +1708,26 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/current_mixed_policy_v1/liliana.rs",
                     include_str!("../current_mixed_policy_v1/liliana.rs"),
                 ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/liliana_v73.rs",
+                    include_str!("../human_bo3_v1/liliana_v73.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_liliana_v14.rs",
+                    include_str!("../human_bo3_v1/limited_liliana_v14.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_liliana_session_v14.rs",
+                    include_str!("../limited_liliana_session_v14.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_liliana_env_v14.rs",
+                    include_str!("../bin/kernel_limited_liliana_env_v14.rs"),
+                ),
+                (
+                    "python/tools/limited_liliana_session_v14.py",
+                    include_str!("../../../python/tools/limited_liliana_session_v14.py"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

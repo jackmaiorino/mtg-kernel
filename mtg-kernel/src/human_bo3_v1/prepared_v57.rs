@@ -1038,6 +1038,22 @@ pub(super) fn choice_label_tinybones(
     )
 }
 
+pub(super) fn choice_label_liliana(
+    obs: &crate::liliana_observation_v73::LilianaObservationV73,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    choice_label_parts(
+        &obs.common.common,
+        obs.common.common.trigger_order.as_ref(),
+        &obs.spinner,
+        &obs.phoenix,
+        &obs.quandary,
+        action,
+        handles,
+    )
+}
+
 pub(super) fn choice_label_graveyard_return(
     obs: &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
     action: &ActionSemanticV1,
