@@ -846,3 +846,6 @@ pub mod muldrotha_candidates_v71;
 pub mod muldrotha_observation_v71;
 pub mod tinybones_candidates_v72;
 pub mod tinybones_observation_v72;
+
+pub mod kaito_public_v75;
+pub mod rules_meaning_kaito_v75;

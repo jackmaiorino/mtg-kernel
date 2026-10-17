@@ -259,7 +259,7 @@ pub(crate) fn counters(s: &GameState, id: ObjectId) -> Result<CountersV72, Strin
     nonnegative(&c)?;
     Ok(c)
 }
-fn nonnegative(c: &CountersV72) -> Result<(), String> {
+pub(crate) fn nonnegative(c: &CountersV72) -> Result<(), String> {
     if [
         c.plus_one,
         i32::from(c.minus_one),
