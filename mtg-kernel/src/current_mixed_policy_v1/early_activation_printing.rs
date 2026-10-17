@@ -419,9 +419,12 @@ enum ActivationCost {
 }
 #[derive(serde::Serialize)]
 enum ActivationTarget {
-    OnePhysicalCardInEitherGraveyard,
-    OneBattlefieldCreatureOrPlaneswalker,
-    OneBattlefieldCreature,
+    #[serde(rename = "OnePhysicalCardInEitherGraveyard")]
+    PhysicalCardInEitherGraveyard,
+    #[serde(rename = "OneBattlefieldCreatureOrPlaneswalker")]
+    BattlefieldCreatureOrPlaneswalker,
+    #[serde(rename = "OneBattlefieldCreature")]
+    BattlefieldCreature,
 }
 #[derive(serde::Serialize)]
 struct Activation {
@@ -476,9 +479,9 @@ pub(in crate::current_mixed_policy_v1) fn printing(id: u16, d: &CardDef) -> Resu
             requires_active_effective_printed_slot_at_activation: true,
             later_source_departure_or_ability_loss_does_not_counter: true,
             target: match kind {
-                Kind::Ooze => ActivationTarget::OnePhysicalCardInEitherGraveyard,
-                Kind::Cavalry => ActivationTarget::OneBattlefieldCreature,
-                Kind::Heartfire => ActivationTarget::OneBattlefieldCreatureOrPlaneswalker,
+                Kind::Ooze => ActivationTarget::PhysicalCardInEitherGraveyard,
+                Kind::Cavalry => ActivationTarget::BattlefieldCreature,
+                Kind::Heartfire => ActivationTarget::BattlefieldCreatureOrPlaneswalker,
                 Kind::Zombie => unreachable!(),
             },
             original_source_incarnation_bound_before_payment: true,
