@@ -1528,7 +1528,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let JournalV75::Published { item, .. } = at(state, *publication)? else {
                     return Err("Kaito evasion publication absent".into());
                 };
-                if target.is_some() != !item.targets.is_empty()
+                if target.is_some() == item.targets.is_empty()
                     || timestamp.is_some_and(|t| t >= state.engine.next_effect_timestamp)
                 {
                     return Err(

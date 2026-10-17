@@ -6673,7 +6673,6 @@ pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: Player
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             spell,
         ));
-        return;
     }
 }
 
