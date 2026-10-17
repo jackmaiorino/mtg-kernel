@@ -219,6 +219,8 @@ fn source_current(state: &GameState, source: AbilitySourceContractV4) -> bool {
             && o.owner == source.owner
     })
 }
+// These are independent fields of the existing published ability contract.
+#[allow(clippy::too_many_arguments)]
 fn ability(
     state: &GameState,
     viewer: PlayerId,

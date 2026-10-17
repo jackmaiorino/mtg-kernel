@@ -476,10 +476,10 @@ pub(crate) fn validate_schedule(
         || source.zone != Zone::Battlefield
         || departure >= i
         || !matches!(state.engine.event_history.get(departure), Some(event::CommittedEvent::ZoneChange {object, from:Zone::Battlefield,to:Zone::Exile,controller_before}) if *object==exiled.object && *controller_before==source.controller)
-        || !state
+        || state
             .objects
             .try_get(exiled.object)
-            .is_some_and(|o| o.owner == *owner)
+            .is_none_or(|o| o.owner != *owner)
     {
         return Err("Kykar exile receipt lost source, owner or physical departure".into());
     }

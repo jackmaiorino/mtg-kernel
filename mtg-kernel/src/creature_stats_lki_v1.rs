@@ -3,6 +3,11 @@ use crate::card_def::CardType;
 use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
+#[cfg(any(
+    test,
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+))]
 pub(crate) fn record_creature_stats_lki(state: &mut GameState, id: ObjectId) {
     record_creature_stats_lki_with_pt(state, id, None);
 }

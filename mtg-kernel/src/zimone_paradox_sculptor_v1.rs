@@ -10,6 +10,7 @@ pub(crate) fn combat_counters() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::PutPlusOneCountersOnTargets)
 }
 
+#[cfg(feature = "limited-fdn-fixtures")]
 pub(crate) fn double_counters() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::DoubleAllCountersOnTargets)
 }
