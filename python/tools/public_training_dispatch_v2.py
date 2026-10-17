@@ -414,6 +414,8 @@ def worker(spec):
     request = read(request_path)
     if request["execution_gpu_ordinal"] != placement["gpu_ordinal"] or request["collector_workers"] != placement["workers"]:
         raise ValueError("request does not implement placement")
+    if "segment" in spec:
+        require_segment(request, spec["binary"]["sha256"], spec["segment"])
     folder = request_path.parent
     started = time.monotonic()
     unix_start = time.time()
@@ -472,6 +474,11 @@ def worker(spec):
     outputs = Path(request["output_directory"])
     if not (outputs/"completion.json").is_file():
         raise ValueError("missing native completion")
+    if "segment" in spec:
+        completion = read(outputs/"completion.json")
+        if (completion["first_update"] != spec["segment"]["first_update"]
+                or completion["next_update"] != spec["segment"]["stop_after"]):
+            raise ValueError("native completion differs from requested segment")
     write(folder/"recovery.json",dict(source_output_directory=str(outputs),
           files={p.relative_to(outputs).as_posix():pin(p)["sha256"] for p in sorted(outputs.rglob("*.json"))}))
     return execution
@@ -552,7 +559,96 @@ if (-not $disk) {throw 'target volume unavailable'}
     return result
 
 
-def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seconds, target_limits=None):
+def resume_inputs(config, binary_sha256, config_sha256, refs):
+    """Bind unchanged prior native evidence to the exact full scientific config."""
+    if set(refs) != {"report", "request", "execution", "completion", "checkpoint", "optimizer"}:
+        raise ValueError("complete prior report/checkpoint/optimizer closure required")
+    documents = {name: read(checked(ref)) for name, ref in refs.items()}
+    report, request, execution, completion, checkpoint, optimizer = (documents[name] for name in
+        ("report", "request", "execution", "completion", "checkpoint", "optimizer"))
+    first = checkpoint["next_update"]
+    if (type(first) is not int or not 0 < first <= len(config["updates"])
+            or report["config"]["sha256"] != config_sha256 or request["config"] != config
+            or report["binary"]["sha256"] != binary_sha256 or execution["binary_sha256"] != binary_sha256
+            or execution["request_sha256"] != refs["request"]["sha256"]
+            or execution["exit_code"] != 0 or execution["timeout"]
+            or completion["schema"] != "mtg-kernel-public-input-run/v1"
+            or checkpoint["schema"] != "mtg-kernel-public-input-checkpoint/v1"
+            or checkpoint["config_sha256"] != completion["config_sha256"]
+            or completion["next_update"] != first or request["stop_after"] != first
+            or checkpoint["optimizer_file"] != "optimizer.json"
+            or checkpoint["optimizer_sha256"] != refs["optimizer"]["sha256"]
+            or optimizer["schema"] != "mtg-kernel-public-input-optimizer-state/v1"):
+        raise ValueError("resume config, binary, completion or optimizer identity differs")
+    for name in ("request", "execution", "completion"):
+        if report[name]["sha256"] != refs[name]["sha256"]:
+            raise ValueError("resume proof differs from prior report")
+    for name in ("checkpoint", "optimizer"):
+        if report["outputs"][f"{first-1:04}/{name}.json"]["sha256"] != refs[name]["sha256"]:
+            raise ValueError("resume primary differs from prior report")
+    receipts = completion["receipts"]
+    begin = completion["first_update"]
+    if (type(begin) is not int or not 0 <= begin < first
+            or [r["update"] for r in receipts] != list(range(begin, first))
+            or any(r["episodes"] != len(config["updates"][r["update"]])
+                   or r["natural_games"] != r["episodes"] for r in receipts)
+            or receipts[-1]["after_state_sha256"] != refs["optimizer"]["sha256"]
+            or optimizer["legacy_adam_step"] != receipts[-1]["legacy_adam_step"]
+            or optimizer["public"]["adam_step"] != receipts[-1]["public_adam_step"]):
+        raise ValueError("resume completed range or optimizer ages differ")
+    episodes = [report["outputs"][f"{first-1:04}/episode-{i:03}.json"]["sha256"]
+                for i in range(len(config["updates"][first-1]))]
+    if checkpoint["trajectory_sha256"] != episodes:
+        raise ValueError("resume checkpoint trajectory binding differs")
+    return first
+
+
+def segment_inputs(config_ref, binary_sha256, segment):
+    if set(segment) != {"resume", "stop_after"}:
+        raise ValueError("segment requires resume and exclusive stop_after")
+    config = read(checked(config_ref))
+    end = segment["stop_after"]
+    if type(end) is not int or not 0 < end <= len(config["updates"]):
+        raise ValueError("segment exclusive stop outside full config")
+    refs, first = None, 0
+    if segment["resume"] is not None:
+        resume = segment["resume"]
+        if "path" in resume:
+            report_ref, supplied = resume, None
+        else:
+            if set(resume) != {"report", "files"} or set(resume["files"]) != {"request", "execution", "completion", "checkpoint", "optimizer"}:
+                raise ValueError("relocated resume requires the exact five-file report closure")
+            report_ref, supplied = resume["report"], resume["files"]
+        report = read(checked(report_ref))
+        if supplied is None:
+            completion = read(checked(report["completion"]))
+            last = completion["next_update"]-1
+            supplied = {name: report[name] for name in ("request", "execution", "completion")}
+            supplied.update({name: report["outputs"][f"{last:04}/{name}.json"] for name in ("checkpoint", "optimizer")})
+        refs = dict(report=report_ref, **supplied)
+        first = resume_inputs(config, binary_sha256, config_ref["sha256"], refs)
+    if first >= end:
+        raise ValueError("segment must advance beyond the resume boundary")
+    return dict(first_update=first, stop_after=end, config_sha256=config_ref["sha256"], inputs=refs)
+
+
+def require_segment(request, binary_sha256, segment):
+    end, first = segment["stop_after"], segment["first_update"]
+    if (request["stop_after"] != end or type(first) is not int or not 0 <= first < end <= len(request["config"]["updates"])):
+        raise ValueError("request segment bounds differ")
+    refs = segment["inputs"]
+    if refs is None:
+        if first != 0 or request["resume"] is not None:
+            raise ValueError("initial segment cannot resume")
+    else:
+        if (request["resume"] != refs["checkpoint"]
+                or Path(refs["optimizer"]["path"]).parent != Path(refs["checkpoint"]["path"]).parent
+                or Path(refs["optimizer"]["path"]).name != "optimizer.json"
+                or resume_inputs(request["config"], binary_sha256, segment["config_sha256"], refs) != first):
+            raise ValueError("staged resume closure differs")
+
+
+def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seconds, target_limits=None, segments=None):
     root = Path(root)
     staging_started=time.monotonic()
     if mode not in ["parallel","sequential","device_queues"] or set(configs) != set(placements):
@@ -560,6 +656,12 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
     if not 0 < wall_seconds <= 7200 or not re.fullmatch(r"[a-z0-9-]+",root.name):
         raise ValueError("invalid root name or wall cap")
     binary = checked(binary_pin)
+    segment_plans = {}
+    if segments is not None:
+        if stop is not None or set(segments) != set(configs):
+            raise ValueError("production segments must cover all qualified jobs")
+        segment_plans = {name: segment_inputs(configs[name], binary_pin["sha256"], segment)
+                         for name, segment in segments.items()}
     preflights = {}
     for host in {p["host"] for p in placements.values()}:
         if host not in HOSTNAMES:
@@ -604,10 +706,27 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
             request = dict(config=config,output_directory=str(Path(native_folder)/"outputs"),resume=None,
                            stop_after=stop if stop is not None else len(config["updates"]),
                            collector_workers=placement["workers"],execution_gpu_ordinal=placement["gpu_ordinal"])
+            segment = segment_plans.get(name)
+            if segment is not None:
+                segment = dict(segment)
+                request["stop_after"] = segment["stop_after"]
+                if segment["inputs"] is not None:
+                    (folder/"resume").mkdir()
+                    refs = {}
+                    for key, ref in segment["inputs"].items():
+                        destination = folder/"resume"/(key+".json")
+                        shutil.copy2(checked(ref), destination)
+                        if pin(destination)["sha256"] != ref["sha256"]:
+                            raise ValueError("staged resume bytes differ")
+                        refs[key] = dict(path=str(Path(native_folder)/"resume"/(key+".json")), sha256=ref["sha256"])
+                    segment["inputs"] = refs
+                    request["resume"] = refs["checkpoint"]
             write(folder/"request.json",request)
             group["jobs"][name]=dict(placement=placement,wall_seconds=wall_seconds,telemetry=mode=="device_queues",
                 binary=dict(path=native_binary,sha256=binary_pin["sha256"]),
                 request=dict(path=str(Path(native_folder)/"request.json"),sha256=pin(folder/"request.json")["sha256"]))
+            if segment is not None:
+                group["jobs"][name]["segment"] = segment
         if host == "computehost":
             binding = host_binding(host, [job["placement"] for job in group["jobs"].values()])
             input_root = binding["input_root"].replace("'", "''")
@@ -655,6 +774,11 @@ try {{
             for name in group["jobs"]:
                 ssh_ps(f"New-Item -ItemType Directory -Path '{remote_root}/jobs/{name}' | Out-Null")
                 subprocess.run(["scp","-q",str(local/"jobs"/name/"request.json"),f"{REMOTE}:{remote_root}/jobs/{name}/request.json"],check=True,timeout=60)
+                if (local/"jobs"/name/"resume").exists():
+                    ssh_ps(f"New-Item -ItemType Directory -Path '{remote_root}/jobs/{name}/resume' | Out-Null")
+                    for resume_file in sorted((local/"jobs"/name/"resume").iterdir()):
+                        subprocess.run(["scp", "-q", str(resume_file), f"{REMOTE}:{remote_root}/jobs/{name}/resume/{resume_file.name}"],
+                                       check=True, timeout=60)
             for name in ("trainer.exe", "worker.py", "group.json", "run.ps1", "host_reservation_v1.py", "host_slots_v1.py") + (tuple(n+".py" for n in GUARD_MODULES) if target_limits is not None else ()):
                 subprocess.run(["scp","-q",str(local/name),f"{REMOTE}:{remote_root}/{name}"],check=True,timeout=60)
         staged[host]=(local,remote_root,group)
@@ -721,6 +845,8 @@ try {{
                     request=pin(folder/"request.json"),completion=pin(output/"completion.json"),outputs=outputs,
                     source_output_directory=request["output_directory"],local_output_directory=str(output),
                     recovery=pin(folder/"recovery.json"))
+        if name in segment_plans:
+            report["segment"] = staged[host][2]["jobs"][name]["segment"]
         path=root/f"{name}-benchmark.json"
         write(path,report)
         reports[name]=pin(path)
@@ -765,11 +891,19 @@ def dispatch_stack_qualified(root,binary,configs,choice_path,wall_seconds):
     return _dispatch_group(root,binary,configs,selected["placements"],selected["mode"],None,wall_seconds)
 
 
-def dispatch_qualified(root,binary,configs,choice_path,wall_seconds):
+def dispatch_qualified(root,binary,configs,choice_path,wall_seconds,*,segments=None,target_limits=None):
+    """Gate the full campaign, then optionally execute per-job exclusive ranges.
+
+    segments[job] = {stop_after: END, resume: None | prior_report_pin}.
+    Relocated resume bytes may use {report: pin, files: {request, execution,
+    completion, checkpoint, optimizer pins}} instead of the report pin alone.
+    Scientific configs stay complete; target_limits retains qualification's schema.
+    """
     from compute_throughput_v2 import require_allocation
     jobs={name:dict(config_sha256=item["sha256"],updates=len(read(checked(item))["updates"])) for name,item in configs.items()}
     selected=require_allocation(choice_path,binary["sha256"],jobs)
-    return _dispatch_group(root,binary,configs,selected["placements"],selected["mode"],None,wall_seconds)
+    return _dispatch_group(root,binary,configs,selected["placements"],selected["mode"],None,wall_seconds,
+                           target_limits=target_limits,segments=segments)
 
 
 if __name__ == "__main__":
