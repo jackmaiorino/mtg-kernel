@@ -7,7 +7,7 @@ use crate::public_cost_features_v1::{
 
 mod bridge;
 pub(crate) mod snapshot;
-pub(crate) use bridge::{PublicTrainingGroup, PublicTrainingStep};
+pub(crate) use bridge::{PublicGroupGradientDiagnostic, PublicTrainingGroup, PublicTrainingStep};
 #[cfg(test)]
 mod tests;
 

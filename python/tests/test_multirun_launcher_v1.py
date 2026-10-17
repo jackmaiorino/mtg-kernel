@@ -631,8 +631,14 @@ class VerdictTests(unittest.TestCase):
 
     def test_m1_late_divergence_fails_the_sentinel_and_the_next_fastest_is_selected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=2,
-                                                  extra_env={"FAKE_TRAINER_LATE_CONTENTION": "4"})
+            # Exercise parallel sentinel rejection, independent of fake-process
+            # startup timing ranking serial first on busy Windows runners.
+            # The prefix, full-length runs and late byte divergence stay real.
+            with patch.object(launcher, "project_seconds",
+                              side_effect=lambda _stats, slots, _runs, _updates, overhead:
+                              overhead + 100.0 / launcher.concurrency(slots)):
+                workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=2,
+                                                      extra_env={"FAKE_TRAINER_LATE_CONTENTION": "4"})
             parallel = next(c for c in choice["candidates"] if c["concurrency"] == 2)
             self.assertEqual(parallel["status"], "disqualified")
             self.assertIn("full-length sentinel", " ".join(parallel["reasons"]))

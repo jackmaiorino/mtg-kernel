@@ -2,6 +2,9 @@
 
 Production entry: dispatch_qualified. Qualification entry is limited to four
 initial updates and 80 games across the group, and does not authorize a campaign.
+Remote placements supply one shared cpu_affinity list. Their staged pinned
+helpers acquire the target reservation and supervise host_slots timed before
+drive/runtime setup, native workers and export. Desktop ownership is unchanged.
 """
 import argparse
 import base64
@@ -9,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import platform
 import re
 import shutil
@@ -22,6 +25,322 @@ REMOTE = os.environ.get('COMPUTE_HOST_SSH', 'compute-host')
 REMOTE_INPUT = "C:/mtg-node/public-device-placement-001"
 HOSTNAMES = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
 DISK_RESERVE_BYTES = 60 * 1024**3
+REMOTE_INPUT_ENV = "MTG_PUBLIC_TRAINING_REMOTE_INPUT_ROOT"
+BUSY_PATTERN = (r"^(cargo|rustc|public_.*|native_.*|expanded_deck_.*|learned_sideboard.*|"
+                r"stack_feature_training.*|stack_policy_replay.*|own_registration_training.*|"
+                r"phase1_native_actor.*|trainer|mtg_kernel.*)\.exe$")
+
+
+def host_binding(host, placements):
+    """Resolve an optional remote Windows binding, without changing old receipts.
+
+    A computehost placement may supply remote_binding={expected_hostname,
+    input_root}. The SSH alias still selects transport; this binding checks the
+    actual destination and selects its already-staged inputs/runtime.
+    """
+    default = dict(expected_hostname=HOSTNAMES[host], input_root=REMOTE_INPUT)
+    bindings = []
+    for placement in placements:
+        if "remote_binding" not in placement:
+            bindings.append(default)
+            continue
+        binding = placement["remote_binding"]
+        if host != "computehost" or not isinstance(binding, dict) or set(binding) != {"expected_hostname", "input_root"}:
+            raise ValueError("explicit remote hostname and input root required")
+        hostname, root = binding["expected_hostname"], binding["input_root"]
+        if not isinstance(hostname, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}", hostname):
+            raise ValueError("invalid expected remote Windows hostname")
+        if not isinstance(root, str) or any(ord(c) < 32 for c in root):
+            raise ValueError("invalid remote input root")
+        path = PureWindowsPath(root)
+        if not path.is_absolute() or not re.fullmatch(r"[A-Za-z]:", path.drive) or ".." in path.parts:
+            raise ValueError("absolute local Windows remote input root required")
+        bindings.append(dict(expected_hostname=hostname.upper(), input_root=path.as_posix()))
+    if any(binding != bindings[0] for binding in bindings[1:]):
+        raise ValueError("remote placements disagree on host/input binding")
+    return bindings[0] if bindings else default
+
+
+def target_cores(placements):
+    """Execution-only affinity shared by one reserved remote worker group."""
+    cores = [placement.get("cpu_affinity") for placement in placements]
+    if (not cores or any(not isinstance(row, list) or not row
+                         or any(type(c) is not int or not 0 <= c < 64 for c in row)
+                         or len(set(row)) != len(row) for row in cores)
+            or any(sorted(row) != sorted(cores[0]) for row in cores[1:])):
+        raise ValueError("remote group requires one explicit distinct CPU affinity")
+    return sorted(cores[0])
+
+
+def target_helpers(runtime):
+    # Hash before importing; a copied helper must also be the module in use.
+    paths = {key: checked(runtime[key]) for key in ("host_reservation", "host_slots", "worker", "script")}
+    import host_reservation_v1 as reservations
+    import host_slots_v1 as slots
+    if (paths["host_reservation"].resolve() != Path(reservations.__file__).resolve()
+            or paths["host_slots"].resolve() != Path(slots.__file__).resolve()
+            or paths["worker"].resolve() != Path(__file__).resolve()):
+        raise ValueError("remote canonical helper/worker paths differ")
+    return reservations, slots
+
+
+GUARD_MODULES = ("archive_distillation_dispatch_v1", "native_expanded_dispatch_v1",
+                 "g115_d4_audit_storage_v1", "public_training_dispatch_v2")
+
+
+def target_guard_plan(limits, cores, root):
+    """Validate execution limits without changing scientific configuration."""
+    if set(limits) != {"group_root", "cpu_seconds", "wall_seconds", "storage", "stop_files"}:
+        raise ValueError("explicit target limits fields required")
+    group = PureWindowsPath(limits["group_root"])
+    storage = limits["storage"]
+    if set(storage) != {"accounting_roots", "max_physical_bytes", "projected_additional_bytes", "reserve_bytes"}:
+        raise ValueError("explicit target storage fields required")
+    roots = [PureWindowsPath(p) for p in storage["accounting_roots"]]
+    base = PureWindowsPath("C:/mtg-node")
+    if (not re.fullmatch(r"C:/mtg-node/[a-z0-9/-]+", group.as_posix())
+            or str(group) != str(PureWindowsPath(root)) or not group.is_absolute()
+            or group == base or not group.is_relative_to(base) or not roots
+            or any(not r.is_absolute() or r == base or not r.is_relative_to(base) for r in roots)
+            or not any(group.is_relative_to(r) for r in roots)
+            or any(a.is_relative_to(b) for i, a in enumerate(roots) for j, b in enumerate(roots) if i != j)):
+        raise ValueError("target group must be inside nonoverlapping C:/mtg-node accounting roots")
+    for value in (limits["cpu_seconds"], limits["wall_seconds"], storage["max_physical_bytes"],
+                  storage["projected_additional_bytes"], storage["reserve_bytes"]):
+        if type(value) not in (int, float) or not 0 < value < float("inf"):
+            raise ValueError("positive finite target bounds required")
+    if (storage["reserve_bytes"] < DISK_RESERVE_BYTES
+            or storage["projected_additional_bytes"] > storage["max_physical_bytes"]
+            or not limits["stop_files"] or any(not PureWindowsPath(p).is_absolute() for p in limits["stop_files"])):
+        raise ValueError("target reserve, projection or STOP declaration differs")
+    return dict(cpu_affinity=cores, run_limits={k: limits[k] for k in ("cpu_seconds", "wall_seconds")},
+                storage=storage, stop_files=limits["stop_files"])
+
+
+def target_guard_class(runtime):
+    # Check the entire import closure before any Guard import executes.
+    paths = {name: checked(runtime[name]) for name in GUARD_MODULES}
+    target_helpers(runtime)
+    import importlib
+    modules = {name: importlib.import_module(name) for name in GUARD_MODULES}
+    if any(Path(modules[name].__file__).resolve() != paths[name].resolve() for name in GUARD_MODULES):
+        raise ValueError("target Guard dependency path differs")
+    return modules[GUARD_MODULES[0]].Guard
+
+
+def target_child(path):
+    """Fixed runtime profile, only inside the Guard-contained script."""
+    path, group = Path(path), read(path)
+    root = path.parent.resolve()
+    binding = host_binding("computehost", [job["placement"] for job in group["jobs"].values()])
+    for key in list(os.environ):
+        if key.startswith(("MTG_", "S4A_", "PROFILE_", "BUDGET_", "CUBECL_")) and key != "MTG_HOST_RESERVATION_TOKEN":
+            os.environ.pop(key)
+    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+    (root/"cuda-cache").mkdir()
+    cube_config = root/"cubecl.toml"
+    cube_config.write_text('[autotune]\ncache = { file = '+json.dumps((root/"cube-cache").as_posix())+' }\n', encoding="utf-8")
+    environment = dict(TMP=str(root/"temp"), TEMP=str(root/"temp"), CUDA_CACHE_PATH=str(root/"cuda-cache"),
+        CUDA_CACHE_MAXSIZE="67108864", RUST_MIN_STACK="16777216", MTG_KERNEL_TENSORIZE_STATE_CACHE="1",
+        MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB="0", MTG_KERNEL_INFERENCE_CACHE_MIB="0", S4A_KEY_MEMO="0",
+        PROFILE_EXPERIMENT="0", PYTHONDONTWRITEBYTECODE="1")
+    environment[REMOTE_INPUT_ENV] = binding["input_root"]
+    os.environ.update(environment)
+    os.chdir(root)
+    write(root/"runtime-profile.json", dict(environment=environment, cwd=str(root), cubecl_configuration=pin(cube_config)))
+    worker_group(path)
+    export_group(root)
+
+
+def guarded_target(path):
+    """Inside the existing timed owner, contain setup, training and export."""
+    path, group = Path(path), read(path)
+    root = path.parent
+    guard, result = None, dict(complete=False, group=pin(path))
+    try:
+        cores = target_cores([job["placement"] for job in group["jobs"].values()])
+        plan = target_guard_plan(group["target_limits"], cores, root)
+        Guard = target_guard_class(group["target_runtime"])
+        reservations, _ = target_helpers(group["target_runtime"])
+        guard = Guard(plan, root/"guard", False)
+        script = checked(group["target_runtime"]["script"])
+        command = [str(Path(os.environ.get("SystemRoot", "C:/Windows"))/"System32/WindowsPowerShell/v1.0/powershell.exe"),
+                   "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
+                   "-Python", reservations.supervisor_python(sys.executable)]
+        with (root/"guard"/"stdout").open("x") as out, (root/"guard"/"stderr").open("x") as err:
+            child = guard.spawn(command, out, err)
+            result["exit_code"] = child.wait()
+            guard.quiet()
+        if result["exit_code"] != 0:
+            raise RuntimeError("contained target script failed")
+        result["sample"] = guard.check()
+        result["complete"] = True
+    except BaseException as error:
+        result["error"] = str(error)
+        raise
+    finally:
+        try:
+            if guard is not None:
+                try:
+                    result["final_sample"] = guard.terminate_and_drain()
+                finally:
+                    guard.close()
+                final = result["final_sample"]
+                if (guard.error or final["active_processes"] != 0
+                        or final["cpu_seconds"] >= plan["run_limits"]["cpu_seconds"]
+                        or final["seconds"] >= plan["run_limits"]["wall_seconds"]):
+                    raise RuntimeError("target Guard terminal failure: "+str(guard.error or final))
+        except BaseException as error:
+            result.update(complete=False, cleanup_error=str(error))
+            raise
+        finally:
+            if (root/"runtime-profile.json").is_file():
+                result["runtime_profile"] = pin(root/"runtime-profile.json")
+            write(root/"guard-result.json", result)
+
+
+def require_target_context(spec):
+    runtime = spec.get("target_runtime")
+    if not isinstance(runtime, dict):
+        raise ValueError("remote worker requires pinned canonical runtime")
+    reservations, slots = target_helpers(runtime)
+    cores = target_cores([spec["placement"]])
+    token = os.environ.get(reservations.TOKEN_ENV)
+    timed = slots.timed_state()
+    if (not token or reservations.status(token).get("token_fate") != "holds"
+            or timed.get("token_sha256") != slots.token_hash(token)
+            or timed.get("why") != "timed work declared its cores"
+            or timed.get("cores") != cores
+            or slots.parse_cores(os.environ.get(slots.CORES_ENV, "")) != cores
+            or slots.current_affinity() != cores):
+        raise ValueError("remote worker requires its held reservation and exact timed affinity")
+    return dict(reservation_sha256=slots.token_hash(token), cpu_affinity=cores,
+                helpers={key: runtime[key] for key in ("host_reservation", "host_slots")})
+
+
+def wait_target_dispatch(result, reservations, timeout, previous_events=()):
+    """Observe existing canonical state only; never retry, reclaim or release."""
+    if result["state"] not in ("dispatched", "finished-before-handoff"):
+        raise RuntimeError("remote dispatch unconfirmed or refused; do not redispatch: " + result["state"])
+    boundary = {json.dumps(event, sort_keys=True) for event in previous_events}
+    deadline = time.monotonic()+timeout
+    while True:
+        state = reservations.status(result["token"])
+        fate = state.get("token_fate")
+        events = state.get("events", []) if fate == "holds" else state.get("token_events", [])
+        if result["nested"]:
+            fresh = [event for event in events if json.dumps(event, sort_keys=True) not in boundary]
+            identities = {event["creation_time"] for event in fresh
+                          if event["kind"] in ("handoff", "adopt") and event.get("pid") == result["pid"]
+                          and type(event.get("creation_time")) is int}
+            if len(identities) > 1:
+                raise RuntimeError("nested supervisor creation identity is ambiguous; preserve and inspect")
+            completed = [event for event in fresh if event["kind"] == "nested-done"
+                         and event["by_pid"] == result["pid"] and event["by_process_creation_time"] in identities]
+            if completed:
+                event = completed[-1]
+                if reservations.process_state(event["by_pid"], event["by_process_creation_time"]) == "absent":
+                    return event
+        elif fate == "released":
+            completed = [event for event in events if event["kind"] == "release"]
+            if completed:
+                return completed[-1]
+        if fate not in ("holds", "released"):
+            raise RuntimeError("remote reservation outcome is " + str(fate) + "; preserve and inspect")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("remote reservation still nonterminal; preserve owner and do not redispatch")
+        time.sleep(1)
+
+
+def reserve_worker_group(path):
+    """Target-host adapter over canonical dispatch, supervision and timed slots."""
+    started, unix_start = time.monotonic(), time.time()
+    path, group = Path(path), read(path)
+    root = path.parent
+    result = dict(complete=False, group=pin(path), started_unix=unix_start)
+    try:
+        placements = [job["placement"] for job in group["jobs"].values()]
+        if not placements or any(p["host"] != "computehost" for p in placements):
+            raise ValueError("reserved adapter accepts one remote worker group only")
+        binding = host_binding("computehost", placements)
+        if platform.node().upper() != binding["expected_hostname"]:
+            raise ValueError("reserved adapter running on the wrong host")
+        cores = target_cores(placements)
+        reservations, slots = target_helpers(group["target_runtime"])
+        parent_token = os.environ.get(reservations.TOKEN_ENV)
+        previous_events = []
+        if parent_token:
+            timed = slots.timed_state()
+            if (timed.get("token_sha256") == slots.token_hash(parent_token)
+                    and timed.get("why") == "timed work declared its cores"):
+                raise ValueError("outer reservation already has a timed declaration; run the worker group inside that owner")
+            previous_events, unreadable = reservations.read_events(parent_token)
+            if unreadable:
+                raise ValueError("cannot bind nested dispatch to an incomplete canonical event log")
+            result["prior_event_count"] = len(previous_events)
+        python = reservations.supervisor_python(sys.executable)
+        command = [python, "-B", str(checked(group["target_runtime"]["host_slots"])), "timed",
+                   "--cores", slots.format_cores(cores), "--",
+                   str(Path(os.environ.get("SystemRoot", "C:/Windows"))/"System32/WindowsPowerShell/v1.0/powershell.exe"),
+                   "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                   str(checked(group["target_runtime"]["script"])), "-Python", python]
+        if "target_limits" in group:
+            target_guard_plan(group["target_limits"], cores, root)
+            command = command[:command.index("--")+1]+[python, "-B", str(Path(__file__).resolve()),
+                                                        "--guarded-target", str(path)]
+        created = {}
+        def create(line, cwd):
+            created.update(reservations.create_process(line, cwd))
+            write(root/"reservation-created.json", created)
+            return created
+        result["dispatch"] = reservations.dispatch(
+            lane="public-training", work_id=root.name,
+            release_condition="Release after worker group, export and all descendants finish, including failure",
+            command=command, cwd=str(root), busy_pattern=BUSY_PATTERN, create=create, python=python,
+            transport_record=dict(group=result["group"], cpu_affinity=cores))
+        write(root/"reservation-dispatch.json", result["dispatch"])
+        observed = dict(result["dispatch"])
+        if "pid" not in observed and "pid" in created:
+            observed["pid"] = created["pid"]
+        limit = sum(job["wall_seconds"] for job in group["jobs"].values())+720
+        result["terminal"] = wait_target_dispatch(observed, reservations, limit, previous_events)
+        if result["terminal"].get("outcome") != "success":
+            raise RuntimeError("canonical remote supervisor reported failure")
+        if "target_limits" in group:
+            result["guard"] = read(root/"guard-result.json")
+            if not result["guard"].get("complete"):
+                raise RuntimeError("target Guard did not complete")
+        executions = [read(Path(job["request"]["path"]).parent/"execution.json") for job in group["jobs"].values()]
+        first, last = min(e["started_unix"] for e in executions), max(e["finished_unix"] for e in executions)
+        result["startup_seconds"] = first-unix_start
+        result["recovery_and_release_seconds"] = time.time()-last
+        # The allocation model already prices native execution. Charge the
+        # remaining measured setup/stagger gaps too, without charging it twice.
+        durations = [e["finished_unix"]-e["started_unix"] for e in executions]
+        if group["mode"] == "parallel":
+            native = max(durations)
+        elif group["mode"] == "device_queues":
+            queues = {}
+            for job, duration in zip(group["jobs"].values(), durations):
+                device = job["placement"]["gpu_uuid"]
+                queues[device] = queues.get(device, 0)+duration
+            native = max(queues.values())
+        else:
+            native = sum(durations)
+        result["inter_job_seconds"] = max(0, last-first-native)
+        result["setup_seconds"] = result["startup_seconds"]+result["inter_job_seconds"]
+        if result["startup_seconds"] < 0 or result["recovery_and_release_seconds"] < 0:
+            raise ValueError("remote timing clock moved backwards")
+        result["export"] = read(root/"export-execution.json")
+        result["complete"] = True
+    except BaseException as error:
+        result["error"] = str(error)
+        print(json.dumps(result), flush=True)
+        raise
+    finally:
+        result["seconds"] = time.monotonic()-started
+        write(root/"reservation-execution.json", result)
+    return result
 
 
 def read(path):
@@ -77,8 +396,15 @@ def process_telemetry(child, ordinal):
 
 def worker(spec):
     placement = spec["placement"]
-    if platform.node().upper() != HOSTNAMES[placement["host"]]:
+    binding = host_binding(placement["host"], [placement])
+    if platform.node().upper() != binding["expected_hostname"]:
         raise ValueError("worker running on the wrong host")
+    if "remote_binding" in placement:
+        root = PureWindowsPath(binding["input_root"])
+        if (PureWindowsPath(os.environ.get(REMOTE_INPUT_ENV, "")) != root
+                or PureWindowsPath(os.environ.get("CUDA_PATH", "")) != root/"runtime"):
+            raise ValueError("worker remote input/runtime binding differs")
+    ownership = require_target_context(spec) if placement["host"] == "computehost" else None
     if os.environ.get("CUDA_VISIBLE_DEVICES"):
         raise ValueError("explicit CUDA remapping needs separate qualification")
     if gpu_uuid(placement["gpu_ordinal"]) != placement["gpu_uuid"]:
@@ -138,6 +464,8 @@ def worker(spec):
     execution = dict(exit_code=code, timeout=timed_out, error=failure, seconds=time.monotonic()-started,
                      started_unix=unix_start, finished_unix=time.time(), placement=placement,
                      observed_gpu_uuid=observed, binary_sha256=spec["binary"]["sha256"], request_sha256=spec["request"]["sha256"])
+    if ownership is not None:
+        execution["target_ownership"] = ownership
     write(folder/"execution.json",execution)
     if code != 0 or failure:
         raise RuntimeError(f"native execution failed: {folder}: {execution}")
@@ -151,6 +479,8 @@ def worker(spec):
 
 def worker_group(path):
     group = read(path)
+    if "target_runtime" in group:
+        group["jobs"] = {name: dict(job, target_runtime=group["target_runtime"]) for name, job in group["jobs"].items()}
     if group["mode"] == "device_queues":
         queues = {}
         for spec in group["jobs"].values():
@@ -168,6 +498,7 @@ def worker_group(path):
 
 
 def export_group(root):
+    started = time.monotonic()
     files = [p for p in sorted((root/"jobs").rglob("*")) if p.is_file()]
     manifest = {p.relative_to(root).as_posix():pin(p)["sha256"] for p in files}
     write(root/"export-manifest.json",manifest)
@@ -175,7 +506,9 @@ def export_group(root):
         for path in files:
             archive.write(path,path.relative_to(root).as_posix())
         archive.write(root/"export-manifest.json","export-manifest.json")
-    print(json.dumps(dict(files=len(files),zip_sha256=pin(root/"results.zip")["sha256"])))
+    result = dict(files=len(files), zip_sha256=pin(root/"results.zip")["sha256"])
+    write(root/"export-execution.json", dict(**result, seconds=time.monotonic()-started))
+    print(json.dumps(result))
 
 
 def ssh_ps(script, timeout=60):
@@ -193,21 +526,22 @@ def require_disk_reserve(free_bytes):
 
 
 def preflight(host, placements, target_drive):
+    binding = host_binding(host, placements)
     drive = str(target_drive).upper()
     if not re.fullmatch(r"[A-Z]", drive):
         raise ValueError("single target drive letter required")
     script=r'''$ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-$active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer\.exe$|public_feature_training|learned_sideboard|expanded_deck_training|phase1_native_actor|stack_feature_training|stack_policy_replay|public_feature_evaluation|cargo|rustc'} | Select-Object Name,ProcessId,CommandLine)
+$active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '__BUSY_PATTERN__'} | Select-Object Name,ProcessId,CommandLine)
 $disk=Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='__TARGET_DRIVE__:'"
 if (-not $disk) {throw 'target volume unavailable'}
-[pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;disk_free_bytes=[int64]$disk.FreeSpace;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''.replace("__TARGET_DRIVE__",drive)
+[pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;disk_free_bytes=[int64]$disk.FreeSpace;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''.replace("__TARGET_DRIVE__",drive).replace("__BUSY_PATTERN__",BUSY_PATTERN)
     if host == "computehost":
         result=json.loads(ssh_ps(script))
     else:
         encoded=base64.b64encode(script.encode("utf-16le")).decode()
         result=json.loads(subprocess.check_output(["powershell","-NoProfile","-EncodedCommand",encoded],text=True))
-    if result["host"].upper() != HOSTNAMES[host] or result["active"]:
+    if result["host"].upper() != binding["expected_hostname"] or result["active"]:
         raise ValueError("placement has a different host or competing native owner")
     require_disk_reserve(result.get("disk_free_bytes"))
     rows={int(parts[0]):parts for parts in ([x.strip() for x in row.split(',')] for row in result["gpu"])}
@@ -218,7 +552,7 @@ if (-not $disk) {throw 'target volume unavailable'}
     return result
 
 
-def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seconds):
+def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seconds, target_limits=None):
     root = Path(root)
     staging_started=time.monotonic()
     if mode not in ["parallel","sequential","device_queues"] or set(configs) != set(placements):
@@ -230,8 +564,15 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
     for host in {p["host"] for p in placements.values()}:
         if host not in HOSTNAMES:
             raise ValueError("no qualified dispatcher for host")
+        if host == "computehost":
+            target_cores([p for p in placements.values() if p["host"] == host])
         target_drive = root.drive.rstrip(":") if host == "desktop" else "C"
         preflights[host] = preflight(host,[p for p in placements.values() if p["host"]==host],target_drive)
+    if target_limits is not None:
+        remote = [p for p in placements.values() if p["host"] == "computehost"]
+        if not remote:
+            raise ValueError("target limits require a remote placement")
+        target_guard_plan(target_limits, target_cores(remote), target_limits["group_root"])
     root.mkdir()
     for host, report in preflights.items():
         write(root/f"{host}-preflight.json",report)
@@ -246,9 +587,13 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
         local = root/host
         (local/"jobs").mkdir(parents=True)
         remote_root = f"C:/mtg-node/{root.name}" if host == "computehost" else str(local)
+        if host == "computehost" and target_limits is not None:
+            remote_root = target_limits["group_root"]
         native_binary = str(Path(remote_root)/"trainer.exe")
         shutil.copy2(binary,local/"trainer.exe")
         group = dict(mode=mode,jobs={})
+        if host == "computehost" and target_limits is not None:
+            group["target_limits"] = target_limits
         for name, placement in placements.items():
             if placement["host"] != host:
                 continue
@@ -263,19 +608,19 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
             group["jobs"][name]=dict(placement=placement,wall_seconds=wall_seconds,telemetry=mode=="device_queues",
                 binary=dict(path=native_binary,sha256=binary_pin["sha256"]),
                 request=dict(path=str(Path(native_folder)/"request.json"),sha256=pin(folder/"request.json")["sha256"]))
-        write(local/"group.json",group)
         if host == "computehost":
-            ssh_ps(f"if (Test-Path -LiteralPath '{remote_root}') {{throw 'remote destination exists'}}; New-Item -ItemType Directory -Path '{remote_root}/jobs' | Out-Null")
+            binding = host_binding(host, [job["placement"] for job in group["jobs"].values()])
+            input_root = binding["input_root"].replace("'", "''")
+            binding_environment = (f"$env:{REMOTE_INPUT_ENV}=$inputRoot\n"
+                                   if any("remote_binding" in job["placement"] for job in group["jobs"].values()) else "")
             shutil.copy2(__file__,local/"worker.py")
-            for name in group["jobs"]:
-                ssh_ps(f"New-Item -ItemType Directory -Path '{remote_root}/jobs/{name}' | Out-Null")
-                subprocess.run(["scp","-q",str(local/"jobs"/name/"request.json"),f"{REMOTE}:{remote_root}/jobs/{name}/request.json"],check=True,timeout=60)
-            for name in ["trainer.exe","worker.py","group.json"]:
-                subprocess.run(["scp","-q",str(local/name),f"{REMOTE}:{remote_root}/{name}"],check=True,timeout=60)
-            ps=f'''$ErrorActionPreference='Stop'
+            worker_mode = "--target-child" if target_limits is not None else "--worker-group"
+            export_command = "" if target_limits is not None else ' & $Python -B "$root/worker.py" --export "$root"\n if ($LASTEXITCODE -ne 0) {throw \'owned export failed\'}'
+            ps=f'''param([Parameter(Mandatory=$true)][string]$Python)
+$ErrorActionPreference='Stop'
 $root='{remote_root}'
-$inputRoot='{REMOTE_INPUT}'
-$created=@()
+$inputRoot='{input_root}'
+{binding_environment}$created=@()
 try {{
  foreach ($drive in @('D','E')) {{
   if (Test-Path -LiteralPath "${{drive}}:/") {{throw 'existing drive mapping; preserve owner'}}
@@ -287,33 +632,53 @@ try {{
  $env:PATH="$inputRoot/runtime/bin;$env:PATH"
  New-Item -ItemType Directory -Path "$root/temp" | Out-Null
  $env:TEMP="$root/temp"; $env:TMP="$root/temp"
- & python "$root/worker.py" --worker-group "$root/group.json"
+ & $Python -B "$root/worker.py" {worker_mode} "$root/group.json"
  if ($LASTEXITCODE -ne 0) {{throw 'native worker group failed'}}
+{export_command}
 }} finally {{ foreach ($drive in $created) {{ & subst "${{drive}}:" /D }} }}
 '''
             (local/"run.ps1").write_text(ps)
-            subprocess.run(["scp","-q",str(local/"run.ps1"),f"{REMOTE}:{remote_root}/run.ps1"],check=True,timeout=60)
+            runtime = {}
+            for key, name in (("host_reservation", "host_reservation_v1.py"), ("host_slots", "host_slots_v1.py"),
+                              ("worker", "worker.py"), ("script", "run.ps1")):
+                if key in ("host_reservation", "host_slots"):
+                    shutil.copy2(Path(__file__).with_name(name), local/name)
+                runtime[key] = dict(path=str(Path(remote_root)/name), sha256=pin(local/name)["sha256"])
+            if target_limits is not None:
+                for name in GUARD_MODULES:
+                    shutil.copy2(Path(__file__).with_name(name+".py"), local/(name+".py"))
+                    runtime[name] = dict(path=str(Path(remote_root)/(name+".py")), sha256=pin(local/(name+".py"))["sha256"])
+            group["target_runtime"] = runtime
+        write(local/"group.json",group)
+        if host == "computehost":
+            ssh_ps(f"if (Test-Path -LiteralPath '{remote_root}') {{throw 'remote destination exists'}}; New-Item -ItemType Directory -Path '{remote_root}/jobs' | Out-Null")
+            for name in group["jobs"]:
+                ssh_ps(f"New-Item -ItemType Directory -Path '{remote_root}/jobs/{name}' | Out-Null")
+                subprocess.run(["scp","-q",str(local/"jobs"/name/"request.json"),f"{REMOTE}:{remote_root}/jobs/{name}/request.json"],check=True,timeout=60)
+            for name in ("trainer.exe", "worker.py", "group.json", "run.ps1", "host_reservation_v1.py", "host_slots_v1.py") + (tuple(n+".py" for n in GUARD_MODULES) if target_limits is not None else ()):
+                subprocess.run(["scp","-q",str(local/name),f"{REMOTE}:{remote_root}/{name}"],check=True,timeout=60)
         staged[host]=(local,remote_root,group)
 
     def run_host(host):
         local, remote_root, group=staged[host]
         if host == "desktop":
             worker_group(local/"group.json")
-            return 0.0
+            return dict(startup_seconds=0.0, recovery_seconds=0.0)
         # Native children have their own wall cap even if SSH observation is interrupted.
         command=["ssh","-o","BatchMode=yes","-o","ServerAliveInterval=15","-o","ServerAliveCountMax=4",REMOTE,
-                 "powershell","-NoProfile","-ExecutionPolicy","Bypass","-File",remote_root+"/run.ps1"]
+                 "python", "-B", remote_root+"/worker.py", "--reserve-worker-group", remote_root+"/group.json"]
         before=time.monotonic()
         with (local/"ssh.stdout").open("x") as out,(local/"ssh.stderr").open("x") as err:
-            result=subprocess.run(command,stdout=out,stderr=err,timeout=wall_seconds*len(group["jobs"])+120)
+            result=subprocess.run(command,stdout=out,stderr=err,timeout=wall_seconds*len(group["jobs"])+720)
         write(local/"ssh-execution.json",dict(exit_code=result.returncode,seconds=time.monotonic()-before))
         if result.returncode:
             raise RuntimeError("remote worker group failed; preserve and inspect remote state")
         recovery_started=time.monotonic()
-        exported=subprocess.run(["ssh","-o","BatchMode=yes",REMOTE,"python",remote_root+"/worker.py","--export",remote_root],capture_output=True,text=True,timeout=600)
-        if exported.returncode:
-            raise RuntimeError(exported.stderr)
-        receipt=read_json_text(exported.stdout)
+        reserved = read_json_text((local/"ssh.stdout").read_text())
+        if not reserved.get("complete"):
+            raise RuntimeError("remote reservation completion missing")
+        write(local/"reservation-execution.json", reserved)
+        receipt=reserved["export"]
         before=time.monotonic()
         subprocess.run(["scp","-q",f"{REMOTE}:{remote_root}/results.zip",str(local/"results.zip")],check=True,timeout=600)
         if pin(local/"results.zip")["sha256"] != receipt["zip_sha256"]:
@@ -331,7 +696,8 @@ try {{
             if pin(recovered/name)["sha256"] != digest:
                 raise ValueError("recovered remote file differs")
         write(local/"recovery-verification.json",dict(files=len(files),mismatches=0,download_seconds=time.monotonic()-before,archive=receipt))
-        return time.monotonic()-recovery_started
+        return dict(startup_seconds=reserved["setup_seconds"],
+                    recovery_seconds=reserved["recovery_and_release_seconds"]+time.monotonic()-recovery_started)
 
     staging_seconds=time.monotonic()-staging_started
     started=time.monotonic()
@@ -359,7 +725,9 @@ try {{
         write(path,report)
         reports[name]=pin(path)
     write(root/"group-benchmark.json",dict(mode=mode,jobs=reports,seconds=time.monotonic()-started,
-        staging_seconds=staging_seconds,recovery_seconds=sum(recoveries)))
+        staging_seconds=staging_seconds+sum(r["startup_seconds"] for r in recoveries),
+        reservation_setup_seconds=sum(r["startup_seconds"] for r in recoveries),
+        recovery_seconds=sum(r["recovery_seconds"] for r in recoveries)))
     return pin(root/"group-benchmark.json")
 
 
@@ -367,13 +735,13 @@ def read_json_text(text):
     return json.loads(text)
 
 
-def dispatch_qualification(root,binary,configs,placements,mode,updates=3):
+def dispatch_qualification(root,binary,configs,placements,mode,updates=3,*,target_limits=None):
     if not 1 <= updates <= 4 or len(configs) != 2:
         raise ValueError("qualification is a bounded two-arm prefix only")
     games=sum(len(batch) for item in configs.values() for batch in read(checked(item))["updates"][:updates])
     if games > 80:
         raise ValueError("qualification prefix exceeds 80 games")
-    return _dispatch_group(root,binary,configs,placements,mode,updates,300)
+    return _dispatch_group(root,binary,configs,placements,mode,updates,300,target_limits=target_limits)
 
 
 def dispatch_stack_qualification(root,binary,configs,placements,updates=3):
@@ -407,9 +775,18 @@ def dispatch_qualified(root,binary,configs,choice_path,wall_seconds):
 if __name__ == "__main__":
     parser=argparse.ArgumentParser()
     parser.add_argument("--worker-group",type=Path)
+    parser.add_argument("--reserve-worker-group",type=Path)
     parser.add_argument("--export",type=Path)
+    parser.add_argument("--guarded-target",type=Path)
+    parser.add_argument("--target-child",type=Path)
     args=parser.parse_args()
-    if args.worker_group:
+    if args.target_child:
+        target_child(args.target_child)
+    elif args.guarded_target:
+        guarded_target(args.guarded_target)
+    elif args.reserve_worker_group:
+        print(json.dumps(reserve_worker_group(args.reserve_worker_group)))
+    elif args.worker_group:
         worker_group(args.worker_group)
     elif args.export:
         export_group(args.export)

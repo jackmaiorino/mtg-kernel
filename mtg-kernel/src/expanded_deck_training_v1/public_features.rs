@@ -12,6 +12,7 @@ use crate::sideboard_play_policy_v1::public_inputs::PublicInputPlayPolicyV1;
 
 pub(crate) mod opponent_kind;
 pub mod replay_audit;
+pub mod reuse_qualification;
 pub(crate) mod search_opponent;
 #[cfg(test)]
 mod tests;
@@ -461,8 +462,7 @@ fn collect_with_opponent(
         },
         "opponent dispatch differs from its episode",
     )?;
-    let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
-        1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player)).map_err(err)?;
+    let mut session = episode_session_v1(episode, &configs)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_for_game_v1(seeds).map_err(err)?;
     match &mut opponent {
