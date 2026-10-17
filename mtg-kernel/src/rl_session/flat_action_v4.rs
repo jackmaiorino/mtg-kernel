@@ -95,6 +95,13 @@ pub(super) fn census_hidden_source_conflicts_v1(
             .is_some_and(|pending| stack(&pending.resolving_item))
 }
 mod search_state;
+pub(super) fn redeterminize_call_v62(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_call_v62(state, actor, seed)
+}
 pub(super) fn redeterminize_end_turn_v68(
     state: &mut crate::state::GameState,
     actor: crate::ids::PlayerId,

@@ -7,6 +7,7 @@ use crate::state::AbilitySourceContractV4;
 struct Scan<'a> {
     state: &'a GameState,
     pool: &'a [ObjectId],
+    scope: ReferenceScopeV68,
 }
 impl Scan<'_> {
     fn raw(&self, id: ObjectId) -> bool {
@@ -86,13 +87,6 @@ impl Scan<'_> {
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
             | MaySacrificeNonlandOtherwiseV1 { .. }
-            | BindAleshaRaidReturn
-            | AleshaRaidReturn { .. }
-            | BindNineLivesFamiliarReturnV1
-            | ScheduleNineLivesFamiliarReturnV1 { .. }
-            | ReturnNineLivesFamiliarV1 { .. }
-            | BindValkyriesCallDeathV1
-            | ReturnValkyriesCallCreatureV1 { .. }
             | AjaniLoyaltyV42 { .. }
             | DrakeIncubationFromCaptureV1 { .. }
             | DrakeCreateTokenFromPaidV1
@@ -103,6 +97,20 @@ impl Scan<'_> {
             | ConquerorGainFromCaptureV49 { .. }
             | ConquerorGainFromWideCaptureV59 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,
+            BindAleshaRaidReturn | AleshaRaidReturn { .. }
+            | BindNineLivesFamiliarReturnV1 | BindValkyriesCallDeathV1 => {
+                self.scope == ReferenceScopeV68::Legacy
+            }
+            ScheduleNineLivesFamiliarReturnV1 { graveyard, .. }
+            | ReturnNineLivesFamiliarV1 { graveyard, .. } => {
+                self.scope == ReferenceScopeV68::Legacy
+                    || self.same(graveyard.object, graveyard.zone_change_count)
+            }
+            ReturnValkyriesCallCreatureV1 { source, graveyard, .. } => {
+                self.scope == ReferenceScopeV68::Legacy
+                    || self.a(source)
+                    || self.same(graveyard.object, graveyard.zone_change_count)
+            }
             AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
                 let crate::event::CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else { return true; };
@@ -860,7 +868,8 @@ impl Scan<'_> {
             PendingEffectChoice::ChooseBoolean { purpose, .. } => {
                 use EffectBooleanChoicePurpose::*;
                 match purpose {
-                    CuratorPileV1 { .. } | AleshaRaidReturnV1 => true,
+                    CuratorPileV1 { .. } => true,
+                    AleshaRaidReturnV1 => self.scope == ReferenceScopeV68::Legacy,
                     ExilePlay { choice } => {
                         choice.card.is_some_and(|b| self.b(&b))
                             || self.bs(&choice.rejected)
@@ -904,7 +913,32 @@ impl Scan<'_> {
 }
 
 pub(super) fn op_conflicts(state: &GameState, pool: &[ObjectId], op: &EffectOp) -> bool {
-    Scan { state, pool }.op(op)
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Legacy,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_call_v62(state: &GameState, pool: &[ObjectId], op: &EffectOp) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Call,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_end_turn_v68(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::EndTurn,
+    }
+    .op(op)
 }
 
 fn continuation_conflicts(
@@ -1047,6 +1081,7 @@ fn continuation_conflicts(
 enum ReferenceScopeV68 {
     Legacy,
     EndTurn,
+    Call,
 }
 
 pub(super) fn conflicts(
@@ -1063,12 +1098,31 @@ pub(super) fn conflicts_end_turn_v68(
 ) -> bool {
     conflicts_in_scope(state, pool, plan, ReferenceScopeV68::EndTurn)
 }
+pub(super) fn conflicts_call_v62(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Call)
+}
 fn conflicts_in_scope(
     state: &GameState,
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     scope: ReferenceScopeV68,
 ) -> bool {
+    if scope != ReferenceScopeV68::Legacy
+        && state
+            .engine
+            .event_log
+            .iter()
+            .any(|event| matches!(event, crate::event::CommittedEvent::AleshaPowerLkiV1 { .. }))
+        && [PlayerId::P0, PlayerId::P1].into_iter().any(|viewer| {
+            crate::graveyard_return_public_v61::capture_complete_call_v62(state, viewer).is_err()
+        })
+    {
+        return true;
+    }
     if scope == ReferenceScopeV68::EndTurn
         && crate::engine::time_stop_v1::sampler_conflicts_v68(state, pool).unwrap_or(true)
     {
@@ -1196,7 +1250,7 @@ fn conflicts_in_scope(
                 event,
                 crate::event::CommittedEvent::TimeStopJournalV1 { .. }
             ) {
-                return scope == ReferenceScopeV68::Legacy;
+                return scope != ReferenceScopeV68::EndTurn;
             }
             matches!(
                 event,
@@ -1302,7 +1356,7 @@ fn conflicts_in_scope(
     {
         return true;
     }
-    let s = Scan { state, pool };
+    let s = Scan { state, pool, scope };
     if state
         .engine
         .event_history
@@ -1690,8 +1744,8 @@ fn conflicts_in_scope(
                 crate::effect::thousand_year_storm_v1::JournalV1::Collected { .. } => false,
                 crate::effect::thousand_year_storm_v1::JournalV1::Published { item, .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { item, .. } => s.storm_snapshot(item),
             },
-            AleshaPowerLkiV1 { .. }
-            | NivMizzetVisionaryDamageV1 { .. }
+            AleshaPowerLkiV1 { .. } => scope == ReferenceScopeV68::Legacy,
+            NivMizzetVisionaryDamageV1 { .. }
             | NivMizzetVisionaryTriggerStackedV1 { .. }
             | NivMizzetVisionaryDamageSourceDepartureV1 { .. }
             | TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
@@ -2012,6 +2066,7 @@ mod tests {
             let scan = Scan {
                 state: &state,
                 pool: &[object],
+                scope: ReferenceScopeV68::Legacy,
             };
             assert!(scan.op(&op));
             assert!(scan.purpose(&purpose));
@@ -2019,6 +2074,7 @@ mod tests {
         let scan = Scan {
             state: &state,
             pool: &[other],
+            scope: ReferenceScopeV68::Legacy,
         };
         assert!(!scan.op(&op));
         assert!(!scan.purpose(&purpose));
@@ -2078,6 +2134,7 @@ mod tests {
             let scan = Scan {
                 state: &state,
                 pool: &pool,
+                scope: ReferenceScopeV68::Legacy,
             };
             assert!(scan.f(&frame));
             assert!(scan.purpose(&purpose));
@@ -2086,6 +2143,7 @@ mod tests {
         let scan = Scan {
             state: &state,
             pool: &pool,
+            scope: ReferenceScopeV68::Legacy,
         };
         assert!(!scan.f(&frame));
         assert!(!scan.purpose(&purpose));
@@ -2094,6 +2152,7 @@ mod tests {
         let scan = Scan {
             state: &state,
             pool: &pool,
+            scope: ReferenceScopeV68::Legacy,
         };
         assert!(!scan.f(&frame));
         assert!(!scan.purpose(&purpose));
