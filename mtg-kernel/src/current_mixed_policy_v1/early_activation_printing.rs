@@ -367,7 +367,7 @@ enum CavalryHasteInstruction {
 fn cavalry_haste() -> CavalryHaste {
     CavalryHaste {
         printed_ability_index: 0,
-        target: ActivationTarget::OneBattlefieldCreature,
+        target: ActivationTarget::BattlefieldCreature,
         either_controller: true,
         target_incarnation_bound_at_announcement: true,
         recheck_creature_target_legality_on_resolution: true,
