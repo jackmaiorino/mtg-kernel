@@ -464,6 +464,7 @@ fn independent_hidden_worlds_neutral_face_down_and_all17_counter_storage_primiti
             incubation: i32::MAX,
             revival: i32::MAX,
             fellowship: i32::MAX,
+            stash: 0,
         };
         {
             let live = state.objects.get_mut(land);

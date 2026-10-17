@@ -2485,7 +2485,8 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let reads_revival = live.counters.revival != 0
         || crate::card_def::CARD_DEFS[usize::from(live.card_def)].name == "Nine-Lives Familiar";
     let reads_fellowship = live.counters.fellowship != 0;
-    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship {
+    let reads_stash = live.counters.stash != 0;
+    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship && !reads_stash {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();

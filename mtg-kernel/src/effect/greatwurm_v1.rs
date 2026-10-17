@@ -22,8 +22,9 @@ pub enum CounterKindV1 {
     Lifelink,
     Time,
     Finality,
+    Stash,
 }
-pub const KINDS: [CounterKindV1; 17] = [
+pub const KINDS: [CounterKindV1; 18] = [
     CounterKindV1::PlusOne,
     CounterKindV1::MinusOne,
     CounterKindV1::MinusToughness,
@@ -41,6 +42,7 @@ pub const KINDS: [CounterKindV1; 17] = [
     CounterKindV1::Lifelink,
     CounterKindV1::Time,
     CounterKindV1::Finality,
+    CounterKindV1::Stash,
 ];
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +68,7 @@ pub(crate) fn count(state: &GameState, id: ObjectId, kind: CounterKindV1) -> Res
         CounterKindV1::Incubation => c.incubation,
         CounterKindV1::Revival => c.revival,
         CounterKindV1::Fellowship => c.fellowship,
+        CounterKindV1::Stash => c.stash,
         CounterKindV1::Loyalty => {
             return Ok(crate::planeswalker_v1::loyalty(state, id).unwrap_or(0))
         }
@@ -102,6 +105,7 @@ pub(crate) fn remove_unit(state: &mut GameState, unit: UnitV1) {
         Incubation => o.counters.incubation -= 1,
         Revival => o.counters.revival -= 1,
         Fellowship => o.counters.fellowship -= 1,
+        Stash => o.counters.stash -= 1,
         Lifelink => o.v4.lifelink_keyword_counters -= 1,
         Time => o.v4.time_counters_v1 -= 1,
         Finality => {
