@@ -45,3 +45,11 @@ preserve both existing ordered source-input prefixes, bind every new semantic
 child to a real path, preserve the original eight fixture bodies, and show no
 registry, frozen event-kind or rl.rs change relative to c99eb1889. No compute,
 remote mutation, or fabricated event sample was used.
+
+Named source review repaired the published/resolving draw projection to use the
+actual triggered row's AbilitySourceContractV4, retaining the separate spell
+StackSourceContractV4 type. The existing paid source-departure group exercises
+the real current draws; a paid-publication clone now also checks a labelled
+native concealment boundary. The authenticated original source stays Known491
+while the current source reference remains face down. Pinned formatting, static
+source checks and diff checks pass for the repair. All Rust remains unrun.

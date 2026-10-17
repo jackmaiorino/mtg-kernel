@@ -49,6 +49,27 @@ fn paid_plus_one_original_payment_token_replacement_and_wide_current_fields_both
                 assert_eq!(f.meaning.printed.zombie_card_id, 492);
                 assert!(!f.meaning.full_engine_admitted && !f.meaning.complete_consumer_admitted);
             }
+            // Native concealment primitive after a genuine paid publication.
+            // It changes the current form, never the originally public source.
+            let mut concealed = restore(&s);
+            concealed.objects.get_mut(v).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: false,
+                lookers: 0,
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            for viewer in [p, p.opponent()] {
+                let f = capture(&concealed, viewer);
+                let source = &f.activations[0].source;
+                assert_eq!(
+                    source.original_source.identity,
+                    crate::optional_trigger_public_v1::IdentityV1::Known { card_id: 491 }
+                );
+                assert!(matches!(
+                    source.current_original_source.as_ref().unwrap().identity,
+                    crate::optional_trigger_public_v1::IdentityV1::FaceDown { disguised: false }
+                ));
+            }
             event::propose_and_commit(&mut s, event::ProposedEvent::zone_change(v, Zone::Hand));
             event::propose_and_commit(
                 &mut s,

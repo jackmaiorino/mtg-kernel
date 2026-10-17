@@ -2,6 +2,20 @@
 use super::*;
 use crate::{liliana_public_v73::*, optional_trigger_public_v1 as public};
 
+fn root(
+    s: &GameState,
+    source: AbilitySourceContractV4,
+    viewer: PlayerId,
+) -> Result<public::RootV1, String> {
+    if !definition(source.card_def) {
+        return Err("V73 original native source is not Liliana".into());
+    }
+    let mut root = public::root(s, source, Some(viewer))?;
+    // The genuine paid activation or captured printed observer was face up.
+    // Preserve that public fact while the current reference remains concealed.
+    root.original_source.identity = public::IdentityV1::Known { card_id: 491 };
+    Ok(root)
+}
 fn incarnation(
     s: &GameState,
     b: EffectObjectBinding,
@@ -133,7 +147,7 @@ pub(crate) fn capture(s: &GameState, v: PlayerId) -> Result<FactsV73, String> {
         paid.insert(input.index, occurrence);
         out.activations.push(ActivationV73 {
             occurrence,
-            source: public::root(s, input.source, Some(v))?,
+            source: root(s, input.source, v)?,
             turn: input.turn,
             ability_index: input.pending.ability_index,
             loyalty_before: input.before,
@@ -330,7 +344,7 @@ pub(crate) fn capture(s: &GameState, v: PlayerId) -> Result<FactsV73, String> {
         out.deaths.push(DeathV73 {
             occurrence: u32::try_from(out.deaths.len())
                 .map_err(|_| "V73 death occurrence overflow")?,
-            observer: public::root(s, *source, Some(v))?,
+            observer: root(s, *source, v)?,
             creature: incarnation(
                 s,
                 EffectObjectBinding {
@@ -346,10 +360,10 @@ pub(crate) fn capture(s: &GameState, v: PlayerId) -> Result<FactsV73, String> {
     for (i, t) in public::held(s).into_iter().enumerate() {
         if t.source_contract.is_some_and(|a| definition(a.card_def)) && t.effect == death_draw() {
             out.current_draws.push(DrawV73 {
-                source: public::root(
+                source: root(
                     s,
                     t.source_contract.ok_or("V73 held draw source absent")?,
-                    Some(v),
+                    v,
                 )?,
                 stage: DrawStageV73::Held,
                 native_position: u32::try_from(i).map_err(|_| "V73 held position overflow")?,
@@ -358,15 +372,17 @@ pub(crate) fn capture(s: &GameState, v: PlayerId) -> Result<FactsV73, String> {
     }
     for (i, r) in s.stack.iter().enumerate() {
         if r.kind == StackItemKind::TriggeredAbility
-            && r.v4.source_contract.is_some_and(|a| definition(a.card_def))
+            && r.v4
+                .ability_source_contract
+                .is_some_and(|a| definition(a.card_def))
             && r.inline_effect == Some(death_draw())
         {
             out.current_draws.push(DrawV73 {
-                source: public::root(
+                source: root(
                     s,
-                    r.v4.source_contract
+                    r.v4.ability_source_contract
                         .ok_or("V73 published draw source absent")?,
-                    Some(v),
+                    v,
                 )?,
                 stage: DrawStageV73::Published,
                 native_position: u32::try_from(i).map_err(|_| "V73 stack position overflow")?,
@@ -376,15 +392,17 @@ pub(crate) fn capture(s: &GameState, v: PlayerId) -> Result<FactsV73, String> {
     if let Some(p) = &s.engine.pending_effect {
         let r = &p.resolving_item;
         if r.kind == StackItemKind::TriggeredAbility
-            && r.v4.source_contract.is_some_and(|a| definition(a.card_def))
+            && r.v4
+                .ability_source_contract
+                .is_some_and(|a| definition(a.card_def))
             && r.inline_effect == Some(death_draw())
         {
             out.current_draws.push(DrawV73 {
-                source: public::root(
+                source: root(
                     s,
-                    r.v4.source_contract
+                    r.v4.ability_source_contract
                         .ok_or("V73 resolving draw source absent")?,
-                    Some(v),
+                    v,
                 )?,
                 stage: DrawStageV73::Resolving,
                 native_position: 0,
