@@ -225,7 +225,7 @@ pub(crate) fn activation_cost(
     if source.card_db_id != 491 {
         return Ok(None);
     }
-    if granted_ability.is_some()
+    if !granted_ability.is_none()
         || *actor != source.controller
         || source.zone != crate::state::Zone::Battlefield
     {
