@@ -83,8 +83,10 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
         peer_child = self.launch(peer, peer_code, trigger, ready, done)
         heartbeat = self.root/"survivor"
         survivor_child = self.launch(survivor, HEARTBEAT, heartbeat)
+        # A console Python descendant otherwise creates an extra conhost process.
         child = self.launch(completed,
-            "import subprocess,sys; subprocess.run([sys.executable,'-B','-c',sys.argv[1]],check=True)", BURN)
+            "import subprocess,sys; subprocess.run([sys.executable,'-B','-c',sys.argv[1]],"
+            "check=True,creationflags=subprocess.CREATE_NO_WINDOW)", BURN)
         self.assertEqual(child.wait(timeout=8), 0)
         self.wait_for(lambda: ready.exists() and heartbeat.exists())
         # A completed job can be quiet while siblings remain active in Guard.
@@ -177,7 +179,8 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
         owner, ready = self.owner(), self.root/"descendant-ready"
         descendant = BURN+"\nimport pathlib,sys; pathlib.Path(sys.argv[1]).touch()\ntime.sleep(20)"
         child = self.launch(owner,
-            "import subprocess,sys; subprocess.Popen([sys.executable,'-B','-c',sys.argv[1],sys.argv[2]])",
+            "import subprocess,sys; subprocess.Popen([sys.executable,'-B','-c',sys.argv[1],sys.argv[2]],"
+            "creationflags=subprocess.CREATE_NO_WINDOW)",
             descendant, ready)
         self.assertEqual(child.wait(timeout=5), 0)
         self.wait_for(ready.exists)
