@@ -2,6 +2,8 @@
 //! decision engine. Battlefield operands and explicitly labelled event/type
 //! boundaries are setup. These native Partial source fixtures remain unrun.
 use super::*;
+#[path = "liliana_public_v73_tests.rs"]
+mod public_v73_tests;
 use crate::{
     engine::time_stop_v1::tests::{next, pass, priority, restore, tapped},
     engine::{self, Action, Decision},
