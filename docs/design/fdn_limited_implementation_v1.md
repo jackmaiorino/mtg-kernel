@@ -38,6 +38,27 @@ without changing any frozen measurements.
 Start with gameplay from already-built decks. Draft picks, sealed-pool deck
 construction and BO3 Limited sideboarding are separate extensions. Define the
 target card pool by names, not collector-number cutoffs or every FDN product.
+
+The separate Python `limited_pool_v1.construct_deck` contract now validates
+construction from acquired inventory. It reuses `ImportedDeck` and exact-name
+catalog lookup: both zones of the acquired `.dck` file are owned copies; the
+proposed `.dck` mainboard and `SB:` reserve must partition all those copies,
+plus exactly the explicitly declared additional basics. Nonbasic copies cannot
+be reused between zones, and an owned fifth copy is legal. Both output zones
+retain the proposed row/copy order and optional printing annotations; annotations
+remain metadata, as in the existing parser. Partial/no-effect inventory may stay
+in reserve, but executable mainboard IDs come only from the existing Full-only
+`resolve_mainboard`, with at least 40 cards and the native 10,000-card safety
+limit. Invalid construction returns no result and never consumes inventory.
+
+Run `python python/tools/limited_pool_v1.py --pool acquired.dck --deck built.dck`
+and, when adding basics, supply `--basic-additions basics.dck`. That optional
+file also uses the existing `.dck` format and permits only the five basic land
+names. Omitting it permits no extra basics. This is a pool-conservation contract,
+not pack collation, draft picks, automatic deck selection, BO3 sideboarding or
+a claim of full-printing qualification. Focused tests live in
+`python/tests/test_limited_pool_v1.py`; the existing import parser is unchanged.
+
 The source reference has 286 names, including all five basics. Before card
 implementation it had seven registry matches and 279 missing names. The two
 starting fixtures contain 39 unique names, originally with 36 missing. Their
