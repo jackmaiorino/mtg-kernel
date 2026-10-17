@@ -10,13 +10,20 @@ fn dual_primitive(
     toughness: i16,
     loyalty: u32,
 ) -> ObjectId {
-    let id = put(
-        s,
-        controller,
-        "Ajani, Caller of the Pride",
-        Zone::Battlefield,
-    );
+    let id = put(s, controller, "Ajani, Caller of the Pride", Zone::Hand);
+    // Native entry primitive, not a paid Ajani cast. The raw fixture insertion
+    // alone does not create the separate incarnation-bound loyalty ledger.
+    assert_eq!(crate::planeswalker_v1::loyalty(s, id), None);
+    event::propose_and_commit(s, ProposedEvent::zone_change(id, Zone::Battlefield));
+    assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
+    assert_eq!(s.objects.get(id).zone, Zone::Battlefield);
     let old = crate::planeswalker_v1::loyalty(s, id).unwrap();
+    assert_eq!(
+        Some(old),
+        card_def::CARD_DEFS[s.objects.get(id).card_def as usize]
+            .starting_loyalty
+            .map(u32::from)
+    );
     if loyalty >= old {
         crate::planeswalker_v1::add_loyalty_counters_checked_v1(s, id, loyalty - old).unwrap();
     } else {

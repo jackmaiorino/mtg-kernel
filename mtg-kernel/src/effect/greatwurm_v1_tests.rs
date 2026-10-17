@@ -253,7 +253,7 @@ fn paid_graveyard_six_repeated_units_original_incarnation_and_restore_both_seats
         let mut s = ready(p);
         let w = paid(&mut s, p);
         graveyard(&mut s, w);
-        let donor = put(&mut s, p, "Bear Cub", Zone::Battlefield);
+        let donor = put(&mut s, p, "Axgard Cavalry", Zone::Battlefield);
         // Counter setup primitive, followed by a genuine 4GG cast/payment.
         s.objects.get_mut(donor).counters.plus1_plus1 = 6;
         let before = tapped(&s, p);
@@ -352,7 +352,7 @@ fn partial_counter_plan_forgery_stale_control_and_unaffordable_cast_are_readonly
         let mut s = ready(p);
         let w = paid(&mut s, p);
         graveyard(&mut s, w);
-        let donor = put(&mut s, p, "Bear Cub", Zone::Battlefield);
+        let donor = put(&mut s, p, "Axgard Cavalry", Zone::Battlefield);
         s.objects.get_mut(donor).counters.charge = 5;
         let before = s.clone();
         assert!(engine::step(&mut s, Action::CastSpell(w)).is_err());
@@ -438,8 +438,8 @@ fn paid_observer_native_wave_sums_all_recipients_once_and_current_placement_cont
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p);
         let _w = paid(&mut s, p);
-        let donor = put(&mut s, p, "Bear Cub", Zone::Battlefield);
-        let blocker = put(&mut s, p.opponent(), "Bear Cub", Zone::Battlefield);
+        let donor = put(&mut s, p, "Axgard Cavalry", Zone::Battlefield);
+        let blocker = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Battlefield);
         primitive_wave(
             &mut s,
             p,
@@ -478,7 +478,7 @@ fn raw_combat_boolean_cannot_mint_trigger_and_departed_reentered_creature_gets_n
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p);
         let _w = paid(&mut s, p);
-        let donor = put(&mut s, p, "Bear Cub", Zone::Battlefield);
+        let donor = put(&mut s, p, "Axgard Cavalry", Zone::Battlefield);
         let mut raw = s.clone();
         let mut damage = event::ProposedEvent::damage(donor, Target::Player(p.opponent()), 2);
         let event::ProposedEvent::Damage(d) = &mut damage else {
@@ -670,8 +670,8 @@ fn mixed_counter_units_pay_one_atomic_cost_and_hidden_worlds_do_not_change_menu_
         assert_eq!(wa, wb);
         graveyard(&mut a, wa);
         graveyard(&mut b, wb);
-        let da = put(&mut a, p, "Bear Cub", Zone::Battlefield);
-        let db = put(&mut b, p, "Bear Cub", Zone::Battlefield);
+        let da = put(&mut a, p, "Axgard Cavalry", Zone::Battlefield);
+        let db = put(&mut b, p, "Axgard Cavalry", Zone::Battlefield);
         assert_eq!(da, db);
         for s in [&mut a, &mut b] {
             // Native six-kind setup; these are public counters on one creature.
@@ -738,7 +738,7 @@ fn paid_counterspell_keeps_six_removed_counters_and_all_mana_paid_both_seats() {
         let mut s = ready(p);
         let w = paid(&mut s, p);
         graveyard(&mut s, w);
-        let donor = put(&mut s, p, "Bear Cub", Zone::Battlefield);
+        let donor = put(&mut s, p, "Axgard Cavalry", Zone::Battlefield);
         s.objects.get_mut(donor).counters.charge = 6;
         let before = tapped(&s, p);
         begin_graveyard(&mut s, p, w);
@@ -783,7 +783,7 @@ fn genuine_paid_copy_and_witness_suppression_use_effective_observer_and_departur
         cast(&mut s, p, "Witness Protection", &[Target::Object(w)], 1);
         finish(&mut s);
         assert!(!crate::continuous_characteristics_v1::printed_abilities_active(&s, w));
-        let donor = put(&mut s, p, "Bear Cub", Zone::Battlefield);
+        let donor = put(&mut s, p, "Axgard Cavalry", Zone::Battlefield);
         primitive_wave(&mut s, p, donor, &[(Target::Player(p.opponent()), 2)]);
         let rows = s
             .stack
@@ -809,7 +809,7 @@ fn native_generic_grant_preserves_distinct_genuinely_paid_graveyard_routes_both_
             let mut s = ready(p);
             let w = paid(&mut s, p);
             graveyard(&mut s, w);
-            let donor = put(&mut s, p, "Bear Cub", Zone::Battlefield);
+            let donor = put(&mut s, p, "Axgard Cavalry", Zone::Battlefield);
             s.objects.get_mut(donor).counters.charge = 6;
             // Existing generic graveyard-permission effect primitive, explicitly
             // not a paid Case or Zul Ashur claim. The following 4GG cast is paid.
