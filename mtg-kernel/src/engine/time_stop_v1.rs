@@ -1544,6 +1544,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("tinybones_v72.rs"),
                 ),
                 (
+                    "mtg-kernel/src/effect/liliana_dreadhorde_v1.rs",
+                    include_str!("../effect/liliana_dreadhorde_v1.rs"),
+                ),
+                (
                     "mtg-kernel/src/muldrotha_public_v71.rs",
                     include_str!("../muldrotha_public_v71.rs"),
                 ),
