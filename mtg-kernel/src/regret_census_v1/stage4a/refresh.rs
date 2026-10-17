@@ -42,6 +42,19 @@ use std::time::Instant;
 
 mod execution;
 pub(super) use execution::ExecutionMode;
+mod reuse_prefix;
+
+/// Acquire one genuinely reused action without changing the ordinary guide's
+/// search allocation or drawing a raw-policy comparator.
+pub(super) fn reuse_prefix_case(
+    sh: &BankShared,
+    policy: &FrozenPlayPolicyV1,
+    src: &SourceSpec,
+    acquisition_search_cap: u64,
+    binding: &str,
+) -> Result<Value, String> {
+    reuse_prefix::run(sh, policy, src, acquisition_search_cap, binding)
+}
 
 pub(super) const TOTAL_BUDGET: u64 = 512_000;
 pub(super) const ANCHOR_BUDGET: u64 = 128_000;
@@ -410,6 +423,7 @@ fn guide(
         allocation,
         anchor_tree,
         run,
+        None,
         #[cfg(feature = "viewer-recording-v1")]
         None,
         #[cfg(feature = "viewer-recording-v1")]
@@ -446,6 +460,7 @@ pub(super) fn guide_viewer(
         Allocation::R,
         None,
         GuideRun::ANCHOR_LEGACY,
+        None,
         observer,
         Some(max_step),
         Some(&mut actual_core_hash),
@@ -471,6 +486,7 @@ fn guide_inner(
     allocation: Allocation,
     anchor_tree: Option<(Tree, Value)>,
     run: GuideRun,
+    mut acquisition: Option<&mut reuse_prefix::Acquisition>,
     #[cfg(feature = "viewer-recording-v1")] observer: Option<&mut super::viewer_uct::Recorder>,
     #[cfg(feature = "viewer-recording-v1")] max_step: Option<u64>,
     #[cfg(feature = "viewer-recording-v1")] actual_core_hash: Option<&mut u64>,
@@ -484,6 +500,9 @@ fn guide_inner(
     )?;
     if run.executor == ExecutionMode::RootOnly && !run.opening {
         return Err("root-only-v1 runs from ordinary openings only".into());
+    }
+    if acquisition.is_some() && (!run.opening || anchor_tree.is_some()) {
+        return Err("reuse prefix requires a fresh ordinary opening and no anchor tree".into());
     }
     let started = Instant::now();
     let focal = PlayerId(src.seat);
@@ -546,118 +565,139 @@ fn guide_inner(
     let mut invalid: Option<String> = None;
     // Passive (`pathlog.rs`): the actual history's nodes in each tree.
     let mut actual = super::pathlog::dir().map(|_| super::pathlog::ActualLog::default());
-    while let Some(d) = decision(&s) {
-        #[cfg(feature = "viewer-recording-v1")]
-        if max_step.is_some_and(|limit| d.step >= limit) {
-            invalid = Some("viewer development step bound".into());
-            break;
-        }
-        #[cfg(feature = "viewer-recording-v1")]
-        if let Some(observer) = searches.observer.as_deref_mut() {
-            observer.before(&s, d);
-        }
-        let a = if acting(&d) == focal && d.legal_action_count >= 2 {
-            let remaining_before = allocation.total.saturating_sub(searches.used);
-            let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
-            let mut refreshed = None;
-            let step = if run.opening && searches.records.is_empty() {
-                // The initial search: min(initial allocation, ceiling).
-                Step::Refresh(allocation.anchor.min(allocation.total))
-            } else {
-                rule(lookup, allocation, searches.used, false)
-            };
-            if let Step::Refresh(budget) = step {
-                let reason = if searches.records.is_empty() {
-                    "initial"
+    let execution = (|| -> Result<(), String> {
+        while let Some(d) = decision(&s) {
+            let mut acquisition_target = None;
+            #[cfg(feature = "viewer-recording-v1")]
+            if max_step.is_some_and(|limit| d.step >= limit) {
+                invalid = Some("viewer development step bound".into());
+                break;
+            }
+            #[cfg(feature = "viewer-recording-v1")]
+            if let Some(observer) = searches.observer.as_deref_mut() {
+                observer.before(&s, d);
+            }
+            let a = if acting(&d) == focal && d.legal_action_count >= 2 {
+                let remaining_before = allocation.total.saturating_sub(searches.used);
+                let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
+                let mut refreshed = None;
+                let step = if run.opening && searches.records.is_empty() {
+                    // The initial search: min(initial allocation, ceiling).
+                    Step::Refresh(allocation.anchor.min(allocation.total))
                 } else {
-                    lookup.reason()
+                    rule(lookup, allocation, searches.used, false)
                 };
-                match searches.run(&s, budget, d.step, reason)? {
-                    Some(tree) => {
-                        cursor_keys.merge(&cursor.keyer.stats);
-                        cursor = Cursor::new(
-                            tree,
-                            searches.records.len() - 1,
-                            run.mode,
-                            run.interchange,
-                        );
-                        refreshed = Some(reason);
-                        (lookup, hit) = cursor.lookup(&s, d)?;
+                if let Step::Refresh(budget) = step {
+                    let reason = if searches.records.is_empty() {
+                        "initial"
+                    } else {
+                        lookup.reason()
+                    };
+                    if let Some(control) = acquisition.as_deref_mut() {
+                        if !control.admit(
+                            &s,
+                            d,
+                            budget,
+                            searches.used,
+                            searches.records.len(),
+                            reason,
+                        )? {
+                            break;
+                        }
                     }
-                    None => {
-                        invalid = Some(format!("failed search at step {}", d.step));
-                        break;
+                    match searches.run(&s, budget, d.step, reason)? {
+                        Some(tree) => {
+                            cursor_keys.merge(&cursor.keyer.stats);
+                            cursor = Cursor::new(
+                                tree,
+                                searches.records.len() - 1,
+                                run.mode,
+                                run.interchange,
+                            );
+                            refreshed = Some(reason);
+                            (lookup, hit) = cursor.lookup(&s, d)?;
+                        }
+                        None => {
+                            invalid = Some(format!("failed search at step {}", d.step));
+                            break;
+                        }
                     }
                 }
-            }
-            if let (Some(log), Some(Hit { key: Some(k), .. })) = (actual.as_mut(), hit.as_ref()) {
-                log.hit(cursor.search, d.step, k);
-            }
-            let new_root = cursor.depth == 1 && !cursor.advanced;
-            let route = execution::route(
-                run.executor,
-                new_root,
-                rule(lookup, allocation, searches.used, true),
-            );
-            let mut edge_backups = None;
-            let suppressed_reuse = match route {
-                execution::Route::RawInsteadOfReuse(edge) => {
-                    let h = hit.as_ref().expect("a supported lookup has a node");
-                    Some(
-                        json!({"storage_edge_index":edge,"live_action":cursor.live(h, edge)?,
-                        "natural_terminal_backups":h.backups}),
-                    )
+                if let (Some(log), Some(Hit { key: Some(k), .. })) = (actual.as_mut(), hit.as_ref())
+                {
+                    log.hit(cursor.search, d.step, k);
                 }
-                _ => None,
-            };
-            let a = execution::choose(
-                route,
-                |edge| {
-                    let h = hit.as_ref().expect("a supported lookup has a node");
-                    edge_backups = h.backups;
-                    cursor.live(h, edge)
-                },
-                || act_plain(live_focal, &s, &d, &mut c),
-            )?;
-            let chooser = route.chooser(new_root);
-            // Along a matching history an interchangeable copy plays as its
-            // representative, so the cursor stays on the stored edge.
-            let a = match &hit {
-                Some(h) if cursor.matching => cursor.keyer.representative(&h.step, a),
-                _ => a,
-            };
-            let reuse_witness = if chooser == "reused" {
-                let h = hit.as_ref().expect("a reused execution has a matched node");
-                let Lookup::Supported(edge) = lookup else {
-                    return Err("reused execution lacks a supported storage edge".into());
+                let new_root = cursor.depth == 1 && !cursor.advanced;
+                let route = execution::route(
+                    run.executor,
+                    new_root,
+                    rule(lookup, allocation, searches.used, true),
+                );
+                let mut edge_backups = None;
+                let suppressed_reuse = match route {
+                    execution::Route::RawInsteadOfReuse(edge) => {
+                        let h = hit.as_ref().expect("a supported lookup has a node");
+                        Some(
+                            json!({"storage_edge_index":edge,"live_action":cursor.live(h, edge)?,
+                            "natural_terminal_backups":h.backups}),
+                        )
+                    }
+                    _ => None,
                 };
-                cursor.reuse_witness(run.reuse_witnesses, &s, h, edge, a, &searches.records)?
-            } else {
-                None
-            };
-            if let Some(h) = hit {
-                if cursor.matching {
-                    cursor.advance(h, a);
+                let a = execution::choose(
+                    route,
+                    |edge| {
+                        let h = hit.as_ref().expect("a supported lookup has a node");
+                        edge_backups = h.backups;
+                        cursor.live(h, edge)
+                    },
+                    || act_plain(live_focal, &s, &d, &mut c),
+                )?;
+                let chooser = route.chooser(new_root);
+                // Along a matching history an interchangeable copy plays as its
+                // representative, so the cursor stays on the stored edge.
+                let a = match &hit {
+                    Some(h) if cursor.matching => cursor.keyer.representative(&h.step, a),
+                    _ => a,
+                };
+                let reuse_witness = if chooser == "reused" {
+                    let h = hit.as_ref().expect("a reused execution has a matched node");
+                    let Lookup::Supported(edge) = lookup else {
+                        return Err("reused execution lacks a supported storage edge".into());
+                    };
+                    cursor.reuse_witness(run.reuse_witnesses, &s, h, edge, a, &searches.records)?
+                } else {
+                    None
+                };
+                if let (Some(control), Some(witness)) =
+                    (acquisition.as_deref_mut(), reuse_witness.as_ref())
+                {
+                    acquisition_target =
+                        control.candidate(&s, d, a, witness, &searches.records, actions.len())?;
                 }
-            }
-            let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
-            let (mut cast_offered, mut own_offered, mut dr_offered) = (false, false, false);
-            for x in &sem {
-                let (cast, own, dr) = classify(x, s.game_state(), focal, &defs);
-                cast_offered |= cast;
-                own_offered |= own;
-                dr_offered |= dr;
-            }
-            let (cast_chosen, own_chosen, dr_chosen) =
-                sem.get(a as usize).map_or((false, false, false), |x| {
-                    classify(x, s.game_state(), focal, &defs)
-                });
-            // The passive sequence tracker watches a chosen Spy cast or
-            // self-target through the next transition (the same rule as
-            // selection, frozen execution and label replay).
-            super::play::observe(suffix.as_mut(), &s, a, focal, &defs);
-            decisions.push(
-                json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+                if let Some(h) = hit {
+                    if cursor.matching {
+                        cursor.advance(h, a);
+                    }
+                }
+                let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+                let (mut cast_offered, mut own_offered, mut dr_offered) = (false, false, false);
+                for x in &sem {
+                    let (cast, own, dr) = classify(x, s.game_state(), focal, &defs);
+                    cast_offered |= cast;
+                    own_offered |= own;
+                    dr_offered |= dr;
+                }
+                let (cast_chosen, own_chosen, dr_chosen) =
+                    sem.get(a as usize).map_or((false, false, false), |x| {
+                        classify(x, s.game_state(), focal, &defs)
+                    });
+                // The passive sequence tracker watches a chosen Spy cast or
+                // self-target through the next transition (the same rule as
+                // selection, frozen execution and label replay).
+                super::play::observe(suffix.as_mut(), &s, a, focal, &defs);
+                decisions.push(
+                    json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"k":d.legal_action_count,"chooser":chooser,
                 "search":cursor.search,"lookup":lookup.reason(),"refreshed":refreshed,
                 "edge_backups":edge_backups,"remaining_before":remaining_before,
@@ -665,35 +705,63 @@ fn guide_inner(
                 "spy_cast_offered":cast_offered,"spy_cast_chosen":cast_chosen,
                 "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
                 "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen}),
-            );
-            if run.executor == ExecutionMode::RootOnly {
-                let record = decisions.last_mut().expect("just recorded decision");
-                record["executor"] = json!(execution::ROOT_ONLY_IDENTITY);
-                if let Some(candidate) = suppressed_reuse {
-                    record["suppressed_reuse"] = candidate;
+                );
+                if run.executor == ExecutionMode::RootOnly {
+                    let record = decisions.last_mut().expect("just recorded decision");
+                    record["executor"] = json!(execution::ROOT_ONLY_IDENTITY);
+                    if let Some(candidate) = suppressed_reuse {
+                        record["suppressed_reuse"] = candidate;
+                    }
+                }
+                if let Some(witness) = reuse_witness {
+                    decisions.last_mut().expect("just recorded decision")["reuse_witness"] =
+                        witness;
+                }
+                a
+            } else if acting(&d) == focal {
+                0
+            } else {
+                act_plain(live_opp, &s, &d, &mut c)?
+            };
+            actions.push(a);
+            apply(&mut s, &d, a, &mut meter, focal, suffix.as_mut(), &defs).map_err(err)?;
+            if let Some(control) = acquisition.as_deref_mut() {
+                control.applied_actions = actions.len();
+                if let Some(target) = acquisition_target {
+                    control.acquired(target, &s)?;
+                    break;
                 }
             }
-            if let Some(witness) = reuse_witness {
-                decisions.last_mut().expect("just recorded decision")["reuse_witness"] = witness;
+            #[cfg(feature = "viewer-recording-v1")]
+            if let Some(observer) = searches.observer.as_deref_mut() {
+                let evidence = decisions
+                    .last()
+                    .filter(|r| r["step"] == d.step)
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                observer.after(&s, a, evidence);
             }
-            a
-        } else if acting(&d) == focal {
-            0
-        } else {
-            act_plain(live_opp, &s, &d, &mut c)?
-        };
-        actions.push(a);
-        apply(&mut s, &d, a, &mut meter, focal, suffix.as_mut(), &defs).map_err(err)?;
-        #[cfg(feature = "viewer-recording-v1")]
-        if let Some(observer) = searches.observer.as_deref_mut() {
-            let evidence = decisions
-                .last()
-                .filter(|r| r["step"] == d.step)
-                .cloned()
-                .unwrap_or(Value::Null);
-            observer.after(&s, a, evidence);
         }
+        Ok(())
+    })();
+    if let Some(control) = acquisition {
+        return Ok((
+            control.finish(
+                &s,
+                focal,
+                actions,
+                decisions,
+                &searches.records,
+                searches.used,
+                meter.spent,
+                c.inference,
+                execution.err().or(invalid),
+                started.elapsed().as_secs_f64(),
+            ),
+            kept,
+        ));
     }
+    execution?;
     cursor_keys.merge(&cursor.keyer.stats);
     #[cfg(feature = "viewer-recording-v1")]
     if let Some(hash) = actual_core_hash {
@@ -1337,6 +1405,149 @@ mod tests {
             limits: Limits::FORMAL,
         };
         (policy, sh, src)
+    }
+
+    /// All nodes come from actual searches. Three guide executions use at
+    /// most 300,000 search transitions total and inherited 512/2048 limits;
+    /// no seeded node or `advanced=true` stand-in establishes the descendant.
+    #[test]
+    #[ignore = "native qualification: at most 300000 search transitions, three fixture guides and 128 existing-stream policy calls"]
+    fn reused_prefix_acquires_genuine_descendant_and_preserves_guide_sampling() {
+        std::thread::Builder::new()
+            .stack_size(256 << 20)
+            .spawn(|| {
+                let (policy, sh, mut src) = plain_control_fixture(0, 0, 512, 2048);
+                src.search_root = "reused-prefix-genuine-engineering-v1".into();
+                let allocation = Allocation {
+                    anchor: 40_000,
+                    refresh: 20_000,
+                    total: 100_000,
+                };
+                let opening = source_session(&sh.spec, &src).unwrap();
+                let mut off_focal = policy.fork_for_collection_v3().unwrap();
+                let mut off_opponent = sh.opponents[0].fork_for_collection_v3().unwrap();
+                let mut on_focal = policy.fork_for_collection_v3().unwrap();
+                let mut on_opponent = sh.opponents[0].fork_for_collection_v3().unwrap();
+                let run = |recording,
+                           focal: &mut FrozenPlayPolicyV1,
+                           opponent: &mut FrozenPlayPolicyV1| {
+                    guide(
+                        &sh,
+                        &mut bank_roles(&policy, &sh.opponents).unwrap(),
+                        focal,
+                        opponent,
+                        &opening,
+                        &src,
+                        0,
+                        allocation,
+                        None,
+                        GuideRun {
+                            opening: true,
+                            mode: KeyMode::Repaired,
+                            interchange: false,
+                            bestline: None,
+                            reuse_witnesses: recording,
+                            executor: ExecutionMode::Persistent,
+                        },
+                    )
+                    .unwrap()
+                    .0
+                };
+                let off = run(Recording::Disabled, &mut off_focal, &mut off_opponent);
+                let on = run(Recording::Enabled, &mut on_focal, &mut on_opponent);
+                fn scientific(mut row: Value) -> Value {
+                    fn strip(row: &mut Value) {
+                        match row {
+                            Value::Object(object) => {
+                                for key in
+                                    ["wall", "keying_seconds", "reuse_witness", "reuse_witnesses"]
+                                {
+                                    object.remove(key);
+                                }
+                                for value in object.values_mut() {
+                                    strip(value);
+                                }
+                            }
+                            Value::Array(array) => array.iter_mut().for_each(strip),
+                            _ => {}
+                        }
+                    }
+                    strip(&mut row);
+                    row
+                }
+                assert_eq!(scientific(off), scientific(on.clone()));
+                let first = on["decisions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| {
+                        if row["chooser"] != "reused" {
+                            return false;
+                        }
+                        let origin = row["search"].as_u64().unwrap() as usize;
+                        row["physical_decision_id"].as_u64().unwrap()
+                            > on["searches"][origin]["root"]["physical_decision_id"]
+                                .as_u64()
+                                .unwrap()
+                    })
+                    .expect("actual searches must produce a supported earlier-search descendant");
+                let acquired =
+                    reuse_prefix::execute(&sh, &policy, &src, allocation, 100_000).unwrap();
+                assert_eq!(acquired["status"], "acquired", "{acquired}");
+                let target = &acquired["selected"];
+                let index = target["action_index"].as_u64().unwrap() as usize;
+                assert_eq!(target["decision"]["step"], first["step"]);
+                assert_eq!(target["witness"], first["reuse_witness"]);
+                assert_eq!(
+                    acquired["game"]["actions"].as_array().unwrap(),
+                    &on["actions"].as_array().unwrap()[..=index]
+                );
+                assert_eq!(acquired["game"]["real_transitions"], index + 1);
+                let mut reconstructed = opening.clone();
+                for action in acquired["game"]["actions"].as_array().unwrap() {
+                    let d = decision(&reconstructed).unwrap();
+                    reconstructed
+                        .step(d.episode_id, d.step, action.as_u64().unwrap() as u32)
+                        .unwrap();
+                }
+                assert_eq!(
+                    target["post_action_policy_steps"],
+                    reconstructed.policy_step_count()
+                );
+                assert_eq!(
+                    target["post_action_physical_decisions"],
+                    reconstructed.physical_decision_count()
+                );
+                assert_eq!(
+                    target["post_action_core_environment_hash"],
+                    format!("{:016x}", reconstructed.privileged_core_environment_hash())
+                );
+                // Probe the ORIGINAL live guide instances, without a fork or reseed:
+                // recording must not change either role's still-existing actor stream.
+                let mut focal_probe = opening.clone();
+                advance(&mut focal_probe, |d| {
+                    acting(d) == PlayerId(src.seat) && d.legal_action_count >= 2
+                });
+                let mut opponent_probe = opening;
+                advance(&mut opponent_probe, |d| {
+                    acting(d) == PlayerId(1 - src.seat) && d.legal_action_count >= 2
+                });
+                for _ in 0..32 {
+                    assert_eq!(
+                        off_focal.select_fast_session_v1(&focal_probe).unwrap(),
+                        on_focal.select_fast_session_v1(&focal_probe).unwrap()
+                    );
+                    assert_eq!(
+                        off_opponent
+                            .select_fast_session_v1(&opponent_probe)
+                            .unwrap(),
+                        on_opponent.select_fast_session_v1(&opponent_probe).unwrap()
+                    );
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     /// Independent plain collection with the same opening and guide seeds
