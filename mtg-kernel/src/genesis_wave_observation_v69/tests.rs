@@ -98,6 +98,31 @@ fn independent_prepaid_wave_public_hidden_libraries_and_orphan_progress_refuse_r
         }
         assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
         assert!(crate::end_turn_observation_v68::validate_state(&a).is_err());
+        // A genuine finalized public cast later returned to a hidden library
+        // cannot be relabelled by an independent private-slot permutation.
+        // The cast/move are native; only that final permutation is a labelled
+        // hidden-world boundary primitive, never a fabricated cast receipt.
+        for (name, expected) in [
+            ("Alesha, Who Laughs at Fate", true),
+            ("Fiend Artisan", false),
+        ] {
+            let mut world = crate::call_observation_v62::tests::ready(p, "Forest");
+            let card = crate::graveyard_return_public_v61::tests::paid(&mut world, p, name, None);
+            crate::event::propose_and_commit(
+                &mut world,
+                crate::event::ProposedEvent::zone_change(card, Zone::Library),
+            );
+            assert!(crate::trigger::collect_and_process(&mut world).is_empty());
+            assert_eq!(require_supported(&world, None).is_ok(), expected);
+            world.objects.get_mut(card).card_def =
+                crate::card_def::card_id_by_name(if expected { "Fiend Artisan" } else { "Forest" })
+                    .unwrap();
+            let before = world.clone();
+            assert_eq!(require_supported(&world, None).is_ok(), expected);
+            assert_eq!(world, before);
+            let restored = restore(&world);
+            assert_eq!(require_supported(&restored, None).is_ok(), expected);
+        }
     }
 }
 

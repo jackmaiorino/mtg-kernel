@@ -1349,6 +1349,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "python/tools/limited_end_turn_session_v9.py",
                     include_str!("../../../python/tools/limited_end_turn_session_v9.py"),
                 ),
+                (
+                    "mtg-kernel/src/cast_identity_v1.rs",
+                    include_str!("../cast_identity_v1.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());
