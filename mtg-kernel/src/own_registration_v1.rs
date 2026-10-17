@@ -94,7 +94,8 @@ struct Catalog {
 fn catalog_v1() -> Result<&'static Catalog, String> {
     static CATALOG: OnceLock<Result<Catalog, String>> = OnceLock::new();
     CATALOG.get_or_init(|| {
-        if CARD_DEFS.len() != WIDTH || format!("{:x}", Sha256::digest(REGISTRY)) != REGISTRY_SHA256 {
+        // Optional catalogs append definitions after this pinned 192-card prefix.
+        if CARD_DEFS.len() < WIDTH || format!("{:x}", Sha256::digest(REGISTRY)) != REGISTRY_SHA256 {
             return Err("own registration pinned registry differs".into());
         }
         let registry: serde_json::Value = serde_json::from_slice(REGISTRY).map_err(|e| e.to_string())?;
