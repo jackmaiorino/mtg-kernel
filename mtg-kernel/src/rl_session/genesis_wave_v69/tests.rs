@@ -8,7 +8,12 @@ use crate::{
 pub(crate) fn ready(p: PlayerId, hidden: &str) -> (GameState, ObjectId, ObjectId) {
     let mut s = crate::effect::genesis_wave_v1::tests::ready(
         p,
-        &["Forest", "Giant Growth", "Llanowar Elves", "Pacifism"],
+        &[
+            "Forest",
+            "Giant Growth",
+            "Llanowar Elves",
+            "Witness Protection",
+        ],
         12,
         hidden,
     );
@@ -162,7 +167,7 @@ fn genuine_paid_wave_owner_original_indices_subset_aura_remainder_and_restore_bo
         assert_eq!(w.x_value, 4);
         assert_eq!(w.revealed.len(), 4);
         assert_eq!(w.revealed.iter().filter(|r| r.eligible).count(), 3);
-        for name in ["Forest", "Pacifism"] {
+        for name in ["Forest", "Witness Protection"] {
             let id = card_def::card_id_by_name(name).unwrap();
             pair.act(|a|matches!(a,A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.card_db_id==id&&object.zone==Zone::Library));
         }
