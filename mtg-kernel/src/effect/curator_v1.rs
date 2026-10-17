@@ -676,7 +676,7 @@ fn stage(state: &mut GameState, p: &mut EffectContinuation, c: ChoiceV1) -> Resu
         return Ok(true);
     }
     let rows = candidates(&c);
-    let count = u8::try_from(rows.len()).map_err(|_| "Curator choice width")?;
+    let count = u16::try_from(rows.len()).map_err(|_| "Curator choice width")?;
     if c.phase == 2
         && (rows.len() < 2 || !crate::engine::graveyard_order_choice_exposed(state, c.player))
     {
@@ -825,7 +825,7 @@ pub(crate) fn validate(state: &GameState, p: &EffectContinuation) -> Result<(), 
                 .collect::<Vec<_>>();
             if *player != c.player
                 || !path.is_empty()
-                || *min_targets != if c.phase == 0 { 0 } else { rows.len() as u8 }
+                || usize::from(*min_targets) != if c.phase == 0 { 0 } else { rows.len() }
                 || usize::from(*max_targets) != rows.len()
                 || *ordered != (c.phase == 2)
                 || *legal != expected
