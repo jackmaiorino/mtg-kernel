@@ -226,9 +226,8 @@ fn combat_rows_for_scope(
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<Vec<CombatRuleV1>, RlContractError> {
     let mut rows = Vec::new();
-    // This fresh value is local to the same immutable state. Only Prepared's
-    // mandatory precise Phoenix family can represent a must-attack-only rule;
-    // the frozen Juggernaut row always requires its blocked subtype as well.
+    // Prepared and its complete successors carry the mandatory precise Phoenix
+    // family. The frozen Juggernaut row still requires its blocked subtype.
     let mut phoenix = None;
     for player in &state.players {
         for source in &player.battlefield {
@@ -239,7 +238,21 @@ fn combat_rows_for_scope(
             if def.combat_static_rules == crate::card_def::CombatStaticRulesDef::NONE {
                 continue;
             }
-            if scope == crate::rl::CommonProjectionScopeV42::PreparedV57
+            if matches!(
+                scope,
+                crate::rl::CommonProjectionScopeV42::PreparedV57
+                    | crate::rl::CommonProjectionScopeV42::NextFiveV59
+                    | crate::rl::CommonProjectionScopeV42::GraveyardReturnV61
+                    | crate::rl::CommonProjectionScopeV42::CallV62
+                    | crate::rl::CommonProjectionScopeV42::EndTurnV68
+                    | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
+                    | crate::rl::CommonProjectionScopeV42::VivienV70
+                    | crate::rl::CommonProjectionScopeV42::MuldrothaV71
+                    | crate::rl::CommonProjectionScopeV42::TinybonesV72
+                    | crate::rl::CommonProjectionScopeV42::LilianaV73
+                    | crate::rl::CommonProjectionScopeV42::ChandraV74
+                    | crate::rl::CommonProjectionScopeV42::KaitoV75
+            )
                 && crate::rules_meaning_phoenix_v56::selected_definition(def, reference.card_db_id)
             {
                 if phoenix.is_none() {
