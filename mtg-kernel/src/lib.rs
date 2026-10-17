@@ -851,3 +851,6 @@ pub mod kaito_public_v75;
 pub mod liliana_candidates_v73;
 pub mod liliana_observation_v73;
 pub mod rules_meaning_kaito_v75;
+
+pub mod chandra_candidates_v74;
+pub mod chandra_observation_v74;

@@ -71,6 +71,7 @@ pub enum Source {
     MuldrothaV71,
     TinybonesV72,
     LilianaV73,
+    ChandraV74,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -375,6 +376,14 @@ pub fn feature_identity() -> String {
             include_str!("liliana_observation_v73.rs"),
             include_str!("liliana_candidates_v73.rs"),
             include_str!("rl_session/liliana_v73.rs"),
+            include_str!("chandra_observation_v74.rs"),
+            include_str!("chandra_candidates_v74.rs"),
+            include_str!("rl_session/chandra_v74.rs"),
+            include_str!("current_mixed_policy_v1/chandra.rs"),
+            include_str!("chandra_public_v74.rs"),
+            include_str!("effect/chandra_flameshaper_public_v74.rs"),
+            include_str!("effect/chandra_flameshaper_v1.rs"),
+            include_str!("rules_meaning_chandra_v74.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
@@ -569,3 +578,6 @@ pub use tinybones::{TinybonesDecision, TinybonesSession, TinybonesSnapshot};
 
 mod liliana;
 pub use liliana::{LilianaDecision, LilianaSession, LilianaSnapshot};
+
+mod chandra;
+pub use chandra::{ChandraDecision, ChandraSession, ChandraSnapshot};
