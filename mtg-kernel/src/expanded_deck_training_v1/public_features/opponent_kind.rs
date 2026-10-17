@@ -1,6 +1,6 @@
 //! Opt-in opponent kinds of the public collector (opponent kinds interface
-//! v1, docs/search_opponent_collection_v1.md): a recent public-input
-//! checkpoint, and Legacy V3 admitted against a declared-identity receipt.
+//! v1, docs/search_opponent_collection_v1.md): the frozen current policy,
+//! a recent public-input checkpoint, and admitted Legacy V3.
 //! Opponent rows never enter learner targets, normalization, entropy or
 //! gradients; the update keeps reading learner rows only.
 use super::search_opponent::{SearchBuildV1, SearchOpponentV1};
@@ -19,10 +19,18 @@ mod tests;
 /// public-input checkpoint; distinct so ordinary readers refuse it.
 pub(crate) const PUBLIC_CHECKPOINT_TRAJECTORY_SCHEMA: &str =
     "mtg-kernel-public-input-public-checkpoint-opponent-trajectory/v1";
+pub(crate) const CURRENT_TRAJECTORY_SCHEMA: &str =
+    "mtg-kernel-public-input-current-opponent-trajectory/v1";
 /// Outer schema of a public trajectory whose opponent seat was Legacy V3.
 pub(crate) const LEGACY_TRAJECTORY_SCHEMA: &str =
     "mtg-kernel-public-input-legacy-opponent-trajectory/v1";
 const OPPONENT_RECORD_SCHEMA: &str = "mtg-kernel-public-opponent-record/v1";
+
+pub(super) fn current_identity(config_hash: &str, state_hash: &str, enabled: bool) -> Value {
+    json!({"schema": "mtg-kernel-current-public-opponent/v1",
+        "config_sha256": config_hash, "optimizer_state_sha256": state_hash,
+        "inputs_enabled": enabled})
+}
 /// Per-member admission receipt shared with opus-panel-export (CLAUDE #472,
 /// python/tools/line_a_panel_admission_v1.py); the frozen V3 uses it too.
 pub(crate) const LEGACY_ADMISSION_SCHEMA: &str = "mtg-kernel-line-a-panel-admission/v1";
@@ -158,6 +166,11 @@ pub(crate) struct LegacyAdmissionV1 {
     reason = "retains the existing inline policy and report layout during merge preparation"
 )]
 pub(crate) enum OpponentSeatV1 {
+    Current {
+        policy: PublicInputPlayPolicyV1,
+        identity: Value,
+        rows: Vec<OpponentRowV1>,
+    },
     /// Ordinary V4 net, or the unchanged D3 wrapper around it.
     Net {
         net: FrozenPlayPolicyV1,
@@ -342,6 +355,9 @@ pub(crate) fn load_seat(
 ) -> Result<OpponentSeatV1, String> {
     episode.configurations_for_public_collector_v1()?;
     match kind {
+        ExpandedOpponentKindV1::Current => {
+            Err("current opponent requires the frozen collection policy".into())
+        }
         ExpandedOpponentKindV1::PublicCheckpoint { config, checkpoint } => {
             let (policy, identity) = load_for_evaluation(config, checkpoint)?;
             ensure(
@@ -436,8 +452,22 @@ pub(super) type OpponentChoiceV1 = (
 );
 
 impl OpponentSeatV1 {
+    pub(super) fn current(
+        policy: &PublicInputPlayPolicyV1,
+        config_hash: &str,
+        state_hash: &str,
+        enabled: bool,
+    ) -> Result<Self, String> {
+        Ok(Self::Current {
+            policy: policy.fork_for_collection()?,
+            identity: current_identity(config_hash, state_hash, enabled),
+            rows: Vec::new(),
+        })
+    }
+
     pub(crate) fn outer_schema(&self) -> &'static str {
         match self {
+            Self::Current { .. } => CURRENT_TRAJECTORY_SCHEMA,
             Self::Net {
                 search: Some(_), ..
             } => super::search_opponent::SEARCH_OPPONENT_TRAJECTORY_SCHEMA,
@@ -530,6 +560,17 @@ impl OpponentSeatV1 {
 }
 
 impl OpponentRecordV1 {
+    pub(super) fn validate_current_identity(
+        &self,
+        config_hash: &str,
+        state_hash: &str,
+        enabled: bool,
+    ) -> Result<(), String> {
+        ensure(
+            self.effective_identity == current_identity(config_hash, state_hash, enabled),
+            "current opponent differs from frozen learner state",
+        )
+    }
     pub(crate) fn new(kind: &str, seat: u8, identity: Value, rows: Vec<OpponentRowV1>) -> Self {
         Self {
             schema: OPPONENT_RECORD_SCHEMA.into(),
@@ -553,6 +594,7 @@ impl OpponentRecordV1 {
         learner_sampler: Option<&str>,
     ) -> Result<(), String> {
         let (kind, generation, singletons) = match &episode.opponent_kind {
+            Some(ExpandedOpponentKindV1::Current) => ("current", "v4", false),
             Some(ExpandedOpponentKindV1::PublicCheckpoint { .. }) => {
                 ("public_checkpoint", "v4", false)
             }
@@ -710,6 +752,11 @@ pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option
     let mut entries = Vec::new();
     for kind in kinds {
         match kind {
+            ExpandedOpponentKindV1::Current => entries.push(json!({
+                "kind": "current", "parameters": "frozen update-start learner parameters",
+                "identity": "per-trajectory config and optimizer state hashes",
+                "sampler": "ordinary behavior sampler with private physical-seat streams",
+            })),
             ExpandedOpponentKindV1::PublicCheckpoint { config, checkpoint } => {
                 let (_, identity) = load_for_evaluation(config, checkpoint)?;
                 entries.push(json!({

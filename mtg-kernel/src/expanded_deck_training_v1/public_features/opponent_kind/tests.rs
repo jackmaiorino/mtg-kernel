@@ -5,6 +5,8 @@ use super::super::replay_audit::admits_public_trajectory;
 use super::super::{collect_with_opponent, weights, Trajectory};
 use super::*;
 
+mod current;
+
 fn pin(path: &str, sha256: &str) -> PinnedFileV1 {
     PinnedFileV1 {
         path: path.into(),

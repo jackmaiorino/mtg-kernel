@@ -254,6 +254,23 @@ pub(super) struct Trajectory {
 
 impl Trajectory {
     fn validate_records(&self) -> Result<(), String> {
+        if matches!(
+            self.episode.opponent_kind,
+            Some(ExpandedOpponentKindV1::Current)
+        ) {
+            ensure(
+                self.schema == opponent_kind::CURRENT_TRAJECTORY_SCHEMA,
+                "current opponent trajectory schema differs",
+            )?;
+            self.opponent_record
+                .as_ref()
+                .ok_or("missing current opponent record")?
+                .validate_current_identity(
+                    &self.config_sha256,
+                    &self.optimizer_state_sha256,
+                    self.inputs_enabled,
+                )?;
+        }
         let sampler = self.learner_sampler.as_deref();
         match (&self.search, &self.opponent_record) {
             (None, None) => validate_episode_records_with_learner_sampler_v1(
@@ -396,6 +413,9 @@ fn collect(
     audit_every: Option<u32>,
 ) -> Result<Trajectory, String> {
     let seat = match &episode.opponent_kind {
+        Some(ExpandedOpponentKindV1::Current) => {
+            opponent_kind::OpponentSeatV1::current(policy, config_hash, state_hash, enabled)?
+        }
         Some(kind) => opponent_kind::load_seat(kind, episode)?,
         None => {
             let (net, identity) = load_expanded_inference_v1(
@@ -447,6 +467,9 @@ fn collect_with_opponent(
     let configs = episode.configurations_for_public_collector_v1()?;
     ensure(
         match &opponent {
+            Seat::Current { .. } => {
+                matches!(episode.opponent_kind, Some(ExpandedOpponentKindV1::Current))
+            }
             Seat::Net { search, .. } => {
                 episode.opponent_kind.is_none()
                     && search.is_some() == episode.opponent_search.is_some()
@@ -472,7 +495,9 @@ fn collect_with_opponent(
                 search.reset_for_game(seeds, &episode.id)?;
             }
         }
-        Seat::PublicCheckpoint { policy, .. } => policy.reset_for_game_v1(seeds).map_err(err)?,
+        Seat::PublicCheckpoint { policy, .. } | Seat::Current { policy, .. } => {
+            policy.reset_for_game_v1(seeds).map_err(err)?
+        }
         Seat::Legacy { policy, .. } => policy.reset_for_game_v1(seeds).map_err(err)?,
     }
     let mut decisions = Vec::new();
@@ -483,6 +508,16 @@ fn collect_with_opponent(
                 let hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
                 let schema = opponent.outer_schema();
                 let (identity, search, opponent_record) = match opponent {
+                    Seat::Current { identity, rows, .. } => (
+                        None,
+                        None,
+                        Some(opponent_kind::OpponentRecordV1::new(
+                            "current",
+                            1 - episode.learner_seat,
+                            identity,
+                            rows,
+                        )),
+                    ),
                     Seat::Net {
                         identity, search, ..
                     } => (
@@ -570,7 +605,8 @@ fn collect_with_opponent(
                             auxiliary.push(None);
                             (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                         }
-                        Seat::PublicCheckpoint { policy, rows, .. } => {
+                        Seat::PublicCheckpoint { policy, rows, .. }
+                        | Seat::Current { policy, rows, .. } => {
                             let input = PairedBo1PolicyInputV1::new(&session, d);
                             let (selected, scores) =
                                 policy.select_with_scores(&input).map_err(err)?;
