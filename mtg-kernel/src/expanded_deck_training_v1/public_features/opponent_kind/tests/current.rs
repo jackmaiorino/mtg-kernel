@@ -15,7 +15,7 @@ fn policy(enabled: bool) -> PublicInputPlayPolicyV1 {
 
 #[test]
 fn current_declaration_is_explicit_and_exclusive() {
-    let kind = ExpandedOpponentKindV1::Current;
+    let kind = ExpandedOpponentKindV1::Current {};
     assert_eq!(
         serde_json::to_value(&kind).unwrap(),
         json!({"kind":"current"})
@@ -25,6 +25,12 @@ fn current_declaration_is_explicit_and_exclusive() {
     )
     .is_err());
     let mut e = episode(0, Some(kind));
+    let bytes = serde_json::to_vec(&e).unwrap();
+    let back: ExpandedEpisodeV1 = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&back).unwrap(), bytes);
+    let mut unknown = serde_json::to_value(&e).unwrap();
+    unknown["opponent_kind"]["checkpoint"] = Value::Null;
+    assert!(serde_json::from_value::<ExpandedEpisodeV1>(unknown).is_err());
     assert!(e.configurations_for_public_collector_v1().is_ok());
     assert!(e.configurations().is_err());
     e.opponent = episode(0, None).opponent;
@@ -39,7 +45,7 @@ fn current_frozen_weights_actor_views_sampler_and_learner_isolation() {
     for enabled in [false, true] {
         for learner_seat in [0, 1] {
             let frozen = policy(enabled);
-            let mut e = episode(learner_seat, Some(ExpandedOpponentKindV1::Current));
+            let mut e = episode(learner_seat, Some(ExpandedOpponentKindV1::Current {}));
             e.runtime_rules = Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1);
             let mut t = super::super::super::collect(
                 &mut frozen.fork_for_collection().unwrap(),
@@ -135,7 +141,7 @@ fn current_serial_parallel_primary_bytes_match() {
     let frozen = policy(true);
     let episodes: Vec<_> = [0, 1]
         .into_iter()
-        .map(|seat| episode(seat, Some(ExpandedOpponentKindV1::Current)))
+        .map(|seat| episode(seat, Some(ExpandedOpponentKindV1::Current {})))
         .collect();
     let mut serial_policy = frozen.fork_for_collection().unwrap();
     let serial: Vec<_> = episodes

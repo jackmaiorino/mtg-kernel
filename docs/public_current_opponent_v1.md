@@ -5,6 +5,11 @@ An episode may explicitly set `"opponent_kind": {"kind": "current"}` with
 ordinary episode consumers and the terminal evaluator do not admit it. An
 absent opponent remains an error in the public collector.
 
+The empty-struct declaration rejects unknown fields, including null-valued
+checkpoint fields. The public trainer admits at most 512 updates, enough for
+three complete 162-update nine-deck cycles; the ceiling does not select a dose
+or change configuration serialization, checkpoint hashes or resume semantics.
+
 The opponent forks the public policy already installed at the start of the
 update, including its input-enable flag and projection weights. It has private
 encoder, capture and physical-seat sampler state. Both actors use their own

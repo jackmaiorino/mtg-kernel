@@ -355,7 +355,7 @@ pub(crate) fn load_seat(
 ) -> Result<OpponentSeatV1, String> {
     episode.configurations_for_public_collector_v1()?;
     match kind {
-        ExpandedOpponentKindV1::Current => {
+        ExpandedOpponentKindV1::Current {} => {
             Err("current opponent requires the frozen collection policy".into())
         }
         ExpandedOpponentKindV1::PublicCheckpoint { config, checkpoint } => {
@@ -594,7 +594,7 @@ impl OpponentRecordV1 {
         learner_sampler: Option<&str>,
     ) -> Result<(), String> {
         let (kind, generation, singletons) = match &episode.opponent_kind {
-            Some(ExpandedOpponentKindV1::Current) => ("current", "v4", false),
+            Some(ExpandedOpponentKindV1::Current {}) => ("current", "v4", false),
             Some(ExpandedOpponentKindV1::PublicCheckpoint { .. }) => {
                 ("public_checkpoint", "v4", false)
             }
@@ -752,7 +752,7 @@ pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option
     let mut entries = Vec::new();
     for kind in kinds {
         match kind {
-            ExpandedOpponentKindV1::Current => entries.push(json!({
+            ExpandedOpponentKindV1::Current {} => entries.push(json!({
                 "kind": "current", "parameters": "frozen update-start learner parameters",
                 "identity": "per-trajectory config and optimizer state hashes",
                 "sampler": "ordinary behavior sampler with private physical-seat streams",

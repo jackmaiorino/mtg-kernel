@@ -256,7 +256,7 @@ impl Trajectory {
     fn validate_records(&self) -> Result<(), String> {
         if matches!(
             self.episode.opponent_kind,
-            Some(ExpandedOpponentKindV1::Current)
+            Some(ExpandedOpponentKindV1::Current {})
         ) {
             ensure(
                 self.schema == opponent_kind::CURRENT_TRAJECTORY_SCHEMA,
@@ -413,7 +413,7 @@ fn collect(
     audit_every: Option<u32>,
 ) -> Result<Trajectory, String> {
     let seat = match &episode.opponent_kind {
-        Some(ExpandedOpponentKindV1::Current) => {
+        Some(ExpandedOpponentKindV1::Current {}) => {
             opponent_kind::OpponentSeatV1::current(policy, config_hash, state_hash, enabled)?
         }
         Some(kind) => opponent_kind::load_seat(kind, episode)?,
@@ -468,7 +468,10 @@ fn collect_with_opponent(
     ensure(
         match &opponent {
             Seat::Current { .. } => {
-                matches!(episode.opponent_kind, Some(ExpandedOpponentKindV1::Current))
+                matches!(
+                    episode.opponent_kind,
+                    Some(ExpandedOpponentKindV1::Current {})
+                )
             }
             Seat::Net { search, .. } => {
                 episode.opponent_kind.is_none()
@@ -883,7 +886,9 @@ pub fn run(command: Command) -> Result<Value, String> {
         "public collector count outside bounds",
     )?;
     ensure(
-        !config.updates.is_empty() && config.updates.len() <= 256,
+        // Three complete nine-deck cycles take 486 updates. Keep a finite
+        // 512-update ceiling without changing config serialization or resume.
+        !config.updates.is_empty() && config.updates.len() <= 512,
         "public update count outside bounds",
     )?;
     ensure(

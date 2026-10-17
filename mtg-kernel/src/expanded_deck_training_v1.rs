@@ -826,7 +826,7 @@ impl ExpandedDeckListV1 {
 pub enum ExpandedOpponentKindV1 {
     /// Frozen update-start public policy with private actor and sampler state.
     /// This training-only tag is not an evaluator model source.
-    Current,
+    Current {},
     /// A recent public-input training checkpoint.
     PublicCheckpoint {
         config: PinnedFileV1,
