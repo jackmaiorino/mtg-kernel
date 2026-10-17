@@ -599,6 +599,24 @@ pub(crate) fn observe_parts_complete_muldrotha_v71(
         crate::rl::CommonProjectionScopeV42::MuldrothaV71,
     )
 }
+pub(crate) fn observe_parts_complete_tinybones_v72(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::TinybonesV72,
+    )
+}
 fn observe_parts_complete_current_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -688,6 +706,10 @@ fn observe_parts_complete_current_scope_using_family_builder(
             crate::muldrotha_observation_v71::COMMON_SCHEMA,
             crate::muldrotha_observation_v71::producer_sha256(),
         ),
+        crate::rl::CommonProjectionScopeV42::TinybonesV72 => (
+            crate::tinybones_observation_v72::COMMON_SCHEMA,
+            crate::tinybones_observation_v72::producer_sha256(),
+        ),
         crate::rl::CommonProjectionScopeV42::GenesisWaveV69 => (
             crate::genesis_wave_observation_v69::COMMON_SCHEMA,
             crate::genesis_wave_observation_v69::producer_sha256(),
@@ -762,7 +784,11 @@ fn observe_parts_complete_current_scope_using_family_builder(
             .map_err(|error| diagnose_observation_error("inherited.hunter", error))?,
         eaten: crate::eaten_public_v46::capture(state, actor)
             .map_err(|error| diagnose_observation_error("inherited.eaten", error))?,
-        panda: (if scope == crate::rl::CommonProjectionScopeV42::NextFiveV59 {
+        panda: (if matches!(
+            scope,
+            crate::rl::CommonProjectionScopeV42::NextFiveV59
+                | crate::rl::CommonProjectionScopeV42::TinybonesV72
+        ) {
             crate::panda_public_v47::capture_ordinary_for_next_five(state)
         } else {
             crate::panda_public_v47::capture(state)
@@ -770,7 +796,11 @@ fn observe_parts_complete_current_scope_using_family_builder(
         .map_err(|error| diagnose_observation_error("inherited.panda", error))?,
         season: crate::doubling_season_public_v48::capture(state)
             .map_err(|error| diagnose_observation_error("inherited.season", error))?,
-        conqueror: (if scope == crate::rl::CommonProjectionScopeV42::NextFiveV59 {
+        conqueror: (if matches!(
+            scope,
+            crate::rl::CommonProjectionScopeV42::NextFiveV59
+                | crate::rl::CommonProjectionScopeV42::TinybonesV72
+        ) {
             crate::conqueror_public_v49::capture_ordinary_for_next_five(state)
         } else {
             crate::conqueror_public_v49::capture(state)
@@ -900,6 +930,12 @@ impl RavenousObservationV51 {
         self.validate_artifact_identity(
             crate::muldrotha_observation_v71::COMMON_SCHEMA,
             &crate::muldrotha_observation_v71::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_tinybones_compatibility_v72(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::tinybones_observation_v72::COMMON_SCHEMA,
+            &crate::tinybones_observation_v72::producer_sha256(),
         )
     }
     fn validate_artifact_identity(

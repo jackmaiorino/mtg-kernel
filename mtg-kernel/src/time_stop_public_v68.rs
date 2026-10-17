@@ -110,6 +110,12 @@ pub(crate) fn capture_muldrotha_v71(
 ) -> Result<FactsV68, String> {
     crate::engine::time_stop_v1::public_facts_muldrotha_v71(state, viewer)
 }
+pub(crate) fn capture_tinybones_v72(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV68, String> {
+    crate::engine::time_stop_v1::public_facts_tinybones_v72(state, viewer)
+}
 /// Closed value and supplied-binding checks only. Native capture establishes
 /// inventory completeness; validate_current and sealed owners recapture it.
 /// A recomputed public commitment is not native authenticity or completeness.

@@ -135,10 +135,30 @@ pub fn producer_sha256() -> String {
 pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV71, String> {
     crate::engine::muldrotha_v1::public_facts_v71(s, v)
 }
+pub(crate) fn capture_tinybones_compat_v72(s: &GameState, v: PlayerId) -> Result<FactsV71, String> {
+    let mut facts = crate::engine::muldrotha_v1::public_facts_tinybones_compat_v72(s, v)?;
+    facts.schema = format!(
+        "{}/compat/muldrotha_v1",
+        crate::tinybones_observation_v72::SCHEMA
+    );
+    Ok(facts)
+}
 pub fn validate(f: &FactsV71) -> Result<(), String> {
+    validate_with_schema_v72(f, SCHEMA)
+}
+pub(crate) fn validate_tinybones_compat_v72(f: &FactsV71) -> Result<(), String> {
+    validate_with_schema_v72(
+        f,
+        &format!(
+            "{}/compat/muldrotha_v1",
+            crate::tinybones_observation_v72::SCHEMA
+        ),
+    )
+}
+fn validate_with_schema_v72(f: &FactsV71, schema: &str) -> Result<(), String> {
     use crate::state::Zone;
     use public::IdentityV1;
-    if f.schema != SCHEMA || f.producer_sha256 != producer_sha256() {
+    if f.schema != schema || f.producer_sha256 != producer_sha256() {
         return Err("V71 facts identity changed".into());
     }
     crate::rules_meaning_muldrotha_v71::validate(&f.meaning)?;

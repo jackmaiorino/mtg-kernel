@@ -97,8 +97,28 @@ pub fn producer_sha256() -> String {
 pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV70, String> {
     crate::effect::vivien_reid_v1::public_facts_v70(s, v)
 }
+pub(crate) fn capture_tinybones_compat_v72(s: &GameState, v: PlayerId) -> Result<FactsV70, String> {
+    let mut facts = crate::effect::vivien_reid_v1::public_facts_tinybones_compat_v72(s, v)?;
+    facts.schema = format!(
+        "{}/compat/vivien_reid_v1",
+        crate::tinybones_observation_v72::SCHEMA
+    );
+    Ok(facts)
+}
 pub fn validate(v: &FactsV70) -> Result<(), String> {
-    if v.schema != SCHEMA || v.producer_sha256 != producer_sha256() {
+    validate_with_schema_v72(v, SCHEMA)
+}
+pub(crate) fn validate_tinybones_compat_v72(v: &FactsV70) -> Result<(), String> {
+    validate_with_schema_v72(
+        v,
+        &format!(
+            "{}/compat/vivien_reid_v1",
+            crate::tinybones_observation_v72::SCHEMA
+        ),
+    )
+}
+fn validate_with_schema_v72(v: &FactsV70, schema: &str) -> Result<(), String> {
+    if v.schema != schema || v.producer_sha256 != producer_sha256() {
         return Err("V70 facts identity changed".into());
     }
     crate::rules_meaning_vivien_v70::validate(&v.meaning)?;

@@ -971,7 +971,11 @@ fn build_for_scope_with_assembly(
     ) -> Result<Vec<FamilyProjectionV40>, RlContractError>,
 ) -> Result<Vec<FamilyProjectionV40>, RlContractError> {
     let (scope, state) = request;
-    if scope == crate::rl::CommonProjectionScopeV42::NextFiveV59 {
+    if matches!(
+        scope,
+        crate::rl::CommonProjectionScopeV42::NextFiveV59
+            | crate::rl::CommonProjectionScopeV42::TinybonesV72
+    ) {
         crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
     } else {
         crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
@@ -989,6 +993,7 @@ fn build_for_scope_with_assembly(
             | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
             | crate::rl::CommonProjectionScopeV42::VivienV70
             | crate::rl::CommonProjectionScopeV42::MuldrothaV71
+            | crate::rl::CommonProjectionScopeV42::TinybonesV72
     ) {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -1020,7 +1025,8 @@ fn build_for_scope_with_assembly(
         | crate::rl::CommonProjectionScopeV42::EndTurnV68
         | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
         | crate::rl::CommonProjectionScopeV42::VivienV70
-        | crate::rl::CommonProjectionScopeV42::MuldrothaV71 => {}
+        | crate::rl::CommonProjectionScopeV42::MuldrothaV71
+        | crate::rl::CommonProjectionScopeV42::TinybonesV72 => {}
     }
     // This is the original first complete common build, after the unchanged
     // scope checks and before any family validation/construction.

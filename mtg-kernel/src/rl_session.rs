@@ -439,6 +439,37 @@ pub(crate) fn muldrotha_candidates_v71(
         crate::rl::core_policy_action_candidates_muldrotha_v71(origin, state)
     }
 }
+pub(crate) fn tinybones_candidates_v72(
+    origin: &PolicyDecisionV5,
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    crate::tinybones_observation_v72::validate_state(state).map_err(RlContractError)?;
+    #[cfg(feature = "limited-fdn-fixtures")]
+    if let Some((player, pending, prefix)) = surface
+        .hunter_order_parts_v45(state)
+        .map_err(RlContractError)?
+    {
+        return crate::rl::hunter_trigger_order_candidates_v45(player, pending, prefix, state);
+    }
+    if let Some(candidates) =
+        crate::divine_actions_v44::candidates_tinybones_v72(origin, state, surface)?
+    {
+        return Ok(candidates);
+    }
+    if matches!(
+        origin,
+        PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEntryColorV36 { .. }
+        ))
+    ) {
+        banner_v36::actual_candidates(origin, state)
+    } else if inspiration_v37::is_mill(state) {
+        inspiration_v37::actual_candidates(origin, state)
+    } else {
+        crate::rl::core_policy_action_candidates_tinybones_v72(origin, state)
+    }
+}
 
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;

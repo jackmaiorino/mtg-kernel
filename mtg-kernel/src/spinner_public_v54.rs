@@ -39,6 +39,9 @@ pub(crate) fn capture_complete_v61(state: &GameState) -> Result<FactsV54, String
 pub(crate) fn capture_complete_call_v62(state: &GameState) -> Result<FactsV54, String> {
     capture_scoped(state, public::CounterScopeV61::CallV62)
 }
+pub(crate) fn capture_tinybones_compat_v72(state: &GameState) -> Result<FactsV54, String> {
+    capture_scoped(state, public::CounterScopeV61::TinybonesV72)
+}
 fn capture_scoped(state: &GameState, scope: public::CounterScopeV61) -> Result<FactsV54, String> {
     let id =
         crate::card_def::card_id_by_name("Spinner of Souls").ok_or("Spinner printing absent")?;
@@ -100,7 +103,9 @@ fn capture_scoped(state: &GameState, scope: public::CounterScopeV61) -> Result<F
         schema: SCHEMA.into(),
         producer_sha256: meaning::producer_sha256(),
         meaning,
-        current: if scope == public::CounterScopeV61::CallV62 {
+        current: if scope == public::CounterScopeV61::TinybonesV72 {
+            public::current_tinybones_compat_v72(state, id)?
+        } else if scope == public::CounterScopeV61::CallV62 {
             public::current_complete_call_v62(state, id)?
         } else if scope == public::CounterScopeV61::CompleteV61 {
             public::current_complete_v61(state, id)?

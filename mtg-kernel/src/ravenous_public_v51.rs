@@ -367,6 +367,7 @@ pub(crate) fn battlefield_complete_scope(
             | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
             | crate::rl::CommonProjectionScopeV42::VivienV70
             | crate::rl::CommonProjectionScopeV42::MuldrothaV71
+            | crate::rl::CommonProjectionScopeV42::TinybonesV72
     ) {
         return Err(RlContractError(
             "wrong complete counter compatibility scope".into(),
@@ -393,13 +394,16 @@ pub(crate) fn battlefield_complete_scope(
             }
             seen.push(*id);
             cards[seat].push(CardV51 {
-                card: if matches!(
+                card: if scope == crate::rl::CommonProjectionScopeV42::TinybonesV72 {
+                    crate::rl::public_card_tinybones_compat_v72(state, *id)?
+                } else if matches!(
                     scope,
                     crate::rl::CommonProjectionScopeV42::CallV62
                         | crate::rl::CommonProjectionScopeV42::EndTurnV68
                         | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
                         | crate::rl::CommonProjectionScopeV42::VivienV70
                         | crate::rl::CommonProjectionScopeV42::MuldrothaV71
+                        | crate::rl::CommonProjectionScopeV42::TinybonesV72
                 ) {
                     crate::rl::public_card_call_compat_v62(state, *id)?
                 } else if scope == crate::rl::CommonProjectionScopeV42::GraveyardReturnV61 {
