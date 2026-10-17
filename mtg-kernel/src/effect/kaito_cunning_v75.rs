@@ -1,5 +1,5 @@
-//! Native Kaito, Cunning Infiltrator. New printing remains unregistered until
-//! the complete native source/fixture checkpoint; no complete consumer admission.
+//! Native Partial494 Kaito and exact Partial495 Ninja dependency.
+//! All source fixtures remain uncompiled/unrun; no complete consumer admission.
 use super::*;
 use crate::engine::{EffectDuration, UntilEndOfTurnEffect};
 use crate::{card_def, event::CommittedEvent as E, ids::StackItemId, state::StackItemKind};
@@ -1426,6 +1426,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         if !log_indices.insert(*index) {
             return Err("Kaito current event duplicated".into());
         }
+        if rows(state).any(|(_, j)| matches!(j,JournalV75::Collected{origin}if origin==index)) {
+            return Err("Kaito consumed capture returned to current event dispatch".into());
+        }
         match journal.as_ref() {
             JournalV75::Combat { .. } => {
                 combat(state, *index)?;
@@ -1525,6 +1528,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let JournalV75::Published { item, .. } = at(state, *publication)? else {
                     return Err("Kaito evasion publication absent".into());
                 };
+                if target.is_some() != !item.targets.is_empty()
+                    || timestamp.is_some_and(|t| t >= state.engine.next_effect_timestamp)
+                {
+                    return Err(
+                        "Kaito evasion omitted its original selected target/timestamp".into(),
+                    );
+                }
                 if *publication>=i as u64||item.inline_effect!=Some(plus_one())||target.is_some()!=timestamp.is_some()||target.as_ref().is_some_and(|b|!item.v4.target_contracts.iter().any(|c|matches!(c,crate::state::StackTargetContractV4::Object{object,zone,zone_change_count,..}if *object==b.object&&*zone==b.expected_zone&&*zone_change_count==b.expected_zone_change_count))){return Err("Kaito evasion original target changed".into())}
             }
             JournalV75::TokenInput { publication, item } => {
@@ -1546,6 +1556,27 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     || !token_finished.insert(*input)
                 {
                     return Err("Kaito Ninja completion changed".into());
+                }
+                let JournalV75::TokenInput { item, .. } = at(state, *input)? else {
+                    return Err("Kaito token input kind changed".into());
+                };
+                let created = state.engine.event_history[*input as usize + 1..i]
+                    .iter()
+                    .filter_map(|e| match e {
+                        E::CreateToken {
+                            token_def,
+                            controller,
+                            ..
+                        } => Some((*token_def, *controller)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if created.is_empty()
+                    || created
+                        .iter()
+                        .any(|(id, p)| !token_definition(*id) || *p != item.controller)
+                {
+                    return Err("Kaito token completion lost its exact native Ninja batch".into());
                 }
             }
             JournalV75::DiscardInput {
@@ -1659,3 +1690,11 @@ pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Res
 pub(crate) fn validate_publication(state: &GameState, item: &StackItem) -> Result<(), String> {
     published(state, item).map(|_| ())
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "kaito_cunning_v75_tests.rs"]
+pub(crate) mod tests;

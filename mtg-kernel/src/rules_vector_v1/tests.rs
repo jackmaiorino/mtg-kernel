@@ -1166,6 +1166,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect/kaito_cunning_v75.rs", "Ninja Token", "exact private Kaito/copy permit dependency; raw creation and legacy consumers refuse"),
     ("effect/kaito_cunning_v75.rs", "Kaito, Cunning Infiltrator", "exact native loyalty, combat/casting occurrences and independent emblem; legacy Opaque and consumer refusal"),
     ("effect/chandra_flameshaper_v1.rs", "Chandra, Flameshaper", "exact native loyalty allocation, exile permission and copiable token abilities; legacy Opaque and consumer refusal"),
     ("effect/vivien_reid_v1.rs", "Vivien Reid", "exact native loyalty and persistent timestamped emblem; legacy Opaque and consumer refusal"),

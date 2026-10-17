@@ -1,7 +1,7 @@
 # Kaito, Cunning Infiltrator native source
 
-Issue110 implementation in progress. Kaito494/V75 and its Ninja495 dependency
-are reserved and unregistered. This branch is isolated from canonical PR308.
+Issue110 native Partial source. Kaito494/V75 and its Ninja495 dependency
+are appended after actual Chandra493. This branch is isolated from canonical PR308.
 No runtime, Full, consumer, model or sampler admission is claimed.
 
 ## Printed contract
@@ -37,9 +37,9 @@ original source/controller/cost/target bindings after source departure.
 The first prerequisite appends the native optional controlled-creature target
 filter. It preserves the old Standard target prefix, retains max1/min0 and the
 controller relation, and leaves the frozen rules-vector facets opaque for the
-new domain. No existing printing selects it yet.
+new domain. Kaito's +1 selects it; prior printing domains are unchanged.
 
-The unregistered native source now implements independent pre-cost payment and
+The native source implements independent pre-cost payment and
 exact full-row publication, lexical execution and consumed continuation owners,
 pre-batch combat observer capture authenticated by the actual combat-wave finish,
 source-independent persistent emblem capture at actual casts, and a distinct
@@ -56,12 +56,25 @@ appends the actual Kaito child once. All changed production source is included
 in that digest. Existing event/effect prefixes and the237 sample bytes remain
 unchanged; one appended kind is pending a genuine native sample.
 
-Remaining work before registration is the genuine paid both-seat fixture set
-covering all branches, source departure, target loss, restore, copy/Season,
-independent hidden worlds and read-only forgery rejection. This source-only
-checkpoint is not runtime qualification or complete consumer admission.
-Register494/495 only after actual490 through493 exist. Add complete V75 owning
-consumers in their own coherent follow-up before any consumer admission.
+Fourteen genuine paid/native both-seat groups cover all printed roots, zero and
+one target, whole-ability fizzle, departed source, issued-discard restore and
+erasure, source recast, Season and native copy ancestry, real declared combat,
+final positive damage after Tyrant or a labelled shield primitive, original
+pre-batch observer departure, source-independent emblem casts/copies/countering,
+two emblems, full u32 loyalty payment, failed empty-library draw, independent
+initial hidden worlds and read-only current-log/history forgeries. Counter,
+zone, shield, final-wave and virtual-spell-copy primitives are explicitly
+labelled and do not claim otherwise absent paid routes.
+
+The exact real Partial Ninja is blue 2/1, subtype Ninja, without keywords or
+activated abilities. Its frozen dependency UUID remains unchanged. The build
+allow list accepts only that exact shape, while raw runtime token creation still
+refuses it. The original 302 Limited rows, Full roster, frozen 286/24 records,
+original 237 sample payloads and historical profile literals are retained.
+
+All new Rust is uncompiled and unrun. This is source implementation, not runtime
+qualification or complete consumer admission. Complete V75 owners/models/Human,
+transport and lawful sampling remain separate necessary work before Full.
 
 Pinned formatting and source checks are allowed locally. Rust build/check/test
 must use the authorized remote/CI path; the active Native213 source and target
