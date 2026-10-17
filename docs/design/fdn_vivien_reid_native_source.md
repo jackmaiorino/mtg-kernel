@@ -44,10 +44,11 @@ initialized hidden worlds. Counter, control, zone and integer-boundary setups
 are explicitly native primitives. They are not claims of paid blink/control or
 counter-producing printings. No native runtime pass is claimed.
 
-The existing derived named-source digest adds nine actual semantic inputs after
+The existing derived named-source digest adds ten actual semantic inputs after
 its original74 ordered inputs: build_standard, card_def, effect, planeswalker,
 old meaning mod/targets, the new Vivien implementation, and the shared native
-look-custody child, and the explicit noncreature Vivien subtype mapping. All original
+look-custody child, and the explicit noncreature Vivien subtype mapping and shared authorized-reference
+projection. All original
 pathname/length/content framing and the existing99 producer callsites remain.
 The new event kind has no invented sample payload; genuine future runtime
 harvesting remains required. Frozen286+24 target and accepted V88 tuple do not

@@ -693,17 +693,14 @@ pub(crate) fn grants_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         p == o.controller && crate::continuous_characteristics_v1::grant_survives(state, id, t)
     })
 }
-pub(crate) fn require_legacy(state: &GameState) -> Result<(), String> {
+pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
     validate_state(state)?;
-    if rows(state).next().is_some()
-        || state.objects.iter().any(|(_, o)| {
-            matches!(
-                o.zone,
-                Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile
-            ) && o.v4.face_down_v1.is_none()
-                && definition(o.card_def)
-        })
-    {
+    let visible=state.objects.iter().any(|(id,o)| {
+        crate::optional_trigger_public_v1::reference(state,id,viewer).is_some_and(|r|
+            matches!(r.identity,crate::optional_trigger_public_v1::IdentityV1::Known{card_id} if definition(card_id)))
+            || viewer.is_some_and(|v|o.v4.face_down_v1.is_some_and(|f|f.lookers&(1<<v.index())!=0)&&definition(o.card_def))
+    });
+    if rows(state).next().is_some() || visible {
         Err("Vivien and its persistent emblem require a complete V70 consumer".into())
     } else {
         Ok(())

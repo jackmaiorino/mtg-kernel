@@ -269,7 +269,7 @@ fn paid_optional_top_four_reveal_random_bottom_and_answered_restore_both_seats()
                     !matches!(next(b),Decision::CastSpellOrPass{activatable_abilities,..}if activatable_abilities.contains(&(v,0)))
                 );
                 validate_state(b).unwrap();
-                assert!(require_legacy(b).is_err());
+                assert!(require_legacy(b, Some(p)).is_err());
             }
             assert_eq!(s, replay);
             assert_eq!(s.state_hash(), replay.state_hash());
@@ -435,7 +435,7 @@ fn paid_emblem_cost_source_departure_season_copy_and_current_control_restore_bot
         assert_eq!(engine::checked_effective_pt(&s, elf).unwrap(), (1, 1));
         assert!(!engine::has_effective_keyword(&s, elf, Keywords::TRAMPLE));
         validate_state(&restore(&s)).unwrap();
-        assert!(require_legacy(&s).is_err());
+        assert!(require_legacy(&s, Some(p)).is_err());
     }
 }
 
@@ -672,7 +672,9 @@ fn independently_initialized_hidden_worlds_and_source_departure_keep_original_pr
         ];
         let mut menus = Vec::new();
         for s in &mut states {
-            assert!(require_legacy(s).is_ok());
+            assert!(require_legacy(s, None).is_ok());
+            assert!(require_legacy(s, Some(p)).is_err());
+            assert!(require_legacy(s, Some(p.opponent())).is_ok());
             let v = walker(s, p);
             let row = activate(s, p, v, 0, None);
             // Native source departure/control scene; the actual ability owns
