@@ -2060,6 +2060,9 @@ pub enum CommittedEvent {
     MuldrothaPlayedV1 {
         played: crate::engine::muldrotha_v1::PlayedV1,
     },
+    ChandraFlameshaperV74 {
+        journal: Box<crate::effect::chandra_flameshaper_v1::JournalV74>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4306,6 +4309,7 @@ fn commit_with_entry_batch_and_source_color(
         None
     };
     let greatwurm_history_start = state.engine.event_history.len();
+    let chandra_departure = crate::effect::chandra_flameshaper_v1::departure_input(state, &event);
     let source_copy_departure =
         match crate::effect::source_token_copy_v1::departure_input(state, &event) {
             Ok(input) => input,
@@ -4661,6 +4665,19 @@ fn commit_with_entry_batch_and_source_color(
     if crate::effect::source_token_copy_v1::record_departure(
         state,
         source_copy_departure,
+        entry_history_index,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    if crate::effect::chandra_flameshaper_v1::record_departure(
+        state,
+        chandra_departure,
         entry_history_index,
     )
     .is_err()
@@ -5756,7 +5773,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    batch_with_aura_token_hosts_v1(state, events, attachments, None, None, None, None);
+    batch_with_aura_token_hosts_v1(state, events, attachments, None, None, None, None, None);
 }
 
 /// The bound copy continuation supplies one untargeted host per actual expanded
@@ -5775,6 +5792,7 @@ pub(crate) fn batch_with_copied_aura_hosts_v1(
         None,
         None,
         None,
+        None,
     );
 }
 /// Consumes one private genuine finishing permit. It cannot be reconstructed
@@ -5787,7 +5805,16 @@ pub(crate) fn commit_goblin_excess_tokens_owned(
     if !permit.allows(state, &events) {
         return Err("excess token batch lost exact continuation owner".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, Some(&permit), None, None);
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        Some(&permit),
+        None,
+        None,
+        None,
+    );
     if state.engine.halted.is_some() {
         return Err("excess token batch halted".into());
     }
@@ -5804,6 +5831,7 @@ fn batch_with_aura_token_hosts_v1(
     excess_permit: Option<&crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>>,
     kykar_permit: Option<&crate::effect::kykar_v1::TokenPermitV1<'_, '_>>,
     spirit_copy_permit: Option<&crate::effect::SpiritCopyPermitV1<'_, '_>>,
+    chandra_copy_permit: Option<&crate::effect::chandra_flameshaper_v1::CopyPermitV74<'_, '_>>,
 ) {
     if !preflight_wide_batch_v59(state, &events) {
         return;
@@ -5811,6 +5839,7 @@ fn batch_with_aura_token_hosts_v1(
     if events.iter().any(unsupported_partial_token_v1)
         && kykar_permit.is_none_or(|p| !p.allows(state, &events))
         && spirit_copy_permit.is_none_or(|p| !p.allows(state, &events))
+        && chandra_copy_permit.is_none_or(|p| !p.allows(state, &events))
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -10247,7 +10276,16 @@ pub(crate) fn commit_kykar_spirit_owned_v1(
     if !permit.allows(state, &events) {
         return Err("Kykar Spirit lost genuine mode owner".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, None, Some(&permit), None);
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        Some(&permit),
+        None,
+        None,
+    );
     if state.engine.halted.is_some() {
         return Err("Kykar Spirit batch halted".into());
     }
@@ -10264,9 +10302,44 @@ pub(crate) fn commit_spirit_copy_owned_v1(
     if !permit.allows(state, &events) {
         return Err("Spirit copy lost its actual spell/target/proposal".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, None, None, Some(&permit));
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        None,
+        Some(&permit),
+        None,
+    );
     if state.engine.halted.is_some() {
         return Err("Spirit copy batch halted".into());
     }
     Ok(())
+}
+
+/// Only the genuine paid Chandra copy row may cross the Partial-token gate.
+pub(crate) fn commit_chandra_copy_v74(
+    state: &mut GameState,
+    permit: crate::effect::chandra_flameshaper_v1::CopyPermitV74<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Chandra copy lost native source/target ownership".into());
+    }
+    batch_with_aura_token_hosts_v1(
+        state,
+        events,
+        Vec::new(),
+        None,
+        None,
+        None,
+        None,
+        Some(&permit),
+    );
+    if state.engine.halted.is_some() {
+        Err("Chandra copy batch halted".into())
+    } else {
+        Ok(())
+    }
 }

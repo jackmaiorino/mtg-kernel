@@ -333,11 +333,12 @@ pub enum EventKindV1 {
     MuldrothaOptionsV1,
     MuldrothaSelectedV1,
     MuldrothaPlayedV1,
+    ChandraFlameshaperV74,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 309;
-const _: () = assert!(EventKindV1::MuldrothaPlayedV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 310;
+const _: () = assert!(EventKindV1::ChandraFlameshaperV74 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -746,6 +747,7 @@ impl CommittedEvent {
             Self::MuldrothaOptionsV1 { .. } => EventKindV1::MuldrothaOptionsV1,
             Self::MuldrothaSelectedV1 { .. } => EventKindV1::MuldrothaSelectedV1,
             Self::MuldrothaPlayedV1 { .. } => EventKindV1::MuldrothaPlayedV1,
+            Self::ChandraFlameshaperV74 { .. } => EventKindV1::ChandraFlameshaperV74,
         }
     }
 }

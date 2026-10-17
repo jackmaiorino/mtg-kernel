@@ -83,6 +83,7 @@ impl Scan<'_> {
             | SphinxLoreV1 { .. }
             | HarvesterExileAndCopyV1
             | FiendArtisanSearchV1 => true,
+            ChandraFlameshaperV74{..}=>true,
             GenesisWaveV1 => self.scope != ReferenceScopeV68::GenesisWave,
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
@@ -379,6 +380,7 @@ impl Scan<'_> {
                     ))
                     || self.bs(cards)
             }
+            ChandraExileGrantV74 { .. } => true,
             CuratorV1 { .. }
             | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
@@ -642,6 +644,7 @@ impl Scan<'_> {
                         choice,
                     ))
             }
+            ChandraExileV74 { .. } => true,
             CuratorCardsV1 { .. }
             | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
@@ -1162,16 +1165,16 @@ fn conflicts_in_scope(
     {
         return true;
     }
-    if state
-        .engine
-        .event_history
-        .has_any(&[EventKindV1::VivienReidV1])
-        || state
-            .engine
-            .event_log
-            .iter()
-            .any(|e| matches!(e, crate::event::CommittedEvent::VivienReidV1 { .. }))
-    {
+    if state.engine.event_history.has_any(&[
+        EventKindV1::VivienReidV1,
+        EventKindV1::ChandraFlameshaperV74,
+    ]) || state.engine.event_log.iter().any(|e| {
+        matches!(
+            e,
+            crate::event::CommittedEvent::VivienReidV1 { .. }
+                | crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
+        )
+    }) {
         return true;
     }
     if crate::engine::ordinary_cleanup_v1::validate(state).is_err()
@@ -1542,6 +1545,7 @@ fn conflicts_in_scope(
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
             PublishedCastIdentityV1 { .. }
+            | ChandraFlameshaperV74{..}
             | VivienReidV1 { .. }
             | OrdinaryCleanupStageV1 { .. }
             | TimeStopJournalV1 { .. }

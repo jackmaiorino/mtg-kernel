@@ -179,6 +179,12 @@ impl BatchDamageV2 {
     fn proposed_with_context(&self, ctx: &ExecCtx) -> DamageProposed {
         let mut damage = self.proposed();
         crate::event::attach_niv_damage_origin_v1(ctx, &mut damage);
+        if ctx
+            .ability_source_contract
+            .is_some_and(|source| super::chandra_flameshaper_v1::definition(source.card_def))
+        {
+            damage.historical_source = ctx.stack_item_id;
+        }
         damage
     }
 }
@@ -677,6 +683,9 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         EffectOp::NivMizzetVisionaryDrawV1 { .. } => true,
         // Both ordered batches move cards only; resulting ETBs resolve later.
         EffectOp::GenesisWaveV1 => true,
+        EffectOp::ChandraFlameshaperV74 {
+            ability_index: 0 | 1,
+        } => true,
         // This exact owned root only mills. Draw capture, source, target and
         // private begin/resume authority remain Tutelage-owned.
         EffectOp::SphinxsTutelageMillV1 { .. } => true,
@@ -942,6 +951,10 @@ fn equipment_damage_grant(item: &StackItem) -> bool {
         })
 }
 fn owned_root(state: &GameState, pending: &EffectContinuation) -> Result<Box<EffectOp>, String> {
+    if super::chandra_flameshaper_v1::selected(state, &pending.resolving_item) {
+        return super::chandra_flameshaper_v1::crystal_root(state, &pending.resolving_item)
+            .map(Box::new);
+    }
     if crate::equipment_damage_source_v4::tracked(state, &pending.resolving_item) {
         crate::equipment_damage_source_v4::validate_published_metadata(
             state,
@@ -1075,13 +1088,15 @@ fn batch_recipe(op: &EffectOp) -> bool {
         op,
         EffectOp::DamageAllCreatures { .. } | EffectOp::DamageAllTargets { .. }
     ) || fight_recipe(op)
+        || matches!(op, EffectOp::ChandraFlameshaperV74 { ability_index: 2 })
 }
 pub(crate) fn has_damage(op: &EffectOp) -> bool {
     if fight_recipe(op) {
         return true;
     }
     match op {
-        EffectOp::FieryAnnihilation
+        EffectOp::ChandraFlameshaperV74 { ability_index: 2 }
+        | EffectOp::FieryAnnihilation
         | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
         | EffectOp::DealDamage { .. }
         | EffectOp::DealDamageDynamic { .. }
@@ -1159,6 +1174,7 @@ fn supported(op: &EffectOp) -> bool {
         return true;
     }
     match op {
+        EffectOp::ChandraFlameshaperV74 { ability_index: 2 } => true,
         EffectOp::GainLife {
             player: PlayerRef::Controller | PlayerRef::Opponent,
             ..
@@ -2058,6 +2074,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
         });
     record(state, owner, None)?;
     if !suspended {
+        super::chandra_flameshaper_v1::finish_crystal(state, owner, &owner.expected)?;
         if let Some(gorehorn) = owner.gorehorn.as_ref() {
             crate::gorehorn_damage_v1::crystal::finish_owned(state, gorehorn, &owner.expected)?;
         }
@@ -2654,7 +2671,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         .batch_capture
                         .as_ref()
                         .ok_or("Crystal simultaneous damage lost its capture")?;
-                    validate_batch_capture(capture, &pending.ctx, op, path)?;
+                    validate_batch_capture(state, capture, &pending.ctx, op, path)?;
                     validate_batch_preparation_ref(state, capture, previous_index, index)?;
                     if step.conditional_result.is_some() {
                         return Err("Crystal batch carries foreign branch".into());
@@ -3629,7 +3646,23 @@ fn capture_batch(
     } else {
         None
     };
-    let proposals = if let EffectOp::DamageAllTargets { amount } = op {
+    let proposals = if matches!(op, EffectOp::ChandraFlameshaperV74 { ability_index: 2 }) {
+        Some(
+            super::chandra_flameshaper_v1::damage_allocations(state, ctx)?
+                .into_iter()
+                .enumerate()
+                .filter(|(slot, _)| {
+                    super::chandra_flameshaper_v1::damage_target_legal(state, ctx, *slot)
+                })
+                .map(|(slot, amount)| BatchDamageV2 {
+                    source: ctx.source,
+                    target: ctx.targets[slot],
+                    amount: i32::from(amount),
+                    touched: vec![],
+                })
+                .collect(),
+        )
+    } else if let EffectOp::DamageAllTargets { amount } = op {
         Some(
             ctx.targets
                 .iter()
@@ -3879,7 +3912,13 @@ fn validate_batch_preparations(state: &GameState) -> Result<(), String> {
         {
             return Err("Crystal batch preparation changed its unique original execution".into());
         }
-        validate_batch_capture(capture, &execution.before.ctx, &capture.op, &capture.path)?;
+        validate_batch_capture(
+            state,
+            capture,
+            &execution.before.ctx,
+            &capture.op,
+            &capture.path,
+        )?;
     }
     Ok(())
 }
@@ -3903,6 +3942,7 @@ fn validate_batch_preparation_ref(
     Ok(())
 }
 fn validate_batch_capture(
+    state: &GameState,
     capture: &BatchCaptureV2,
     ctx: &ExecCtx,
     op: &EffectOp,
@@ -3926,6 +3966,35 @@ fn validate_batch_capture(
         return Err("Crystal batch repeated battlefield recipient".into());
     }
     let expected = match op {
+        EffectOp::ChandraFlameshaperV74 { ability_index: 2 } => {
+            if capture.fight.is_some() {
+                return Err("Chandra division carries foreign fight facts".into());
+            }
+            let allocations = super::chandra_flameshaper_v1::damage_allocations(state, ctx)?;
+            let mut result = vec![];
+            for (slot, amount) in allocations.into_iter().enumerate() {
+                if let Some(r) = capture
+                    .roster
+                    .iter()
+                    .find(|r| r.selected && ctx.targets[slot] == Target::Object(r.object.object))
+                {
+                    if !matches!(ctx.target_contracts.get(slot),Some(crate::state::StackTargetContractV4::Object { object, owner, zone:Zone::Battlefield, zone_change_count,.. })
+                        if *object==r.object.object && *owner==r.owner && *zone_change_count==r.object.expected_zone_change_count)
+                    {
+                        return Err(
+                            "Chandra division changed original recipient incarnation".into()
+                        );
+                    }
+                    result.push(BatchDamageV2 {
+                        source: ctx.source,
+                        target: ctx.targets[slot],
+                        amount: i32::from(amount),
+                        touched: vec![],
+                    });
+                }
+            }
+            result
+        }
         EffectOp::DamageAllTargets { amount } => {
             if capture.fight.is_some() {
                 return Err("targeted area damage carries foreign fight facts".into());
@@ -4140,6 +4209,22 @@ fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<()
                     || live.controller != r.controller
                     || live.card_def != r.card_def
                     || match &capture.op {
+                        EffectOp::ChandraFlameshaperV74 { ability_index: 2 } => {
+                            capture
+                                .ctx
+                                .targets
+                                .iter()
+                                .enumerate()
+                                .any(|(slot, target)| {
+                                    *target == Target::Object(r.object.object)
+                                        && super::chandra_flameshaper_v1::damage_target_legal(
+                                            state,
+                                            &capture.ctx,
+                                            slot,
+                                        )
+                                })
+                                != r.selected
+                        }
                         EffectOp::DamageAllTargets { .. } => {
                             capture
                                 .ctx
@@ -4309,7 +4394,7 @@ fn validate_batch_choice_record(
     let capture = batch_capture_at(state, progress.capture, &choice.path)?;
     let op = effect_op_at_structural_path(root, &choice.path)
         .ok_or("Crystal batch lost printed leaf")?;
-    validate_batch_capture(capture, &pending.ctx, op, &choice.path)?;
+    validate_batch_capture(state, capture, &pending.ctx, op, &choice.path)?;
     let Some(CommittedEvent::CrystalExecutionV1 { execution }) =
         state.engine.event_history.get(progress.capture as usize)
     else {

@@ -212,6 +212,7 @@ pub enum StandardTargetV1 {
     /// Imprisoned in the Moon's exact battlefield union.
     CreatureLandOrPlaneswalkerV1,
     ArtifactEnchantmentOrFlyingCreatureV1,
+    UpToEightCreaturesOrPlaneswalkersV74,
 }
 
 impl StandardTargetV1 {
@@ -223,6 +224,7 @@ impl StandardTargetV1 {
             | Self::UpToTwoControlledArtifactsOrCreatures => (2, 0),
             Self::OneToThreeDistinctAnyTargetsV1 => (3, 1),
             Self::UpToOneCreature => (1, 0),
+            Self::UpToEightCreaturesOrPlaneswalkersV74 => (8, 0),
             _ => (1, 1),
         }
     }
@@ -299,7 +301,8 @@ pub(crate) fn legal_targets(
         .filter(|&id| {
             !matches!(
                 target,
-                StandardTargetV1::UpToTwoControlledCreatures
+                StandardTargetV1::UpToEightCreaturesOrPlaneswalkersV74
+                    | StandardTargetV1::UpToTwoControlledCreatures
                     | StandardTargetV1::UpToTwoControlledArtifactsOrCreatures
             ) || !prefix.contains(&Target::Object(id))
         })
@@ -358,6 +361,9 @@ pub(crate) fn target_matches(
     }
     let has = |card_type| crate::engine::object_has_type(state, object, card_type);
     match target {
+        StandardTargetV1::UpToEightCreaturesOrPlaneswalkersV74 => {
+            has(CardType::Creature) || has(CardType::Planeswalker)
+        }
         StandardTargetV1::ArtifactEnchantmentOrFlyingCreatureV1 => {
             has(CardType::Artifact)
                 || has(CardType::Enchantment)

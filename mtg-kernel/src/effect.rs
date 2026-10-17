@@ -2762,6 +2762,9 @@ pub enum EffectOp {
     },
     /// Definition-owned revealed subset and simultaneous permanent entry.
     GenesisWaveV1,
+    ChandraFlameshaperV74 {
+        ability_index: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -3244,6 +3247,10 @@ pub enum EffectFrame {
         choice: genesis_wave_v1::ChoiceV1,
         cards: Vec<EffectObjectBinding>,
     },
+    ChandraExileGrantV74 {
+        capture: u64,
+        chosen: EffectObjectBinding,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -3623,6 +3630,9 @@ pub enum EffectTargetSelectionPurpose {
     },
     GenesisWaveCardsV1 {
         choice: genesis_wave_v1::ChoiceV1,
+    },
+    ChandraExileV74 {
+        capture: u64,
     },
 }
 
@@ -4228,6 +4238,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         op,
         EffectOp::AleshaRaidReturn { .. }
             | EffectOp::FiendArtisanSearchV1
+            | EffectOp::ChandraFlameshaperV74 { .. }
             | EffectOp::GenesisWaveV1
     ) {
         return true;
@@ -4348,6 +4359,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if chandra_flameshaper_v1::recipe(op)
+        || chandra_flameshaper_v1::selected(state, &resolving_item)
+        || chandra_flameshaper_v1::context_selected(state, ctx)
+    {
+        return Err("Chandra requires its native row owner".into());
+    }
     if vivien_reid_v1::recipe(op)
         || vivien_reid_v1::selected(state, &resolving_item)
         || vivien_reid_v1::context_selected(state, ctx)
@@ -4484,6 +4501,13 @@ fn begin_resumable_resolution_with_native_row_v1(
     inspiration_owner: Option<&InspirationResolutionOwnerV1>,
     native_row: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
+    if native_row.is_none()
+        && (chandra_flameshaper_v1::recipe(op)
+            || chandra_flameshaper_v1::selected(state, &resolving_item)
+            || chandra_flameshaper_v1::context_selected(state, ctx))
+    {
+        return Err("Chandra requires its native row owner".into());
+    }
     if native_row.is_none()
         && (vivien_reid_v1::recipe(op)
             || vivien_reid_v1::selected(state, &resolving_item)
@@ -4678,6 +4702,12 @@ fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
             || source_token_copy_v1::waiting(state, &p.ctx)
     }) {
         return Err("source copy has no public continuation".into());
+    }
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        chandra_flameshaper_v1::selected(state, &p.resolving_item)
+            || chandra_flameshaper_v1::context_selected(state, &p.ctx)
+    }) {
+        return Err("Chandra requires its private native resume owner".into());
     }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         vivien_reid_v1::selected(state, &p.resolving_item)
@@ -6092,6 +6122,9 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::ChandraExileV74 { capture } => {
+            chandra_flameshaper_v1::answer(continuation, capture, objects, path)?;
         }
         EffectTargetSelectionPurpose::BlasphemousEdictV1 { choice } => {
             blasphemous_edict_v1::answer(continuation, choice, objects, path)?;
@@ -9265,6 +9298,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
                         | EffectFrame::CuratorV1 { .. }
                         | EffectFrame::GenesisWaveV1 { .. }
+                        | EffectFrame::ChandraExileGrantV74 { .. }
                         | EffectFrame::BlasphemousEdictV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
@@ -9317,6 +9351,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
                         | EffectFrame::CuratorV1 { .. }
                         | EffectFrame::GenesisWaveV1 { .. }
+                        | EffectFrame::ChandraExileGrantV74 { .. }
                         | EffectFrame::BlasphemousEdictV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
@@ -10247,6 +10282,8 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    chandra_flameshaper_v1::validate_state(state)?;
+    chandra_flameshaper_v1::validate_pending(state)?;
     vivien_reid_v1::validate_state(state)?;
     vivien_reid_v1::validate_pending(state)?;
     fiend_artisan_v1::validate_pending(state)?;
@@ -10449,6 +10486,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::ChandraExileV74 { .. } => {
+                    chandra_flameshaper_v1::validate_pending(state)?;
+                }
                 EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. } => {
                     exile_top_choose_v1::validate_choice(state, pending)?;
                 }
@@ -12630,6 +12670,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 | EffectFrame::NonlandSacrificePaymentV1 { .. }
                 | EffectFrame::CuratorV1 { .. }
                 | EffectFrame::GenesisWaveV1 { .. }
+                | EffectFrame::ChandraExileGrantV74 { .. }
                 | EffectFrame::BlasphemousEdictV1 { .. }
                 | EffectFrame::AleshaRaidAnswerV1 { .. }
                 | EffectFrame::SphinxsTutelageMillV1 {
@@ -12655,6 +12696,9 @@ fn drive_resumable_inner_with_native_row_v1(
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::ChandraExileGrantV74 { capture, chosen } => {
+                    chandra_flameshaper_v1::apply_grant(state, &continuation, capture, chosen)?;
+                }
                 EffectFrame::GenesisWaveV1 { choice, cards } => {
                     if genesis_wave_v1::apply(state, &mut continuation, choice, cards)? {
                         state.engine.pending_effect = Some(continuation);
@@ -14868,6 +14912,16 @@ fn drive_resumable_inner_with_native_row_v1(
             } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 standard_discard::random_exile(state, player, minimum_cards)?;
+            }
+            EffectOp::ChandraFlameshaperV74 { ability_index } => {
+                let owner = native_row.ok_or("Chandra private owner absent")?;
+                if !path.is_empty() || !continuation.frames.is_empty() {
+                    return Err("Chandra original whole root changed".into());
+                }
+                if chandra_flameshaper_v1::begin(state, &mut continuation, ability_index, owner)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::ExileTopEachPlayerThenCastV1 => {
                 if standard_exile::start_batch(
@@ -19318,6 +19372,21 @@ fn execute_with_native_row_v1(
     if state.engine.halted.is_some() {
         return;
     }
+    if (chandra_flameshaper_v1::recipe(op)
+        || chandra_flameshaper_v1::context_selected(state, ctx)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| chandra_flameshaper_v1::selected(state, &p.resolving_item)))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if (vivien_reid_v1::recipe(op)
         || vivien_reid_v1::context_selected(state, ctx)
         || state
@@ -19569,6 +19638,12 @@ fn execute_with_native_row_v1(
             }
         }
         EffectOp::BindCuratorDestiniesV1 | EffectOp::CuratorDestiniesV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::ChandraFlameshaperV74 { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -26537,8 +26612,12 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // Only a current actual published row selects its source. Caller-supplied
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
+pub(crate) mod chandra_flameshaper_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if chandra_flameshaper_v1::context_selected(state, ctx) {
+        return true;
+    }
     if vivien_reid_v1::waiting(state, ctx) {
         return true;
     }
@@ -27814,6 +27893,7 @@ fn execute_copied_token_sacrifice_v1(
 /// Public copy creation and its added abilities have no predecessor schema.
 /// This does not inspect any hidden hand/library identity.
 pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    chandra_flameshaper_v1::require_legacy(state, None)?;
     standard_exile::refuse_top_batch_legacy(state)?;
     crate::leyline_axe_v1::require_legacy_absence(state)?;
     harvester_v1::require_legacy_absence(state)?;

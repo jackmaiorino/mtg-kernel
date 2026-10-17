@@ -1518,6 +1518,14 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/engine/muldrotha_v1.rs",
                     include_str!("muldrotha_v1.rs"),
                 ),
+                (
+                    "mtg-kernel/src/effect/chandra_flameshaper_v1.rs",
+                    include_str!("../effect/chandra_flameshaper_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/crystal_prevention_v1.rs",
+                    include_str!("../effect/crystal_prevention_v1.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

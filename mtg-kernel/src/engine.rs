@@ -1078,6 +1078,8 @@ pub struct PendingActivation {
     /// Distinct declared mana X; absent for every predecessor activation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mana_x_v1: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chandra_damage_v74: Option<effect::chandra_flameshaper_v1::DistributionV74>,
     #[serde(
         default,
         skip_serializing_if = "crate::cauldron_grants_v1::CauldronGrantRecordV1::is_empty"
@@ -1104,6 +1106,10 @@ impl std::hash::Hash for PendingActivation {
         if let Some(x) = self.loyalty_x {
             b"loyalty_x_v1".hash(hash);
             x.hash(hash);
+        }
+        if let Some(d) = &self.chandra_damage_v74 {
+            b"activation_chandra_damage_v74".hash(hash);
+            d.hash(hash);
         }
         if let Some(x) = self.mana_x_v1 {
             b"activation_mana_x_v1".hash(hash);
@@ -10102,6 +10108,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if time_stop_v1::validate(state)
         .and_then(|_| ordinary_cleanup_v1::validate(state))
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
+        .and_then(|()| effect::chandra_flameshaper_v1::validate_state(state))
         .and_then(|()| effect::vivien_reid_v1::validate_state(state))
         .and_then(|()| muldrotha_v1::validate_state(state))
         .is_err()
@@ -13408,8 +13415,11 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         }
     }
 
+    if let Some(d) = effect::chandra_flameshaper_v1::allocation_decision(state, &pending) {
+        return Some(d);
+    }
     let max_targets = target_count(pending.target_spec);
-    if (pending.targets_chosen.len() as u8) < max_targets {
+    if pending.chandra_damage_v74.is_none() && (pending.targets_chosen.len() as u8) < max_targets {
         let legal_targets = completable_next_activation_targets_for(
             pending.source,
             ability,
@@ -13688,6 +13698,7 @@ pub(crate) fn validate_pending_activation(
     state: &GameState,
     pending: &PendingActivation,
 ) -> Result<(), String> {
+    effect::chandra_flameshaper_v1::validate_distribution(state, pending)?;
     if pending.target_spec == TargetSpec::KickerControlledCreatures {
         return Err(
             "variable targeting is supported only by its definition-owned spell cast".into(),
@@ -16471,6 +16482,7 @@ pub(crate) fn counter_stack_item_by_id(
         &item,
         effect::FrenziedGoblinOutcomeV1::Countered,
     )?;
+    effect::chandra_flameshaper_v1::record_not_resolved(state, &item, true)?;
     crate::source_power_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::cerberus_capture_v1::record_countered(state, &item);
@@ -16557,6 +16569,7 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
 /// to the graveyard here rather than applying its successful post-resolution
 /// departure (library shuffle, or exile-with-permission).
 fn finish_failed_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
+    effect::chandra_flameshaper_v1::record_not_resolved(state, item, false)?;
     if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Omen) {
         let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
         return apply_spell_departure(state, departure);
@@ -18552,6 +18565,10 @@ fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
     });
     let p = state.active_player;
     state.players[p.index()].lands_played_this_turn = 0;
+    if effect::chandra_flameshaper_v1::cleanup(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Err(());
+    }
     if crate::effect::strongbox_permission_v1::cleanup(state).is_err() {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Err(());
@@ -20766,6 +20783,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     time_stop_v1::validate(state)?;
     ordinary_cleanup_v1::validate(state)?;
     effect::genesis_wave_v1::validate_state(state)?;
+    effect::chandra_flameshaper_v1::validate_state(state)?;
     effect::vivien_reid_v1::validate_state(state)?;
     muldrotha_v1::validate_state(state)?;
     crate::leyline_axe_v1::validate(state)?;
@@ -20874,6 +20892,14 @@ pub(crate) fn step_without_linked_aura_v1(
                 "action does not match pending cast stage {stage:?}"
             ));
         }
+    }
+    if state
+        .engine
+        .pending_activation
+        .as_ref()
+        .is_some_and(|p| p.chandra_damage_v74.as_ref().is_some_and(|d| !d.finished))
+    {
+        return effect::chandra_flameshaper_v1::answer_allocation(state, &action);
     }
     if let Some(pending) = state.engine.pending_activation.as_ref() {
         let stage = pending_activation_action_stage(state, pending)?;
@@ -23844,6 +23870,7 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
         crew_finished: false,
         loyalty_x: None,
         mana_x_v1: None,
+        chandra_damage_v74: effect::chandra_flameshaper_v1::seed(state, source, ability_index),
         cauldron_grant: crate::standard_cards_v1::capture_cauldron_grant(
             state,
             source,
@@ -24303,6 +24330,7 @@ fn finalize_activation(state: &mut GameState) {
         return;
     };
     if validate_pending_activation(state, staged).is_err()
+        || !effect::chandra_flameshaper_v1::allocation_complete(staged)
         || !target_cardinality_is_complete(staged.target_spec, staged.targets_chosen.len())
         || resolved_activated_ability(
             state.objects.get(staged.source).card_def,
@@ -24377,6 +24405,16 @@ fn finalize_activation(state: &mut GameState) {
         }
     };
     frozen.ajani_payment_owner = ajani_payment_owner;
+    frozen.chandra_payment = match effect::chandra_flameshaper_v1::record_input(state, &pending) {
+        Ok(input) => input,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    };
     frozen.vivien_payment = match effect::vivien_reid_v1::record_input(state, &pending) {
         Ok(input) => input,
         Err(_) => {
@@ -24529,6 +24567,7 @@ struct FrozenActivationSource {
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
     vivien_payment: Option<u64>,
+    chandra_payment: Option<u64>,
     ravenous_payment: Option<crate::ravenous_amulet_v1::PaymentOwnerV1>,
     drake_payment: Option<crate::drake_hatcher_v1::custody::PaymentOwnerV1>,
 }
@@ -24570,6 +24609,7 @@ fn freeze_activation_source(
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
         vivien_payment: None,
+        chandra_payment: None,
         ravenous_payment: None,
         drake_payment: None,
     }
@@ -24684,6 +24724,15 @@ fn push_paid_activation(
         },
     });
     if effect::fiend_artisan_v1::record_paid(state, stack_item_id, frozen.fiend_input).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    if effect::chandra_flameshaper_v1::record_paid(state, stack_item_id, frozen.chandra_payment)
+        .is_err()
+    {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
