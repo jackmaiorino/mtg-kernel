@@ -568,6 +568,21 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 controller,
                 timestamp,
             } => {
+                let JournalV1::Published { item, .. } = at(state, *pub_at)? else {
+                    return Err("Vivien emblem publication kind changed".into());
+                };
+                if state
+                    .stack
+                    .iter()
+                    .any(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+                    || state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .is_some_and(|p| p.resolving_item.v4.stack_item_id == item.v4.stack_item_id)
+                {
+                    return Err("Vivien completed emblem publication was reintroduced".into());
+                }
                 created_inputs.insert(*input);
                 if input.checked_add(1) != Some(position as u64)
                     || *timestamp >= state.engine.next_effect_timestamp

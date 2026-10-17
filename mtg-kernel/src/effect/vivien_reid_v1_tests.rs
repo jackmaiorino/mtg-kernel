@@ -513,7 +513,7 @@ fn paid_journal_echo_tamper_private_dispatch_and_full_u32_loyalty_refuse_readonl
         let mut s = ready(p, &["Forest"; 8], &[NAME], "Island");
         let v = walker(&mut s, p);
         emblem_setup(&mut s, p, v);
-        for which in 0..5 {
+        for which in 0..6 {
             let mut bad = restore(&s);
             match which {
                 0 => {
@@ -561,6 +561,15 @@ fn paid_journal_echo_tamper_private_dispatch_and_full_u32_loyalty_refuse_readonl
                             _ => *publication += 1,
                         }
                     }
+                }
+                5 => {
+                    let row = rows(&bad)
+                        .find_map(|(_, j)| match j {
+                            JournalV1::Published { item, .. } => Some(item.as_ref().clone()),
+                            _ => None,
+                        })
+                        .unwrap();
+                    bad.stack.push(row);
                 }
                 _ => {
                     let event = bad
