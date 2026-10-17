@@ -77,7 +77,10 @@ impl Owner {
             Source::CallV62 | Source::EndTurnV68 => {
                 unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
             }
-            Source::VivienV70 | Source::MuldrothaV71 | Source::TinybonesV72 => {
+            Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73 => {
                 unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
             }
         }
@@ -176,7 +179,10 @@ impl Harness {
             Source::CallV62 | Source::EndTurnV68 => {
                 unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
             }
-            Source::VivienV70 | Source::MuldrothaV71 | Source::TinybonesV72 => {
+            Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73 => {
                 unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
             }
         };
@@ -217,7 +223,10 @@ impl Harness {
             Source::CallV62 | Source::EndTurnV68 => {
                 unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
             }
-            Source::VivienV70 | Source::MuldrothaV71 | Source::TinybonesV72 => {
+            Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73 => {
                 unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
             }
         }
@@ -305,7 +314,10 @@ impl Harness {
             Source::CallV62 | Source::EndTurnV68 => {
                 unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
             }
-            Source::VivienV70 | Source::MuldrothaV71 | Source::TinybonesV72 => {
+            Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73 => {
                 unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
             }
         };
