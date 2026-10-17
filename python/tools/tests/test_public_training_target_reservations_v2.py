@@ -289,9 +289,9 @@ class ReservedAdapterTests(unittest.TestCase):
                     for ref in group["target_runtime"].values():
                         self.assertEqual(dispatch.pin(local/Path(ref["path"]).name)["sha256"], ref["sha256"])
                     script = (local/"run.ps1").read_text()
-                    self.assertIn('& $Python -B "$root/worker.py" --worker-group', script)
-                    self.assertIn('& $Python -B "$root/worker.py" --export', script)
-                    self.assertEqual("Remove-Item Env:CUDA_VISIBLE_DEVICES" in script, target_limits is not None)
+                    mode = "--target-child" if target_limits is not None else "--worker-group"
+                    self.assertIn('& $Python -B "$root/worker.py" '+mode, script)
+                    self.assertEqual('--export "$root"' in script, target_limits is None)
                     request = dispatch.read(local/"jobs/r1/request.json")
                     self.assertEqual(request["config"], dispatch.read(config))
                     self.assertEqual(request["execution_gpu_ordinal"], 0)
@@ -373,8 +373,9 @@ class TargetGuardTests(unittest.TestCase):
         imported.assert_not_called()
 
     def test_script_training_and_export_share_contained_guard_and_failure_receipt(self):
-        for code in (0, 9):
-            with self.subTest(code=code), tempfile.TemporaryDirectory() as temporary:
+        for failure in ("none", "script", "watcher", "cpu", "wall", "descendants"):
+            code = 9 if failure == "script" else 0
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 dispatch.write(root/"group.json", dict(target_limits=self.limits(), target_runtime={},
                     jobs=dict(r1=dict(placement=dict(cpu_affinity=[0, 2])))))
@@ -384,8 +385,10 @@ class TargetGuardTests(unittest.TestCase):
                     return instance
                 instance.spawn.return_value.wait.return_value = code
                 instance.check.return_value = {"charged_physical_bound_bytes": 1}
-                instance.terminate_and_drain.return_value = {"active_processes": 0}
-                with patch.object(dispatch, "target_guard_plan", return_value={}), \
+                instance.error = "STOP requested" if failure == "watcher" else None
+                instance.terminate_and_drain.return_value = dict(active_processes=1 if failure == "descendants" else 0,
+                    cpu_seconds=3600 if failure == "cpu" else 1, seconds=900 if failure == "wall" else 1)
+                with patch.object(dispatch, "target_guard_plan", return_value=dict(run_limits=dict(cpu_seconds=3600, wall_seconds=900))), \
                         patch.object(dispatch, "target_guard_class", return_value=construct), \
                         patch.object(dispatch, "target_helpers", return_value=(Mock(), Mock())), \
                         patch.object(dispatch, "checked", return_value=root/"run.ps1"):
@@ -393,8 +396,8 @@ class TargetGuardTests(unittest.TestCase):
                     group = dispatch.read(root/"group.json")
                     group["target_runtime"]["script"] = {}
                     (root/"group.json").write_text(json.dumps(group))
-                    if code:
-                        with self.assertRaisesRegex(RuntimeError, "contained target script failed"):
+                    if failure != "none":
+                        with self.assertRaisesRegex(RuntimeError, "contained target script failed|target Guard terminal failure"):
                             dispatch.guarded_target(root/"group.json")
                     else:
                         dispatch.guarded_target(root/"group.json")
@@ -403,7 +406,37 @@ class TargetGuardTests(unittest.TestCase):
                 instance.quiet.assert_called_once()
                 instance.terminate_and_drain.assert_called_once()
                 instance.close.assert_called_once()
-                self.assertEqual(dispatch.read(root/"guard-result.json")["complete"], code == 0)
+                self.assertEqual(dispatch.read(root/"guard-result.json")["complete"], failure == "none")
+
+
+    def test_contained_profile_clears_experiments_preserves_owner_and_contains_caches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root/"temp").mkdir()
+            dispatch.write(root/"group.json", dict(jobs=dict(r1=dict(placement=dict(host="computehost")))))
+            inherited = dict(MTG_HOST_RESERVATION_TOKEN="owner", HOST_SLOTS_CLAIM="claim", HOST_SLOTS_CORES="20,21",
+                MTG_UNEXPECTED="remove", S4A_UNEXPECTED="remove", PROFILE_UNEXPECTED="remove", BUDGET_UNEXPECTED="remove",
+                CUBECL_UNEXPECTED="remove", CUDA_VISIBLE_DEVICES="")
+            with patch.dict(os.environ, inherited, clear=True), patch.object(dispatch.os, "chdir") as cwd, \
+                    patch.object(dispatch, "worker_group") as worker, patch.object(dispatch, "export_group") as export:
+                dispatch.target_child(root/"group.json")
+                for key in inherited:
+                    if key.endswith("UNEXPECTED") or key == "CUDA_VISIBLE_DEVICES":
+                        self.assertNotIn(key, os.environ)
+                self.assertEqual(os.environ["MTG_HOST_RESERVATION_TOKEN"], "owner")
+                self.assertEqual(os.environ["HOST_SLOTS_CLAIM"], "claim")
+                self.assertEqual(os.environ["HOST_SLOTS_CORES"], "20,21")
+                self.assertEqual(os.environ["CUDA_CACHE_PATH"], str(root/"cuda-cache"))
+                self.assertEqual(os.environ["CUDA_CACHE_MAXSIZE"], "67108864")
+                self.assertEqual(os.environ["RUST_MIN_STACK"], "16777216")
+                self.assertEqual(os.environ[dispatch.REMOTE_INPUT_ENV], dispatch.REMOTE_INPUT)
+                self.assertEqual(os.environ["TEMP"], str(root/"temp"))
+                cwd.assert_called_once_with(root)
+                worker.assert_called_once_with(root/"group.json")
+                export.assert_called_once_with(root)
+            profile = dispatch.read(root/"runtime-profile.json")
+            self.assertEqual(profile["cubecl_configuration"], dispatch.pin(root/"cubecl.toml"))
+            self.assertIn((root/"cube-cache").as_posix(), (root/"cubecl.toml").read_text())
 
 
 if __name__ == "__main__":

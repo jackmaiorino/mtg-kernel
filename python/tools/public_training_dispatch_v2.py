@@ -128,6 +128,30 @@ def target_guard_class(runtime):
     return modules[GUARD_MODULES[0]].Guard
 
 
+def target_child(path):
+    """Fixed runtime profile, only inside the Guard-contained script."""
+    path, group = Path(path), read(path)
+    root = path.parent.resolve()
+    binding = host_binding("computehost", [job["placement"] for job in group["jobs"].values()])
+    for key in list(os.environ):
+        if key.startswith(("MTG_", "S4A_", "PROFILE_", "BUDGET_", "CUBECL_")) and key != "MTG_HOST_RESERVATION_TOKEN":
+            os.environ.pop(key)
+    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+    (root/"cuda-cache").mkdir()
+    cube_config = root/"cubecl.toml"
+    cube_config.write_text('[autotune]\ncache = { file = '+json.dumps((root/"cube-cache").as_posix())+' }\n', encoding="utf-8")
+    environment = dict(TMP=str(root/"temp"), TEMP=str(root/"temp"), CUDA_CACHE_PATH=str(root/"cuda-cache"),
+        CUDA_CACHE_MAXSIZE="67108864", RUST_MIN_STACK="16777216", MTG_KERNEL_TENSORIZE_STATE_CACHE="1",
+        MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB="0", MTG_KERNEL_INFERENCE_CACHE_MIB="0", S4A_KEY_MEMO="0",
+        PROFILE_EXPERIMENT="0", PYTHONDONTWRITEBYTECODE="1")
+    environment[REMOTE_INPUT_ENV] = binding["input_root"]
+    os.environ.update(environment)
+    os.chdir(root)
+    write(root/"runtime-profile.json", dict(environment=environment, cwd=str(root), cubecl_configuration=pin(cube_config)))
+    worker_group(path)
+    export_group(root)
+
+
 def guarded_target(path):
     """Inside the existing timed owner, contain setup, training and export."""
     path, group = Path(path), read(path)
@@ -161,10 +185,17 @@ def guarded_target(path):
                     result["final_sample"] = guard.terminate_and_drain()
                 finally:
                     guard.close()
+                final = result["final_sample"]
+                if (guard.error or final["active_processes"] != 0
+                        or final["cpu_seconds"] >= plan["run_limits"]["cpu_seconds"]
+                        or final["seconds"] >= plan["run_limits"]["wall_seconds"]):
+                    raise RuntimeError("target Guard terminal failure: "+str(guard.error or final))
         except BaseException as error:
             result.update(complete=False, cleanup_error=str(error))
             raise
         finally:
+            if (root/"runtime-profile.json").is_file():
+                result["runtime_profile"] = pin(root/"runtime-profile.json")
             write(root/"guard-result.json", result)
 
 
@@ -583,13 +614,13 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
             binding_environment = (f"$env:{REMOTE_INPUT_ENV}=$inputRoot\n"
                                    if any("remote_binding" in job["placement"] for job in group["jobs"].values()) else "")
             shutil.copy2(__file__,local/"worker.py")
+            worker_mode = "--target-child" if target_limits is not None else "--worker-group"
+            export_command = "" if target_limits is not None else ' & $Python -B "$root/worker.py" --export "$root"\n if ($LASTEXITCODE -ne 0) {throw \'owned export failed\'}'
             ps=f'''param([Parameter(Mandatory=$true)][string]$Python)
 $ErrorActionPreference='Stop'
 $root='{remote_root}'
 $inputRoot='{input_root}'
-{binding_environment}# Only the Guard-contained script removes its inherited CPU-only mask.
-{("Remove-Item Env:CUDA_VISIBLE_DEVICES -ErrorAction SilentlyContinue" if target_limits is not None else "")}
-$created=@()
+{binding_environment}$created=@()
 try {{
  foreach ($drive in @('D','E')) {{
   if (Test-Path -LiteralPath "${{drive}}:/") {{throw 'existing drive mapping; preserve owner'}}
@@ -601,10 +632,9 @@ try {{
  $env:PATH="$inputRoot/runtime/bin;$env:PATH"
  New-Item -ItemType Directory -Path "$root/temp" | Out-Null
  $env:TEMP="$root/temp"; $env:TMP="$root/temp"
- & $Python -B "$root/worker.py" --worker-group "$root/group.json"
+ & $Python -B "$root/worker.py" {worker_mode} "$root/group.json"
  if ($LASTEXITCODE -ne 0) {{throw 'native worker group failed'}}
- & $Python -B "$root/worker.py" --export "$root"
- if ($LASTEXITCODE -ne 0) {{throw 'owned export failed'}}
+{export_command}
 }} finally {{ foreach ($drive in $created) {{ & subst "${{drive}}:" /D }} }}
 '''
             (local/"run.ps1").write_text(ps)
@@ -748,8 +778,11 @@ if __name__ == "__main__":
     parser.add_argument("--reserve-worker-group",type=Path)
     parser.add_argument("--export",type=Path)
     parser.add_argument("--guarded-target",type=Path)
+    parser.add_argument("--target-child",type=Path)
     args=parser.parse_args()
-    if args.guarded_target:
+    if args.target_child:
+        target_child(args.target_child)
+    elif args.guarded_target:
         guarded_target(args.guarded_target)
     elif args.reserve_worker_group:
         print(json.dumps(reserve_worker_group(args.reserve_worker_group)))
