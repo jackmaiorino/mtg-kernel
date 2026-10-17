@@ -69,6 +69,7 @@ pub enum Source {
     GenesisWaveV69,
     VivienV70,
     MuldrothaV71,
+    TinybonesV72,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -361,6 +362,12 @@ pub fn feature_identity() -> String {
             include_str!("human_bo3_v1/limited_muldrotha_v12.rs"),
             include_str!("limited_muldrotha_session_v12.rs"),
             include_str!("bin/kernel_limited_muldrotha_env_v12.rs"),
+            include_str!("rules_meaning_tinybones_v72.rs"),
+            include_str!("tinybones_public_v72.rs"),
+            include_str!("tinybones_observation_v72.rs"),
+            include_str!("tinybones_candidates_v72.rs"),
+            include_str!("rl_session/tinybones_v72.rs"),
+            include_str!("current_mixed_policy_v1/tinybones.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
@@ -550,3 +557,5 @@ pub use vivien::{VivienDecision, VivienSession, VivienSnapshot};
 
 mod muldrotha;
 pub use muldrotha::{MuldrothaDecision, MuldrothaSession, MuldrothaSnapshot};
+mod tinybones;
+pub use tinybones::{TinybonesDecision, TinybonesSession, TinybonesSnapshot};
