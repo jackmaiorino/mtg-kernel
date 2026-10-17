@@ -96,6 +96,10 @@ impl RegistrationDeviceTrainState {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit ordinary GAE input contract"
+    )]
     fn accumulate_chunks(
         &self,
         accumulator: &mut RegistrationGradientAccumulator,

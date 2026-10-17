@@ -251,6 +251,10 @@ impl RegistrationDeviceTrainState {
         projection.validate()?;
         Ok((self.legacy.export_snapshot_v1()?, projection))
     }
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit ordinary GAE input contract"
+    )]
     fn chunk_backward_gae(
         &self,
         accumulator: &mut RegistrationGradientAccumulator,
