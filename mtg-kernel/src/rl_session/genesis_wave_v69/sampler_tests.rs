@@ -10,7 +10,7 @@ fn scene(p: PlayerId) -> (Pair, ObjectId, ObjectId) {
         p,
         &[
             "Forest",
-            "Pacifism",
+            "Witness Protection",
             "Mountain",
             "Island",
             "Llanowar Elves",
@@ -128,7 +128,7 @@ fn genuine_paid_wave_sampler_aura_remainder_terminal_and_history_order_independe
         let (mut pair, wave, host) = scene(p);
         pair.cast(wave, p, 2);
         pair.to_subset();
-        pair.act(|a|matches!(a,A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.card_db_id==crate::card_def::card_id_by_name("Pacifism").unwrap()));
+        pair.act(|a|matches!(a,A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.card_db_id==crate::card_def::card_id_by_name("Witness Protection").unwrap()));
         pair.act(|a| matches!(a, A::FinishEffectSelection { .. }));
         let original = pair.own.decision_v69().unwrap();
         assert!(matches!(
@@ -188,12 +188,21 @@ fn genuine_paid_wave_sampler_aura_remainder_terminal_and_history_order_independe
     }
 }
 #[test]
-fn genuine_paid_wave_sampler_as_enters_remains_readonly_until_exact_checkpoint_successor_both_seats(
+fn genuine_paid_wave_sampler_as_enters_preserves_parent_receipts_and_exact_derived_resume_both_seats(
 ) {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = crate::effect::genesis_wave_v1::tests::ready(
             p,
-            &["Heraldic Banner", "Forest", "Island", "Mountain"],
+            &[
+                "Heraldic Banner",
+                "Forest",
+                "Island",
+                "Mountain",
+                "Plains",
+                "Giant Growth",
+                "Forest",
+                "Island",
+            ],
             8,
             "Island",
         );
@@ -208,9 +217,129 @@ fn genuine_paid_wave_sampler_as_enters_remains_readonly_until_exact_checkpoint_s
             d.observation().genesis_wave.waves[0].stage,
             crate::genesis_wave_public_v69::StageV69::EntryChoices
         );
-        let before = pair.own.fixture_state_v69().clone();
-        assert!(pair.own.sampled_clone_v69(&d, 8172).is_err());
-        assert_eq!(pair.own.fixture_state_v69(), &before);
+        let parent = pair
+            .own
+            .fixture_state_v69()
+            .engine
+            .linked_aura_operation_v1
+            .pending_general_v36
+            .as_ref()
+            .unwrap()
+            .original
+            .clone();
+        assert!(!serde_json::to_string(pair.own.fixture_state_v69())
+            .unwrap()
+            .contains("genesis_current_slots_v69"));
+        let mut clone = sampled(&pair.own, 8172);
+        assert_ne!(
+            clone.fixture_state_v69().players[p.index()].library,
+            pair.own.fixture_state_v69().players[p.index()].library
+        );
+        let checkpoint = clone
+            .fixture_state_v69()
+            .engine
+            .linked_aura_operation_v1
+            .pending_general_v36
+            .as_ref()
+            .unwrap();
+        assert_eq!(checkpoint.original, parent);
+        assert!(checkpoint.genesis_current_slots_v69.is_some());
+        let decoded: GameState =
+            serde_json::from_slice(&serde_json::to_vec(clone.fixture_state_v69()).unwrap())
+                .unwrap();
+        crate::linked_aura_operation_v1::validate(&decoded).unwrap();
+        // These are negative private-state operands on genuine paid history,
+        // not a public mode switch or a fabricated permission to enter.
+        let mut erased = decoded.clone();
+        erased
+            .engine
+            .linked_aura_operation_v1
+            .pending_general_v36
+            .as_mut()
+            .unwrap()
+            .genesis_current_slots_v69 = None;
+        let mut actor_value = serde_json::to_value(&decoded).unwrap();
+        actor_value["engine"]["linked_aura_operation_v1"]["pending_general_v36"]
+            ["genesis_current_slots_v69"]["actor"] = serde_json::to_value(p.opponent()).unwrap();
+        let changed_actor: GameState = serde_json::from_value(actor_value).unwrap();
+        let mut changed_parent = decoded.clone();
+        changed_parent
+            .engine
+            .linked_aura_operation_v1
+            .pending_general_v36
+            .as_mut()
+            .unwrap()
+            .original
+            .active_player = p.opponent();
+        for mut bad in [erased, changed_actor, changed_parent] {
+            let before = bad.clone();
+            assert!(crate::linked_aura_operation_v1::validate(&bad).is_err());
+            assert!(
+                crate::engine::step(&mut bad, crate::engine::Action::ChooseEffectOption(0))
+                    .is_err()
+            );
+            assert_eq!(bad, before);
+        }
+        let current = clone.decision_v69().unwrap();
+        let save = clone.snapshot_v69();
+        let index = current
+            .actions()
+            .iter()
+            .position(|a| {
+                matches!(
+                    a,
+                    A::ChooseEntryColorV36 {
+                        color: crate::mana::ManaColor::W,
+                        ..
+                    }
+                )
+            })
+            .unwrap() as u32;
+        let raw = current.fixture_original_index_v69(index).unwrap();
+        // A separate native stream of this exact sampled checkpoint retains its
+        // own actual surface cursor and counts; it never consumes the owner.
+        let mut reference = clone.inner.clone();
+        assert_eq!(
+            clone.step_v69(&current, index).unwrap(),
+            reference
+                .step(current.expected().episode_id, current.expected().step, raw)
+                .unwrap()
+        );
+        assert_eq!(
+            clone.fixture_state_v69(),
+            reference.genesis_wave_fixture_state()
+        );
+        assert_eq!(
+            clone.fixture_counts_v69(),
+            (
+                reference.policy_step_count(),
+                reference.physical_decision_count()
+            )
+        );
+        let remainder = clone.fixture_state_v69().clone();
+        assert!(remainder.players[p.index()]
+            .battlefield
+            .iter()
+            .any(|id| remainder.objects.get(*id).card_def
+                == crate::card_def::card_id_by_name("Heraldic Banner").unwrap()));
+        clone.restore_v69(&save).unwrap();
+        assert!(clone.validate_decision_v69(&current).is_err());
+        assert_eq!(clone.fixture_state_v69(), &decoded);
+        act(&mut clone, |a| {
+            matches!(
+                a,
+                A::ChooseEntryColorV36 {
+                    color: crate::mana::ManaColor::W,
+                    ..
+                }
+            )
+        });
+        assert_eq!(clone.fixture_state_v69(), &remainder);
+        finish(&mut clone);
+        assert_eq!(
+            clone.fixture_state_v69().objects.get(wave).zone,
+            Zone::Graveyard
+        );
         pair.equal();
     }
 }

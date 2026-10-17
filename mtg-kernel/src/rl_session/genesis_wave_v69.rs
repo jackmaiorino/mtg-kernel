@@ -655,3 +655,23 @@ pub(crate) mod tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod sampler_tests;
+
+/// Disposable native entry replay input only; no owner/capability is created.
+pub(crate) fn derive_entry_hidden_input_v69(
+    original: &GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<GameState, String> {
+    let mut derived = original.clone();
+    super::flat_action_v4::redeterminize_genesis_wave_v69(&mut derived, actor, seed)
+        .map_err(|e| format!("Genesis current-slot input:{e:?}"))?;
+    crate::effect::validate_pending_effect_choice(&derived)?;
+    Ok(derived)
+}
+pub(crate) fn same_entry_hidden_pool_v69(
+    original: &GameState,
+    current: &GameState,
+    actor: PlayerId,
+) -> bool {
+    super::flat_action_v4::same_current_unknown_pool_v69(original, current, actor)
+}

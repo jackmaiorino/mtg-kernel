@@ -113,6 +113,8 @@ pub struct GeneralCheckpointV36 {
     pub answers: Vec<GeneralAnswerV36>,
     pub choice: GeneralChoiceV36,
     pub operation_history_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) genesis_current_slots_v69: Option<genesis_current_slots_v69::InputV69>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ColorPlanV36 {
@@ -770,11 +772,23 @@ fn replay_general(
     answers: &[GeneralAnswerV36],
     used_banner: bool,
 ) -> Result<(GameState, Option<Decision>), String> {
+    replay_general_current_slots_v69(original, operation, answers, used_banner, None)
+}
+fn replay_general_current_slots_v69(
+    original: &GameState,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+    current_slots: Option<&genesis_current_slots_v69::InputV69>,
+) -> Result<(GameState, Option<Decision>), String> {
     if has_pending(original) || locally_owned(original) {
         return Err("entry operation cannot recursively own another public checkpoint".into());
     }
     crate::effect::validate_pending_effect_choice(original)?;
-    let mut staged = original.clone();
+    let mut staged = match current_slots {
+        Some(input) => genesis_current_slots_v69::materialize(original, operation, input)?,
+        None => original.clone(),
+    };
     staged.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
         kinship_start: None,
         kinship_plans: Vec::new(),
@@ -819,6 +833,14 @@ fn replay_general(
         return Err("entry replay did not consume every confirmed answer".into());
     }
     if let Some((mut checkpoint, choice)) = runner.checkpoint {
+        if current_slots.is_some()
+            && (!runner.used_banner
+                || !matches!(choice, GeneralChoiceV36::Color { .. })
+                || runner.kinship_start.is_some()
+                || runner.attachment_input_v48.is_some())
+        {
+            return Err("Genesis current-slot replay changed its exact color-entry owner".into());
+        }
         if let GeneralChoiceV36::FakeAuraV50 { input, .. } = &choice {
             checkpoint
                 .engine
@@ -872,6 +894,7 @@ fn replay_general(
                 operation_history_index: runner
                     .banner_start
                     .ok_or("Banner checkpoint lost actual operation")?,
+                genesis_current_slots_v69: current_slots.cloned(),
             }));
         } else {
             let GeneralChoiceV36::Host { choice, capture } = choice else {
@@ -1276,11 +1299,12 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         {
             return Err("Banner checkpoint lost independently committed operation".into());
         }
-        let (expected, _) = replay_general(
+        let (expected, _) = replay_general_current_slots_v69(
             &pending.original,
             &pending.operation,
             &pending.answers,
             true,
+            pending.genesis_current_slots_v69.as_ref(),
         )?;
         if expected != *state || !has_banner_pending(&expected) {
             return Err("Banner checkpoint/original operation changed".into());
@@ -1461,7 +1485,13 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
         };
         let mut answers = pending.answers.clone();
         answers.push(answer);
-        let (next, _) = replay_general(&pending.original, &pending.operation, &answers, true)?;
+        let (next, _) = replay_general_current_slots_v69(
+            &pending.original,
+            &pending.operation,
+            &answers,
+            true,
+            pending.genesis_current_slots_v69.as_ref(),
+        )?;
         *state = next;
         return Ok(());
     }
@@ -2620,3 +2650,6 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
     };
     state.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
 }
+
+mod genesis_current_slots_v69;
+pub(crate) use genesis_current_slots_v69::sample_genesis_checkpoint_v69;

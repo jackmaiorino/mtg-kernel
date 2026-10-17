@@ -16,6 +16,13 @@ pub(super) fn redeterminize_call_v62(
 ) -> Result<(), V4SearchStateErrorV1> {
     sampler::redeterminize_call_v62(state, actor, seed)
 }
+pub(super) fn same_current_unknown_pool_v69(
+    before: &crate::state::GameState,
+    current: &crate::state::GameState,
+    actor: crate::ids::PlayerId,
+) -> bool {
+    sampler::same_current_unknown_pool_v69(before, current, actor)
+}
 pub(super) fn redeterminize_genesis_wave_v69(
     state: &mut GameState,
     actor: PlayerId,

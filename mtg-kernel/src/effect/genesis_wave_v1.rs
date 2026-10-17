@@ -1429,6 +1429,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/rl_session/flat_action_v4/search_state/effect_refs.rs",
                     include_str!("../rl_session/flat_action_v4/search_state/effect_refs.rs"),
                 ),
+                (
+                    "mtg-kernel/src/linked_aura_operation_v1/genesis_current_slots_v69.rs",
+                    include_str!("../linked_aura_operation_v1/genesis_current_slots_v69.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

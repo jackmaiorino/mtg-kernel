@@ -357,7 +357,8 @@ pub(super) fn redeterminize_genesis_wave_v69(
     // Exact enclosing entry checkpoints retain a whole original operation.
     // They need their own current-slot continuation, never a pinned old library.
     if crate::linked_aura_operation_v1::pending_original_operation(state).is_some() {
-        return Err(Error::UnsupportedActionContract);
+        return crate::linked_aura_operation_v1::sample_genesis_checkpoint_v69(state, actor, seed)
+            .map_err(|_| Error::HiddenReferenceConflict);
     }
     if crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true) {
         return Err(Error::HiddenReferenceConflict);
@@ -370,6 +371,57 @@ pub(super) fn redeterminize_genesis_wave_v69(
         true,
         SamplingScopeV68::GenesisWave,
     )
+}
+fn current_unknown_slots(
+    state: &GameState,
+    actor: PlayerId,
+    owner: PlayerId,
+) -> Vec<(Zone, usize, ObjectId)> {
+    let mut slots = Vec::new();
+    if owner != actor {
+        for (i, &id) in state.players[owner.index()].hand.iter().enumerate() {
+            let obj = state.objects.get(id);
+            if !state
+                .known_hand_cards(actor, owner)
+                .iter()
+                .any(|k| k.object == id && k.zone_change_count == obj.zone_change_count)
+            {
+                slots.push((Zone::Hand, i, id));
+            }
+        }
+    }
+    for (i, &id) in state.players[owner.index()].library.iter().enumerate() {
+        let obj = state.objects.get(id);
+        if !state.known_library_cards(actor, owner).iter().any(|k| {
+            k.position as usize == i
+                && k.object == id
+                && k.zone_change_count == obj.zone_change_count
+        }) {
+            slots.push((Zone::Library, i, id));
+        }
+    }
+    slots
+}
+pub(super) fn same_current_unknown_pool_v69(
+    before: &GameState,
+    current: &GameState,
+    actor: PlayerId,
+) -> bool {
+    [PlayerId::P0, PlayerId::P1].into_iter().all(|owner| {
+        let a = current_unknown_slots(before, actor, owner);
+        let b = current_unknown_slots(current, actor, owner);
+        let shape =
+            |v: &[(Zone, usize, ObjectId)]| v.iter().map(|(z, i, _)| (*z, *i)).collect::<Vec<_>>();
+        let pool = |s: &GameState, v: &[(Zone, usize, ObjectId)]| {
+            let mut ids = v
+                .iter()
+                .map(|(_, _, id)| (*id, s.objects.get(*id).zone_change_count))
+                .collect::<Vec<_>>();
+            ids.sort_unstable();
+            ids
+        };
+        shape(&a) == shape(&b) && pool(before, &a) == pool(current, &b)
+    })
 }
 fn redeterminize_with_library_plan_inner(
     state: &mut GameState,
@@ -419,29 +471,7 @@ fn redeterminize_with_library_plan_inner(
     let mut rng = SplitMix64::seed(seed);
     for owner in [PlayerId::P0, PlayerId::P1] {
         // Slots are canonical: owner order, then hand indices, then library indices.
-        let mut slots = Vec::new();
-        if owner != actor {
-            for (i, &id) in state.players[owner.index()].hand.iter().enumerate() {
-                let obj = state.objects.get(id);
-                if !state
-                    .known_hand_cards(actor, owner)
-                    .iter()
-                    .any(|k| k.object == id && k.zone_change_count == obj.zone_change_count)
-                {
-                    slots.push((Zone::Hand, i, id));
-                }
-            }
-        }
-        for (i, &id) in state.players[owner.index()].library.iter().enumerate() {
-            let obj = state.objects.get(id);
-            if !state.known_library_cards(actor, owner).iter().any(|k| {
-                k.position as usize == i
-                    && k.object == id
-                    && k.zone_change_count == obj.zone_change_count
-            }) {
-                slots.push((Zone::Library, i, id));
-            }
-        }
+        let slots = current_unknown_slots(state, actor, owner);
         let mut pool: Vec<_> = slots.iter().map(|x| x.2).collect();
         pool.sort_unstable();
         if pool.windows(2).any(|x| x[0] == x[1]) {
