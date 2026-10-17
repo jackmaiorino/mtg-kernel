@@ -2107,7 +2107,7 @@ pub(crate) fn public_facts_v75(
                 actual_cast,
                 current_original_spell: original_current(state, &original_spell, viewer),
                 original_spell,
-                x_value: spell.x_value,
+                x_value: spell.v4.x_value,
                 kicked: spell.kicked,
                 cast_method: source.cast_method,
             });
