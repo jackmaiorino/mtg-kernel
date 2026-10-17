@@ -3953,6 +3953,9 @@ fn program_target_spec_src(target: &str) -> &'static str {
             "TargetSpec::TwoCreaturesWithDifferentControllers"
         }
         "CreatureEnchantmentOrPlaneswalker" => "TargetSpec::CreatureEnchantmentOrPlaneswalker",
+        "StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureLandOrPlaneswalkerV1)" => {
+            "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureLandOrPlaneswalkerV1)"
+        }
         other => panic!("unsupported program target spec {other}"),
     }
 }
