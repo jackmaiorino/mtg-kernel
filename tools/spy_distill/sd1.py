@@ -17,8 +17,9 @@ Stage 0, before any replay (each writes its record and exits 1 on a failure):
               its job spec, and the inputs those name), the absolute paths
               inside the job specs and their inputs resolved to the extracted
               copies; within a lineage one source, bank spec and pair of
-              opponents, paths aside; ANALYSIS-SOURCES-001's allocation and
-              index SHA-256s; the known answer's archive records and inputs from
+              opponents, paths aside; ANALYSIS-SOURCES-001 and the index
+              bound to each other, with one allocation; the known answer's
+              archive records and inputs from
               BT1's JOBS.json and CASE-PINS.json; and the plain files read in
               place. Every gap and mismatch is listed
   parents     section 3's parent identity, per lineage: its parent's, T1's and
@@ -106,7 +107,8 @@ Checks of the tools and builds:
                  committed live maps (the new_root rows of BT1's ROWS in archive
                  games that pass the checks, at least 1,000 per lineage), each
                  rebuild row checked against the archive's schedule and key mode;
-                 a game BT1's ROWS name that the rebuild lacks fails it
+                 a game BT1's ROWS name that the rebuild lacks fails it. Its
+                 JOBS.json and each archive schedule are custody's copies
   bt1-regression the mean-rule adapter on BT1's committed root counts
                  reproduces every row's recorded mean-rule result
   o-check        O-s0 against the recorded O: its final state and, as far as
@@ -130,7 +132,8 @@ CLI (JSON summary on stdout; a failed check exits 1 after writing its record):
   phase2 --lineage r1 --o-config O.json --select SELECT-0.json ... SELECT-7.json --workers W
          --root DIR --out-dir DIR
   known-answer --rebuild r1=REBUILD.jsonl [r2=...] --rows r1=ROWS-r1.jsonl [r2=...]
-               --schedule r1=archive-r1.jsonl [r2=...] --jobs JOBS.json --out KNOWN.json
+               --schedule r1=archive-r1.jsonl [r2=...] --jobs JOBS.json --custody CUSTODY.json
+               --out KNOWN.json
   bt1-regression --rows r1=ROWS-r1.jsonl [r2=...] --out REGRESSION.json
   o-check --lineage r1 --run O-s0/completion.json --recorded O/completion.json
           --o-final O_FINAL_CHECKPOINT.json --out OCHECK.json
@@ -1049,6 +1052,29 @@ def archive_jobs(jobs: dict) -> dict:
     return out
 
 
+def known_inputs(custody_path: Path, jobs: Path, schedules: dict) -> dict:
+    """known-answer's inputs as custody verified them, the way records binds
+    its list: the JOBS.json given is custody's (its known_answer jobs pin) and
+    each archive schedule given is custody's LIN-archive-schedule copy, each
+    by path_key and SHA-256, read outside custody's forbidden roots and
+    through no link. Returns the custody record's pin."""
+    held = custody_record(custody_path)
+    roots = Roots(held["forbidden"])
+    want = (held.get("known_answer") or {}).get("jobs")
+    given = {"JOBS.json": (jobs, want if is_pin(want) else None)}
+    for lineage, path in schedules.items():
+        copies = [f for f in held["files"] if f["role"] == f"{lineage}-archive-schedule" and f.get("verified")]
+        given[f"{lineage}-archive-schedule"] = (path, copies[0] if len(copies) == 1 else None)
+    for what, (path, copy) in given.items():
+        require(copy is not None and path_key(path) == path_key(copy["path"]),
+                f"{path} is not custody's {what}" + (f" {copy['path']}" if copy else ""))
+        problem = path_problem(str(path), roots)
+        require(problem is None, f"{path}: {problem}")
+        got = sha256_file(path)
+        require(got == copy["sha256"], f"{path} has SHA-256 {got}, not custody's {copy['sha256']} for its {what}")
+    return pin(custody_path)
+
+
 def known_answer(rebuilds: dict, rows: dict, schedules: dict, jobs: dict) -> dict:
     """The rebuild's maps over the Spy archive's games against BT1's committed
     live maps: every new_root row of BT1's ROWS in an archive game the SD1
@@ -1224,6 +1250,9 @@ COMPLETION_RULE = ("Both durable completion records must be identical and comple
 # entry per job id CASE-ARM; a search-arm entry's row pins the job's
 # game.jsonl, and the job spec (utility_queue.py) is the command.json beside it.
 INDEX_SCHEMA = "search-player-utility-analysis-index/v1"
+# The utility screen's analysis_index.py builds the index from this input spec
+# (ANALYSIS-SOURCES-001) and pins it in the index as source_spec.
+ANALYSIS_SOURCES_SCHEMA = "search-player-utility-analysis-sources/v1"
 SEARCH_ARM = "-search-v1"
 JOB_SPEC = "command.json"
 # The inputs a job spec names that custody checks per lineage, each with the
@@ -1590,21 +1619,6 @@ class Archive:
 
     def close(self):
         self.tar.close()
-
-
-def extract_members(archive: Path, wanted: dict, out_dir: Path, failures: list) -> dict:
-    """Each wanted member ({name: {sha256, bytes}}) of the archive
-    (Archive.extract)."""
-    reader = Archive(archive, out_dir, failures)
-    try:
-        out = {}
-        for name, want in wanted.items():
-            target = reader.extract(name, want)
-            if target is not None:
-                out[name] = target
-        return out
-    finally:
-        reader.close()
 
 
 def strings(value):
@@ -2223,32 +2237,48 @@ class Custody:
                              "search_records": {lineage: len(v) for lineage, v in found.items()}}
 
     def check_analysis_sources(self):
-        """ANALYSIS-SOURCES-001 (by its original path) binds the index's
-        SHA-256 and the allocation's the index pins; that allocation is
-        extracted too."""
+        """ANALYSIS-SOURCES-001 (by its original path) and the index bind each
+        other, one way or the other: the index pins it as its source_spec
+        ("index-pins-sources", as the utility screen's analysis_index.py
+        builds the index from that input spec), or else it holds the index's
+        SHA-256 ("sources-pin-index"). Either way its allocation pin has the
+        SHA-256 of the allocation the index pins, which is extracted too."""
         name = self.sealed(self.spec["analysis_sources"], "ANALYSIS-SOURCES-001")
         if name is None or not self.register(name, "analysis-sources", "object", "ANALYSIS-SOURCES-001"):
             return
         value = self.member_json(name, "ANALYSIS-SOURCES-001")
-        hashes = {s for s in strings(value) if HEX64.match(s)}
-        index_sha256 = self.spec["index"]["sha256"]
-        binds = index_sha256 in hashes
-        if not binds:
-            self.failures.append(f"ANALYSIS-SOURCES-001 does not bind the index {index_sha256}")
-        allocation = (self.index_value or {}).get("allocation")
+        sealed_sha256, index_sha256 = self.members[name]["sha256"], self.spec["index"]["sha256"]
+        index = self.index_value or {}
+        source_spec = index.get("source_spec")
+        if is_pin(source_spec) and source_spec["sha256"] == sealed_sha256:
+            direction = "index-pins-sources"
+        elif index_sha256 in {s for s in strings(value) if HEX64.match(s)}:
+            direction = "sources-pin-index"
+        else:
+            direction = None
+            self.failures.append(f"ANALYSIS-SOURCES-001 ({sealed_sha256}) and the index ({index_sha256}) do not "
+                                 "bind each other: the index's source_spec does not pin it, and it does not hold "
+                                 "the index's SHA-256")
+        binds = direction is not None
+        allocation = index.get("allocation")
         allocation_sha256 = allocation["sha256"] if is_pin(allocation) else None
+        own = value.get("allocation") if isinstance(value, dict) else None
+        own_sha256 = own["sha256"] if is_pin(own) else None
         if allocation_sha256 is None:
             binds = False
             self.failures.append("the index pins no allocation")
         else:
-            if allocation_sha256 not in hashes:
+            if own_sha256 != allocation_sha256:
                 binds = False
-                self.failures.append(f"ANALYSIS-SOURCES-001 does not bind the index's allocation {allocation_sha256}")
+                self.failures.append(f"ANALYSIS-SOURCES-001's allocation is {own_sha256}, not the index's "
+                                     f"allocation {allocation_sha256}")
             allocation_name = self.sealed(allocation, "the allocation the index pins")
             if allocation_name is not None:
                 self.register(allocation_name, "allocation", "object", "the allocation the index pins")
-        self.analysis = {"member": name, "index_sha256": index_sha256, "allocation_sha256": allocation_sha256,
-                         "binds": binds}
+        self.analysis = {"member": name, "sha256": sealed_sha256,
+                         "schema": value.get("schema") if isinstance(value, dict) else None,
+                         "index_sha256": index_sha256, "allocation_sha256": allocation_sha256,
+                         "direction": direction, "binds": binds}
 
     def explicit_members(self):
         for i, m in enumerate(self.spec.get("members", [])):
@@ -2410,8 +2440,13 @@ def custody(spec: dict, out_dir: Path, spec_pin: dict | None = None) -> dict:
                   (LIN-jobs, remapped); the records are exactly the frozen
                   schedule's cases
       analysis_sources  PIN of ANALYSIS-SOURCES-001.json by its original
-                  path: it must bind the index's SHA-256 and the allocation's
-                  (the index's allocation pin, extracted as allocation)
+                  path: the utility screen's analysis input spec (schema
+                  search-player-utility-analysis-sources/v1), which the index
+                  pins as its source_spec (direction index-pins-sources); a
+                  file that instead holds the index's SHA-256 binds too
+                  (sources-pin-index). Either way its allocation pin must
+                  have the SHA-256 of the index's allocation pin (extracted as
+                  allocation); the record gives the direction beside binds
       schedule    PIN of the utility screen's SCHEDULE.json read in place: the
                   index pins it, and formal-LIN.jsonl beside it must have its
                   files pins (roles schedule and LIN-schedule)
@@ -2871,19 +2906,30 @@ def d2_problem(cfg: dict, o_k: dict, source: dict) -> str | None:
 
 
 def config_differences(base: dict, cfg: dict) -> dict:
-    """What separates a config from O-0's, placement aside (descriptive)."""
+    """What separates a config from O-0's, placement aside (descriptive; a
+    malformed update or unit, which the gate itself refuses, is counted as it
+    stands rather than read)."""
     fields = sorted(k for k in set(base) | set(cfg)
                     if k not in ("iterations", *PLACEMENT_FIELDS) and canonical(base.get(k)) != canonical(cfg.get(k)))
-    a = [item for update in base.get("iterations", []) for item in update["episodes"]]
-    b = [item for update in cfg.get("iterations", []) for item in update["episodes"]]
-    out = {"fields": fields, "units": len(b), "same_updates": [len(u["episodes"]) for u in base.get("iterations", [])]
-           == [len(u["episodes"]) for u in cfg.get("iterations", [])]}
-    out["episode_ids"] = sum(x["episode"]["id"] != y["episode"]["id"] for x, y in zip(a, b))
-    out["seeds"] = sum(x["episode"]["seed"] != y["episode"]["seed"] for x, y in zip(a, b))
-    out["other_unit_fields"] = sum(
-        canonical({**x, "episode": {k: v for k, v in x["episode"].items() if k not in ("id", "seed")}})
-        != canonical({**y, "episode": {k: v for k, v in y["episode"].items() if k not in ("id", "seed")}})
-        for x, y in zip(a, b))
+
+    def updates(config) -> list:
+        return [u.get("episodes") if isinstance(u, dict) and isinstance(u.get("episodes"), list) else []
+                for u in (config.get("iterations") if isinstance(config.get("iterations"), list) else [])]
+
+    def episode(item) -> dict:
+        return item["episode"] if isinstance(item, dict) and isinstance(item.get("episode"), dict) else {}
+
+    def rest(item) -> str:
+        if not isinstance(item, dict):
+            return canonical(item)
+        return canonical({**item, "episode": {k: v for k, v in episode(item).items() if k not in ("id", "seed")}})
+    a = [item for units in updates(base) for item in units]
+    b = [item for units in updates(cfg) for item in units]
+    out = {"fields": fields, "units": len(b),
+           "same_updates": [len(u) for u in updates(base)] == [len(u) for u in updates(cfg)]}
+    out["episode_ids"] = sum(episode(x).get("id") != episode(y).get("id") for x, y in zip(a, b))
+    out["seeds"] = sum(episode(x).get("seed") != episode(y).get("seed") for x, y in zip(a, b))
+    out["other_unit_fields"] = sum(rest(x) != rest(y) for x, y in zip(a, b))
     return out
 
 
@@ -3030,6 +3076,7 @@ def main(argv=None) -> int:
     k.add_argument("--rows", nargs="+", required=True)
     k.add_argument("--schedule", nargs="+", required=True)
     k.add_argument("--jobs", type=Path, required=True)
+    k.add_argument("--custody", type=Path, required=True)
     k.add_argument("--out", type=Path, required=True)
     q = sub.add_parser("bt1-regression")
     q.add_argument("--rows", nargs="+", required=True)
@@ -3103,9 +3150,10 @@ def main(argv=None) -> int:
                                                                ("split", a.split))}}
         result, ok = write_json(a.out, value), not value["reading"].startswith("engineering")
     elif a.op == "known-answer":
-        value = known_answer(pairs(a.rebuild, "--rebuild"), pairs(a.rows, "--rows"),
-                             pairs(a.schedule, "--schedule"), read_json(a.jobs))
-        result, ok = write_json(a.out, {**value, "jobs": pin(a.jobs)}), value["pass"]
+        schedules = pairs(a.schedule, "--schedule")
+        held = known_inputs(a.custody, a.jobs, schedules)
+        value = known_answer(pairs(a.rebuild, "--rebuild"), pairs(a.rows, "--rows"), schedules, read_json(a.jobs))
+        result, ok = write_json(a.out, {**value, "jobs": pin(a.jobs), "custody": held}), value["pass"]
     elif a.op == "bt1-regression":
         value = bt1_regression(pairs(a.rows, "--rows"))
         result, ok = write_json(a.out, value), value["pass"]

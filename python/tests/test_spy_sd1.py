@@ -6,6 +6,7 @@ import io
 import json
 import math
 import os
+import shutil
 import struct
 import sys
 import tarfile
@@ -1044,24 +1045,58 @@ class ToolChecks(Temp):
         with self.assertRaisesRegex(ValueError, "a: two jobs"):
             self.run_known(rows=rows, jobs={"jobs": self.jobs["jobs"] + self.jobs["jobs"][:1]})
 
+    def known_custody(self, jobs: str, schedules: dict) -> str:
+        """A custody record that verified the known answer's JOBS.json and each lineage's archive schedule."""
+        files = [{"role": f"{lineage}-archive-schedule", **common.pin(path), "verified": True}
+                 for lineage, path in schedules.items()]
+        return write(self.root / "CUSTODY.json", {"schema": sd1.CUSTODY_SCHEMA, "pass": True, "forbidden": [HOT],
+                                                  "known_answer": {"jobs": common.pin(jobs)}, "files": files,
+                                                  "members": []})["path"]
+
     def test_the_known_answer_cli_pins_the_jobs_and_each_lineages_files(self):
         self.known()
         rows = [r for r in self.bt1_rows if (r["game"], r["step"]) not in (("a", 5), ("d", 4))]
         rebuild = write_lines(self.root / "rebuild.jsonl", self.rebuild)["path"]
         bt1 = write_lines(self.root / "ROWS-r1.jsonl", rows)["path"]
         jobs = write(self.root / "JOBS.json", self.jobs)["path"]
+        archive_r2 = write_lines(self.root / "archive-r2.jsonl", [{"id": "z"}])["path"]
+        held = self.known_custody(jobs, {"r1": self.archive["path"], "r2": archive_r2})
         argv = ["known-answer", "--rebuild", f"r1={rebuild}", "--rows", f"r1={bt1}", "--schedule",
-                f"r1={self.archive['path']}", "--jobs", jobs, "--out", str(self.root / "KNOWN.json")]
+                f"r1={self.archive['path']}", "--jobs", jobs, "--custody", held, "--out", str(self.root / "KNOWN.json")]
         with mock.patch("sys.stdout"), mock.patch.object(sd1, "MIN_KNOWN_ROOTS", 1):
             self.assertEqual(sd1.main(argv), 0)
         record = json.loads((self.root / "KNOWN.json").read_text(encoding="utf-8"))
-        self.assertEqual(record["jobs"], common.pin(jobs))
+        self.assertEqual((record["jobs"], record["custody"]), (common.pin(jobs), common.pin(held)))
         self.assertEqual(record["lineages"]["r1"]["rebuild"], common.pin(rebuild))
         with mock.patch("sys.stdout"):
             self.assertEqual(sd1.main(argv), 1, "1,000 roots per lineage")
         with self.assertRaisesRegex(ValueError, "give its rebuild output and schedule"):
             sd1.main([a for a in argv if not a.startswith("--schedule") and a != f"r1={self.archive['path']}"]
-                     + ["--schedule", f"r2={self.archive['path']}"])
+                     + ["--schedule", f"r2={archive_r2}"])
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            sd1.main(argv[:argv.index("--custody")] + argv[argv.index("--custody") + 2:])
+
+    def test_known_answer_reads_only_custodys_copies_of_its_jobs_and_schedules(self):
+        self.known()
+        rebuild = write_lines(self.root / "rebuild.jsonl", self.rebuild)["path"]
+        bt1 = write_lines(self.root / "ROWS-r1.jsonl", self.bt1_rows)["path"]
+        jobs = write(self.root / "JOBS.json", self.jobs)["path"]
+        held = self.known_custody(jobs, {"r1": self.archive["path"]})
+
+        def run(jobs_path, schedule_path):
+            sd1.main(["known-answer", "--rebuild", f"r1={rebuild}", "--rows", f"r1={bt1}", "--schedule",
+                      f"r1={schedule_path}", "--jobs", jobs_path, "--custody", held, "--out",
+                      str(self.root / "KNOWN.json")])
+        # Another copy of JOBS.json, its bytes the same, is not custody's.
+        elsewhere = write_bytes(self.root / "elsewhere" / "JOBS.json", Path(jobs).read_bytes())["path"]
+        with self.assertRaises(ValueError) as caught:
+            run(elsewhere, self.archive["path"])
+        self.assertIn(f"{elsewhere} is not custody's JOBS.json", str(caught.exception))
+        # Custody's archive schedule, changed since custody read it, is not custody's copy.
+        Path(self.archive["path"]).write_text('{"id": "a"}\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "not custody's .* for its r1-archive-schedule"):
+            run(jobs, self.archive["path"])
+        self.assertFalse((self.root / "KNOWN.json").exists())
 
     def test_bt1_regression_counts_reproduced_rows(self):
         rows = [{"chooser": "new_root", **EVIDENCE, "rules": {"mean": sd1.mean_rule(**EVIDENCE)}},
@@ -1177,11 +1212,14 @@ class Custody(Temp):
         return data
 
     def build(self, name="screen", remote_parameters=b"parameters", desk_environment=None, scheduled=None,
-              analysis_binds=True, edits=None):
+              analysis="index-pins-sources", analysis_allocation=None, edits=None, index_edit=None, drop=()):
         """The evidence under ROOT/NAME. ``remote_parameters`` are the bytes computehost's import descriptor
         pins; ``desk_environment`` adds to r1's desktop job spec's environment; ``scheduled`` replaces the
-        frozen schedules' cases; ``analysis_binds`` False leaves the index out of ANALYSIS-SOURCES-001;
-        ``edits`` maps a sealed import descriptor, source or bank spec to a function changing its JSON."""
+        frozen schedules' cases. ``analysis`` is how ANALYSIS-SOURCES-001 and the index bind: the index pins it
+        as its source_spec ("index-pins-sources", as the utility screen's analysis_index.py writes it), it pins
+        the index ("sources-pin-index"), or neither; ``analysis_allocation`` gives its allocation pin other
+        bytes. ``edits`` maps a sealed import descriptor, source or bank spec to a function changing its JSON,
+        ``index_edit`` changes the index's, and the members ``drop`` names are left out of the seal."""
         self.base = base = self.root / name
         self.sealed, self.edits = {}, edits or {}
         for host in ("desk", "remote"):
@@ -1259,19 +1297,36 @@ class Custody(Temp):
                 entries.append({"id": f"{case}-plain-v1", "row": None, "host": "desktop", "classification": "formal"})
         allocation = b'{"allocation":1}'
         self.seal("metadata/allocation.json", f"{HOT}/allocation.json", allocation)
-        self.index_bytes = json.dumps({"schema": sd1.INDEX_SCHEMA, "source_spec": "formal",
-                                       "allocation": as_pin(f"{HOT}/allocation.json", allocation),
-                                       "schedule": schedule_pin, "entries": entries}).encode()
+        allocation_pin = as_pin(f"{HOT}/allocation.json", allocation)
+        own_allocation = allocation_pin if analysis_allocation is None else as_pin(f"{HOT}/allocation.json",
+                                                                                     analysis_allocation)
+        index = {"schema": sd1.INDEX_SCHEMA, "allocation": allocation_pin, "schedule": schedule_pin,
+                 "entries": entries}
+
+        def encoded(value):
+            return json.dumps((index_edit or (lambda v: v))(value)).encode()
+        if analysis == "sources-pin-index":
+            self.index_bytes = encoded(index)
+            self.analysis_bytes = json.dumps({"allocation": own_allocation,
+                                              "index": as_pin(f"{HOT}/analysis/INDEX.json", self.index_bytes)}).encode()
+        else:
+            # The analysis input spec the index is built from: each active host's whole formal source.
+            self.analysis_bytes = json.dumps({
+                "schema": sd1.ANALYSIS_SOURCES_SCHEMA, "allocation": own_allocation,
+                "sources": {"desktop": {"kind": "local", "root": f"{HOT}/formal"},
+                            "computehost": {"kind": "collection",
+                                            "receipt": as_pin(f"{HOT}/remote-runs/COLLECTION.json", b"c")}}}).encode()
+            if analysis == "index-pins-sources":
+                index["source_spec"] = as_pin(f"{HOT}/ANALYSIS-SOURCES-001.json", self.analysis_bytes)
+            self.index_bytes = encoded(index)
         self.seal("metadata/INDEX.json", f"{HOT}/analysis/INDEX.json", self.index_bytes)
-        bound = {"allocation": as_pin(f"{HOT}/allocation.json", allocation)}
-        if analysis_binds:
-            bound["index"] = as_pin(f"{HOT}/analysis/INDEX.json", self.index_bytes)
-        self.analysis_bytes = json.dumps(bound).encode()
         self.seal("metadata/ANALYSIS-SOURCES-001.json", f"{HOT}/ANALYSIS-SOURCES-001.json", self.analysis_bytes)
         self.seal("metadata/stale.json", f"{HOT}/stale.json",
                   json.dumps({"allocation": {"path": f"{HOT}/allocation.json", "sha256": "0" * 64}}).encode())
         self.seal("metadata/notes.txt", f"{HOT}/notes.txt", b"notes")
         self.seal("metadata/broken.json", f"{HOT}/broken.json", b"{broken")
+        for member in drop:
+            del self.sealed[member]
         tar_path = base / "build" / "EVIDENCE.tar"
         tar_path.parent.mkdir(parents=True)
         with tarfile.open(tar_path, "w", format=tarfile.USTAR_FORMAT) as tar:
@@ -1395,7 +1450,8 @@ class Custody(Temp):
         self.assertEqual(members["inputs/desk/sources/r1-source.json"]["originals"],
                          [f"{HOT}/inputs-001/desk/sources/r1-source.json", f"{HOT}/staged/r1-source.json"])
         self.assertEqual(out["index"]["search_records"], {"r1": 2, "r2": 1})
-        self.assertTrue(out["analysis_sources"]["binds"])
+        self.assertEqual((out["analysis_sources"]["direction"], out["analysis_sources"]["binds"]),
+                         ("index-pins-sources", True))
         self.assertEqual(out["known_answer"]["games"], {"r1": 2, "r2": 1})
         file_roles = {}
         for f in out["files"]:
@@ -1623,7 +1679,7 @@ class Custody(Temp):
                        "role r1-records: custody holds 2 members and files, not 3"):
             self.assertIn(needle, failures)
 
-    def test_the_index_must_be_the_schedules_and_analysis_sources_must_bind_it(self):
+    def test_the_index_is_the_schedules_and_names_sealed_records_and_job_specs(self):
         other = as_pin(f"{HOT}/analysis/INDEX.json", b"another index")
         out = sd1.custody(self.spec(index=other), self.root / "other")
         self.assertIn(f"the formal analysis index: the seal maps no member with SHA-256 {other['sha256']} to "
@@ -1631,10 +1687,127 @@ class Custody(Temp):
         self.build("short", scheduled={"r1": self.CASES["r1"], "r2": self.CASES["r2"] + ["formal-r2-o6-v7-s1"]})
         failures = "\n".join(sd1.custody(self.spec(), self.root / "a")["failures"])
         self.assertIn("r2: the index's 1 search-arm records are not exactly the frozen schedule's 2 cases", failures)
-        self.build("unbound", analysis_binds=False)
-        out = sd1.custody(self.spec(), self.root / "b")
-        self.assertIn(f"ANALYSIS-SOURCES-001 does not bind the index {digest(self.index_bytes)}", out["failures"])
+        case = f"{self.CASES['r1'][0]}-search-v1"
+        given = [
+            (dict(index_edit=lambda index: {**index, "schema": "another-index/v1"}),
+             "the formal analysis index is not a search-player-utility analysis index"),
+            (dict(index_edit=lambda index: {**index, "schedule": {**index["schedule"], "sha256": "0" * 64}}),
+             "the index's frozen schedule is not the SCHEDULE.json given"),
+            (dict(index_edit=lambda index: {**index, "entries": index["entries"] + [
+                {"id": "formal-r9-o0-v0-s0-search-v1", "row": None}]}),
+             "formal-r9-o0-v0-s0-search-v1: the index names no search-arm record of a lineage"),
+            (dict(drop=[f"formal/{case}/command.json"]),
+             f"{case}: its job spec {HOT}/formal/{case}/command.json is not sealed"),
+        ]
+        for i, (change, needle) in enumerate(given):
+            with self.subTest(needle):
+                self.build(f"index-{i}", **change)
+                self.assertIn(needle, sd1.custody(self.spec(), self.root / "sd1" / f"index-{i}")["failures"])
+
+    def test_analysis_sources_and_the_index_bind_either_way_with_one_allocation(self):
+        # The utility screen's form: the index pins its input spec, ANALYSIS-SOURCES-001, as its source_spec.
+        out = sd1.custody(self.spec(), self.root / "real")
+        self.assertEqual(out["failures"], [])
+        self.assertEqual(out["analysis_sources"], {
+            "member": "metadata/ANALYSIS-SOURCES-001.json", "sha256": digest(self.analysis_bytes),
+            "schema": sd1.ANALYSIS_SOURCES_SCHEMA, "index_sha256": digest(self.index_bytes),
+            "allocation_sha256": digest(self.sealed["metadata/allocation.json"][1]),
+            "direction": "index-pins-sources", "binds": True})
+        # The other way: ANALYSIS-SOURCES-001 holds the index's SHA-256.
+        self.build("other-way", analysis="sources-pin-index")
+        out = sd1.custody(self.spec(), self.root / "sd1" / "other-way")
+        self.assertEqual(out["failures"], [])
+        self.assertEqual((out["analysis_sources"]["direction"], out["analysis_sources"]["binds"]),
+                         ("sources-pin-index", True))
+        # Either way its allocation must be the index's.
+        allocation = digest(self.sealed["metadata/allocation.json"][1])
+        for way in ("index-pins-sources", "sources-pin-index"):
+            with self.subTest(way):
+                self.build(f"allocation-{way}", analysis=way, analysis_allocation=b"another allocation")
+                out = sd1.custody(self.spec(), self.root / "sd1" / f"allocation-{way}")
+                self.assertEqual(out["failures"], [f"ANALYSIS-SOURCES-001's allocation is "
+                                                   f"{digest(b'another allocation')}, not the index's allocation "
+                                                   f"{allocation}"])
+                self.assertEqual((out["analysis_sources"]["direction"], out["analysis_sources"]["binds"]),
+                                 (way, False))
+        # Neither way.
+        self.build("neither", analysis="neither")
+        out = sd1.custody(self.spec(), self.root / "sd1" / "neither")
+        self.assertEqual(out["failures"], [f"ANALYSIS-SOURCES-001 ({digest(self.analysis_bytes)}) and the index "
+                                           f"({digest(self.index_bytes)}) do not bind each other: the index's "
+                                           "source_spec does not pin it, and it does not hold the index's SHA-256"])
+        self.assertEqual((out["analysis_sources"]["direction"], out["analysis_sources"]["binds"]), (None, False))
+        # An index that pins no allocation.
+        self.build("no-allocation", index_edit=lambda index: {k: v for k, v in index.items() if k != "allocation"})
+        out = sd1.custody(self.spec(), self.root / "sd1" / "no-allocation")
+        self.assertIn("the index pins no allocation", out["failures"])
         self.assertFalse(out["analysis_sources"]["binds"])
+
+    def test_a_known_answer_that_is_not_bt1s_checked_jobs_is_a_failure(self):
+        bt1 = self.base / "bt1"
+        jobs = json.loads((bt1 / "JOBS.json").read_text(encoding="utf-8"))
+        pins = json.loads((bt1 / "CASE-PINS.json").read_text(encoding="utf-8"))
+
+        def answer(i, jobs_value=jobs, pins_value=pins, schedule_r1=None):
+            folder = self.root / f"answer-{i}"
+            known = {"jobs": write(folder / "JOBS.json", jobs_value),
+                     "budget_root": self.spec()["known_answer"]["budget_root"]}
+            if schedule_r1 is not None:
+                shutil.copytree(bt1 / "budget", folder / "budget")
+                schedule = write_bytes(folder / "budget" / "schedule" / "archive-r1.jsonl", schedule_r1)
+                pins_value = {**pins_value, "case_files": {**pins_value["case_files"], "r1": schedule["sha256"]}}
+                known["budget_root"] = common.absolute(folder / "budget")
+            known["case_pins"] = write(folder / "CASE-PINS.json", pins_value)
+            return "\n".join(sd1.custody(self.spec(known_answer=known), folder / "custody")["failures"])
+        given = [
+            (dict(jobs_value={"jobs": "none"}), "JOBS.json lists no jobs"),
+            (dict(jobs_value={"jobs": jobs["jobs"] + jobs["jobs"][:1]}),
+             f"JOBS.json jobs[{len(jobs['jobs'])}]: not a job (lineage, id, record and record_sha256) or a repeated "
+             "id"),
+            (dict(pins_value={**pins, "passed": False}),
+             "CASE-PINS.json is not a passed case check with input_pins and both lineages' case_files"),
+            (dict(pins_value={**pins, "games_checked": 2}), "CASE-PINS.json checked 2 games, not JOBS.json's 3"),
+            (dict(pins_value={**pins, "input_pins": {**pins["input_pins"], "../outside.json": "0" * 64}}),
+             "CASE-PINS.json: '../outside.json' is not a path under the budget root"),
+            (dict(schedule_r1=b"not a schedule\n"), "archive-r1.jsonl: not a schedule ("),
+            (dict(schedule_r1=b'{"id": "archive-r1-g0"}\n'),
+             "r1: JOBS.json names 1 games outside the archive's schedule, first archive-r1-g1"),
+        ]
+        for i, (change, needle) in enumerate(given):
+            with self.subTest(needle):
+                self.assertIn(needle, answer(i, **change))
+
+    def test_a_job_input_read_in_place_is_its_own_sha256(self):
+        # r1's desktop job names T1 as a plain file read in place, which computehost's does not.
+        plain = write_bytes(self.root / "opponents" / "t1-source.json",
+                            self.sealed["inputs/desk/sources/t1-source.json"][1])
+        path = common.absolute(plain["path"])
+        self.build("plain", desk_environment={
+            "OPPONENTS": f"T1={path},A48={HOT}/inputs-001/desk/sources/a48-source.json"})
+        out = sd1.custody(self.spec(files=[{"role": "parent", **self.parent},
+                                           {"role": "opponents", "path": path, "sha256": plain["sha256"]}]),
+                          self.out_dir)
+        self.assertIn(plain["sha256"], out["inputs"]["r1"]["identity_sha256"]["T1"])
+        self.assertIn(plain["sha256"], out["inputs"]["r1"]["raw_sha256"]["T1"])
+        self.assertEqual(out["failures"], ["r1: its jobs name 2 different T1 inputs, paths aside, not one"])
+        desk = json.loads((self.out_dir / "remapped" / "formal" / f"{self.CASES['r1'][0]}-search-v1" /
+                           "command.json").read_text(encoding="utf-8"))
+        self.assertEqual(desk["environment"]["OPPONENTS"],
+                         f"T1={path},A48={self.mine(self.out_dir, 'remapped', 'inputs/desk/sources/a48-source.json')}")
+
+    def test_an_incomplete_completion_or_two_different_seals_break_the_rule(self):
+        first, second = self.spec()["durable"]
+        done = json.loads((self.targets[0] / "CUSTODY-COMPLETION.json").read_text(encoding="utf-8"))
+        incomplete = write(self.targets[0] / "CUSTODY-COMPLETION.json", {**done, "complete": False})
+        out = sd1.custody(self.spec(durable=[{**first, "completion": incomplete}, second]), self.root / "incomplete")
+        self.assertIn("durable copy 1: the custody completion is not complete", out["failures"])
+        self.assertIn("the seal's completion rule: a completion record is not complete", out["failures"])
+        first, second = self.reseal(lambda seal: None)["durable"]
+        seal = json.loads((self.targets[1] / "SOURCE-SEAL.json").read_text(encoding="utf-8"))
+        other = write(self.targets[1] / "SOURCE-SEAL.json", {**seal, "note": 1})
+        out = sd1.custody(self.spec(durable=[first, {**second, "seal": other}]), self.root / "differ")
+        self.assertIn("the seal's completion rule: the two SOURCE-SEAL copies differ", out["failures"])
+        self.assertFalse(out["pass"])
 
     def test_only_a_durable_archive_under_the_seals_completion_rule_is_read(self):
         first, second = self.spec()["durable"]
@@ -2252,6 +2425,42 @@ class ConfigsCheck(PhaseTwoFixture):
                       out["problems"]["O-2 is O-0 on seed 2's unit seeds and episode ids"])
         diff = out["differences_from_O-0"]
         self.assertEqual((diff["O-2"]["other_unit_fields"], diff["O-6"]["fields"]), (1, ["update_backend"]))
+
+    def test_each_way_a_config_departs_from_the_design_is_named(self):
+        selections, cfgs, root = self.configs()
+        # O's recorded config gives the initial opponent to one unit fewer than j = 3 to 7's.
+        units = pilot.DECKS * pilot.DECKS * 5 * 2
+        o_config = copy.deepcopy(self.o_config)
+        first = next(item for update in o_config["iterations"] for item in update["episodes"]
+                     if item.get("opponent") == sd1.INITIAL_OPPONENT)
+        first["opponent"] = {"kind": "fixed", "id": "other"}
+        out = sd1.configs_check("r1", o_config, selections, cfgs, root)
+        self.assertEqual(out["problems"]["O-0 is O's recorded config with the named parent, its units O's own"],
+                         f"O's config gives the initial opponent to {units - 1} units, not the {units} of j = 3 to 7")
+        # Each structural departure of O-k from O-0; D2-7 from another source; D1-1's source with another
+        # feature transfer.
+        bad = copy.deepcopy(cfgs)
+        bad["O-2"]["note"] = 1
+        bad["O-3"]["iterations"] = bad["O-3"]["iterations"][:-1]
+        bad["O-4"]["iterations"][0]["episodes"] = bad["O-4"]["iterations"][0]["episodes"][:-1]
+        bad["O-5"]["iterations"][1]["episodes"][0]["episode"] = None
+        bad["O-6"]["iterations"][2]["episodes"][3]["opponent"] = {"kind": "fixed", "id": "other"}
+        bad["D2-7"]["initial_source"] = copy.deepcopy(self.o_config["initial_source"])
+        chosen = selections[1]["d1_checkpoint"]
+        source = json.loads(Path(chosen["source"]["path"]).read_text(encoding="utf-8"))
+        chosen["source"] = write(self.root / "d1-1-source.json",
+                                 {**source, "feature_transfer": {"expected_feature_contract_digest": "other"}})
+        out = sd1.configs_check("r1", self.o_config, selections, bad, root)
+        replicate = {k: out["problems"][f"O-{k} is O-0 on seed {k}'s unit seeds and episode ids"] for k in range(2, 7)}
+        self.assertEqual(replicate, {2: "it differs in ['note']", 3: "it does not hold the schedule's 162 updates",
+                                     4: "update 0 does not hold the schedule's units",
+                                     5: "update 1 unit 0 is not a unit with an episode",
+                                     6: "update 2 unit 3 differs outside its episode"})
+        self.assertEqual(out["problems"]["D2-7 is O-7 from D1-7"], "its initial source is not D1-k's source verbatim")
+        self.assertEqual(out["problems"]["D1-1's source is the parent's but for its selected checkpoint"],
+                         "it names another checkpoint or differs from the parent's import or feature transfer")
+        self.assertEqual(out["differences_from_O-0"]["O-5"]["other_unit_fields"], 1)
+        self.assertFalse(out["pass"])
 
     def test_each_run_writes_its_own_directory_under_the_root(self):
         selections, cfgs, root = self.configs()
