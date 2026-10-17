@@ -33,7 +33,12 @@ controller, context, whole own-library roster, original incarnations, issued
 choice and answer. The remainder checkpoint binds the original ordered native
 Library-to-Battlefield event segment; changing both stored choice copies cannot
 rewrite which cards actually entered. Public begin/resume/direct execution do
-not mint authority.
+not mint authority. A separate progress occurrence binds the exact native
+remainder moves and ordered Progenitus input/shuffle receipts. A private local
+engine handoff emits the terminal receipt only after the existing physical,
+flashback or virtual-copy row disposition. Terminal history excludes any
+surviving same-ID public row or pending owner; a bare completion marker cannot
+skip the original remainder instruction, including an empty remainder.
 
 The journal and two EventHistory kinds append after Time Stop. No old event
 payload or first237 kind is changed. No new public DTO exposes private history
@@ -41,12 +46,13 @@ or library contents. Existing complete consumers and sampler refuse the new
 printing or history. Full metadata, owning/model/Human/transport admission,
 frozen V88 tuple, runtime/catalog hash and export profile are unchanged.
 
-Eleven genuinely paid native source groups cover both seats, real payment,
+Twelve genuinely paid native source groups cover both seats, real payment,
 X0/zero/subset/all eligible choices, empty/short libraries, all represented
 permanent types, pre-existing Aura hosts, simultaneous entry, Season and
 as-enters restore, actual Progenitus replacement, post-spell ETB publication,
 Counterspell response, X256 with259 automatic sources, stale/foreign/erased
-continuations, independent prepaid hidden worlds and serialized restore.
+continuations, independent prepaid hidden worlds, terminal-marker/foreign-receipt readonly
+refusals and serialized restore.
 Initial library/battlefield declarations and negative mutations are labelled
 native setup/boundary primitives. They do not claim production deck admission.
 

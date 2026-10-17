@@ -16474,7 +16474,13 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
         return Ok(());
     }
     let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
-    apply_spell_departure(state, departure)
+    let genesis_terminal = effect::genesis_wave_v1::prepare_terminal(state, item)?;
+    let destination = match departure {
+        SpellDeparture::Move { to_zone, .. } => Some(to_zone),
+        SpellDeparture::Cease { .. } => None,
+    };
+    apply_spell_departure(state, departure)?;
+    effect::genesis_wave_v1::finish_terminal(state, genesis_terminal, destination)
 }
 
 /// A spell countered by the rules for having no legal targets performs none

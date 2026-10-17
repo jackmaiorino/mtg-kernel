@@ -689,3 +689,139 @@ fn genuine_paid_wave_counter_response_retains_x_source_and_never_reveals_both_se
         assert_eq!(s, replay);
     }
 }
+
+#[test]
+fn genuine_paid_wave_terminal_requires_remainder_and_disposed_row_readonly_both_seats() {
+    for p in players() {
+        for (library, x) in [
+            (vec!["Forest"], 0),
+            (
+                vec!["Forest", "Llanowar Elves", "Giant Growth", "Island"],
+                3,
+            ),
+            (
+                vec![
+                    "Forest",
+                    "Llanowar Elves",
+                    "Progenitus",
+                    "Giant Growth",
+                    "Island",
+                ],
+                4,
+            ),
+        ] {
+            let mut s = ready(p, &library, 12, "Island");
+            let original = s.players[p.index()].library.clone();
+            let wave = paid(&mut s, p, "Genesis Wave", Some(x), usize::from(x) + 3);
+            subset(&mut s, p);
+            if x != 0 {
+                choose(&mut s, &[original[1]]);
+                assert!(matches!(
+                    next(&mut s),
+                    Decision::ChooseEffectTargets {
+                        min_targets: 2,
+                        max_targets: 2,
+                        ..
+                    }
+                ));
+                assert_eq!(s.objects.get(original[0]).zone, Zone::Library);
+                assert_eq!(s.objects.get(original[2]).zone, Zone::Library);
+            }
+            s = restore(&s);
+            let pending = s.engine.pending_effect.as_ref().unwrap().clone();
+            let row = pending.resolving_item.clone();
+            let id = row.v4.stack_item_id;
+            let progress = s
+                .engine
+                .event_history
+                .iter()
+                .rposition(|e| {
+                    matches!(e,
+                event::CommittedEvent::GenesisWaveProgressV1 {item,..} if item.v4.stack_item_id==id)
+                })
+                .unwrap();
+            let mut completed = restore(&s);
+            finish(&mut completed, wave);
+            validate_state(&completed).unwrap();
+            completed = restore(&completed);
+            // This receipt comes from an independent genuine paid episode,
+            // with a different original source and library checkpoint.
+            let mut foreign = ready(p, &library, 13, "Swamp");
+            let foreign_wave = paid(&mut foreign, p, "Genesis Wave", Some(x), usize::from(x) + 3);
+            subset(&mut foreign, p);
+            if x != 0 {
+                let selected = foreign.players[p.index()].library[1];
+                choose(&mut foreign, &[selected]);
+            }
+            finish(&mut foreign, foreign_wave);
+            let foreign_receipt = foreign
+                .engine
+                .event_history
+                .iter()
+                .find(|e| matches!(e, event::CommittedEvent::GenesisWaveFinishedV1 { .. }))
+                .unwrap()
+                .clone();
+            for variant in 0..4 {
+                // Explicit mutable-world boundary primitives. No native
+                // batch or terminal owner is manufactured by these edits.
+                let mut bad = restore(&s);
+                let at = bad.engine.event_history.len() as u64;
+                let receipt = if variant == 3 {
+                    foreign_receipt.clone()
+                } else {
+                    event::CommittedEvent::GenesisWaveFinishedV1 {
+                        stack_item_id: id,
+                        remainder_history_index: progress as u64,
+                        departure_start: at,
+                        departure_end: at,
+                        departure: Some(Zone::Graveyard),
+                    }
+                };
+                bad.engine.event_history.push(receipt);
+                if variant != 0 {
+                    bad.engine.pending_effect = None;
+                }
+                if variant >= 2 {
+                    bad.stack.retain(|r| r.v4.stack_item_id != id);
+                }
+                let frozen = bad.clone();
+                assert!(validate_state(&bad).is_err());
+                assert!(engine::step(&mut bad, Action::Pass).is_err());
+                assert_eq!(bad, frozen);
+            }
+            for keep_pending in [false, true] {
+                let mut bad = restore(&completed);
+                bad.stack.push(row.clone());
+                if keep_pending {
+                    bad.engine.pending_effect = Some(pending.clone());
+                }
+                let frozen = bad.clone();
+                assert!(validate_state(&bad).is_err());
+                assert!(engine::step(&mut bad, Action::Pass).is_err());
+                assert_eq!(bad, frozen);
+            }
+            if x == 4 {
+                assert_eq!(completed.objects.get(original[2]).zone, Zone::Library);
+                assert_eq!(completed.objects.get(original[2]).zone_change_count, 0);
+                let mut bad = restore(&completed);
+                let event::CommittedEvent::ProgenitusShuffledV1 {
+                    input_history_index,
+                    ..
+                } = bad
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find(|e| matches!(e, event::CommittedEvent::ProgenitusShuffledV1 { .. }))
+                    .unwrap()
+                else {
+                    unreachable!()
+                };
+                *input_history_index += 1;
+                let frozen = bad.clone();
+                assert!(validate_state(&bad).is_err());
+                assert!(engine::step(&mut bad, Action::Pass).is_err());
+                assert_eq!(bad, frozen);
+            }
+        }
+    }
+}

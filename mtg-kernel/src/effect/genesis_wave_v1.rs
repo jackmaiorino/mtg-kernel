@@ -95,6 +95,13 @@ enum PhaseV1 {
         entry_start: u64,
         entry_end: u64,
     },
+    // A separate occurrence after the actual remainder batch. It is not a
+    // terminal marker: the engine must still dispose of the resolving row.
+    RemainderCommitted {
+        ordered: Vec<EffectObjectBinding>,
+        start: u64,
+        end: u64,
+    },
 }
 
 fn row_context(state: &GameState, p: &EffectContinuation) -> Result<(), String> {
@@ -122,6 +129,9 @@ fn printed_row_shape(item: &StackItem) -> bool {
                 || source.controller != item.controller
                 || source.zone != Zone::Stack
                 || Some(source.cast_method) != item.v4.cast_method
+                || item.is_copy != source.spell_copy_origin.is_some()
+                || item.is_flashback
+                    != (source.cast_method == crate::state::CastMethodV4::Flashback)
                 || source
                     .finalized_cast_binding
                     .is_some_and(|binding| binding.x_value != item.v4.x_value)
@@ -177,6 +187,9 @@ fn candidates(
     c: &ChoiceV1,
 ) -> Result<Vec<EffectObjectBinding>, String> {
     match &c.phase {
+        PhaseV1::RemainderCommitted { .. } => {
+            Err("Genesis Wave committed batch is not a choice".into())
+        }
         PhaseV1::Subset => c
             .prefix
             .iter()
@@ -230,6 +243,9 @@ fn validate_data(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> Res
         return Err("Genesis Wave original prefix/subset changed".into());
     }
     match &c.phase {
+        PhaseV1::RemainderCommitted { .. } => {
+            return Err("Genesis Wave committed batch has no pending choice".into())
+        }
         PhaseV1::Graveyard {
             remaining_library,
             cards,
@@ -294,7 +310,7 @@ fn validate_data(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> Res
                     }
                     at
                 }
-                PhaseV1::Graveyard { .. } => unreachable!(),
+                PhaseV1::Graveyard { .. } | PhaseV1::RemainderCommitted { .. } => unreachable!(),
             };
             let mut expected_failed = Vec::new();
             let mut expected_attached = Vec::new();
@@ -410,6 +426,316 @@ fn validate_entry_record(
     }
     Ok(())
 }
+// The independent batch occurrence is checked from actual native events, not
+// from a terminal flag or from the cards' later physical identities.
+fn validate_remainder_record(
+    state: &GameState,
+    item: &StackItem,
+    previous_index: usize,
+    previous: &ChoiceV1,
+    committed: &ChoiceV1,
+    at: usize,
+) -> Result<(), String> {
+    let PhaseV1::Graveyard {
+        cards,
+        entry_start,
+        entry_end,
+        ..
+    } = &previous.phase
+    else {
+        return Err("Genesis Wave remainder has no issued graveyard instruction".into());
+    };
+    let PhaseV1::RemainderCommitted {
+        ordered,
+        start,
+        end,
+    } = &committed.phase
+    else {
+        return Err("Genesis Wave missing committed remainder".into());
+    };
+    validate_entry_record(
+        state,
+        item.controller,
+        item.v4.stack_item_id,
+        previous,
+        *entry_start,
+        *entry_end,
+    )?;
+    if committed.ordinal != previous.ordinal + 1
+        || committed.original_library != previous.original_library
+        || committed.prefix != previous.prefix
+        || committed.selected != previous.selected
+        || committed.attachments != previous.attachments
+        || committed.failed_auras != previous.failed_auras
+        || canonical_subset(cards, ordered)? != *cards
+    {
+        return Err("Genesis Wave remainder changed its original issued inputs".into());
+    }
+    let start = usize::try_from(*start).map_err(|_| "Genesis Wave remainder width")?;
+    let end = usize::try_from(*end).map_err(|_| "Genesis Wave remainder width")?;
+    if previous_index >= start || end != at {
+        return Err("Genesis Wave remainder occurrence moved outside its progress".into());
+    }
+    let segment = state
+        .engine
+        .event_history
+        .get(start..end)
+        .ok_or("Genesis Wave remainder segment absent")?;
+    let mut members = Vec::new();
+    let mut replacements = Vec::new();
+    let mut shuffles = Vec::new();
+    let mut last_member = None;
+    let mut first_shuffle = None;
+    for (offset, event) in segment.iter().enumerate() {
+        match event {
+            event::CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Library,
+                to,
+                controller_before,
+            } => {
+                if *to != Zone::Graveyard || *controller_before != item.controller {
+                    return Err("Genesis Wave remainder has an unrelated library move".into());
+                }
+                members.push(*object);
+                last_member = Some(start + offset);
+            }
+            event::CommittedEvent::ProgenitusInputV1 { input } => {
+                let source = input.source;
+                let expected = event::ProposedEvent::zone_change_preserving_known_identity(
+                    source.source,
+                    Zone::Graveyard,
+                );
+                let event::ProposedEvent::ZoneChange(expected) = expected else {
+                    unreachable!()
+                };
+                if source.zone != Zone::Library
+                    || source.controller != item.controller
+                    || source.owner != item.controller
+                    || !crate::progenitus_v1::definition(source.card_def)
+                    || input.original != expected
+                    || !ordered.iter().any(|b| {
+                        b.object == source.source
+                            && b.expected_zone == source.zone
+                            && b.expected_zone_change_count == source.zone_change_count
+                    })
+                {
+                    return Err(
+                        "Genesis Wave remainder replacement lost its original library source"
+                            .into(),
+                    );
+                }
+                members.push(source.source);
+                last_member = Some(start + offset);
+                replacements.push(((start + offset) as u64, source));
+            }
+            event::CommittedEvent::ProgenitusShuffledV1 {
+                input_history_index,
+                move_history_index,
+                source,
+            } => {
+                if move_history_index.is_some() {
+                    return Err("Genesis Wave library replacement invented a zone move".into());
+                }
+                first_shuffle.get_or_insert(start + offset);
+                shuffles.push((*input_history_index, *source));
+            }
+            event::CommittedEvent::GenesisWaveProgressV1 { .. }
+            | event::CommittedEvent::GenesisWaveFinishedV1 { .. } => {
+                return Err("Genesis Wave remainder contains another owning occurrence".into());
+            }
+            _ => {}
+        }
+    }
+    if members != ordered.iter().map(|b| b.object).collect::<Vec<_>>()
+        || replacements != shuffles
+        || first_shuffle.is_some_and(|shuffle| last_member.is_none_or(|member| shuffle <= member))
+    {
+        return Err(
+            "Genesis Wave remainder lacks its exact native moves or replacement shuffles".into(),
+        );
+    }
+    if !replacements.is_empty() {
+        crate::progenitus_v1::validate(state)?;
+    }
+    Ok(())
+}
+
+/// Linear local handoff from the engine's completed row to its existing spell
+/// departure. It is neither serialized nor constructible from a public flag.
+pub(crate) struct TerminalOwnerV1 {
+    item: StackItem,
+    choice: ChoiceV1,
+    remaining_stack: Vec<StackItem>,
+    remainder: usize,
+    departure_start: usize,
+}
+pub(crate) fn prepare_terminal(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<TerminalOwnerV1>, String> {
+    if !item
+        .v4
+        .source_contract
+        .is_some_and(|s| definition(s.card_def))
+    {
+        return Ok(None);
+    }
+    let Some((at, original, committed)) = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(at, e)| match e {
+            event::CommittedEvent::GenesisWaveProgressV1 {
+                item: original,
+                choice,
+            } if original.v4.stack_item_id == item.v4.stack_item_id => {
+                Some((at, original.as_ref(), choice.as_ref()))
+            }
+            _ => None,
+        })
+    else {
+        return Ok(None);
+    }; // Countering before resolution has no progress.
+    let Some((previous_index, previous_item, previous)) = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .take(at)
+        .rev()
+        .find_map(|(at, e)| match e {
+            event::CommittedEvent::GenesisWaveProgressV1 {
+                item: original,
+                choice,
+            } if original.v4.stack_item_id == item.v4.stack_item_id => {
+                Some((at, original.as_ref(), choice.as_ref()))
+            }
+            _ => None,
+        })
+    else {
+        return Err("Genesis Wave terminal lost its original remainder instruction".into());
+    };
+    if original != item || previous_item != item || !printed_row_shape(item)
+        || state.stack.iter().any(|r|r.v4.stack_item_id==item.v4.stack_item_id)
+        || state.engine.pending_effect.as_ref().is_some_and(|p|p.resolving_item.v4.stack_item_id==item.v4.stack_item_id)
+        || state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::GenesisWaveFinishedV1{stack_item_id,..}if *stack_item_id==item.v4.stack_item_id))
+    { return Err("Genesis Wave completed row still has public ownership or changed identity".into()); }
+    validate_remainder_record(state, item, previous_index, previous, committed, at)?;
+    Ok(Some(TerminalOwnerV1 {
+        item: item.clone(),
+        choice: committed.clone(),
+        remaining_stack: state.stack.clone(),
+        remainder: at,
+        departure_start: state.engine.event_history.len(),
+    }))
+}
+fn validate_terminal_record(
+    state: &GameState,
+    item: &StackItem,
+    remainder: usize,
+    phase: &ChoiceV1,
+    departure: (u64, u64, Option<Zone>),
+    at: usize,
+) -> Result<(), String> {
+    let (departure_start, departure_end, departure) = departure;
+    if !matches!(phase.phase, PhaseV1::RemainderCommitted { .. })
+        || remainder >= at
+        || usize::try_from(departure_end).ok() != Some(at)
+        || usize::try_from(departure_start)
+            .ok()
+            .is_none_or(|start| start <= remainder)
+    {
+        return Err("Genesis Wave terminal has no completed native remainder occurrence".into());
+    }
+    let start = usize::try_from(departure_start).map_err(|_| "Genesis Wave departure width")?;
+    let segment = state
+        .engine
+        .event_history
+        .get(start..at)
+        .ok_or("Genesis Wave native departure segment absent")?;
+    if item.is_copy {
+        if departure.is_some()
+            || !segment.is_empty()
+            || item
+                .v4
+                .source_contract
+                .is_none_or(|s| s.spell_copy_origin.is_none())
+        {
+            return Err("Genesis Wave virtual row invented a physical departure".into());
+        }
+    } else {
+        let expected = if item.is_flashback {
+            Zone::Exile
+        } else {
+            Zone::Graveyard
+        };
+        let moves = segment
+            .iter()
+            .filter_map(|e| match e {
+                event::CommittedEvent::ZoneChange {
+                    object,
+                    from,
+                    to,
+                    controller_before,
+                } if *object == item.source => Some((*from, *to, *controller_before)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if departure != Some(expected) || moves != [(Zone::Stack, expected, item.controller)] {
+            return Err("Genesis Wave terminal lost its actual physical spell departure".into());
+        }
+    }
+    Ok(())
+}
+pub(crate) fn finish_terminal(
+    state: &mut GameState,
+    owner: Option<TerminalOwnerV1>,
+    departure: Option<Zone>,
+) -> Result<(), String> {
+    let Some(owner) = owner else { return Ok(()) };
+    if state.engine.halted.is_some()
+        || state.stack != owner.remaining_stack
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| p.resolving_item.v4.stack_item_id == owner.item.v4.stack_item_id)
+    {
+        return Err("Genesis Wave terminal handoff changed after native departure".into());
+    }
+    let Some(event::CommittedEvent::GenesisWaveProgressV1 { item, choice }) =
+        state.engine.event_history.get(owner.remainder)
+    else {
+        return Err("Genesis Wave terminal remainder was erased".into());
+    };
+    if item.as_ref() != &owner.item || choice.as_ref() != &owner.choice {
+        return Err("Genesis Wave terminal remainder belongs to another row".into());
+    }
+    let end = state.engine.event_history.len();
+    validate_terminal_record(
+        state,
+        item,
+        owner.remainder,
+        choice,
+        (owner.departure_start as u64, end as u64, departure),
+        end,
+    )?;
+    state
+        .engine
+        .event_history
+        .push(event::CommittedEvent::GenesisWaveFinishedV1 {
+            stack_item_id: owner.item.v4.stack_item_id,
+            remainder_history_index: owner.remainder as u64,
+            departure_start: owner.departure_start as u64,
+            departure_end: end as u64,
+            departure,
+        });
+    Ok(())
+}
+
 fn validate_issued(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> Result<(), String> {
     validate_data(state, p, c)?;
     let rows = state
@@ -430,7 +756,7 @@ fn validate_issued(state: &GameState, p: &EffectContinuation, c: &ChoiceV1) -> R
             || old.ordinal != i as u64 || old.original_library != c.original_library || old.prefix != c.prefix)
         || c.ordinal != rows.len() as u64 - 1
         || state.engine.event_history.iter().any(|e| matches!(e,
-            event::CommittedEvent::GenesisWaveFinishedV1 { stack_item_id } if *stack_item_id == p.resolving_item.v4.stack_item_id))
+            event::CommittedEvent::GenesisWaveFinishedV1 { stack_item_id, .. } if *stack_item_id == p.resolving_item.v4.stack_item_id))
     { return Err("Genesis Wave lost its issued native progress".into()); }
     Ok(())
 }
@@ -489,6 +815,9 @@ fn answer_valid(
         PhaseV1::Subset => false,
         PhaseV1::Aura { .. } => cards.len() != 1,
         PhaseV1::Graveyard { .. } => rows.len() != cards.len(),
+        PhaseV1::RemainderCommitted { .. } => {
+            return Err("Genesis Wave committed batch cannot be answered".into())
+        }
     } {
         return Err("Genesis Wave answer cardinality changed".into());
     }
@@ -540,6 +869,9 @@ pub(crate) fn apply(
     validate_issued(state, p, &c)?;
     answer_valid(state, p, &c, &cards)?;
     match c.phase {
+        PhaseV1::RemainderCommitted { .. } => {
+            return Err("Genesis Wave remainder cannot commit twice".into())
+        }
         PhaseV1::Subset => c.selected = canonical_subset(&c.prefix, &cards)?,
         PhaseV1::Aura { index } => c
             .attachments
@@ -553,15 +885,35 @@ pub(crate) fn apply(
             // every actual replacement and mandatory shuffle to the batch.
             let mut all = cards.clone();
             all.extend(original.iter().copied().filter(|b| !cards.contains(b)));
+            let previous_index = state.engine.event_history.iter().rposition(|e| matches!(e,
+                event::CommittedEvent::GenesisWaveProgressV1 {item,..} if item.v4.stack_item_id==p.resolving_item.v4.stack_item_id))
+                .ok_or("Genesis Wave remainder lost original progress")?;
+            let start = state.engine.event_history.len() as u64;
             commit_zone_change_batch(state, &all, Zone::Graveyard, true)?;
             if state.engine.halted.is_some() {
                 return Err("Genesis Wave graveyard batch halted".into());
             }
+            let mut committed = c.clone();
+            committed.ordinal += 1;
+            committed.phase = PhaseV1::RemainderCommitted {
+                ordered: all,
+                start,
+                end: state.engine.event_history.len() as u64,
+            };
+            validate_remainder_record(
+                state,
+                &p.resolving_item,
+                previous_index,
+                &c,
+                &committed,
+                state.engine.event_history.len(),
+            )?;
             state
                 .engine
                 .event_history
-                .push(event::CommittedEvent::GenesisWaveFinishedV1 {
-                    stack_item_id: p.resolving_item.v4.stack_item_id,
+                .push(event::CommittedEvent::GenesisWaveProgressV1 {
+                    item: Box::new(p.resolving_item.clone()),
+                    choice: Box::new(committed),
                 });
             return Ok(false);
         }
@@ -695,8 +1047,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         return Ok(());
     }
     let mut progress =
-        std::collections::BTreeMap::<StackItemId, (u64, &StackItem, &ChoiceV1, bool)>::new();
-    for event in &state.engine.event_history {
+        std::collections::BTreeMap::<StackItemId, (u64, &StackItem, &ChoiceV1, bool, usize)>::new();
+    for (at, event) in state.engine.event_history.iter().enumerate() {
         match event {
             event::CommittedEvent::GenesisWaveProgressV1 { item, choice } => {
                 let id = item.v4.stack_item_id;
@@ -718,14 +1070,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         entry_end,
                     )?;
                 }
-                if let Some((ordinal, original, old, finished)) = progress.get(&id) {
+                if let Some((ordinal, original, old, finished, previous_index)) = progress.get(&id)
+                {
+                    if matches!(choice.phase, PhaseV1::RemainderCommitted { .. }) {
+                        validate_remainder_record(state, item, *previous_index, old, choice, at)?;
+                    }
                     if *finished
                         || item.as_ref() != *original
                         || choice.ordinal != ordinal + 1
                         || choice.original_library != old.original_library
                         || choice.prefix != old.prefix
                         || matches!(choice.phase, PhaseV1::Subset)
+                        || matches!(old.phase, PhaseV1::RemainderCommitted { .. })
                         || matches!(old.phase, PhaseV1::Graveyard { .. })
+                            && !matches!(choice.phase, PhaseV1::RemainderCommitted { .. })
                         || matches!(old.phase, PhaseV1::Aura { .. })
                             && choice.selected != old.selected
                         || !choice.attachments.starts_with(&old.attachments)
@@ -743,22 +1101,52 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Genesis Wave initial progress changed".into());
                 }
-                progress.insert(id, (choice.ordinal, item, choice, false));
+                progress.insert(id, (choice.ordinal, item, choice, false, at));
             }
-            event::CommittedEvent::GenesisWaveFinishedV1 { stack_item_id } => {
-                let Some((_, _, choice, finished)) = progress.get_mut(stack_item_id) else {
+            event::CommittedEvent::GenesisWaveFinishedV1 {
+                stack_item_id,
+                remainder_history_index,
+                departure_start,
+                departure_end,
+                departure,
+            } => {
+                let Some((_, item, choice, finished, remainder)) = progress.get_mut(stack_item_id)
+                else {
                     return Err("Genesis Wave completion has no original progress".into());
                 };
-                if *finished || !matches!(choice.phase, PhaseV1::Graveyard { .. }) {
-                    return Err("Genesis Wave completion repeated or premature".into());
+                if *finished || usize::try_from(*remainder_history_index).ok() != Some(*remainder) {
+                    return Err(
+                        "Genesis Wave completion repeated or references a foreign remainder".into(),
+                    );
                 }
+                validate_terminal_record(
+                    state,
+                    item,
+                    *remainder,
+                    choice,
+                    (*departure_start, *departure_end, *departure),
+                    at,
+                )?;
                 *finished = true;
             }
             _ => {}
         }
     }
-    for (id, (_, item, _, finished)) in progress {
-        if !finished {
+    for (id, (_, item, choice, finished, _)) in progress {
+        if finished {
+            if state.stack.iter().any(|row| row.v4.stack_item_id == id)
+                || state
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .is_some_and(|p| p.resolving_item.v4.stack_item_id == id)
+            {
+                return Err("Genesis Wave terminal still has a public row or pending owner".into());
+            }
+        } else {
+            if matches!(choice.phase, PhaseV1::RemainderCommitted { .. }) {
+                return Err("Genesis Wave committed remainder lost native row completion".into());
+            }
             if let Some(p) = state
                 .engine
                 .pending_effect

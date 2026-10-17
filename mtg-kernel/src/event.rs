@@ -2034,6 +2034,11 @@ pub enum CommittedEvent {
     },
     GenesisWaveFinishedV1 {
         stack_item_id: crate::ids::StackItemId,
+        remainder_history_index: u64,
+        departure_start: u64,
+        departure_end: u64,
+        // None is the original virtual-copy disposition, never a GY move.
+        departure: Option<Zone>,
     },
 }
 
