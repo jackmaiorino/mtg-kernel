@@ -1214,3 +1214,94 @@ pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Res
 ))]
 #[path = "liliana_dreadhorde_v1_tests.rs"]
 pub(crate) mod tests;
+
+/// Factual original references are never reassigned to unknown current slots.
+/// Later hidden incarnations also conflict; no historical identity selects a placement.
+pub(crate) fn sampler_conflicts_v73(state: &GameState, pool: &[ObjectId]) -> Result<bool, String> {
+    validate_state(state)?;
+    let raw = |id: ObjectId| pool.contains(&id);
+    let ability =
+        |a: AbilitySourceContractV4| raw(a.source) || a.attached_to.is_some_and(|r| raw(r.object));
+    let source = |s: crate::state::StackSourceContractV4| {
+        raw(s.source)
+            || s.spell_copy_origin.is_some_and(|o| raw(o.parent))
+            || s.finalized_cast_binding.is_some_and(|b| {
+                b.chosen_creature_cost.is_some_and(|r| raw(r.object))
+                    || b.mandatory_additional_cost.is_some()
+            })
+    };
+    let stack = |s: &StackItem| {
+        raw(s.source)
+            || s.targets
+                .iter()
+                .any(|t| matches!(t,Target::Object(id)if raw(*id)))
+            || s.v4.target_contracts.iter().any(|t| match t {
+                crate::state::StackTargetContractV4::Player(_) => false,
+                crate::state::StackTargetContractV4::Object { object, .. } => raw(*object),
+                crate::state::StackTargetContractV4::StackItem { source, .. } => raw(*source),
+            })
+            || s.discarded.iter().any(|id| raw(*id))
+            || s.v4.paid_cost_refs.iter().any(|r| raw(r.object))
+            || s.v4.ability_source_contract.is_some_and(ability)
+            || s.v4.granted_by.is_some_and(ability)
+            || s.v4.source_contract.is_some_and(source)
+            || s.v4.hidden_ability_source.is_some_and(|r| raw(r.object))
+            || s.v4.madness_source_contract.is_some_and(|r| raw(r.source))
+            || s.v4
+                .cauldron_grant
+                .0
+                .as_ref()
+                .is_some_and(|r| ability(r.host) || ability(r.donor))
+    };
+    for (_, journal) in rows(state) {
+        let conflict = match journal {
+            JournalV1::Payment { input } => {
+                ability(input.source)
+                    || raw(input.pending.source)
+                    || input.pending.chandra_damage_v74.is_some()
+            }
+            JournalV1::Published { input, item } => {
+                ability(input.source)
+                    || raw(input.pending.source)
+                    || input.pending.chandra_damage_v74.is_some()
+                    || stack(item)
+            }
+            JournalV1::Started { item, choice } => {
+                stack(item) || sampler_choice_conflicts_v73(state, pool, choice)?
+            }
+            JournalV1::Issued { choice, .. } | JournalV1::CommitInput { choice, .. } => {
+                sampler_choice_conflicts_v73(state, pool, choice)?
+            }
+            JournalV1::TokenInput { item, .. } => stack(item),
+            JournalV1::Finished { .. } | JournalV1::TokenFinished { .. } => false,
+        };
+        if conflict {
+            return Ok(true);
+        }
+    }
+    // Original observer/deceased references remain factual after a later return
+    // to an unknown hand/library. The shared walker also checks these captures.
+    Ok(state.engine.event_history.iter().any(|e| {
+        matches!(e,
+        E::ControlledCreatureDeathCaptureV1 {source,died,..}
+        if definition(source.card_def) && (ability(*source)||raw(died.object)))
+    }))
+}
+pub(crate) fn sampler_choice_conflicts_v73(
+    state: &GameState,
+    pool: &[ObjectId],
+    c: &ChoiceV1,
+) -> Result<bool, String> {
+    validate_choice(state, c, false)?;
+    Ok(c.rosters
+        .iter()
+        .flatten()
+        .any(|(b, _)| pool.contains(&b.object))
+        || c.sacrificed
+            .iter()
+            .flatten()
+            .chain(c.graveyard.iter().flatten())
+            .chain(c.orders.iter().flatten())
+            .any(|b| pool.contains(&b.object))
+        || c.kept.iter().any(|(_, b)| pool.contains(&b.object)))
+}

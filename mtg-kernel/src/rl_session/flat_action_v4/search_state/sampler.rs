@@ -11,6 +11,7 @@ enum SamplingScopeV68 {
     GenesisWave,
     Muldrotha,
     Tinybones,
+    Liliana,
 }
 fn conflicts(
     state: &GameState,
@@ -36,6 +37,7 @@ fn conflicts_in_scope(
         SamplingScopeV68::Tinybones => {
             super::effect_refs::op_conflicts_tinybones_v72(state, pool, op)
         }
+        SamplingScopeV68::Liliana => super::effect_refs::op_conflicts_liliana_v73(state, pool, op),
         SamplingScopeV68::EndTurn => super::effect_refs::op_conflicts_end_turn_v68(state, pool, op),
         SamplingScopeV68::Legacy => super::effect_refs::op_conflicts(state, pool, op),
     };
@@ -120,6 +122,7 @@ fn conflicts_in_scope(
         SamplingScopeV68::Tinybones => {
             super::effect_refs::conflicts_tinybones_v72(state, pool, plan)
         }
+        SamplingScopeV68::Liliana => super::effect_refs::conflicts_liliana_v73(state, pool, plan),
     } {
         return true;
     }
@@ -435,6 +438,25 @@ pub(super) fn redeterminize_tinybones_v72(
         SamplingScopeV68::Tinybones,
     )
 }
+pub(super) fn redeterminize_liliana_v73(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), Error> {
+    crate::liliana_observation_v73::validate_state(state)
+        .map_err(|_| Error::HiddenStateContract)?;
+    // Entry checkpoints retain whole original worlds. V69's replay derivation
+    // cannot authenticate a V73 world, so this scope preserves that refusal.
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some()
+        || crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true)
+        || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true)
+        || crate::engine::tinybones_v72::sampler_conflicts_v72(state, &[]).unwrap_or(true)
+        || crate::effect::liliana_dreadhorde_v1::sampler_conflicts_v73(state, &[]).unwrap_or(true)
+    {
+        return Err(Error::HiddenReferenceConflict);
+    }
+    redeterminize_with_library_plan_inner(state, actor, seed, None, true, SamplingScopeV68::Liliana)
+}
 fn current_unknown_slots(
     state: &GameState,
     actor: PlayerId,
@@ -546,7 +568,8 @@ fn redeterminize_with_library_plan_inner(
             | SamplingScopeV68::Call
             | SamplingScopeV68::GenesisWave
             | SamplingScopeV68::Muldrotha
-            | SamplingScopeV68::Tinybones => conflicts_in_scope(state, &pool, plan, scope),
+            | SamplingScopeV68::Tinybones
+            | SamplingScopeV68::Liliana => conflicts_in_scope(state, &pool, plan, scope),
         } {
             return Err(if classified {
                 Error::HiddenReferenceConflict

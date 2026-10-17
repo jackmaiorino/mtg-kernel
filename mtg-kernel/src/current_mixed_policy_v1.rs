@@ -410,6 +410,7 @@ pub fn feature_identity() -> String {
             include_str!("limited_chandra_session_v15.rs"),
             include_str!("bin/kernel_limited_chandra_env_v15.rs"),
             include_str!("../../python/tools/limited_chandra_session_v15.py"),
+            include_str!("effect/liliana_dreadhorde_v1.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

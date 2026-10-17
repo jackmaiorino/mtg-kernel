@@ -538,6 +538,43 @@ impl LilianaSessionV73 {
         Ok(fresh)
     }
 
+    /// Samples only eligible current unknown slots. Factual native history,
+    /// permission menus, costs and the complete original pair binding stay fixed.
+    pub fn sampled_clone_v73(
+        &self,
+        decision: &LilianaDecisionV73,
+        seed: u64,
+    ) -> Result<Self, RlContractError> {
+        let before = self.validated_current(decision)?;
+        let actor = self
+            .inner
+            .current
+            .as_ref()
+            .ok_or_else(|| RlContractError("V73 sampling has no current decision".into()))?
+            .actor;
+        let mut inner = self.inner.clone();
+        super::flat_action_v4::redeterminize_liliana_v73(&mut inner.state, actor, seed)
+            .map_err(|e| RlContractError(format!("V73 current-slot sampling:{e:?}")))?;
+        let mut current = inner
+            .current
+            .take()
+            .ok_or_else(|| RlContractError("V73 sampled current decision absent".into()))?;
+        prepare_current(&inner, &mut current).map_err(binding_error)?;
+        inner.flat_action_cache_spare = None;
+        inner.flat_action_cache_spare_v2 = None;
+        inner.current = Some(current);
+        let sampled = Self {
+            inner,
+            owner: std::sync::Arc::new(()),
+            generation: self.generation,
+        };
+        if sampled.fresh_binding()? != before {
+            return Err(RlContractError(
+                "V73 sampled complete public/native binding changed".into(),
+            ));
+        }
+        Ok(sampled)
+    }
     pub fn validate_decision_v73(
         &self,
         decision: &LilianaDecisionV73,
@@ -612,3 +649,10 @@ impl LilianaSessionV73 {
 ))]
 #[path = "liliana_v73/tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod sampler_tests;
