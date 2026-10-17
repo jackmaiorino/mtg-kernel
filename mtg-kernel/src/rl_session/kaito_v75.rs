@@ -358,6 +358,11 @@ impl KaitoDecisionV75 {
     }
     /// Original native header/count. Public ordinals index actions(), not the
     /// native vector; the private map is applied only inside step_v75.
+    pub(crate) fn family_projections_v75(
+        &self,
+    ) -> &[crate::akroma_family_public_v40::FamilyProjectionV40] {
+        &self.binding.families
+    }
     pub fn expected(&self) -> FastActorDecisionV1 {
         self.binding.expected
     }

@@ -464,3 +464,13 @@ pub use chandra_v74::{
 pub(crate) mod limited_chandra_v15;
 pub(crate) use limited_chandra_v15::project_limited_chandra_v15;
 pub use limited_chandra_v15::LimitedChandraDecisionV15;
+
+pub mod kaito_v75;
+pub use kaito_v75::{
+    HumanDecisionKaitoV75, HumanKaitoProjectorV75, HumanKaitoSessionV75, HumanKaitoSnapshotV75,
+    HumanVisibleStateKaitoV75,
+};
+
+pub(crate) mod limited_kaito_v16;
+pub(crate) use limited_kaito_v16::project_limited_kaito_v16;
+pub use limited_kaito_v16::LimitedKaitoDecisionV16;

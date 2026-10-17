@@ -1630,6 +1630,26 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "python/tools/limited_chandra_session_v15.py",
                     include_str!("../../../python/tools/limited_chandra_session_v15.py"),
                 ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/kaito_v75.rs",
+                    include_str!("../human_bo3_v1/kaito_v75.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_kaito_v16.rs",
+                    include_str!("../human_bo3_v1/limited_kaito_v16.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_kaito_session_v16.rs",
+                    include_str!("../limited_kaito_session_v16.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_kaito_env_v16.rs",
+                    include_str!("../bin/kernel_limited_kaito_env_v16.rs"),
+                ),
+                (
+                    "python/tools/limited_kaito_session_v16.py",
+                    include_str!("../../../python/tools/limited_kaito_session_v16.py"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());
