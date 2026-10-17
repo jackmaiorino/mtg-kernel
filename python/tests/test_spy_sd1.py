@@ -2065,12 +2065,15 @@ class Parents(Temp):
                 self.assertEqual(row["recorded_checkpoint_sha256"], recorded)
                 self.assertEqual(row["utility"]["checkpoint"]["sha256"], row["recorded_checkpoint_sha256"])
         # Every file each side read is pinned: the source file, its checkpoint, its import descriptor and the
-        # parameters that descriptor pins.
+        # parameters that descriptor pins, each path spelled as the spec or the pin that named it (the fixture
+        # writes native spellings, which differ from pin()'s on Windows).
+        def as_written(path: Path) -> dict:
+            return {"path": str(path), "sha256": digest(path.read_bytes())}
         folder = self.root / "screen" / "r2" / "A48"
         self.assertEqual(out["lineages"]["r2"]["A48"]["screen"]["read"],
-                         [common.pin(folder / name) for name in ("source.json", "ck.json", "import.json", "par.bin")])
+                         [as_written(folder / name) for name in ("source.json", "ck.json", "import.json", "par.bin")])
         self.assertEqual(out["lineages"]["r1"]["parent"]["screen"]["read"][0],
-                         common.pin(self.root / "screen" / "r1" / "parent" / "O-config.json"))
+                         as_written(self.root / "screen" / "r1" / "parent" / "O-config.json"))
         # T1 and A48 need only the utility screen's sources.
         spec = self.spec()
         del spec["r1"]["T1"]["screen"], spec["r2"]["A48"]["screen"]
