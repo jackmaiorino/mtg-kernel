@@ -1584,6 +1584,7 @@ impl CompleteObservationV68<'_> {
                 crate::tinybones_observation_v72::validate_artifact(v)
             }
             CompleteOriginalV68::Liliana(v) => crate::liliana_observation_v73::validate_artifact(v),
+            CompleteOriginalV68::Chandra(v) => crate::chandra_observation_v74::validate_artifact(v),
             CompleteOriginalV68::Vivien(v) => crate::vivien_observation_v70::validate_artifact(v),
             CompleteOriginalV68::GenesisWave(v) => {
                 crate::genesis_wave_observation_v69::validate_artifact(v)
