@@ -61,6 +61,7 @@ mod interchange;
 mod labels;
 mod pathlog;
 mod play;
+mod policy_ensemble;
 mod process_cpu;
 mod profile_roots;
 mod refresh;
@@ -116,6 +117,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-utility-root-inspect"
             | "s4a-reuse-prefix"
             | "s4a-reused-action"
+            | "s4a-policy-ensemble"
     )
 }
 
@@ -1035,6 +1037,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         prior: world::DeckPrior::new(&cfg.decks),
         limits: parse_limits()?,
     };
+    if cfg.mode == policy_ensemble::MODE {
+        return policy_ensemble::run(cfg, policy, &sh, &spec_bytes);
+    }
     if cfg.mode == "s4a-utility-root" {
         return utility_root::run(cfg, policy, &sh, &spec_bytes);
     }
@@ -1544,6 +1549,9 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 
 /// Validate even non-Stage4a modes before loading their source policy.
 pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
+    if mode != policy_ensemble::MODE && std::env::var_os("POLICY_ENSEMBLE_MEMBERS").is_some() {
+        return Err("POLICY_ENSEMBLE_MEMBERS is supported only for s4a-policy-ensemble".into());
+    }
     refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
 }
 
@@ -1571,6 +1579,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-utility-root"
         | "s4a-reuse-prefix"
         | "s4a-reused-action"
+        | "s4a-policy-ensemble"
         | "s4a-utility-root-inspect" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
