@@ -12,7 +12,86 @@ pub(crate) struct PublicTrainingGroup<'a> {
     pub(crate) substeps: &'a [PublicTrainingStep<'a>],
 }
 
+/// Effective gradients before Adam, in the native tensor layout. Diagnostic
+/// only: reading them does not change parameters or optimizer moments.
+pub(crate) struct PublicGroupGradientDiagnostic {
+    pub(crate) base: Vec<NativeNamedParameterV1>,
+    pub(crate) object_bits: Vec<u32>,
+    pub(crate) state_bits: Vec<u32>,
+    pub(crate) ratios: Vec<f32>,
+}
+
 impl PublicDeviceTrainState {
+    /// Read the same complete-batch gradient accumulated by the production
+    /// GAE/PPO paths, with public inputs disabled and the inherited fixed loss
+    /// scalars. Updates are separately exercised through the production methods.
+    pub(crate) fn diagnostic_group_gradients(
+        &self,
+        groups: &[PublicTrainingGroup<'_>],
+        targets: &[f32],
+        advantages: &[f32],
+        ppo: Option<(&[f32], f32)>,
+        max_chunk_substeps: usize,
+    ) -> Result<PublicGroupGradientDiagnostic, Box<dyn Error>> {
+        self.validate_groups(groups, targets, advantages, max_chunk_substeps)?;
+        if ppo.is_some_and(|(behavior, clip)| {
+            behavior.len() != groups.len()
+                || behavior.iter().any(|v| !v.is_finite())
+                || !clip.is_finite()
+                || clip <= 0.0
+                || clip > 1.0
+        }) {
+            return Err(training_error("invalid diagnostic PPO behavior or clip"));
+        }
+        let mut accumulator = PublicGradientAccumulator::default();
+        let ratios = self.accumulate_chunks(
+            &mut accumulator,
+            groups,
+            targets,
+            advantages,
+            ppo,
+            0.5,
+            0.0,
+            false,
+            true,
+            max_chunk_substeps,
+            groups.len() as f32,
+            true,
+        )?;
+        let template = self.legacy.export_snapshot_v1()?.parameters;
+        let mut gradients = accumulator.base.grads();
+        // This is the effective scorer gauge gradient used by apply(). Keep
+        // the inherited Adam state intact; only the exported gradient is zeroed.
+        let gauge = self
+            .legacy
+            .model
+            .scorer
+            .output
+            .bias
+            .as_ref()
+            .ok_or_else(|| training_error("missing diagnostic scorer gauge"))?;
+        let raw = gradients
+            .remove::<CudaBackendV1, 1>(gauge.id)
+            .ok_or_else(|| training_error("missing diagnostic scorer gradient"))?;
+        gradients.register(gauge.id, raw.zeros_like());
+        let base = export_named_state_v1(&self.legacy.model, &gradients, &template)?;
+        let read = |value: Option<Tensor<CudaBackendV1, 2>>| -> Result<Vec<u32>, Box<dyn Error>> {
+            Ok(value
+                .ok_or_else(|| training_error("missing diagnostic public gradient"))?
+                .into_data()
+                .to_vec::<f32>()?
+                .into_iter()
+                .map(f32::to_bits)
+                .collect())
+        };
+        Ok(PublicGroupGradientDiagnostic {
+            base,
+            object_bits: read(accumulator.object)?,
+            state_bits: read(accumulator.state)?,
+            ratios,
+        })
+    }
+
     #[allow(
         clippy::too_many_arguments,
         reason = "preserves the explicit numerical and collection input contract"
