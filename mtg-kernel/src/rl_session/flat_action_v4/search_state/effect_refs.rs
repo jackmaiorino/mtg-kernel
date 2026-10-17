@@ -1080,6 +1080,7 @@ pub(super) fn conflicts(
         .engine
         .event_history
         .scan_for_v1(&[
+            EventKindV1::TimeStopJournalV1,
             EventKindV1::SphinxsTutelageDrawV1,
             EventKindV1::SphinxsTutelageCollectedV1,
             EventKindV1::SphinxsTutelagePublishedV1,
@@ -1667,6 +1668,69 @@ pub(super) fn conflicts(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn paid_time_stop_private_journal_refuses_hidden_slot_sampling_both_seats() {
+        use crate::{
+            engine::{self, Action, Decision},
+            ids::PlayerId,
+            policy_observation_v6::tests::put,
+            state::{GameState, Step, Zone},
+        };
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let island = crate::card_def::card_id_by_name("Island").unwrap();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[island; 40],
+                &[island; 40],
+                crate::rl::card_name,
+                110_486,
+                actor,
+            );
+            state.step = Step::Main1;
+            let pool = state.players[actor.opponent().index()].library.clone();
+            assert!(!conflicts(&state, &pool, None));
+            let lands = (0..6)
+                .map(|_| put(&mut state, actor, "Island", Zone::Battlefield))
+                .collect::<Vec<_>>();
+            let spell = put(&mut state, actor, "Time Stop", Zone::Hand);
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass{castable_spells,..} if castable_spells.contains(&spell))
+            );
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+            );
+            assert!(state.engine.pending_cast.is_none());
+            assert!(lands.iter().all(|id| state.objects.get(*id).tapped));
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            assert!(state.stack.iter().any(|row| row.source == spell));
+            for _ in 0..16 {
+                let d = engine::advance_until_decision(&mut state);
+                assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
+                if state.objects.get(spell).zone == Zone::Exile
+                    && state.engine.time_stop_v1.is_empty()
+                {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.objects.get(spell).zone, Zone::Exile);
+            assert!(state
+                .engine
+                .event_history
+                .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1]));
+            assert!(conflicts(&state, &pool, None));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(state, restored);
+            assert!(conflicts(&restored, &pool, None));
+        }
+    }
+
     use super::*;
     use crate::ids::PlayerId;
     use crate::policy_observation_v6::tests::{put, ready_state};
