@@ -2,6 +2,7 @@ use super::*;
 use crate::{
     card_def::CARD_DEFS,
     engine::{self, Action, Decision},
+    event::{self, ProposedEvent},
     policy_observation_v6::tests::put,
 };
 
@@ -79,8 +80,28 @@ pub(crate) fn announce(
         .count();
     engine::step(state, Action::CastSpell(spell)).unwrap();
     if let Some(target) = target {
+        let mut choice = engine::advance_until_decision(state);
+        if let Decision::ChooseSpellMode {
+            player,
+            spell: pending,
+            mode_count,
+            legal_modes,
+        } = &choice
+        {
+            // The paid Employment scene includes its real Treasure artifact,
+            // so Abrade must choose creature damage before choosing a target.
+            assert_eq!(
+                CARD_DEFS[state.objects.get(spell).card_def as usize].name,
+                "Abrade"
+            );
+            assert_eq!((*player, *pending, *mode_count), (actor, spell, 2));
+            assert_eq!(legal_modes.as_slice(), &[0, 1]);
+            engine::step(state, Action::ChooseSpellMode(0)).unwrap();
+            choice = engine::advance_until_decision(state);
+        }
         assert!(
-            matches!(engine::advance_until_decision(state),Decision::ChooseTargets{legal_targets,..}if legal_targets.contains(&Target::Object(target)))
+            matches!(&choice,Decision::ChooseTargets{player,spell:pending,legal_targets,..}if *player==actor && *pending==spell && legal_targets.contains(&Target::Object(target))),
+            "expected the paid spell's original target choice: {choice:?}"
         );
         engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
     }
@@ -123,6 +144,31 @@ fn assert_restore(state: &GameState) -> GameState {
     }
     assert_eq!(serde_json::to_vec(state).unwrap(), before);
     restored
+}
+
+fn conceal_returned_card_native(state: &mut GameState, card: ObjectId) {
+    let owner = state.objects.get(card).owner;
+    let generation = state.objects.get(card).zone_change_count;
+    // Snap's real public return remains known at its new hand incarnation.
+    let remembered = public::reference(state, card, Some(owner.opponent())).unwrap();
+    assert_eq!(remembered.zone, Zone::Hand);
+    assert_eq!(remembered.generation, generation);
+    assert_eq!(
+        remembered.identity,
+        public::IdentityV1::Known {
+            card_id: state.objects.get(card).card_def,
+        }
+    );
+    // Explicit native concealment setup, not a claimed printed shuffle ability:
+    // move to library, shuffle away exact knowledge, then privately move to hand.
+    // The independently paid original death/departure history stays intact.
+    event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Library));
+    state.shuffle_library(owner).unwrap();
+    event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Hand));
+    assert_eq!(state.objects.get(card).zone, Zone::Hand);
+    assert_eq!(state.objects.get(card).zone_change_count, generation + 2);
+    assert!(public::reference(state, card, Some(owner.opponent())).is_none());
+    assert!(public::reference(state, card, Some(owner)).is_some());
 }
 #[test]
 fn closed_two_printing_programs_preserve_order_and_refuse_forged_meanings() {
@@ -311,7 +357,16 @@ fn paid_nine_lives_old_schedule_does_not_expose_new_hidden_hand_incarnation_both
         paid(&mut state, actor, "Zombify", Some(familiar));
         paid(&mut state, actor, "Snap", Some(familiar));
         assert_eq!(state.objects.get(familiar).zone, Zone::Hand);
+        let remembered = capture(&state, actor.opponent()).unwrap();
+        assert!(remembered
+            .authorized
+            .iter()
+            .any(|r| r.card.object == familiar.0
+                && r.card.zone == Zone::Hand
+                && r.card.generation == state.objects.get(familiar).zone_change_count));
+        conceal_returned_card_native(&mut state, familiar);
         let facts = capture(&state, actor.opponent()).unwrap();
+        assert_eq!(facts.nine_lives_schedules, remembered.nine_lives_schedules);
         assert_eq!(facts.nine_lives_schedules.len(), 1);
         assert!(facts.nine_lives_schedules[0]
             .source
@@ -492,8 +547,8 @@ fn paid_familiar_copy_and_retained_death_schedule_refuse_legacy_readonly_both_se
         assert!(state.objects.get(copies[0]).v4.is_token);
         assert_eq!(state.objects.get(copies[0]).counters.revival, 0);
         legacy_refuses_readonly(&state);
-        // A second, independently paid world isolates a retained originally-public
-        // source whose new current incarnation is hidden from the opponent.
+        // A second, independently paid world isolates the original public source.
+        // A labelled native concealment setup below then hides its newer incarnation.
         let mut state = ready(actor);
         let familiar = paid(&mut state, actor, "Nine-Lives Familiar", None);
         paid(&mut state, actor, "Abrade", Some(familiar));
@@ -505,6 +560,7 @@ fn paid_familiar_copy_and_retained_death_schedule_refuse_legacy_readonly_both_se
         paid(&mut state, actor, "Zombify", Some(familiar));
         paid(&mut state, actor, "Snap", Some(familiar));
         assert_eq!(state.objects.get(familiar).zone, Zone::Hand);
+        conceal_returned_card_native(&mut state, familiar);
         assert!(public::reference(&state, familiar, Some(actor.opponent())).is_none());
         assert!(require_legacy_visible(&state, Some(actor.opponent())).is_err());
         legacy_refuses_readonly(&state);
@@ -566,8 +622,13 @@ fn paid_alesha_departure_lki_refuses_old_viewer_after_source_becomes_hidden_both
         let source = paid(&mut state, actor, "Alesha, Who Laughs at Fate", None);
         paid(&mut state, actor, "Snap", Some(source));
         assert_eq!(state.objects.get(source).zone, Zone::Hand);
+        let remembered = capture(&state, actor.opponent()).unwrap();
+        assert_eq!(remembered.alesha_departures.len(), 1);
+        assert_eq!(remembered.alesha_departures[0].power, 2);
+        conceal_returned_card_native(&mut state, source);
         assert!(public::reference(&state, source, Some(actor.opponent())).is_none());
         let facts = capture(&state, actor.opponent()).unwrap();
+        assert_eq!(facts.alesha_departures, remembered.alesha_departures);
         assert_eq!(facts.alesha_departures.len(), 1);
         assert_eq!(facts.alesha_departures[0].power, 2);
         legacy_refuses_readonly(&state);
