@@ -1,15 +1,15 @@
 //! Genuine paid current-slot sampling, not a posterior or playing-strength claim.
 use super::*;
 use crate::{
-    effect::chandra_dreadhorde_v1::tests::owner_v74_tests::owning_ready,
+    effect::chandra_flameshaper_v1::tests::owner_v74_tests::owning_ready,
     event::{self, CommittedEvent as E, ProposedEvent},
     rl::ActionSemanticV1 as A,
     state::Zone,
 };
-fn owner(s: GameState) -> ChandraSessionV73 {
-    ChandraSessionV73::from_session(FastActorSessionV1::from_chandra_v74_fixture_state(s)).unwrap()
+fn owner(s: GameState) -> ChandraSessionV74 {
+    ChandraSessionV74::from_session(FastActorSessionV1::from_chandra_v74_fixture_state(s)).unwrap()
 }
-fn sampled(o: &ChandraSessionV73, seed: u64) -> ChandraSessionV73 {
+fn sampled(o: &ChandraSessionV74, seed: u64) -> ChandraSessionV74 {
     let d = o.decision_v74().unwrap();
     let before = o.fixture_state_v74().clone();
     let mut c = o.sampled_clone_v74(&d, seed).unwrap();
@@ -43,7 +43,7 @@ fn sampled(o: &ChandraSessionV73, seed: u64) -> ChandraSessionV73 {
     );
     c
 }
-fn act(o: &mut ChandraSessionV73, choose: impl Fn(&A) -> bool) {
+fn act(o: &mut ChandraSessionV74, choose: impl Fn(&A) -> bool) {
     let d = o.decision_v74().unwrap();
     let i = d.actions().iter().position(choose).unwrap();
     let original = d.fixture_original_index_v74(i as u32).unwrap();
@@ -60,7 +60,7 @@ fn act(o: &mut ChandraSessionV73, choose: impl Fn(&A) -> bool) {
         (native.policy_step_count(), native.physical_decision_count())
     );
 }
-fn quiet(o: &mut ChandraSessionV73) {
+fn quiet(o: &mut ChandraSessionV74) {
     let d = o.decision_v74().unwrap();
     let finish = d
         .actions()
