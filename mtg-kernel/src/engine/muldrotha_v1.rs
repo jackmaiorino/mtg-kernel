@@ -58,15 +58,173 @@ pub(crate) fn definition(id: u16) -> bool {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     )) && id == 489
-        && card_def::CARD_DEFS.get(id as usize).is_some_and(|d| {
+        && card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+            let card_def::CardDef {
+                name: _,
+                capability: _,
+                cost: _,
+                generic_cost_reduction: _,
+                ward_cost: _,
+                spell_cannot_be_countered: _,
+                records_mana_spent: _,
+                equipment: _,
+                types: _,
+                subtypes: _,
+                supertypes: _,
+                power: _,
+                toughness: _,
+                starting_loyalty: _,
+                enters_with_plus_one_counters: _,
+                controlled_counter_keyword: _,
+                game_outcome_protection_v1: _,
+                controlled_creature_grant: _,
+                is_land: _,
+                produces_mana: _,
+                colors: _,
+                target_spec: _,
+                keywords: _,
+                spell_effect: _,
+                mana_ability: _,
+                alt_cost: _,
+                kicker_cost: _,
+                additional_cost: _,
+                flashback: _,
+                activated_abilities: _,
+                plot_cost: _,
+                madness_cost: _,
+                mode2: _,
+                mode3: _,
+                additional_modes: _,
+                kicked_target_spec: _,
+                is_token: _,
+                escape: _,
+                mana_ability_choices: _,
+                enters_battlefield_tapped: _,
+                mana_ability_def: _,
+                minimum_blockers: _,
+                omen: _,
+                mana_value: _,
+                mana_ability_includes_chosen_color: _,
+                as_enters_choose_color_other_than: _,
+                additional_mana_abilities: _,
+                object_name: _,
+                enters_battlefield_tapped_unless: _,
+                attachment: _,
+                transform_face: _,
+                saga: _,
+                optional_additional_cost: _,
+                changeling: _,
+                bestow: _,
+                delve: _,
+                adventure: _,
+                cant_be_blocked_by_monarchs_creatures: _,
+                conditional_tap_yield: _,
+                enters_tapped_unless_controller: _,
+                additional_mana_ability_conditions: _,
+                restricted_mana_abilities: _,
+                animation: _,
+                activated_ability_generic_reductions: _,
+                combat_static_rules: _,
+                as_enters_color_choice_v1: _,
+                chosen_color_creature_boost_v1: _,
+                damage_replacement_v1: _,
+                token_counter_replacement_v48: _,
+                starting_life_self_bonuses_v1: _,
+                source_type_hexproof_v1: _,
+                other_controlled_nontoken_death_v1: _,
+                creature_type_entry_v1: _,
+            } = d;
             d.name == "Muldrotha, the Gravetide"
-                && d.is_executable()
-                && d.has_type(CardType::Creature)
+                && d.capability == card_def::CardCapability::Partial
+                && d.cost
+                    == crate::mana::Cost {
+                        pips: &[
+                            crate::mana::Pip::Colored(crate::mana::ManaColor::B),
+                            crate::mana::Pip::Colored(crate::mana::ManaColor::G),
+                            crate::mana::Pip::Colored(crate::mana::ManaColor::U),
+                        ],
+                        generic: 3,
+                        x_count: 0,
+                    }
+                && d.generic_cost_reduction.is_none()
+                && d.ward_cost.is_none()
+                && !d.spell_cannot_be_countered
+                && !d.records_mana_spent
+                && d.equipment.is_none()
+                && d.types == [CardType::Creature]
+                && d.subtypes == [card_def::Subtype::Elemental, card_def::Subtype::Avatar]
+                && d.supertypes == [card_def::Supertype::Legendary]
+                && d.power == Some(6)
+                && d.toughness == Some(6)
+                && d.starting_loyalty.is_none()
+                && d.enters_with_plus_one_counters.is_none()
+                && d.controlled_counter_keyword.is_none()
+                && d.game_outcome_protection_v1.is_none()
+                && d.controlled_creature_grant.is_none()
+                && !d.is_land
+                && d.produces_mana.is_empty()
+                && d.colors
+                    == [
+                        crate::mana::ManaColor::B,
+                        crate::mana::ManaColor::G,
+                        crate::mana::ManaColor::U,
+                    ]
+                && d.target_spec == card_def::TargetSpec::None
+                && d.keywords == Keywords::NONE
                 && (d.spell_effect)()
                     == Some(EffectOp::MoveObject {
                         object: ObjectRef::ThisSource,
                         to_zone: Zone::Battlefield,
                     })
+                && (d.mana_ability)().is_none()
+                && d.alt_cost.is_none()
+                && d.kicker_cost.is_none()
+                && d.additional_cost.is_none()
+                && d.flashback.is_none()
+                && d.activated_abilities.is_empty()
+                && d.plot_cost.is_none()
+                && d.madness_cost.is_none()
+                && d.mode2.is_none()
+                && d.mode3.is_none()
+                && d.additional_modes.is_empty()
+                && d.kicked_target_spec.is_none()
+                && !d.is_token
+                && d.escape.is_none()
+                && d.mana_ability_choices.is_empty()
+                && !d.enters_battlefield_tapped
+                && d.mana_ability_def.is_none()
+                && d.minimum_blockers == 1
+                && d.omen.is_none()
+                && d.mana_value == 6
+                && !d.mana_ability_includes_chosen_color
+                && d.as_enters_choose_color_other_than.is_none()
+                && d.additional_mana_abilities.is_empty()
+                && d.object_name == d.name
+                && d.enters_battlefield_tapped_unless.is_none()
+                && d.attachment.is_none()
+                && d.transform_face.is_none()
+                && d.saga.is_none()
+                && d.optional_additional_cost.is_none()
+                && !d.changeling
+                && d.bestow.is_none()
+                && !d.delve
+                && d.adventure.is_none()
+                && !d.cant_be_blocked_by_monarchs_creatures
+                && d.conditional_tap_yield.is_none()
+                && d.enters_tapped_unless_controller.is_none()
+                && d.additional_mana_ability_conditions.is_empty()
+                && d.restricted_mana_abilities.is_empty()
+                && d.animation.is_none()
+                && d.activated_ability_generic_reductions.is_empty()
+                && d.combat_static_rules == card_def::CombatStaticRulesDef::NONE
+                && d.as_enters_color_choice_v1.is_none()
+                && d.chosen_color_creature_boost_v1.is_none()
+                && d.damage_replacement_v1.is_none()
+                && d.token_counter_replacement_v48.is_none()
+                && d.starting_life_self_bonuses_v1.is_empty()
+                && d.source_type_hexproof_v1.is_none()
+                && d.other_controlled_nontoken_death_v1.is_none()
+                && d.creature_type_entry_v1.is_none()
         })
 }
 fn active(state: &GameState, source: AbilitySourceContractV4, player: PlayerId) -> bool {
@@ -758,10 +916,145 @@ pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Res
     }
 }
 
+pub(crate) fn public_facts_v71(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::muldrotha_public_v71::FactsV71, String> {
+    use crate::{muldrotha_public_v71::*, optional_trigger_public_v1 as public};
+    validate_state(state)?;
+    let visible_printings = state
+        .objects
+        .iter()
+        .filter_map(|(id, _)| public::reference(state, id, Some(viewer)))
+        .filter(|r| matches!(r.identity, public::IdentityV1::Known { card_id: 489 }))
+        .collect();
+    let current = crate::valkyries_call_public_v62::capture(state, viewer)?
+        .battlefield
+        .into_iter()
+        .flatten()
+        .filter(|r| matches!(r.card.identity, public::IdentityV1::Known { card_id: 489 }))
+        .collect();
+    let mut budgets = Vec::new();
+    for (id, o) in state.objects.iter() {
+        if o.zone != Zone::Battlefield || o.v4.face_down_v1.is_some() || !definition(o.card_def) {
+            continue;
+        }
+        let source = AbilitySourceContractV4::capture(state, id);
+        let mut unused = Vec::new();
+        let mut used = Vec::new();
+        for permanent_type in TYPES {
+            if spent(
+                state,
+                PermissionV1 {
+                    source,
+                    permanent_type,
+                },
+                state.turn_key_v1(),
+            ) {
+                used.push(permanent_type)
+            } else {
+                unused.push(permanent_type)
+            }
+        }
+        budgets.push(BudgetV71 {
+            source: public::root(state, source, Some(viewer))?,
+            turn: state.turn_key_v1(),
+            active_own_turn: state.active_player == o.controller,
+            printed_abilities_active:
+                crate::continuous_characteristics_v1::printed_abilities_active(state, id),
+            unused,
+            spent: used,
+        });
+    }
+    let mut plays = Vec::new();
+    for (at, e) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::MuldrothaOptionsV1 { options: o } = e else {
+            continue;
+        };
+        options(state, at as u64)?;
+        let chosen = state.engine.event_history.iter().find_map(|e| match e {
+            CommittedEvent::MuldrothaSelectedV1 { pending }
+                if pending.options_history_index == at as u64 =>
+            {
+                Some(*pending)
+            }
+            _ => None,
+        });
+        let played = state.engine.event_history.iter().find_map(|e| match e {
+            CommittedEvent::MuldrothaPlayedV1 { played }
+                if played.options_history_index == at as u64 =>
+            {
+                Some(played)
+            }
+            _ => None,
+        });
+        let stage = if chosen.is_some_and(|p| p.selected == Some(0) && o.ordinary) {
+            StageV71::OrdinaryRoute
+        } else if let Some(p) = played {
+            match p.spell {
+                None => StageV71::PlayedLand,
+                Some((_, id)) if state.stack.iter().any(|r| r.v4.stack_item_id == id) => {
+                    StageV71::CastPublished
+                }
+                Some(_) => StageV71::NoLongerPublished,
+            }
+        } else if chosen.is_some() {
+            StageV71::SelectedPayment
+        } else {
+            StageV71::PermissionChoice
+        };
+        let original = public::ReferenceV1 {
+            object: o.card.object.0,
+            generation: o.card.expected_zone_change_count,
+            owner: o.controller.into(),
+            controller: o.controller.into(),
+            zone: Zone::Graveyard,
+            identity: public::IdentityV1::Known {
+                card_id: o.card_def,
+            },
+        };
+        let current_original = public::reference(state, o.card.object, Some(viewer))
+            .filter(|r| r.generation == o.card.expected_zone_change_count);
+        plays.push(PlayV71 {
+            occurrence: u32::try_from(plays.len()).map_err(|_| "V71 play count exceeds u32")?,
+            card: original,
+            current_original,
+            controller: o.controller.into(),
+            turn: o.turn,
+            land: o.land,
+            ordinary_available: o.ordinary,
+            permissions: o
+                .permissions
+                .iter()
+                .map(|p| {
+                    Ok(PermissionV71 {
+                        source: public::root(state, p.source, Some(viewer))?,
+                        permanent_type: p.permanent_type,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+            selected_menu_index: chosen.and_then(|p| p.selected),
+            stage,
+        });
+    }
+    let facts = FactsV71 {
+        schema: SCHEMA.into(),
+        producer_sha256: producer_sha256(),
+        viewer: viewer.into(),
+        meaning: crate::rules_meaning_muldrotha_v71::printed_meaning()?,
+        visible_printings,
+        current,
+        budgets,
+        plays,
+    };
+    crate::muldrotha_public_v71::validate(&facts)?;
+    Ok(facts)
+}
+
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "muldrotha_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -1930,6 +1930,8 @@ pub fn observe_v1(
         .map_err(RlContractError)?;
     crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
+    crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
@@ -2047,6 +2049,7 @@ enum ObservationTextModeV2 {
     EndTurnV68Artifact,
     GenesisWaveV69Artifact,
     VivienV70Artifact,
+    MuldrothaV71Artifact,
 }
 
 impl ObservationTextModeV2 {
@@ -2058,6 +2061,7 @@ impl ObservationTextModeV2 {
             Self::CallV62Artifact => Some(CommonProjectionScopeV42::CallV62),
             Self::EndTurnV68Artifact => Some(CommonProjectionScopeV42::EndTurnV68),
             Self::VivienV70Artifact => Some(CommonProjectionScopeV42::VivienV70),
+            Self::MuldrothaV71Artifact => Some(CommonProjectionScopeV42::MuldrothaV71),
             Self::GenesisWaveV69Artifact => Some(CommonProjectionScopeV42::GenesisWaveV69),
             _ => None,
         }
@@ -2073,7 +2077,8 @@ impl ObservationTextModeV2 {
             | ObservationTextModeV2::CallV62Artifact
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
-            | ObservationTextModeV2::VivienV70Artifact => KERNEL_VERSION.to_string(),
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact => KERNEL_VERSION.to_string(),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2088,7 +2093,8 @@ impl ObservationTextModeV2 {
             | ObservationTextModeV2::CallV62Artifact
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
-            | ObservationTextModeV2::VivienV70Artifact => card_name(card_id),
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact => card_name(card_id),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2254,12 +2260,15 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if !matches!(
         text_mode,
-        ObservationTextModeV2::GenesisWaveV69Artifact | ObservationTextModeV2::VivienV70Artifact
+        ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2274,6 +2283,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
@@ -2288,6 +2298,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2300,6 +2311,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2315,6 +2327,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2379,11 +2392,18 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if !accept_faebloom {
         refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     }
-    crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+    crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
-    if text_mode != ObservationTextModeV2::VivienV70Artifact {
+    if text_mode != ObservationTextModeV2::MuldrothaV71Artifact {
+        crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::VivienV70Artifact | ObservationTextModeV2::MuldrothaV71Artifact
+    ) {
         crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
@@ -2982,11 +3002,18 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     if !accept_faebloom {
         refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     }
-    crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+    crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
-    if text_mode != ObservationTextModeV2::VivienV70Artifact {
+    if text_mode != ObservationTextModeV2::MuldrothaV71Artifact {
+        crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::VivienV70Artifact | ObservationTextModeV2::MuldrothaV71Artifact
+    ) {
         crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
@@ -3756,6 +3783,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     EndTurnV68,
     GenesisWaveV69,
     VivienV70,
+    MuldrothaV71,
 }
 
 /// Classification of a caller-declared mainboard, never cast permission or a
@@ -3789,6 +3817,7 @@ pub(crate) fn require_declared_cards_for_scope(
                     | CommonProjectionScopeV42::EndTurnV68
                     | CommonProjectionScopeV42::GenesisWaveV69
                     | CommonProjectionScopeV42::VivienV70
+                    | CommonProjectionScopeV42::MuldrothaV71
             ))
             || (graveyard
                 && !matches!(
@@ -3798,6 +3827,7 @@ pub(crate) fn require_declared_cards_for_scope(
                         | CommonProjectionScopeV42::EndTurnV68
                         | CommonProjectionScopeV42::GenesisWaveV69
                         | CommonProjectionScopeV42::VivienV70
+                        | CommonProjectionScopeV42::MuldrothaV71
                 ))
             || (id == 459
                 && !matches!(
@@ -3806,8 +3836,15 @@ pub(crate) fn require_declared_cards_for_scope(
                         | CommonProjectionScopeV42::EndTurnV68
                         | CommonProjectionScopeV42::GenesisWaveV69
                         | CommonProjectionScopeV42::VivienV70
+                        | CommonProjectionScopeV42::MuldrothaV71
                 ))
             || (scope == CommonProjectionScopeV42::CallV62 && id >= 460)
+            || (scope == CommonProjectionScopeV42::MuldrothaV71
+                && id >= 460
+                && !crate::engine::time_stop_v1::definition(id)
+                && !crate::effect::genesis_wave_v1::definition(id)
+                && !crate::effect::vivien_reid_v1::definition(id)
+                && !crate::engine::muldrotha_v1::definition(id))
             || (scope == CommonProjectionScopeV42::VivienV70
                 && id >= 460
                 && !crate::engine::time_stop_v1::definition(id)
@@ -3982,6 +4019,9 @@ fn common_family_observation_storage_with_proof(
         }
         CommonProjectionScopeV42::CallV62 => crate::call_observation_v62::validate_state(state),
         CommonProjectionScopeV42::VivienV70 => crate::vivien_observation_v70::validate_state(state),
+        CommonProjectionScopeV42::MuldrothaV71 => {
+            crate::muldrotha_observation_v71::validate_state(state)
+        }
         CommonProjectionScopeV42::GenesisWaveV69 => {
             crate::genesis_wave_observation_v69::validate_state(state)
         }
@@ -4023,6 +4063,7 @@ fn common_family_observation_storage_with_proof(
             | CommonProjectionScopeV42::EndTurnV68
             | CommonProjectionScopeV42::GenesisWaveV69
             | CommonProjectionScopeV42::VivienV70
+            | CommonProjectionScopeV42::MuldrothaV71
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -4034,7 +4075,9 @@ fn common_family_observation_storage_with_proof(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: if scope == CommonProjectionScopeV42::VivienV70 {
+                text_mode: if scope == CommonProjectionScopeV42::MuldrothaV71 {
+                    ObservationTextModeV2::MuldrothaV71Artifact
+                } else if scope == CommonProjectionScopeV42::VivienV70 {
                     ObservationTextModeV2::VivienV70Artifact
                 } else if scope == CommonProjectionScopeV42::GenesisWaveV69 {
                     ObservationTextModeV2::GenesisWaveV69Artifact
@@ -4076,6 +4119,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::EndTurnV68
                             | CommonProjectionScopeV42::GenesisWaveV69
                             | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
                     ),
                     matches!(
                         scope,
@@ -4093,6 +4137,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::EndTurnV68
                             | CommonProjectionScopeV42::GenesisWaveV69
                             | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
                     ),
                     matches!(
                         scope,
@@ -4109,6 +4154,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::EndTurnV68
                             | CommonProjectionScopeV42::GenesisWaveV69
                             | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
                     ),
                     matches!(
                         scope,
@@ -4124,6 +4170,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::EndTurnV68
                             | CommonProjectionScopeV42::GenesisWaveV69
                             | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
                     ),
                     matches!(
                         scope,
@@ -4138,6 +4185,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::EndTurnV68
                             | CommonProjectionScopeV42::GenesisWaveV69
                             | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
                     ),
                 ),
                 matches!(
@@ -4152,6 +4200,7 @@ fn common_family_observation_storage_with_proof(
                         | CommonProjectionScopeV42::EndTurnV68
                         | CommonProjectionScopeV42::GenesisWaveV69
                         | CommonProjectionScopeV42::VivienV70
+                        | CommonProjectionScopeV42::MuldrothaV71
                 ),
             ),
         ),
@@ -4178,6 +4227,7 @@ fn common_family_observation_storage_with_proof(
                 | CommonProjectionScopeV42::EndTurnV68
                 | CommonProjectionScopeV42::GenesisWaveV69
                 | CommonProjectionScopeV42::VivienV70
+                | CommonProjectionScopeV42::MuldrothaV71
         ),
         conqueror_proof,
     )
@@ -4732,6 +4782,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             request.0.state,
@@ -4746,6 +4797,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(
             request.0.state,
@@ -4761,6 +4813,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(
             request.0.state,
@@ -4800,11 +4853,21 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             accept_season,
         ),
     ) = (request, accepted_planes);
-    crate::engine::muldrotha_v1::require_legacy(request.state, Some(request.acting_player))
-        .map_err(RlContractError)?;
+    crate::effect::liliana_dreadhorde_v1::require_legacy(
+        request.state,
+        Some(request.acting_player),
+    )
+    .map_err(RlContractError)?;
     crate::engine::tinybones_v72::require_legacy(request.state, Some(request.acting_player))
         .map_err(RlContractError)?;
-    if request.text_mode != ObservationTextModeV2::VivienV70Artifact {
+    if request.text_mode != ObservationTextModeV2::MuldrothaV71Artifact {
+        crate::engine::muldrotha_v1::require_legacy(request.state, Some(request.acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        request.text_mode,
+        ObservationTextModeV2::VivienV70Artifact | ObservationTextModeV2::MuldrothaV71Artifact
+    ) {
         crate::effect::vivien_reid_v1::require_legacy(request.state, Some(request.acting_player))
             .map_err(RlContractError)?;
     }
@@ -5337,12 +5400,15 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if !matches!(
         text_mode,
-        ObservationTextModeV2::GenesisWaveV69Artifact | ObservationTextModeV2::VivienV70Artifact
+        ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5357,6 +5423,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
@@ -5371,6 +5438,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5383,6 +5451,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5398,6 +5467,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5680,6 +5750,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                                     | ObservationTextModeV2::EndTurnV68Artifact
                                     | ObservationTextModeV2::GenesisWaveV69Artifact
                                     | ObservationTextModeV2::VivienV70Artifact
+                                    | ObservationTextModeV2::MuldrothaV71Artifact
                             ) && crate::ravenous_amulet_v1::definition(object.card_def)
                             {
                                 return Err(RlContractError(
@@ -6063,6 +6134,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
             | CommonProjectionScopeV42::EndTurnV68
             | CommonProjectionScopeV42::GenesisWaveV69
             | CommonProjectionScopeV42::VivienV70
+            | CommonProjectionScopeV42::MuldrothaV71
     ) {
         crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
             state,
@@ -6077,6 +6149,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
             | CommonProjectionScopeV42::EndTurnV68
             | CommonProjectionScopeV42::GenesisWaveV69
             | CommonProjectionScopeV42::VivienV70
+            | CommonProjectionScopeV42::MuldrothaV71
     ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
@@ -6089,6 +6162,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
             | CommonProjectionScopeV42::EndTurnV68
             | CommonProjectionScopeV42::GenesisWaveV69
             | CommonProjectionScopeV42::VivienV70
+            | CommonProjectionScopeV42::MuldrothaV71
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
@@ -6125,6 +6199,7 @@ fn core_policy_action_candidates_next_five_scoped_v59(
                 | CommonProjectionScopeV42::EndTurnV68
                 | CommonProjectionScopeV42::GenesisWaveV69
                 | CommonProjectionScopeV42::VivienV70
+                | CommonProjectionScopeV42::MuldrothaV71
         ) {
             return Err(RlContractError(
                 "full-range cast X requires its current successor".into(),
@@ -9516,6 +9591,7 @@ fn public_card_v2(
                 | ObservationTextModeV2::EndTurnV68Artifact
                 | ObservationTextModeV2::GenesisWaveV69Artifact
                 | ObservationTextModeV2::VivienV70Artifact
+                | ObservationTextModeV2::MuldrothaV71Artifact
         ) && object.zone == Zone::Battlefield)
     {
         return Err(RlContractError(
@@ -9683,6 +9759,21 @@ pub(crate) fn core_policy_action_candidates_vivien_v70(
         CommonProjectionScopeV42::VivienV70,
     )
 }
+pub(crate) fn core_policy_action_candidates_muldrotha_v71(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::muldrotha_observation_v71::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::MuldrothaV71,
+    )
+}
 
 fn public_card_v2_non_soul_fields(
     state: &GameState,
@@ -9698,6 +9789,7 @@ fn public_card_v2_non_soul_fields(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
@@ -9711,6 +9803,7 @@ fn public_card_v2_non_soul_fields(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)
             .map_err(RlContractError)?;
@@ -9734,6 +9827,7 @@ fn public_card_v2_non_soul_fields(
                 | ObservationTextModeV2::EndTurnV68Artifact
                 | ObservationTextModeV2::GenesisWaveV69Artifact
                 | ObservationTextModeV2::VivienV70Artifact
+                | ObservationTextModeV2::MuldrothaV71Artifact
         ) && (object.v4.face_index == 1
             || card_effective_identity_v1(state, id).is_some()
             || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
@@ -9868,6 +9962,7 @@ fn private_card(
             | ObservationTextModeV2::EndTurnV68Artifact
             | ObservationTextModeV2::GenesisWaveV69Artifact
             | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
     ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
@@ -11033,6 +11128,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                         CommonProjectionScopeV42::EndTurnV68
                             | CommonProjectionScopeV42::GenesisWaveV69
                             | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
                     )
                 ) {
                     pending_discard_semantic_end_turn_v68(state, acting_player, p)
@@ -11113,6 +11209,9 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     }
                     Some(CommonProjectionScopeV42::CallV62) => {
                         crate::call_observation_v62::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::MuldrothaV71) => {
+                        crate::muldrotha_observation_v71::pending_source_reference(state, p)?
                     }
                     Some(CommonProjectionScopeV42::VivienV70) => {
                         crate::vivien_observation_v70::pending_source_reference(state, p)?
@@ -11542,7 +11641,8 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                 }
                             },
                             crate::effect::EffectTargetSelectionPurpose::GenesisWaveCardsV1 { choice } => {
-                                if !matches!(prepared_scope,Some(CommonProjectionScopeV42::GenesisWaveV69|CommonProjectionScopeV42::VivienV70)) {return Err(RlContractError("Genesis Wave requires its distinct complete consumer".into()));}
+                                if !matches!(prepared_scope,Some(CommonProjectionScopeV42::GenesisWaveV69|CommonProjectionScopeV42::VivienV70
+|CommonProjectionScopeV42::MuldrothaV71)) {return Err(RlContractError("Genesis Wave requires its distinct complete consumer".into()));}
                                 crate::effect::genesis_wave_v1::selection_purpose_v69(choice)
                             },
                             crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
@@ -12139,6 +12239,26 @@ pub(crate) fn stack_item_public_vivien_v70(
         None,
     )
 }
+pub(crate) fn stack_item_public_muldrotha_v71(
+    state: &GameState,
+    viewer: PlayerId,
+    position: u32,
+    item: &StackItem,
+) -> Result<StackItemPublicV2> {
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    stack_item_public_conqueror_v49_fake_v50(
+        state,
+        viewer,
+        position,
+        item,
+        true,
+        (true, true, true, true),
+        (true, true),
+        true,
+        Some(CommonProjectionScopeV42::MuldrothaV71),
+        None,
+    )
+}
 
 #[allow(clippy::too_many_arguments)]
 fn stack_public_conqueror_v49_fake_v50(
@@ -12563,6 +12683,9 @@ fn stack_source_ref_conqueror_v49_fake_v50(
         }
         Some(CommonProjectionScopeV42::CallV62) => {
             crate::call_observation_v62::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::MuldrothaV71) => {
+            crate::muldrotha_observation_v71::stack_source_reference(state, item)?
         }
         Some(CommonProjectionScopeV42::VivienV70) => {
             crate::vivien_observation_v70::stack_source_reference(state, item)?

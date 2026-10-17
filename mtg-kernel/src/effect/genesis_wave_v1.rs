@@ -1438,18 +1438,6 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     include_str!("../engine/muldrotha_v1.rs"),
                 ),
                 (
-                    "mtg-kernel/src/engine/tinybones_v72.rs",
-                    include_str!("../engine/tinybones_v72.rs"),
-                ),
-                (
-                    "mtg-kernel/src/rules_meaning_tinybones_v72.rs",
-                    include_str!("../rules_meaning_tinybones_v72.rs"),
-                ),
-                (
-                    "mtg-kernel/src/tinybones_public_v72.rs",
-                    include_str!("../tinybones_public_v72.rs"),
-                ),
-                (
                     "mtg-kernel/src/current_mixed_policy_v1/canonical_semantic_booleans.rs",
                     include_str!("../current_mixed_policy_v1/canonical_semantic_booleans.rs"),
                 ),
@@ -1460,6 +1448,75 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                 (
                     "mtg-kernel/src/current_mixed_policy_v1/ordinary_removal_printing.rs",
                     include_str!("../current_mixed_policy_v1/ordinary_removal_printing.rs"),
+                ),
+                (
+                    "mtg-kernel/src/engine/tinybones_v72.rs",
+                    include_str!("../engine/tinybones_v72.rs"),
+                ),
+                (
+                    "mtg-kernel/src/effect/liliana_dreadhorde_v1.rs",
+                    include_str!("liliana_dreadhorde_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/creature_death_capture_v1.rs",
+                    include_str!("../creature_death_capture_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/planeswalker_v1.rs",
+                    include_str!("../planeswalker_v1.rs"),
+                ),
+                ("mtg-kernel/src/trigger.rs", include_str!("../trigger.rs")),
+                (
+                    "mtg-kernel/src/muldrotha_public_v71.rs",
+                    include_str!("../muldrotha_public_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rules_meaning_muldrotha_v71.rs",
+                    include_str!("../rules_meaning_muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/muldrotha_observation_v71.rs",
+                    include_str!("../muldrotha_observation_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/muldrotha_candidates_v71.rs",
+                    include_str!("../muldrotha_candidates_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/muldrotha_v71.rs",
+                    include_str!("../rl_session/muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/muldrotha.rs",
+                    include_str!("../current_mixed_policy_v1/muldrotha.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/muldrotha_v71.rs",
+                    include_str!("../human_bo3_v1/muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_muldrotha_v12.rs",
+                    include_str!("../human_bo3_v1/limited_muldrotha_v12.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_muldrotha_session_v12.rs",
+                    include_str!("../limited_muldrotha_session_v12.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_muldrotha_env_v12.rs",
+                    include_str!("../bin/kernel_limited_muldrotha_env_v12.rs"),
+                ),
+                (
+                    "python/tools/limited_muldrotha_session_v12.py",
+                    include_str!("../../../python/tools/limited_muldrotha_session_v12.py"),
+                ),
+                (
+                    "mtg-kernel/src/rules_meaning_tinybones_v72.rs",
+                    include_str!("../rules_meaning_tinybones_v72.rs"),
+                ),
+                (
+                    "mtg-kernel/src/tinybones_public_v72.rs",
+                    include_str!("../tinybones_public_v72.rs"),
                 ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
