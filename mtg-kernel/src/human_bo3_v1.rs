@@ -427,3 +427,12 @@ pub use vivien_v70::{
 pub(crate) mod limited_vivien_v11;
 pub(crate) use limited_vivien_v11::project_limited_vivien_v11;
 pub use limited_vivien_v11::LimitedVivienDecisionV11;
+
+pub mod muldrotha_v71;
+pub use muldrotha_v71::{
+    HumanDecisionMuldrothaV71, HumanMuldrothaProjectorV71, HumanMuldrothaSessionV71,
+    HumanMuldrothaSnapshotV71, HumanVisibleStateMuldrothaV71,
+};
+pub(crate) mod limited_muldrotha_v12;
+pub(crate) use limited_muldrotha_v12::project_limited_muldrotha_v12;
+pub use limited_muldrotha_v12::LimitedMuldrothaDecisionV12;

@@ -1449,6 +1449,50 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/current_mixed_policy_v1/ordinary_removal_printing.rs",
                     include_str!("../current_mixed_policy_v1/ordinary_removal_printing.rs"),
                 ),
+                (
+                    "mtg-kernel/src/muldrotha_public_v71.rs",
+                    include_str!("../muldrotha_public_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rules_meaning_muldrotha_v71.rs",
+                    include_str!("../rules_meaning_muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/muldrotha_observation_v71.rs",
+                    include_str!("../muldrotha_observation_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/muldrotha_candidates_v71.rs",
+                    include_str!("../muldrotha_candidates_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/rl_session/muldrotha_v71.rs",
+                    include_str!("../rl_session/muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/current_mixed_policy_v1/muldrotha.rs",
+                    include_str!("../current_mixed_policy_v1/muldrotha.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/muldrotha_v71.rs",
+                    include_str!("../human_bo3_v1/muldrotha_v71.rs"),
+                ),
+                (
+                    "mtg-kernel/src/human_bo3_v1/limited_muldrotha_v12.rs",
+                    include_str!("../human_bo3_v1/limited_muldrotha_v12.rs"),
+                ),
+                (
+                    "mtg-kernel/src/limited_muldrotha_session_v12.rs",
+                    include_str!("../limited_muldrotha_session_v12.rs"),
+                ),
+                (
+                    "mtg-kernel/src/bin/kernel_limited_muldrotha_env_v12.rs",
+                    include_str!("../bin/kernel_limited_muldrotha_env_v12.rs"),
+                ),
+                (
+                    "python/tools/limited_muldrotha_session_v12.py",
+                    include_str!("../../../python/tools/limited_muldrotha_session_v12.py"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

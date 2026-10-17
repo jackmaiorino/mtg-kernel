@@ -988,6 +988,7 @@ fn build_for_scope_with_assembly(
             | crate::rl::CommonProjectionScopeV42::EndTurnV68
             | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
             | crate::rl::CommonProjectionScopeV42::VivienV70
+            | crate::rl::CommonProjectionScopeV42::MuldrothaV71
     ) {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -1018,7 +1019,8 @@ fn build_for_scope_with_assembly(
         | crate::rl::CommonProjectionScopeV42::CallV62
         | crate::rl::CommonProjectionScopeV42::EndTurnV68
         | crate::rl::CommonProjectionScopeV42::GenesisWaveV69
-        | crate::rl::CommonProjectionScopeV42::VivienV70 => {}
+        | crate::rl::CommonProjectionScopeV42::VivienV70
+        | crate::rl::CommonProjectionScopeV42::MuldrothaV71 => {}
     }
     // This is the original first complete common build, after the unchanged
     // scope checks and before any family validation/construction.

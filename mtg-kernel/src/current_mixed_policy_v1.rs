@@ -68,6 +68,7 @@ pub enum Source {
     EndTurnV68,
     GenesisWaveV69,
     VivienV70,
+    MuldrothaV71,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -349,6 +350,16 @@ pub fn feature_identity() -> String {
             include_str!("effect/squad_rallier_resolution_v1.rs"),
             crate::engine::time_stop_v1::source_sha256_v1(),
             crate::effect::genesis_wave_v1::source_sha256_v1(),
+            include_str!("muldrotha_public_v71.rs"),
+            include_str!("rules_meaning_muldrotha_v71.rs"),
+            include_str!("muldrotha_observation_v71.rs"),
+            include_str!("muldrotha_candidates_v71.rs"),
+            include_str!("rl_session/muldrotha_v71.rs"),
+            include_str!("current_mixed_policy_v1/muldrotha.rs"),
+            include_str!("human_bo3_v1/muldrotha_v71.rs"),
+            include_str!("human_bo3_v1/limited_muldrotha_v12.rs"),
+            include_str!("limited_muldrotha_session_v12.rs"),
+            include_str!("bin/kernel_limited_muldrotha_env_v12.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
@@ -535,3 +546,6 @@ mod legendary_tests;
 
 mod vivien;
 pub use vivien::{VivienDecision, VivienSession, VivienSnapshot};
+
+mod muldrotha;
+pub use muldrotha::{MuldrothaDecision, MuldrothaSession, MuldrothaSnapshot};

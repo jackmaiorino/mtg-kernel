@@ -580,6 +580,24 @@ pub(crate) fn observe_parts_complete_vivien_v70(
         crate::rl::CommonProjectionScopeV42::VivienV70,
     )
 }
+pub(crate) fn observe_parts_complete_muldrotha_v71(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::MuldrothaV71,
+    )
+}
 fn observe_parts_complete_current_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -664,6 +682,10 @@ fn observe_parts_complete_current_scope_using_family_builder(
         crate::rl::CommonProjectionScopeV42::VivienV70 => (
             crate::vivien_observation_v70::COMMON_SCHEMA,
             crate::vivien_observation_v70::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::MuldrothaV71 => (
+            crate::muldrotha_observation_v71::COMMON_SCHEMA,
+            crate::muldrotha_observation_v71::producer_sha256(),
         ),
         crate::rl::CommonProjectionScopeV42::GenesisWaveV69 => (
             crate::genesis_wave_observation_v69::COMMON_SCHEMA,
@@ -871,6 +893,12 @@ impl RavenousObservationV51 {
         self.validate_artifact_identity(
             crate::vivien_observation_v70::COMMON_SCHEMA,
             &crate::vivien_observation_v70::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_muldrotha_compatibility_v71(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::muldrotha_observation_v71::COMMON_SCHEMA,
+            &crate::muldrotha_observation_v71::producer_sha256(),
         )
     }
     fn validate_artifact_identity(

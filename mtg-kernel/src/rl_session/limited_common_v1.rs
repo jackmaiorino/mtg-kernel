@@ -25,6 +25,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::EndTurnV68
                 | FlatActionContractModeV1::GenesisWaveV69
                 | FlatActionContractModeV1::VivienV70
+                | FlatActionContractModeV1::MuldrothaV71
         )
     }
     #[cfg(all(

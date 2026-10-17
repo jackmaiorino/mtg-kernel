@@ -162,6 +162,22 @@ pub(crate) fn candidates_vivien_v70(
         true,
     )
 }
+pub(crate) fn candidates_muldrotha_v71(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::muldrotha_observation_v71::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope_muldrotha_v71(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        true,
+        true,
+    )
+}
 fn candidates_current_scope(
     origin: &PolicyDecisionV5,
     state: &GameState,
@@ -242,6 +258,26 @@ fn candidates_current_scope_vivien_v70(
         Some(crate::rl::CommonProjectionScopeV42::VivienV70),
     )
 }
+fn candidates_current_scope_muldrotha_v71(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+    accept_graveyard_return: bool,
+    accept_call: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope_inner_v68(
+        origin,
+        state,
+        surface,
+        capabilities,
+        accept_next_five,
+        accept_graveyard_return,
+        accept_call,
+        Some(crate::rl::CommonProjectionScopeV42::MuldrothaV71),
+    )
+}
 #[allow(clippy::too_many_arguments)]
 fn candidates_current_scope_inner_v68(
     origin: &PolicyDecisionV5,
@@ -267,7 +303,9 @@ fn candidates_current_scope_inner_v68(
     if context.is_none() && !priority_offer {
         return Ok(None);
     }
-    let candidates = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::VivienV70) {
+    let candidates = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::MuldrothaV71) {
+        crate::rl_variable_cast_v1::candidates_muldrotha_v71(state, surface, origin)?
+    } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::VivienV70) {
         crate::rl_variable_cast_v1::candidates_vivien_v70(state, surface, origin)?
     } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::GenesisWaveV69) {
         crate::rl_variable_cast_v1::candidates_genesis_wave_v69(state, surface, origin)?

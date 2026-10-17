@@ -758,6 +758,141 @@ pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Res
     }
 }
 
+pub(crate) fn public_facts_v71(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<crate::muldrotha_public_v71::FactsV71, String> {
+    use crate::{muldrotha_public_v71::*, optional_trigger_public_v1 as public};
+    validate_state(state)?;
+    let visible_printings = state
+        .objects
+        .iter()
+        .filter_map(|(id, _)| public::reference(state, id, Some(viewer)))
+        .filter(|r| matches!(r.identity, public::IdentityV1::Known { card_id: 489 }))
+        .collect();
+    let current = crate::valkyries_call_public_v62::capture(state, viewer)?
+        .battlefield
+        .into_iter()
+        .flatten()
+        .filter(|r| matches!(r.card.identity, public::IdentityV1::Known { card_id: 489 }))
+        .collect();
+    let mut budgets = Vec::new();
+    for (id, o) in state.objects.iter() {
+        if o.zone != Zone::Battlefield || o.v4.face_down_v1.is_some() || !definition(o.card_def) {
+            continue;
+        }
+        let source = AbilitySourceContractV4::capture(state, id);
+        let mut unused = Vec::new();
+        let mut used = Vec::new();
+        for permanent_type in TYPES {
+            if spent(
+                state,
+                PermissionV1 {
+                    source,
+                    permanent_type,
+                },
+                state.turn_key_v1(),
+            ) {
+                used.push(permanent_type)
+            } else {
+                unused.push(permanent_type)
+            }
+        }
+        budgets.push(BudgetV71 {
+            source: public::root(state, source, Some(viewer))?,
+            turn: state.turn_key_v1(),
+            active_own_turn: state.active_player == o.controller,
+            printed_abilities_active:
+                crate::continuous_characteristics_v1::printed_abilities_active(state, id),
+            unused,
+            spent: used,
+        });
+    }
+    let mut plays = Vec::new();
+    for (at, e) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::MuldrothaOptionsV1 { options: o } = e else {
+            continue;
+        };
+        options(state, at as u64)?;
+        let chosen = state.engine.event_history.iter().find_map(|e| match e {
+            CommittedEvent::MuldrothaSelectedV1 { pending }
+                if pending.options_history_index == at as u64 =>
+            {
+                Some(*pending)
+            }
+            _ => None,
+        });
+        let played = state.engine.event_history.iter().find_map(|e| match e {
+            CommittedEvent::MuldrothaPlayedV1 { played }
+                if played.options_history_index == at as u64 =>
+            {
+                Some(played)
+            }
+            _ => None,
+        });
+        let stage = if chosen.is_some_and(|p| p.selected == Some(0) && o.ordinary) {
+            StageV71::OrdinaryRoute
+        } else if let Some(p) = played {
+            match p.spell {
+                None => StageV71::PlayedLand,
+                Some((_, id)) if state.stack.iter().any(|r| r.v4.stack_item_id == id) => {
+                    StageV71::CastPublished
+                }
+                Some(_) => StageV71::NoLongerPublished,
+            }
+        } else if chosen.is_some() {
+            StageV71::SelectedPayment
+        } else {
+            StageV71::PermissionChoice
+        };
+        let original = public::ReferenceV1 {
+            object: o.card.object.0,
+            generation: o.card.expected_zone_change_count,
+            owner: o.controller.into(),
+            controller: o.controller.into(),
+            zone: Zone::Graveyard,
+            identity: public::IdentityV1::Known {
+                card_id: o.card_def,
+            },
+        };
+        let current_original = public::reference(state, o.card.object, Some(viewer))
+            .filter(|r| r.generation == o.card.expected_zone_change_count);
+        plays.push(PlayV71 {
+            occurrence: u32::try_from(plays.len()).map_err(|_| "V71 play count exceeds u32")?,
+            card: original,
+            current_original,
+            controller: o.controller.into(),
+            turn: o.turn,
+            land: o.land,
+            ordinary_available: o.ordinary,
+            permissions: o
+                .permissions
+                .iter()
+                .map(|p| {
+                    Ok(PermissionV71 {
+                        source: public::root(state, p.source, Some(viewer))?,
+                        permanent_type: p.permanent_type,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+            selected_menu_index: chosen.and_then(|p| p.selected),
+            stage,
+        });
+    }
+    let facts = FactsV71 {
+        schema: SCHEMA.into(),
+        producer_sha256: producer_sha256(),
+        viewer: viewer.into(),
+        meaning: crate::rules_meaning_muldrotha_v71::printed_meaning()?,
+        visible_printings,
+        current,
+        budgets,
+        plays,
+    };
+    crate::muldrotha_public_v71::validate(&facts)?;
+    Ok(facts)
+}
+
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
