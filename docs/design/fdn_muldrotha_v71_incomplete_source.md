@@ -21,3 +21,10 @@ and unrun. Only formatting and source inspection have occurred so far.
 
 Liliana native checkpoint f1de47a5b remains on its separate clean branch.
 Liliana491/Zombie492 remain unregistered pending actual Tinybones490.
+
+Follow-on preservation checkpoint: strict native definition checking and seven
+paid both-seat Rust fixture groups are now source-prepared, all uncompiled and
+unrun. Six new Limited V12 Python parser/process mock tests pass. This remains
+incomplete pending the shared dispatch/API audit, binary wiring and broader
+affected Python checks. The author is switching to register Liliana491 and its
+exact Zombie492 dependency now that actual Tinybones490 is committed.

@@ -1259,3 +1259,10 @@ fn muldrotha_facts(
             .collect::<Result<_, Error>>()?,
     })
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) mod tests;

@@ -230,3 +230,10 @@ where
 {
     Option::<T>::deserialize(d)
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) mod tests;

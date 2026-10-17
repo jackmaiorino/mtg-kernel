@@ -596,3 +596,10 @@ impl MuldrothaSessionV71 {
         )
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) mod tests;

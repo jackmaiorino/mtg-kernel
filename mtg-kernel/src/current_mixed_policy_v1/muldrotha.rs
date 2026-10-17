@@ -198,3 +198,10 @@ pub(super) fn printing(id: u16) -> Result<Option<Value>> {
     .map(Some)
     .map_err(|e| Error::Projection(e.to_string()))
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) mod tests;
