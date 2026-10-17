@@ -61,17 +61,45 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
     def record_membership(self, name, owner, **readiness):
         identities = {role: json.loads(path.read_text()) for role, path in readiness.items()}
         members = owner.tree.members()
+        raw_members = dispatch.slots._job_members(owner.tree.job)
+        sibling_pids = [other.pid for other in self.owners if other is not owner and other.pid is not None]
         processes = dispatch.slots.process_table()
-        relevant = set(members) | {os.getpid(), owner.pid}
+        relevant = set(raw_members) | {os.getpid(), owner.pid} | set(sibling_pids)
         for identity in identities.values():
             relevant.update([identity["pid"], identity["parent_pid"]])
         relevant.update(processes[pid][0] for pid in list(relevant) if pid in processes)
         rows = [dict(pid=pid, parent_pid=processes[pid][0], name=processes[pid][1])
                 for pid in sorted(relevant) if pid in processes]
-        (self.root/(name+".json")).write_text(json.dumps(dict(
+        record = dict(
             coordinator_pid=os.getpid(), popen_root_pid=owner.pid, identities=identities,
-            members=members, sample=owner.sample(), processes=rows,
-            scope="owned job members, known fixture PIDs and their immediate parents"), indent=2), encoding="utf-8")
+            members=members, raw_members=raw_members, known_sibling_root_pids=sibling_pids,
+            sample=owner.sample(), processes=rows,
+            scope="raw owned job members, known fixture PIDs and their immediate parents")
+        (self.root/(name+".json")).write_text(json.dumps(record, indent=2), encoding="utf-8")
+        return record
+
+    def assert_owned_members(self, record, required_roles, absent_roles=()):
+        raw = set(record["raw_members"])
+        expected = {identity["pid"]: identity for identity in record["identities"].values()}
+        rows = {row["pid"]: row for row in record["processes"]}
+        self.assertNotIn(record["coordinator_pid"], raw)
+        self.assertFalse(raw & set(record["known_sibling_root_pids"]))
+        self.assertEqual(record["identities"]["root"]["pid"], record["popen_root_pid"])
+        for role in required_roles:
+            self.assertIn(record["identities"][role]["pid"], raw)
+        for role in absent_roles:
+            self.assertNotIn(record["identities"][role]["pid"], raw)
+        for pid in raw:
+            self.assertIn(pid, rows)
+            if pid in expected:
+                self.assertEqual(rows[pid]["name"], Path(expected[pid]["executable"]).name.lower())
+                self.assertEqual(rows[pid]["parent_pid"], expected[pid]["parent_pid"])
+            else:
+                # Windows can attach console helpers even for CREATE_NO_WINDOW.
+                # Keep their work charged, but admit only these observed owned helpers.
+                self.assertEqual(rows[pid]["name"], "conhost.exe")
+                self.assertIn(rows[pid]["parent_pid"], expected)
+        self.assertEqual(record["sample"]["active_processes"], len(raw))
 
     def finish(self):
         # Keep failure logs and partial accounting under the configured TEMP.
@@ -105,7 +133,10 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
                      "\nwhile True: time.sleep(.02)")
         peer_child = self.launch(peer, peer_code, trigger, ready, done)
         heartbeat = self.root/"survivor"
-        survivor_child = self.launch(survivor, HEARTBEAT, heartbeat)
+        survivor_ready = self.root/"survivor-ready"
+        survivor_child = self.launch(survivor,
+            "import json,os,pathlib,sys\n"+PID_READY+"\nready(sys.argv[2], 'root')\n"+HEARTBEAT,
+            heartbeat, survivor_ready)
         root_ready, descendant_ready, release = [self.root/name for name in
                                                 ("completed-root-ready", "completed-descendant-ready", "release")]
         descendant = (BURN+"\nimport json,os,pathlib,sys\n"+PID_READY+
@@ -120,14 +151,19 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
             "check=True,creationflags=subprocess.CREATE_NO_WINDOW)",
             descendant, root_ready, descendant_ready, release)
         self.wait_for(lambda: root_ready.exists() and descendant_ready.exists())
-        self.record_membership("completed-live-members", completed, root=root_ready, descendant=descendant_ready)
+        live = self.record_membership("completed-live-members", completed, root=root_ready, descendant=descendant_ready)
+        self.assert_owned_members(live, ("root", "descendant"))
+        self.assertEqual(live["identities"]["descendant"]["parent_pid"], live["identities"]["root"]["pid"])
         release.touch()
         self.assertEqual(child.wait(timeout=8), 0)
         self.wait_for(lambda: ready.exists() and heartbeat.exists())
         # A completed job can be quiet while siblings remain active in Guard.
         result = completed.quiet()
-        self.record_membership("completed-exited-members", completed, root=root_ready, descendant=descendant_ready)
-        self.assertEqual(result["total_processes"], 2)
+        exited = self.record_membership("completed-exited-members", completed, root=root_ready, descendant=descendant_ready)
+        self.assertEqual(exited["raw_members"], [])
+        self.assertEqual(exited["sample"]["active_processes"], len(exited["raw_members"]))
+        self.assertEqual(result["total_processes"], live["sample"]["total_processes"])
+        self.assertEqual(exited["sample"]["total_processes"], result["total_processes"])
         self.assertEqual(result["active_processes"], 0)
         self.assertGreater(result["cpu_100ns"], 0)
         self.assertEqual(result["cpu_100ns"], result["user_100ns"]+result["kernel_100ns"])
@@ -136,6 +172,7 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
         completed.close()
         frozen = completed.sample()
         self.assertTrue(frozen["natural_drain"])
+        self.assertEqual(frozen["total_processes"], live["sample"]["total_processes"])
         before = peer.sample()["cpu_100ns"]
         end = time.process_time()+.06
         while time.process_time() < end:
@@ -154,7 +191,9 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
         size = heartbeat.stat().st_size
         self.wait_for(lambda: heartbeat.stat().st_size > size)
         self.assertIsNone(survivor_child.poll())
-        self.assertEqual(survivor.sample()["active_processes"], 1)
+        self.wait_for(survivor_ready.exists)
+        surviving = self.record_membership("survivor-live-members", survivor, root=survivor_ready)
+        self.assert_owned_members(surviving, ("root",))
         closed = survivor.close()
         self.assertEqual(survivor_child.wait(timeout=3), 1)
         self.assertEqual(closed["active_processes"], 0)
@@ -226,9 +265,11 @@ class WindowsLaunchAccountingTest(unittest.TestCase):
         self.record_membership("lingering-live-members", owner, root=root_ready, descendant=ready)
         with self.assertRaisesRegex(ValueError, "descendants remain"):
             owner.quiet(timeout=.05)
-        partial = owner.sample()
-        self.assertEqual(partial["active_processes"], 1)
-        self.assertEqual(partial["total_processes"], 2)
+        remaining = self.record_membership("lingering-after-quiet-members", owner, root=root_ready, descendant=ready)
+        self.assert_owned_members(remaining, ("descendant",), ("root",))
+        self.assertEqual(remaining["identities"]["descendant"]["parent_pid"], remaining["identities"]["root"]["pid"])
+        partial = remaining["sample"]
+        self.assertGreaterEqual(partial["total_processes"], partial["active_processes"]+1)
         self.assertGreater(partial["cpu_100ns"], 0)
         self.assertFalse(partial["natural_drain"])
         final = owner.terminate_and_drain()
