@@ -161,6 +161,9 @@ def case_match(case: dict, decks: list[dict]) -> dict:
 
 
 def candidate_source(source: dict) -> dict:
+    if source.get("kind") == "public_checkpoint":
+        require(set(source) == {"kind", "config", "checkpoint"}, "public candidate descriptor fields differ")
+        return copy.deepcopy(source)
     return {"kind": "legacy", "source": source, "v3_forced_actions": False}
 
 
@@ -293,11 +296,52 @@ def check_request_pins(value):
         for item in value:
             check_request_pins(item)
     elif isinstance(value, dict):
-        if {"path", "sha256"} <= set(value):
+        if value.get("kind") == "public_checkpoint":
+            public_checkpoint_metadata(value)
+        elif {"path", "sha256"} <= set(value):
             checked(value)
         else:
             for item in value.values():
                 check_request_pins(item)
+
+
+def public_checkpoint_metadata(source):
+    """Read loader dependencies, never historical trajectories inside objects.
+
+    The native loader remains authoritative for Rust config serialization,
+    tensor contents and model contracts. This layer binds the sibling optimizer
+    and parent age before constructing or qualifying a panel.
+    """
+    candidate_source(source)
+    config = json.loads(checked(source["config"]).read_bytes())
+    checkpoint_path = checked(source["checkpoint"])
+    checkpoint = json.loads(checkpoint_path.read_bytes())
+    require(checkpoint.get("schema") == "mtg-kernel-public-input-checkpoint/v1"
+            and checkpoint.get("optimizer_file") == "optimizer.json"
+            and type(checkpoint.get("next_update")) is int
+            and 0 < checkpoint["next_update"] <= len(config["updates"]),
+            "public candidate checkpoint/update boundary differs")
+    optimizer = json.loads(checked(dict(path=str(checkpoint_path.parent/"optimizer.json"),
+                                       sha256=checkpoint["optimizer_sha256"])).read_bytes())
+    require(optimizer.get("schema") == "mtg-kernel-public-input-optimizer-state/v1",
+            "public candidate optimizer schema differs")
+    parent = config["source"]
+    check_request_pins(parent)
+    imported = json.loads(checked(parent["play_import"]).read_bytes())
+    # Fresh ordinary import descriptors have these real loader dependencies.
+    # Their checkpoints and parameter objects are opaque identity bytes.
+    check_request_pins([imported[key] for key in ("initialization", "parameters") if key in imported])
+    initial_age = (json.loads(checked(parent["checkpoint"]).read_bytes())["adam_step"]
+                   if parent.get("checkpoint") is not None else 0)
+    ppo = config.get("ppo")
+    steps = checkpoint["next_update"] * (ppo["epochs"]*ppo["minibatches"] if ppo is not None else 1)
+    require(optimizer["legacy_adam_step"] == initial_age+steps
+            and optimizer["public"]["adam_step"] == steps, "public candidate optimizer ages differ")
+    if not config["inputs_enabled"]:
+        require(all(bits in (0, 0x80000000) for key in
+                    ("object", "state", "object_first", "object_second", "state_first", "state_second")
+                    for bits in optimizer["public"][key]), "disabled public candidate projections are nonzero")
+    return config, optimizer
 
 
 def guarded_paths(guard, request_path, command):
@@ -573,6 +617,15 @@ def qualify(plan_path: Path, sample: int | None, workers: list[int], root: Path,
 
 def candidate_layout(source: dict) -> str:
     """Candidate model layout (import, feature contract, parameter shapes), not its weights."""
+    if source.get("kind") == "public_checkpoint":
+        config, optimizer = public_checkpoint_metadata(source)
+        layout = {key: optimizer[key] for key in
+                  ("schema", "feature_contract", "feature_encoding", "auxiliary_contract", "registry")}
+        layout.update(kind="public_checkpoint", inputs_enabled=config["inputs_enabled"],
+                      projection_mode=config.get("projection_mode", "all"),
+                      play_import=config["source"]["play_import"]["sha256"],
+                      parameters=[(row["name"], row["shape"]) for row in optimizer["parameters"]])
+        return sha256_bytes(json.dumps(layout, sort_keys=True).encode())
     checkpoint = json.loads(checked(source["checkpoint"]).read_text(encoding="utf-8"))
     layout = {key: checkpoint[key] for key in ("schema", "source_import", "feature_contract_digest",
                                                "feature_encoding_digest", "card_db_hash")}
