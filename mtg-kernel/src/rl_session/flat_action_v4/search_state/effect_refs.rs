@@ -1485,7 +1485,8 @@ fn conflicts_in_scope(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            OrdinaryCleanupStageV1 { .. }
+            PublishedCastIdentityV1 { .. }
+            | OrdinaryCleanupStageV1 { .. }
             | TimeStopJournalV1 { .. }
             | SphinxsTutelageDrawV1 { .. }
             | SphinxsTutelageCollectedV1 { .. }
