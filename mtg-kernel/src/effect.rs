@@ -9435,7 +9435,15 @@ fn validate_answered_choice_guard(
                             order_resolved: true,
                             ..
                         }
-                    )))
+                    ))
+                    // validate_pending_effect_choice has already authenticated
+                    // the paid Fiend row, original library and exact search
+                    // frame through fiend_artisan_v1::validate_pending.
+                    || (fiend_artisan_v1::selected(state, &pending.resolving_item)
+                        && matches!(
+                            **frame,
+                            EffectFrame::SearchLibraryCardsToDestination { .. }
+                        )))
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
             }

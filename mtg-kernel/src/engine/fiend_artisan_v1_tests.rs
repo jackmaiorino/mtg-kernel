@@ -329,6 +329,38 @@ fn answer(s: &mut GameState, target: Option<ObjectId>) {
     assert_eq!(*s, r);
     // Snapshot after a real answer, before its bound frame executes.
     crate::effect::validate_pending_effect_choice(s).unwrap();
+    for mode in 0..3 {
+        let mut bad = restore(s);
+        let pending = bad.engine.pending_effect.as_mut().unwrap();
+        if mode == 0 {
+            pending.answered_choice_guard = None;
+        } else {
+            let changed_x = if pending.ctx.x_value == 0 { 1 } else { 0 };
+            let frame = pending.frames.last_mut().unwrap();
+            let EffectFrame::SearchLibraryCardsToDestination {
+                filter,
+                max_targets,
+                ..
+            } = frame
+            else {
+                panic!("paid Fiend answer lost its original search frame")
+            };
+            if mode == 1 {
+                *filter = effect::LibraryCardFilter::CreatureManaValueAtMost(changed_x);
+            } else {
+                *max_targets = 2;
+            }
+            // Coherently changing both copies must still fail the paid native
+            // search contract, even though the generic guard copies agree.
+            pending.answered_choice_guard =
+                Some(effect::EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+        }
+        let before = bad.clone();
+        assert!(effect::validate_pending_effect_choice(&bad).is_err());
+        assert_eq!(bad, before);
+    }
     let mut r = restore(s);
     finish(s);
     finish(&mut r);
