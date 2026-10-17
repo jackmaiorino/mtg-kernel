@@ -2802,7 +2802,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state)?,
+            restricted_mana: public_restricted_mana_v1(state, text_mode)?,
             surface: base.projection,
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
@@ -2860,11 +2860,37 @@ fn refuse_chosen_type_mana_v60(state: &GameState) -> Result<()> {
 
 fn public_restricted_mana_v1(
     state: &GameState,
+    text_mode: ObservationTextModeV2,
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
-    crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
-    crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
+    // Both frozen and complete constructors project this field, even for an
+    // empty mana pool. Retain their private scope through these legacy guards.
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::EndTurnV68Artifact
+            | ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::GenesisWaveV69Artifact
+            | ObservationTextModeV2::VivienV70Artifact
+            | ObservationTextModeV2::MuldrothaV71Artifact
+            | ObservationTextModeV2::TinybonesV72Artifact
+            | ObservationTextModeV2::LilianaV73Artifact
+            | ObservationTextModeV2::ChandraV74Artifact
+            | ObservationTextModeV2::KaitoV75Artifact
+    ) {
+        crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
+    }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -5411,7 +5437,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state)?,
+            restricted_mana: public_restricted_mana_v1(state, text_mode)?,
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
