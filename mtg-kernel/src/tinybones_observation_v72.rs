@@ -120,6 +120,7 @@ pub fn producer_sha256() -> String {
             include_str!("engine/muldrotha_v1.rs"),
             include_str!("engine/tinybones_v72.rs"),
             include_str!("tinybones_public_v72.rs"),
+            include_str!("rl_session/tinybones_v72.rs"),
             include_str!("rules_meaning_tinybones_v72.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());

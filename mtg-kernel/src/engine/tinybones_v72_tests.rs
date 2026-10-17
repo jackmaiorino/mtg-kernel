@@ -817,4 +817,4 @@ fn paid_stash_independent_permission_native_abort_rebinds_restore_and_own_turn_r
 mod public_foundation;
 
 #[path = "tinybones_observation_v72_tests.rs"]
-mod complete_observation;
+pub(crate) mod complete_observation;
