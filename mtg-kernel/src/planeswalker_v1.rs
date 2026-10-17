@@ -123,9 +123,13 @@ pub(crate) fn quote_loyalty_change_v48(
     origin: crate::doubling_season_v48::CounterOriginV48,
 ) -> Result<u32, String> {
     let counters = loyalty(state, object).ok_or("loyalty ledger absent")?;
+    let exact = crate::doubling_season_v48::requires_successor(state)
+        || crate::effect::vivien_reid_v1::definition(state.objects.get(object).card_def)
+        || crate::effect::liliana_dreadhorde_v1::definition(state.objects.get(object).card_def)
+        || crate::effect::chandra_flameshaper_v1::definition(state.objects.get(object).card_def);
     let counters = if delta >= 0 {
         let controller = state.objects.get(object).controller;
-        let original = if crate::doubling_season_v48::requires_successor(state) {
+        let original = if exact {
             crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, delta as u32)
         } else {
             Ok(crate::standard_cards_v1::scale_counters(state, controller, delta) as u32)
@@ -142,7 +146,7 @@ pub(crate) fn quote_loyalty_change_v48(
         });
         let amount = amount?;
         // Retain the legacy saturation only on catalogs without the new source.
-        if crate::doubling_season_v48::requires_successor(state) {
+        if exact {
             counters
                 .checked_add(amount)
                 .ok_or("loyalty counter storage overflow")?
@@ -280,16 +284,64 @@ pub(crate) fn add_loyalty_counters_u32_v48(
     Ok(())
 }
 
+/// New checked placements never narrow a Talent-modified unsigned amount
+/// through the historical signed placement path.
+pub(crate) fn add_loyalty_counters_checked_v1(
+    state: &mut GameState,
+    object: ObjectId,
+    amount: u32,
+) -> Result<(), String> {
+    if amount == 0 {
+        return Ok(());
+    }
+    let counters = quote_loyalty_counters_v48(state, object, amount)?;
+    let permanent = ObjectLinkV4 {
+        object,
+        zone_change_count: state.objects.get(object).zone_change_count,
+    };
+    state
+        .planeswalkers_v1
+        .get_or_insert_with(Default::default)
+        .loyalty
+        .insert(
+            object,
+            LoyaltyV1 {
+                permanent,
+                counters,
+            },
+        );
+    Ok(())
+}
+
 /// Scoped Human V12 recipient facts, not printed planeswalker admission.
 /// Inspect every stored ledger row so stale/hidden/foreign recipients cannot
 /// be silently omitted from the public observation.
 pub(crate) fn validate_heartfire_recipients_v12(state: &GameState) -> Result<(), String> {
-    validate_recipients_inner(state, false)
+    validate_recipients_inner(state, RecipientScopeV1::HeartfireV12)
 }
 pub(crate) fn validate_full_ajani_recipients_v42(state: &GameState) -> Result<(), String> {
-    validate_recipients_inner(state, true)
+    validate_recipients_inner(state, RecipientScopeV1::FullAjaniV42)
 }
-fn validate_recipients_inner(state: &GameState, accept_full: bool) -> Result<(), String> {
+/// Exact recipient definitions already represented by each complete DTO.
+/// Native family validation and the owner's supported-world guard remain required.
+#[derive(Clone, Copy)]
+pub(crate) enum RecipientScopeV1 {
+    HeartfireV12,
+    FullAjaniV42,
+    VivienV70,
+    MuldrothaV71,
+    TinybonesV72,
+    LilianaV73,
+    ChandraV74,
+    KaitoV75,
+}
+pub(crate) fn validate_complete_recipients_v70(
+    state: &GameState,
+    scope: RecipientScopeV1,
+) -> Result<(), String> {
+    validate_recipients_inner(state, scope)
+}
+fn validate_recipients_inner(state: &GameState, scope: RecipientScopeV1) -> Result<(), String> {
     let recipient_ids = || {
         state
             .objects
@@ -323,14 +375,39 @@ fn validate_recipients_inner(state: &GameState, accept_full: bool) -> Result<(),
         let definition = CARD_DEFS
             .get(usize::from(live.card_def))
             .ok_or("Heartfire V12 unknown loyalty recipient definition")?;
+        let supported_definition = definition.name == "Ajani, Caller of the Pride"
+            && (definition.capability == crate::card_def::CardCapability::Partial
+                || !matches!(scope, RecipientScopeV1::HeartfireV12)
+                    && crate::ajani_full_v42::validate_definition(live.card_def).is_ok())
+            && definition.starting_loyalty == Some(4)
+            || match scope {
+                RecipientScopeV1::HeartfireV12 | RecipientScopeV1::FullAjaniV42 => false,
+                RecipientScopeV1::VivienV70
+                | RecipientScopeV1::MuldrothaV71
+                | RecipientScopeV1::TinybonesV72 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::LilianaV73 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::ChandraV74 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                        || crate::effect::chandra_flameshaper_v1::definition(live.card_def)
+                }
+                RecipientScopeV1::KaitoV75 => {
+                    crate::effect::vivien_reid_v1::definition(live.card_def)
+                        || crate::effect::liliana_dreadhorde_v1::definition(live.card_def)
+                        || crate::effect::chandra_flameshaper_v1::definition(live.card_def)
+                        || crate::effect::kaito_cunning_v75::definition(live.card_def)
+                }
+            };
         if live.zone != Zone::Battlefield
             || live.v4.face_index != 0
             || entry.permanent.object != *id
             || entry.permanent.zone_change_count != live.zone_change_count
-            || definition.name != "Ajani, Caller of the Pride"
-            || !(definition.capability == crate::card_def::CardCapability::Partial
-                || accept_full && crate::ajani_full_v42::validate_definition(live.card_def).is_ok())
-            || definition.starting_loyalty != Some(4)
+            || !supported_definition
             || !engine::object_has_type(state, *id, CardType::Planeswalker)
         {
             return Err("Heartfire V12 unsupported or stale loyalty recipient".into());

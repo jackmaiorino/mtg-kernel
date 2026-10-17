@@ -53,3 +53,95 @@ harvest that runs them copies the file back, hand-built events included.
 Insert that line where the variant sits in `CommittedEvent`. When no test
 commits the kind, build the event by hand from its fields, reusing a harvested
 sibling's payload where the types match.
+
+## Unqualified future source bridge
+
+The future native source classifies 313 event kinds. The 237 current samples
+above remain byte-for-byte unchanged. The following 76 future kinds do not yet
+have sample rows. The existing complete-kind assertions are retained and will
+remain unqualified until genuine or honestly hand-built typed samples are
+appended in this order. The initial future export builds and lists its binary;
+it does not execute these or any other native tests.
+
+This is an explicit remaining runtime prerequisite, not a passed check or a
+consumer/Full qualification. Internal kind indices use u16; events, event
+history serialization/Hash and all earlier kind indices retain their shape.
+
+```text
+AleshaPowerLkiV1
+NivMizzetVisionaryDamageV1
+NivMizzetVisionaryTriggerStackedV1
+NivMizzetVisionaryDamageSourceDepartureV1
+KinshipEntryV1
+SphinxsTutelageDrawV1
+SphinxsTutelageCollectedV1
+SphinxsTutelagePublishedV1
+SphinxsTutelageMillStartedV1
+SphinxsTutelageMillBatchV1
+LathrilCombatDamageV1
+LathrilCombatCollectedV1
+LathrilCombatPublishedV1
+LathrilCombatResolvedV1
+LathrilCombatCounteredV1
+LathrilCombatObservedV1
+CopiedTokenAbilitiesEnteredV1
+CopiedTokenEndStepV1
+CopiedTokenEndStepCollectedV1
+CopiedTokenSacrificePublishedV1
+CopiedTokenSacrificeFinishedV1
+CuratorEnteredV1
+CuratorCollectedV1
+CuratorPublishedV1
+CuratorFinishedV1
+CuratorProgressV1
+KykarExiledV1
+KykarDelayedCollectedV1
+GreatwurmCounterPaymentV1
+GreatwurmCombatCaptureV1
+GreatwurmCombatBoundV1
+GreatwurmCollectedV1
+GreatwurmPublishedV1
+GreatwurmFinishedV1
+GreatwurmCounterInputV1
+SourceCopyDepartureV1
+SphinxLoreV1
+SphinxLoreCastOptionsV1
+SphinxLoreCastSelectedV1
+OmniscienceCastOptionsV1
+OmniscienceCastSelectedV1
+NightmareCopyEnteredV1
+NightmareCopyLayerV1
+HarvesterGraveyardEntryV1
+HarvesterResolvedV1
+HarvesterCastAnnouncedV1
+HarvesterCastReversedV1
+ProgenitusInputV1
+ProgenitusShuffledV1
+LeylineOpeningV1
+FiendArtisanInputV1
+FiendArtisanPaidV1
+FiendArtisanSearchStartedV1
+FiendArtisanSearchFinishedV1
+LifeLossWideV59
+LifeGainWideV59
+ConquerorObserverInputV59
+ConquerorLossBatchV59
+ConquerorCapturedV59
+ConquerorCollectedV59
+ConquerorJournalV59
+FiendishPandaWideGainCaptureV59
+ThousandYearStormV1
+TimeStopJournalV1
+OrdinaryCleanupStageV1
+GenesisWaveProgressV1
+GenesisWaveFinishedV1
+PublishedCastIdentityV1
+VivienReidV1
+MuldrothaOptionsV1
+MuldrothaSelectedV1
+MuldrothaPlayedV1
+TinybonesV72
+LilianaDreadhordeV1
+ChandraFlameshaperV74
+KaitoCunningV75
+```

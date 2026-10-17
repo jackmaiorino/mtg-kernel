@@ -290,6 +290,9 @@ fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
         EffectOp::DiscardCards { player, count } => format!("{} discards {count} cards", effect_player(*player)?),
         EffectOp::GainLife { player, amount } => format!("{} gains {amount} life", effect_player(*player)?),
         EffectOp::LoseLife { player, amount } => format!("{} loses {amount} life", effect_player(*player)?),
+        EffectOp::LoseLifeEqualControllerTurnGainsV1 => {
+            "the chosen opponent loses life equal to the total life you have gained this turn".into()
+        }
         EffectOp::AddMana { player, colors } => format!("{} adds {}", effect_player(*player)?, colors.iter().map(|c| format!("{{{}}}", color(*c))).collect::<String>()),
         EffectOp::CreateToken { token_def, controller } => {
             let token = card_def::CARD_DEFS.get(*token_def as usize).ok_or(Error::UnsupportedPrompt)?;
@@ -460,6 +463,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseKicker { actor, .. }
         | A::ChooseSpellMode { actor, .. }
         | A::ChooseEffectOption { actor, .. }
+        | A::ChooseFullRangeCastXValueV59 { actor, .. }
         | A::ChooseEffectTarget { actor, .. }
         | A::FinishEffectSelection { actor, .. }
         | A::ChooseEffectColor { actor, .. }
@@ -581,6 +585,577 @@ pub(super) fn label_parts_v8(
         handles,
         human,
     )
+}
+
+/// Opt-in successor for the five next-printing labels. Facts are supplied by
+/// the V59 owner; predecessor V8 callers never synthesize or reinterpret them.
+pub(super) fn label_parts_v59(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    facts: &crate::next_five_public_v59::FactsV59,
+) -> Result<String, Error> {
+    use crate::{
+        next_five_public_v59 as public,
+        rules_meaning_next_five_v59::{self as meaning, FamilyV59},
+    };
+
+    if facts.schema != public::SCHEMA
+        || facts.producer_sha256 != public::producer_sha256()
+        || facts.viewer != human
+        || facts.meanings.len() != FamilyV59::ALL.len()
+    {
+        return Err(Error::UnsupportedPrompt);
+    }
+    for family in FamilyV59::ALL {
+        let mut rows = facts.meanings.iter().filter(|row| row.family == family);
+        let Some(row) = rows.next() else {
+            return Err(Error::UnsupportedPrompt);
+        };
+        if rows.next().is_some()
+            || meaning::validate(row).is_err()
+            || row.producer_sha256 != meaning::producer_sha256()
+        {
+            return Err(Error::UnsupportedPrompt);
+        }
+    }
+    label_parts_next_five(action, observation, handles, human, facts)
+}
+
+pub(super) fn label_parts_call_v62(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::call_observation_v62::CallObservationV62,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+pub(super) fn label_parts_end_turn_v68(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::end_turn_observation_v68::EndTurnObservationV68,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+pub(super) fn label_parts_genesis_wave_v69(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::genesis_wave_observation_v69::GenesisWaveObservationV69,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+pub(super) fn label_parts_vivien_v70(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::vivien_observation_v70::VivienObservationV70,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+pub(super) fn label_parts_muldrotha_v71(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::muldrotha_observation_v71::MuldrothaObservationV71,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+pub(super) fn label_parts_tinybones_v72(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::tinybones_observation_v72::TinybonesObservationV72,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+pub(super) fn label_parts_liliana_v73(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::liliana_observation_v73::LilianaObservationV73,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+pub(super) fn label_parts_chandra_v74(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::chandra_observation_v74::ChandraObservationV74,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+pub(super) fn label_parts_kaito_v75(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::kaito_observation_v75::KaitoObservationV75,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+pub(super) fn label_parts_graveyard_return_v61(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+// Pure inherited field mapping after the caller's distinct complete validator.
+fn label_parts_next_five(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    facts: &crate::next_five_public_v59::FactsV59,
+) -> Result<String, Error> {
+    use crate::{
+        next_five_public_v59::{TargetV59, TriggerStageV59},
+        optional_trigger_public_v1::{IdentityV1, ReferenceV1},
+        rules_meaning_next_five_v59::FamilyV59,
+    };
+    if actor(action) != Some(human) {
+        return Err(Error::NotHumanTurn);
+    }
+
+    let ref_matches = |stable: &CardStableRefV1, public: &ReferenceV1| {
+        matches!(&public.identity, IdentityV1::Known { card_id }
+            if stable.card_db_id == *card_id)
+            && stable.arena_id == public.object
+            && stable.zone_change_count == public.generation
+            && stable.owner == public.owner
+            && stable.controller == public.controller
+            && stable.zone == public.zone
+    };
+    // A Creature target remains the same legal target across a control change.
+    // Goblin's quote captures the announcement controller, while its ordering
+    // stage captures the target's resolution-time controller for the affected-
+    // player menu. Bind those records by public incarnation and identity only.
+    let target_incarnation_matches = |stable: &CardStableRefV1, public: &ReferenceV1| {
+        matches!(&public.identity, IdentityV1::Known { card_id }
+            if stable.card_db_id == *card_id)
+            && stable.arena_id == public.object
+            && stable.zone_change_count == public.generation
+            && stable.owner == public.owner
+            && stable.zone == public.zone
+    };
+    let stable_refs_match = |left: &CardStableRefV1, right: &CardStableRefV1| {
+        left.arena_id == right.arena_id
+            && left.card_db_id == right.card_db_id
+            && left.owner == right.owner
+            && left.controller == right.controller
+            && left.zone == right.zone
+            && left.zone_change_count == right.zone_change_count
+    };
+    let source_authorized = |source: &CardStableRefV1, family: FamilyV59| {
+        facts
+            .authorized
+            .iter()
+            .any(|row| row.family == family && ref_matches(source, &row.card))
+    };
+    let meaning_for = |source: &CardStableRefV1| {
+        facts
+            .meanings
+            .iter()
+            .find(|row| row.card_id == source.card_db_id)
+    };
+    let public_name = |reference: &ReferenceV1| -> Result<String, Error> {
+        match &reference.identity {
+            IdentityV1::Known { card_id } => handles.name(&CardStableRefV1 {
+                arena_id: reference.object,
+                card_db_id: *card_id,
+                owner: reference.owner,
+                controller: reference.controller,
+                zone: reference.zone,
+                zone_change_count: reference.generation,
+            }),
+            IdentityV1::FaceDown { .. } => Ok("the face-down permanent".into()),
+        }
+    };
+    let target_name = |target: &TargetRefV1| -> Result<String, Error> {
+        match target {
+            TargetRefV1::Object { object } => handles.name(object),
+            _ => Err(Error::UnsupportedPrompt),
+        }
+    };
+    let root_matches = |source: &CardStableRefV1,
+                        root: &crate::optional_trigger_public_v1::RootV1| {
+        ref_matches(source, &root.original_source)
+            || root
+                .current_original_source
+                .as_ref()
+                .is_some_and(|current| ref_matches(source, current))
+    };
+
+    match action {
+        A::ChooseTarget { source, target, .. }
+            if meaning_for(source).is_some_and(|row| row.family == FamilyV59::Goblin)
+                && source_authorized(source, FamilyV59::Goblin) =>
+        {
+            let name = target_name(target)?;
+            let Some(cast) = facts
+                .casts
+                .iter()
+                .find(|row| row.family == FamilyV59::Goblin && ref_matches(source, &row.source))
+            else {
+                return Err(Error::InvalidVisibleReference);
+            };
+            if !cast.payment_pending || cast.original_controller != human {
+                return Err(Error::InvalidVisibleReference);
+            }
+            let x = cast.x.map_or_else(
+                || "X is not selected yet".to_string(),
+                |value| format!("X = {value}"),
+            );
+            return Ok(format!(
+                "Choose {name} as the creature target for Goblin Negotiation ({x})"
+            ));
+        }
+        A::ChooseTarget {
+            actor,
+            source,
+            target,
+            ..
+        } if *actor == human
+            && meaning_for(source).is_some_and(|row| row.family == FamilyV59::Replication)
+            && facts.triggers.iter().any(|row| {
+                row.family == FamilyV59::Replication
+                    && row.stage == TriggerStageV59::Held
+                    && row.source.captured_controller == human
+                    && root_matches(source, &row.source)
+            }) =>
+        {
+            let TargetRefV1::Object { object } = target else {
+                return Err(Error::UnsupportedPrompt);
+            };
+            if object.controller != human || object.zone != Zone::Battlefield {
+                return Err(Error::InvalidVisibleReference);
+            }
+            return Ok(format!(
+                "Choose {} as another nonland permanent you control for the Extravagant Replication trigger",
+                handles.name(object)?
+            ));
+        }
+        A::ChooseEffectTarget {
+            actor,
+            source,
+            target,
+            selected_count,
+            min_targets,
+            max_targets,
+        } if *actor == human
+            && meaning_for(source).is_some_and(|row| row.family == FamilyV59::Replication) =>
+        {
+            let Some(copy) = facts.aura_copy.as_ref() else {
+                return label_parts_v8(action, observation, handles, human);
+            };
+            if !copy.untargeted
+                || copy.chooser != human
+                || !root_matches(source, &copy.source)
+                || *selected_count != 0
+                || *min_targets != 1
+                || *max_targets != 1
+                || copy.remaining_count == 0
+                || copy.accepted_host_awaiting_advance.is_some()
+                || !copy.candidate_hosts.iter().any(|host| match target {
+                    TargetRefV1::Object { object } => ref_matches(object, host),
+                    _ => false,
+                })
+            {
+                return Err(Error::InvalidVisibleReference);
+            }
+            let TargetRefV1::Object { object } = target else {
+                return Err(Error::UnsupportedPrompt);
+            };
+            return Ok(format!(
+                "Choose {} as an Aura host for the Extravagant Replication copy",
+                handles.name(object)?
+            ));
+        }
+        A::ChooseFullRangeCastXValueV59 {
+            actor,
+            source,
+            x_value,
+        } if *actor == human => {
+            let cast = facts
+                .casts
+                .iter()
+                .find(|row| row.family == FamilyV59::Goblin && ref_matches(source, &row.source))
+                .ok_or(Error::InvalidVisibleReference)?;
+            if !cast.payment_pending
+                || cast.original_controller != human
+                || cast.x.is_some()
+                || facts.goblin_ordering.is_some()
+            {
+                return Err(Error::InvalidVisibleReference);
+            }
+            let [TargetV59::Object(target)] = cast.targets.as_slice() else {
+                return Err(Error::InvalidVisibleReference);
+            };
+            return Ok(format!("Cast Goblin Negotiation with X = {x_value}, targeting {}; choose from the complete native range 0 through 65535", public_name(target)?));
+        }
+        A::ChooseEffectOption {
+            actor,
+            source,
+            option_index,
+            option_count,
+        } if *actor == human
+            && meaning_for(source).is_some_and(|row| row.family == FamilyV59::Goblin)
+            && facts.goblin_ordering.is_none() =>
+        {
+            let Some(cast) = facts
+                .casts
+                .iter()
+                .find(|row| row.family == FamilyV59::Goblin && ref_matches(source, &row.source))
+            else {
+                return Err(Error::InvalidVisibleReference);
+            };
+            if !cast.payment_pending
+                || cast.original_controller != human
+                || cast.x.is_some()
+                || usize::from(*option_index) >= usize::from(*option_count)
+            {
+                return Err(Error::InvalidVisibleReference);
+            }
+            let [TargetV59::Object(target)] = cast.targets.as_slice() else {
+                return Err(Error::InvalidVisibleReference);
+            };
+            return Ok(format!(
+                "Cast Goblin Negotiation with X = {option_index}, targeting {}; it deals X damage and creates Goblins only for actual damage in excess of lethal after replacement and prevention",
+                public_name(target)?
+            ));
+        }
+        A::ChooseEffectOption {
+            actor,
+            source,
+            option_index,
+            option_count,
+        } if *actor == human
+            && meaning_for(source).is_some_and(|row| row.family == FamilyV59::Goblin)
+            && facts.goblin_ordering.is_some() =>
+        {
+            let stage = facts.goblin_ordering.as_ref().unwrap();
+            let Some(option) = facts.goblin_ordering_options.get(*option_index as usize) else {
+                return Err(Error::InvalidVisibleReference);
+            };
+            let quote_matches = facts.goblin_quotes.iter().any(|quote| {
+                quote.original_controller == stage.controller
+                    && quote.original_x == stage.original_x
+                    && quote.target_legal_now
+                    && ref_matches(source, &quote.source)
+                    && ref_matches(&stage.source, &quote.source)
+                    && matches!(&quote.target, TargetV59::Object(target)
+                        if target_incarnation_matches(&stage.target, target))
+            });
+            if stage.chooser != human
+                || !quote_matches
+                || !stable_refs_match(source, &stage.source)
+                || usize::from(*option_count) != facts.goblin_ordering_options.len()
+                || *option_count == 0
+            {
+                return Err(Error::InvalidVisibleReference);
+            }
+            let operation = match option.kind.as_str() {
+                "multiplier" => "double the remaining damage",
+                "barricade" => "prevent all remaining damage",
+                "protection" => "prevent all remaining damage through protection",
+                "shield" => "use the remaining damage shield",
+                "color" => "apply color-based damage prevention",
+                _ => return Err(Error::UnsupportedPrompt),
+            };
+            let shield = option
+                .shield_remaining
+                .map(|amount| format!(" ({amount} shield damage remains)"))
+                .unwrap_or_default();
+            return Ok(format!(
+                "For Goblin Negotiation (X = {}), {operation} from {}{shield} against the {} remaining damage to {}",
+                stage.original_x,
+                handles.name(&option.source)?,
+                stage.remaining_damage,
+                handles.name(&stage.target)?
+            ));
+        }
+        A::OrderTriggers {
+            actor,
+            pending_sources,
+            order,
+        } if *actor == human => {
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            if sorted != (0..order.len()).collect::<Vec<_>>()
+                || pending_sources.len() != order.len()
+                || pending_sources.len() < 2
+            {
+                return Err(Error::InvalidVisibleReference);
+            }
+            let held = facts
+                .triggers
+                .iter()
+                .filter(|row| {
+                    row.stage == TriggerStageV59::Held && row.source.captured_controller == human
+                })
+                .collect::<Vec<_>>();
+            if held.len() != pending_sources.len() {
+                return label_parts_v8(action, observation, handles, human);
+            }
+            let assigned = pending_sources
+                .iter()
+                .zip(&held)
+                .map(|(source, row)| {
+                    if !root_matches(source, &row.source) {
+                        return Err(Error::InvalidVisibleReference);
+                    }
+                    Ok(*row)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if assigned
+                .iter()
+                .any(|row| !matches!(row.family, FamilyV59::Replication | FamilyV59::Infernal))
+            {
+                return label_parts_v8(action, observation, handles, human);
+            }
+            let mut descriptions = Vec::with_capacity(order.len());
+            for &position in order {
+                let row = assigned
+                    .get(position)
+                    .ok_or(Error::InvalidVisibleReference)?;
+                let source = pending_sources
+                    .get(position)
+                    .ok_or(Error::InvalidVisibleReference)?;
+                let name = handles.name(source)?;
+                let description = match row.family {
+                    FamilyV59::Replication => {
+                        if !row.targets.is_empty() {
+                            return Err(Error::UnsupportedPrompt);
+                        }
+                        format!(
+                            "{name} trigger: create a token copy of a nonland permanent you control"
+                        )
+                    }
+                    FamilyV59::Infernal => {
+                        let death = facts
+                            .infernal_deaths
+                            .iter()
+                            .find(|death| {
+                                death.source.original_source == row.source.original_source
+                            })
+                            .ok_or(Error::UnsupportedPrompt)?;
+                        if !death.captured_not_demon || !death.collection_completed {
+                            return Err(Error::UnsupportedPrompt);
+                        }
+                        if death.return_incarnation_available_now {
+                            format!(
+                                "{name} trigger: return the original non-token card from its owner's graveyard to the battlefield under its owner's control with two +1/+1 counters, entering as a Demon if that same incarnation is still there on resolution"
+                            )
+                        } else {
+                            format!(
+                                "{name} trigger: the original non-token card is no longer returnable from its owner's graveyard, so this trigger will do nothing"
+                            )
+                        }
+                    }
+                    _ => return Err(Error::UnsupportedPrompt),
+                };
+                descriptions.push(description);
+            }
+            return Ok(format!(
+                "Put triggers on the stack from bottom to top (last resolves first): {}",
+                descriptions.join("; then ")
+            ));
+        }
+        _ => {}
+    }
+
+    label_parts_v8(action, observation, handles, human)
 }
 
 /// Opt-in label successor. Predecessor entry points never call this function.
@@ -936,8 +1511,31 @@ fn label_common(
                     .iter()
                     .find(|ability| ability.colors.contains(&choice))
             };
-            if !primary && additional.is_none() {
+            let restricted = if primary || additional.is_some() {
+                None
+            } else {
+                def.restricted_mana_abilities
+                    .iter()
+                    .find(|ability| ability.colors.contains(&choice))
+            };
+            if !primary && additional.is_none() && restricted.is_none() {
                 return Err(Error::UnsupportedPrompt);
+            }
+            if let Some(restricted) = restricted {
+                if cost_target.is_some() {
+                    return Err(Error::UnsupportedPrompt);
+                }
+                let restriction = match restricted.restriction {
+                    card_def::ManaSpendRestrictionDef::SpellWithSubtype(
+                        card_def::Subtype::Angel,
+                    ) => "spend this mana only to cast Angel spells",
+                    _ => return Err(Error::UnsupportedPrompt),
+                };
+                return Ok(format!(
+                    "Tap {}: add {{{}}}; {restriction}",
+                    handles.name(source)?,
+                    color(choice)
+                ));
             }
             let (ability, extra_cost) = match additional {
                 Some(additional) => (Some(additional.ability), Some(additional.mana_cost)),
@@ -1456,6 +2054,7 @@ fn label_common(
         | A::ChooseEntryColorV36 { .. }
         | A::ChooseDivineKickerV44 { .. }
         | A::ChooseDivineTargetV44 { .. }
+        | A::ChooseFullRangeCastXValueV59 { .. }
         | A::FinishDivineTargetsV44 { .. } => return Err(Error::UnsupportedPrompt),
     })
 }
@@ -1844,5 +2443,1579 @@ mod variable_target_refusal_tests {
             describe_effect(&op),
             Err(Error::UnsupportedPrompt)
         ));
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod next_five_native_label_tests {
+    use super::*;
+    use crate::{
+        extra_turn_v1::tests::ready, ids::PlayerId, policy_observation_v6::tests::put,
+        rl_session::FastActorSessionV1, state::Zone,
+    };
+
+    fn next_five_rows(
+        session: &crate::rl_session::NextFiveSessionV59,
+    ) -> (
+        crate::next_five_observation_v59::NextFiveObservationV59,
+        crate::rl_session::FastActorDecisionV1,
+        Vec<A>,
+    ) {
+        let decision = session.decision_v59().unwrap();
+        (
+            decision.observation().clone(),
+            decision.expected(),
+            decision.actions().to_vec(),
+        )
+    }
+
+    fn human_label(
+        observation: &crate::next_five_observation_v59::NextFiveObservationV59,
+        action: &A,
+        human: PlayerSeatV1,
+    ) -> Result<String, Error> {
+        let handles = Handles::from_parts(
+            &observation.common.common.projection,
+            &observation.common.common.own_hand,
+            &observation.common.common.known_hand_cards,
+            &observation.common.common.known_library_cards,
+            observation
+                .common
+                .common
+                .extensions
+                .decision_local_library
+                .as_ref(),
+        )?;
+        let parts = super::super::life_ward_v8::ProjectionPartsV8 {
+            projection: &observation.common.common.projection,
+            own_hand: &observation.common.common.own_hand,
+            known_library_cards: &observation.common.common.known_library_cards,
+            known_hand_cards: &observation.common.common.known_hand_cards,
+            known_face_down_cards: &observation.common.common.known_face_down_cards,
+            extensions: &observation.common.common.extensions,
+        };
+        label_parts_v59(action, &parts, &handles, human, &observation.next_five)
+    }
+
+    fn human_label_v59(
+        observation: &crate::next_five_observation_v59::NextFiveObservationV59,
+        action: &A,
+        human: PlayerSeatV1,
+        facts: &crate::next_five_public_v59::FactsV59,
+    ) -> Result<String, Error> {
+        let handles = Handles::from_parts(
+            &observation.common.common.projection,
+            &observation.common.common.own_hand,
+            &observation.common.common.known_hand_cards,
+            &observation.common.common.known_library_cards,
+            observation
+                .common
+                .common
+                .extensions
+                .decision_local_library
+                .as_ref(),
+        )?;
+        let parts = super::super::life_ward_v8::ProjectionPartsV8 {
+            projection: &observation.common.common.projection,
+            own_hand: &observation.common.common.own_hand,
+            known_library_cards: &observation.common.common.known_library_cards,
+            known_hand_cards: &observation.common.common.known_hand_cards,
+            known_face_down_cards: &observation.common.common.known_face_down_cards,
+            extensions: &observation.common.common.extensions,
+        };
+        label_parts_v59(action, &parts, &handles, human, facts)
+    }
+
+    fn activate_and_restore(
+        session: &mut crate::rl_session::NextFiveSessionV59,
+        expected: crate::rl_session::FastActorDecisionV1,
+        index: usize,
+    ) {
+        let saved = session.snapshot_v59();
+        let decision = session.decision_v59().unwrap();
+        assert_eq!(decision.expected(), expected);
+        session.step_v59(&decision, index as u32).unwrap();
+        session.restore_v59(&saved).unwrap();
+    }
+
+    fn step_next_five(
+        session: &mut crate::rl_session::NextFiveSessionV59,
+        expected: crate::rl_session::FastActorDecisionV1,
+        index: u32,
+    ) {
+        let decision = session.decision_v59().unwrap();
+        assert_eq!(decision.expected(), expected);
+        session.step_v59(&decision, index).unwrap();
+    }
+
+    fn owned_human_prompt(
+        session: &mut crate::human_bo3_v1::HumanNextFiveSessionV59,
+        projector: &mut crate::human_bo3_v1::HumanNextFiveProjectorV59,
+        human: PlayerId,
+    ) -> (
+        crate::rl_session::FastActorDecisionV1,
+        crate::human_bo3_v1::HumanDecisionNextFiveV59,
+    ) {
+        use crate::rl_session::FastActorResponseV1;
+        for _ in 0..128 {
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("native Human fixture reached terminal unexpectedly");
+            };
+            if expected.acting_player == human.into() {
+                return (
+                    expected,
+                    projector.project_current(session, expected).unwrap(),
+                );
+            }
+            session
+                .step_opponent_with(expected, |_, actions| {
+                    actions
+                        .iter()
+                        .position(|action| {
+                            matches!(action, A::Pass { actor } if *actor == expected.acting_player)
+                        })
+                        .map(|index| index as u32)
+                        .ok_or_else(|| {
+                            crate::rl::RlContractError(
+                                "opponent fixture has no native pass action".into(),
+                            )
+                        })
+                })
+                .unwrap();
+        }
+        panic!("opponent fixture did not reach the Human decision");
+    }
+
+    fn submit_owned(
+        session: &mut crate::human_bo3_v1::HumanNextFiveSessionV59,
+        projector: &mut crate::human_bo3_v1::HumanNextFiveProjectorV59,
+        visible: &crate::human_bo3_v1::HumanDecisionNextFiveV59,
+        action_index: u32,
+    ) {
+        projector
+            .submit(
+                session,
+                crate::human_bo3_v1::HumanActionRequestV1 {
+                    prompt_seq: visible.prompt_seq,
+                    action_index,
+                },
+            )
+            .unwrap();
+    }
+
+    fn quiet_actual_step(state: &mut crate::state::GameState, decision: crate::engine::Decision) {
+        use crate::engine::{Action, Decision};
+        let action = match decision {
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
+            Decision::DeclareBlockers { .. } => Action::DeclareBlockers(vec![]),
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            other => panic!("unexpected native Replication fixture decision: {other:?}"),
+        };
+        crate::engine::step(state, action).unwrap();
+    }
+
+    fn paid_replication_at_own_upkeep(
+        actor: PlayerId,
+    ) -> (
+        crate::state::GameState,
+        crate::ids::ObjectId,
+        crate::ids::ObjectId,
+        crate::ids::ObjectId,
+        crate::ids::ObjectId,
+    ) {
+        use crate::{
+            engine::{self, Action, Decision},
+            state::{Step, Target},
+        };
+
+        fn cast_native_fixture_spell(
+            state: &mut crate::state::GameState,
+            actor: PlayerId,
+            spell: crate::ids::ObjectId,
+            target: Option<crate::ids::ObjectId>,
+        ) {
+            let before = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            let definition =
+                &crate::card_def::CARD_DEFS[usize::from(state.objects.get(spell).card_def)];
+            let (mana_value, spell_name) = (definition.mana_value, definition.name.to_string());
+            assert!(matches!(
+                engine::advance_until_decision(state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == actor && castable_spells.contains(&spell)
+            ));
+            engine::step(state, Action::CastSpell(spell)).unwrap();
+            if let Some(target) = target {
+                assert!(matches!(
+                    engine::advance_until_decision(state),
+                    Decision::ChooseTargets { spell: source, legal_targets, .. }
+                        if source == spell && legal_targets.contains(&Target::Object(target))
+                ));
+                engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            }
+            assert!(matches!(
+                engine::advance_until_decision(state),
+                Decision::CastSpellOrPass { player, .. } if player == actor
+            ));
+            assert!(state.engine.pending_cast.is_none());
+            assert_eq!(state.objects.get(spell).zone, Zone::Stack);
+
+            for _ in 0..48 {
+                let decision = engine::advance_until_decision(state);
+                if state.objects.get(spell).zone == Zone::Battlefield
+                    && state.stack.is_empty()
+                    && state.engine.pending_cast.is_none()
+                    && state.engine.pending_effect.is_none()
+                    && state.engine.pending_triggers.is_empty()
+                    && matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+                {
+                    let after = state.players[actor.index()]
+                        .battlefield
+                        .iter()
+                        .filter(|id| state.objects.get(**id).tapped)
+                        .count();
+                    assert_eq!(after - before, usize::from(mana_value));
+                    return;
+                }
+                quiet_actual_step(state, decision);
+            }
+            panic!("paid fixture spell did not resolve: {spell_name}");
+        }
+
+        let mut state = ready(actor);
+        crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
+        for _ in 0..3 {
+            put(&mut state, actor, "Island", Zone::Battlefield);
+        }
+        for _ in 0..10 {
+            put(&mut state, actor, "Forest", Zone::Battlefield);
+        }
+        let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let other_host = put(&mut state, actor, "Axgard Cavalry", Zone::Battlefield);
+        let aura = put(&mut state, actor, "Bind the Monster", Zone::Hand);
+        cast_native_fixture_spell(&mut state, actor, aura, Some(host));
+        assert_eq!(state.objects.get(aura).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(aura).v4.attached_to.unwrap().object, host);
+        assert!(state.objects.get(host).attachments.contains(&aura));
+
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        cast_native_fixture_spell(&mut state, actor, season, None);
+
+        let target = aura;
+        let source = put(&mut state, actor, "Extravagant Replication", Zone::Hand);
+        cast_native_fixture_spell(&mut state, actor, source, None);
+
+        let mut found_upkeep_target = false;
+        for _ in 0..256 {
+            let decision = engine::advance_until_decision(&mut state);
+            if matches!(decision, Decision::ChooseTargets { spell, .. } if spell == source)
+                && state.active_player == actor
+                && state.step == Step::Upkeep
+            {
+                found_upkeep_target = true;
+                break;
+            }
+            quiet_actual_step(&mut state, decision);
+        }
+        assert!(
+            found_upkeep_target,
+            "paid Replication upkeep target did not appear"
+        );
+        (state, source, target, host, other_host)
+    }
+
+    fn paid_infernal_pair(actor: PlayerId) -> (crate::state::GameState, [crate::ids::ObjectId; 2]) {
+        use crate::engine::{self, Action, Decision};
+        let mut state = ready(actor);
+        crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
+        for _ in 0..12 {
+            put(&mut state, actor, "Swamp", Zone::Battlefield);
+        }
+        let mut vessels = Vec::new();
+        for _ in 0..2 {
+            let vessel = put(&mut state, actor, "Infernal Vessel", Zone::Hand);
+            let mana_value = crate::card_def::CARD_DEFS
+                [usize::from(state.objects.get(vessel).card_def)]
+            .mana_value;
+            let tapped_before = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == actor && castable_spells.contains(&vessel)
+            ));
+            engine::step(&mut state, Action::CastSpell(vessel)).unwrap();
+            let mut resolved = false;
+            for _ in 0..32 {
+                let decision = engine::advance_until_decision(&mut state);
+                if state.objects.get(vessel).zone == Zone::Battlefield
+                    && state.stack.is_empty()
+                    && state.engine.pending_cast.is_none()
+                    && matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+                {
+                    resolved = true;
+                    break;
+                }
+                quiet_actual_step(&mut state, decision);
+            }
+            assert!(resolved, "paid Infernal Vessel did not resolve");
+            let tapped_after = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            assert_eq!(tapped_after - tapped_before, usize::from(mana_value));
+            vessels.push(vessel);
+        }
+        let [first, second] = vessels.as_slice() else {
+            unreachable!("exactly two paid Vessels were cast")
+        };
+        (state, [*first, *second])
+    }
+
+    fn paid_giada_entry(actor: PlayerId) -> crate::state::GameState {
+        use crate::engine;
+        use crate::state::Step;
+        let mut state = ready(actor);
+        for _ in 0..10 {
+            put(&mut state, actor, "Plains", Zone::Battlefield);
+        }
+        put(&mut state, actor, "Serra Angel", Zone::Battlefield);
+        put(&mut state, actor, "Doubling Season", Zone::Battlefield);
+        let giada = put(&mut state, actor, "Giada, Font of Hope", Zone::Hand);
+        let later_angel = put(&mut state, actor, "Serra Angel", Zone::Hand);
+
+        fn paid_cast(
+            state: &mut crate::state::GameState,
+            actor: PlayerId,
+            spell: crate::ids::ObjectId,
+        ) {
+            use crate::engine::{self, Action, Decision};
+            let mana_value = crate::card_def::CARD_DEFS
+                [usize::from(state.objects.get(spell).card_def)]
+            .mana_value;
+            let tapped_before = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            let mut resolved = false;
+            for _ in 0..96 {
+                let decision = engine::advance_until_decision(state);
+                if state.objects.get(spell).zone == Zone::Battlefield
+                    && state.stack.is_empty()
+                    && state.engine.pending_cast.is_none()
+                    && state.engine.pending_effect.is_none()
+                    && state.engine.pending_triggers.is_empty()
+                {
+                    resolved = true;
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass {
+                        player,
+                        castable_spells,
+                        ..
+                    } if player == actor && castable_spells.contains(&spell) => {
+                        engine::step(state, Action::CastSpell(spell)).unwrap();
+                    }
+                    other => quiet_actual_step(state, other),
+                }
+            }
+            assert!(resolved, "paid Angel spell did not enter the battlefield");
+            let tapped_after = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            assert_eq!(tapped_after - tapped_before, usize::from(mana_value));
+        }
+
+        paid_cast(&mut state, actor, giada);
+        assert_eq!(state.objects.get(giada).counters.plus1_plus1, 0);
+        paid_cast(&mut state, actor, later_angel);
+        assert_eq!(state.objects.get(later_angel).counters.plus1_plus1, 4);
+
+        // Giada cannot use a tap mana ability on the turn she entered. Advance
+        // through native empty combat/priority decisions until her next turn.
+        let mut ready_to_tap = false;
+        for _ in 0..512 {
+            let decision = engine::advance_until_decision(&mut state);
+            if state.active_player == actor
+                && state.step == Step::Main1
+                && !state.objects.get(giada).summoning_sick
+            {
+                ready_to_tap = true;
+                break;
+            }
+            quiet_actual_step(&mut state, decision);
+        }
+        assert!(
+            ready_to_tap,
+            "native turn progression clears Giada sickness"
+        );
+        state
+    }
+
+    #[test]
+    fn restricted_giada_white_mana_labels_actual_paid_rows_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let giada = put(&mut state, actor, "Giada, Font of Hope", Zone::Battlefield);
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+            let (observation, expected, actions) = next_five_rows(&session);
+            let human = expected.acting_player;
+            let (index, action) = actions
+                .iter()
+                .enumerate()
+                .find(|(_, action)| matches!(action,
+                    A::ActivateManaAbility { actor: owner, source, mana_choice: Some(ManaColor::W), .. }
+                    if *owner == human && source.arena_id == giada.0
+                ))
+                .expect("native Giada white-mana row");
+            let label = human_label(&observation, action, human).unwrap();
+            assert!(label.contains("add {W}"), "{label}");
+            assert!(label.contains("only to cast Angel spells"), "{label}");
+
+            activate_and_restore(&mut session, expected, index);
+            let (restored_observation, restored_expected, restored_actions) =
+                next_five_rows(&session);
+            let restored_human = restored_expected.acting_player;
+            let (restored_index, restored_action) = restored_actions
+                .iter()
+                .enumerate()
+                .find(|(_, action)| matches!(action,
+                    A::ActivateManaAbility { actor: owner, source, mana_choice: Some(ManaColor::W), .. }
+                    if *owner == restored_human && source.arena_id == giada.0
+                ))
+                .expect("restored native Giada white-mana row");
+            assert_eq!(
+                human_label(&restored_observation, restored_action, restored_human).unwrap(),
+                label
+            );
+            activate_and_restore(&mut session, restored_expected, restored_index);
+        }
+    }
+
+    #[test]
+    fn midnight_snack_turn_gain_loss_labels_actual_activation_rows_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let snack = put(&mut state, actor, "Midnight Snack", Zone::Battlefield);
+            state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+            let (observation, expected, actions) = next_five_rows(&session);
+            let human = expected.acting_player;
+            let (index, action) = actions
+                .iter()
+                .enumerate()
+                .find(|(_, action)| {
+                    matches!(action,
+                        A::ActivateAbility { actor: owner, source, ability_index: 0, .. }
+                        if *owner == human && source.arena_id == snack.0
+                    )
+                })
+                .expect("native Midnight Snack activation row");
+            let label = human_label(&observation, action, human).unwrap();
+            assert!(label.contains("sacrifice Midnight Snack"), "{label}");
+            assert!(
+                label.contains(
+                    "chosen opponent loses life equal to the total life you have gained this turn"
+                ),
+                "{label}"
+            );
+
+            activate_and_restore(&mut session, expected, index);
+            let (restored_observation, restored_expected, restored_actions) =
+                next_five_rows(&session);
+            let restored_human = restored_expected.acting_player;
+            let (restored_index, restored_action) = restored_actions
+                .iter()
+                .enumerate()
+                .find(|(_, action)| {
+                    matches!(action,
+                        A::ActivateAbility { actor: owner, source, ability_index: 0, .. }
+                        if *owner == restored_human && source.arena_id == snack.0
+                    )
+                })
+                .expect("restored native Midnight Snack activation row");
+            assert_eq!(
+                human_label(&restored_observation, restored_action, restored_human).unwrap(),
+                label
+            );
+            activate_and_restore(&mut session, restored_expected, restored_index);
+        }
+    }
+
+    #[test]
+    fn goblin_pending_target_and_x_labels_bind_to_actual_paid_cast_both_seats_and_restore() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            for _ in 0..10 {
+                put(&mut state, actor, "Mountain", Zone::Battlefield);
+            }
+            let target = put(
+                &mut state,
+                actor.opponent(),
+                "Axgard Cavalry",
+                Zone::Battlefield,
+            );
+            let spell = put(&mut state, actor, "Goblin Negotiation", Zone::Hand);
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+
+            let (_, cast_decision, cast_actions) = next_five_rows(&session);
+            let cast_index = cast_actions
+                .iter()
+                .position(|action| {
+                    matches!(action,
+                        A::CastSpell { actor: owner, source }
+                        if *owner == cast_decision.acting_player && source.arena_id == spell.0
+                    )
+                })
+                .expect("native Goblin Negotiation cast row");
+            step_next_five(&mut session, cast_decision, cast_index as u32);
+
+            let (target_observation, target_decision, target_actions) = next_five_rows(&session);
+            let target_facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            let target_index = target_actions
+                .iter()
+                .position(|action| matches!(action,
+                    A::ChooseTarget { actor: owner, source, target: TargetRefV1::Object { object }, .. }
+                    if *owner == target_decision.acting_player
+                        && source.arena_id == spell.0
+                        && object.arena_id == target.0
+                ))
+                .expect("native Goblin creature target row");
+            let target_label = human_label_v59(
+                &target_observation,
+                &target_actions[target_index],
+                target_decision.acting_player,
+                &target_facts,
+            )
+            .unwrap();
+            assert!(target_label.contains("creature target"), "{target_label}");
+            assert!(
+                target_label.contains("X is not selected yet"),
+                "{target_label}"
+            );
+            step_next_five(&mut session, target_decision, target_index as u32);
+
+            let (x_observation, x_decision, x_actions) = next_five_rows(&session);
+            let x_facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            let x_index = x_actions
+                .iter()
+                .position(|action| {
+                    matches!(action,
+                        A::ChooseEffectOption { actor: owner, source, option_index: 3, .. }
+                        if *owner == x_decision.acting_player && source.arena_id == spell.0
+                    )
+                })
+                .expect("native Goblin X=3 row");
+            let x_label = human_label_v59(
+                &x_observation,
+                &x_actions[x_index],
+                x_decision.acting_player,
+                &x_facts,
+            )
+            .unwrap();
+            assert!(x_label.contains("X = 3"), "{x_label}");
+            assert!(x_label.contains("Axgard Cavalry"), "{x_label}");
+            assert!(
+                x_label.contains("actual damage in excess of lethal"),
+                "{x_label}"
+            );
+
+            let saved = session.snapshot_v59();
+            step_next_five(&mut session, x_decision, x_index as u32);
+            assert!(session.fixture_state_v59().engine.pending_cast.is_none());
+            assert_eq!(
+                session.fixture_state_v59().objects.get(spell).zone,
+                Zone::Stack
+            );
+            let paid_facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            let paid_cast = paid_facts
+                .casts
+                .iter()
+                .find(|row| row.source.object == spell.0)
+                .expect("paid Goblin cast fact");
+            assert!(!paid_cast.payment_pending);
+            assert_eq!(paid_cast.x, Some(3));
+
+            session.restore_v59(&saved).unwrap();
+            let (restored_observation, restored_decision, restored_actions) =
+                next_five_rows(&session);
+            let restored_facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            let restored_index = restored_actions
+                .iter()
+                .position(|action| {
+                    matches!(action,
+                        A::ChooseEffectOption { actor: owner, source, option_index: 3, .. }
+                        if *owner == restored_decision.acting_player && source.arena_id == spell.0
+                    )
+                })
+                .expect("restored native Goblin X=3 row");
+            assert_eq!(
+                human_label_v59(
+                    &restored_observation,
+                    &restored_actions[restored_index],
+                    restored_decision.acting_player,
+                    &restored_facts,
+                )
+                .unwrap(),
+                x_label
+            );
+            step_next_five(&mut session, restored_decision, restored_index as u32);
+            assert!(session.fixture_state_v59().engine.pending_cast.is_none());
+        }
+    }
+
+    #[test]
+    fn goblin_replacement_label_tracks_paid_control_response_and_restore_both_seats() {
+        use crate::{
+            engine::{self, Action, Decision},
+            event,
+            state::{Target, Zone},
+        };
+
+        for human in [PlayerId::P0, PlayerId::P1] {
+            let caster = human.opponent();
+            let mut state = ready(caster);
+            crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
+            for seat in [PlayerId::P0, PlayerId::P1] {
+                for _ in 0..10 {
+                    put(&mut state, seat, "Mountain", Zone::Battlefield);
+                }
+            }
+            put(&mut state, human, "High Fae Trickster", Zone::Battlefield);
+            let employment = put(&mut state, human, "Involuntary Employment", Zone::Hand);
+            let target = put(&mut state, caster, "Axgard Cavalry", Zone::Battlefield);
+            let target_generation = state.objects.get(target).zone_change_count;
+            let multiplier = put(&mut state, caster, "Twinflame Tyrant", Zone::Battlefield);
+
+            // The existing native damage-choice fixture primitive supplies a
+            // real shield replacement alongside the actual Tyrant multiplier.
+            let replacement_id = state.engine.next_replacement_id;
+            state.engine.next_replacement_id += 1;
+            state
+                .engine
+                .active_replacements
+                .push(event::ActiveReplacement {
+                    id: replacement_id,
+                    source: multiplier,
+                    kind: event::ReplacementEffectKind::PreventNextDamage {
+                        target: Target::Object(target),
+                        remaining: 1,
+                    },
+                });
+
+            let goblin = put(&mut state, caster, "Goblin Negotiation", Zone::Hand);
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == caster && castable_spells.contains(&goblin)
+            ));
+            engine::step(&mut state, Action::CastSpell(goblin)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(target))
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseEffectOption { option_count, .. } if option_count > 3
+            ));
+            engine::step(&mut state, Action::ChooseEffectOption(3)).unwrap();
+
+            // High Fae Trickster makes the real sorcery a legal response. Both
+            // spells pay through native cast decisions; the target's physical
+            // incarnation stays fixed while its controller changes at resolve.
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == caster && !castable_spells.contains(&employment)
+            ));
+            engine::step(&mut state, Action::Pass).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == human && castable_spells.contains(&employment)
+            ));
+            engine::step(&mut state, Action::CastSpell(employment)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(target))
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            for _ in 0..8 {
+                let decision = engine::advance_until_decision(&mut state);
+                if state.objects.get(employment).zone == Zone::Graveyard && state.stack.len() == 1 {
+                    break;
+                }
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.objects.get(employment).zone, Zone::Graveyard);
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(state.stack[0].source, goblin);
+            assert_eq!(state.objects.get(target).controller, human);
+            assert_eq!(state.objects.get(target).owner, caster);
+            assert_eq!(
+                state.objects.get(target).zone_change_count,
+                target_generation
+            );
+
+            let mut found_choice = false;
+            for _ in 0..24 {
+                let decision = engine::advance_until_decision(&mut state);
+                if matches!(decision, Decision::ChooseEffectOption { .. })
+                    && crate::effect::crystal_prevention_v1::is_choice(&state)
+                {
+                    found_choice = true;
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap();
+                    }
+                    Decision::OrderTriggers { pending, .. } => {
+                        engine::step(
+                            &mut state,
+                            Action::OrderTriggers((0..pending.len()).collect()),
+                        )
+                        .unwrap();
+                    }
+                    other => panic!("unexpected native Goblin response resolution: {other:?}"),
+                }
+            }
+            assert!(found_choice, "actual affected-player replacement choice");
+            let ordering = crate::goblin_negotiation_v1::public_ordering_stage(&state)
+                .unwrap()
+                .expect("actual native Goblin ordering stage");
+            assert_eq!(ordering.chooser, human.into());
+            assert_eq!(ordering.controller, caster.into());
+            assert_eq!(ordering.target.controller, human.into());
+
+            let mut session = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+                human.into(),
+            )
+            .unwrap();
+            let mut projector = crate::human_bo3_v1::HumanNextFiveProjectorV59::new(human.into());
+            let (_, visible) = owned_human_prompt(&mut session, &mut projector, human);
+            let multiplier_choice = visible
+                .actions
+                .iter()
+                .find(|row| {
+                    row.label.contains("double the remaining damage")
+                        && row.label.contains("Twinflame Tyrant")
+                        && row.label.contains("Axgard Cavalry")
+                })
+                .expect("Human label for actual post-control-change replacement choice");
+            assert!(visible.state.next_five.goblin_quotes.iter().any(|quote| {
+                matches!(&quote.target, crate::human_bo3_v1::HumanNextFiveTargetV59::Object(target)
+                    if target.controller == caster.into()
+                        && target.name == "Axgard Cavalry")
+            }));
+            assert_eq!(
+                visible
+                    .state
+                    .next_five
+                    .goblin_ordering
+                    .as_ref()
+                    .unwrap()
+                    .target
+                    .controller,
+                human.into()
+            );
+
+            let label = multiplier_choice.label.clone();
+            let saved = session.snapshot_v59();
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &visible,
+                multiplier_choice.action_index,
+            );
+            session.restore_v59(&saved).unwrap();
+            let (_, restored) = owned_human_prompt(&mut session, &mut projector, human);
+            let restored_choice = restored
+                .actions
+                .iter()
+                .find(|row| row.label == label)
+                .expect("restored native replacement choice preserves its label");
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &restored,
+                restored_choice.action_index,
+            );
+        }
+    }
+
+    #[test]
+    fn replication_target_and_aura_host_label_actual_paid_upkeep_rows_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, source, copy_target, host, other_host) =
+                paid_replication_at_own_upkeep(actor);
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+            let (target_observation, target_decision, target_actions) = next_five_rows(&session);
+            let target_facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            let target_index = target_actions
+                .iter()
+                .position(|action| matches!(action,
+                    A::ChooseTarget { actor: owner, source: actual_source, target: TargetRefV1::Object { object }, .. }
+                    if *owner == target_decision.acting_player
+                        && actual_source.arena_id == source.0
+                        && object.arena_id == copy_target.0
+                ))
+                .expect("native Replication upkeep target row");
+            let target_label = human_label_v59(
+                &target_observation,
+                &target_actions[target_index],
+                target_decision.acting_player,
+                &target_facts,
+            )
+            .unwrap();
+            assert!(
+                target_label.contains("another nonland permanent"),
+                "{target_label}"
+            );
+            assert!(target_label.contains("Bind the Monster"), "{target_label}");
+
+            let saved_target = session.snapshot_v59();
+            step_next_five(&mut session, target_decision, target_index as u32);
+            session.restore_v59(&saved_target).unwrap();
+            let (restored_observation, restored_decision, restored_actions) =
+                next_five_rows(&session);
+            let restored_facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            let restored_target_index = restored_actions
+                .iter()
+                .position(|action| matches!(action,
+                    A::ChooseTarget { actor: owner, source: actual_source, target: TargetRefV1::Object { object }, .. }
+                    if *owner == restored_decision.acting_player
+                        && actual_source.arena_id == source.0
+                        && object.arena_id == copy_target.0
+                ))
+                .expect("restored native Replication upkeep target row");
+            assert_eq!(
+                human_label_v59(
+                    &restored_observation,
+                    &restored_actions[restored_target_index],
+                    restored_decision.acting_player,
+                    &restored_facts,
+                )
+                .unwrap(),
+                target_label
+            );
+            step_next_five(
+                &mut session,
+                restored_decision,
+                restored_target_index as u32,
+            );
+
+            for host_prompt in 0usize..2 {
+                let mut found_host = false;
+                for _ in 0..16 {
+                    let (observation, decision, actions) = next_five_rows(&session);
+                    let facts =
+                        crate::next_five_public_v59::capture(session.fixture_state_v59(), actor)
+                            .unwrap();
+                    if let Some((index, action)) = actions.iter().enumerate().find(|(_, action)| {
+                        matches!(action,
+                            A::ChooseEffectTarget {
+                                actor: owner,
+                                source: actual_source,
+                                target: TargetRefV1::Object { object },
+                                ..
+                            }
+                            if *owner == decision.acting_player
+                                && actual_source.arena_id == source.0
+                                && object.arena_id == host.0
+                        )
+                    }) {
+                        let copy = facts.aura_copy.as_ref().expect("public Aura-copy stage");
+                        assert_eq!(copy.expanded_count, 2);
+                        assert_eq!(copy.chosen_hosts.len(), host_prompt);
+                        assert_eq!(copy.remaining_count, 2 - host_prompt as u64);
+                        assert_eq!(copy.chooser, actor.into());
+                        assert!(copy
+                            .candidate_hosts
+                            .iter()
+                            .any(|candidate| candidate.object == other_host.0));
+                        let other_host_index = actions
+                            .iter()
+                            .position(|candidate| {
+                                matches!(candidate,
+                                    A::ChooseEffectTarget {
+                                        source: actual_source,
+                                        target: TargetRefV1::Object { object },
+                                        ..
+                                    }
+                                    if actual_source.arena_id == source.0
+                                        && object.arena_id == other_host.0
+                                )
+                            })
+                            .expect("other legal Aura-host row remains available");
+                        assert!(human_label_v59(
+                            &observation,
+                            &actions[other_host_index],
+                            decision.acting_player,
+                            &facts,
+                        )
+                        .unwrap()
+                        .contains("Axgard Cavalry"));
+                        if host_prompt == 1 {
+                            assert!(copy
+                                .chosen_hosts
+                                .iter()
+                                .any(|chosen| chosen.object == host.0));
+                        }
+                        let label =
+                            human_label_v59(&observation, action, decision.acting_player, &facts)
+                                .unwrap();
+                        assert!(label.contains("Aura host"), "{label}");
+
+                        let saved = session.snapshot_v59();
+                        step_next_five(&mut session, decision, index as u32);
+                        if host_prompt == 1 {
+                            session.restore_v59(&saved).unwrap();
+                            let (restored_observation, restored_decision, restored_actions) =
+                                next_five_rows(&session);
+                            let restored_facts = crate::next_five_public_v59::capture(
+                                session.fixture_state_v59(),
+                                actor,
+                            )
+                            .unwrap();
+                            let restored_index = restored_actions
+                                .iter()
+                                .position(|candidate| candidate == action)
+                                .expect("restored second native Aura-host row");
+                            assert_eq!(
+                                human_label_v59(
+                                    &restored_observation,
+                                    &restored_actions[restored_index],
+                                    restored_decision.acting_player,
+                                    &restored_facts,
+                                )
+                                .unwrap(),
+                                label
+                            );
+                            step_next_five(&mut session, restored_decision, restored_index as u32);
+                        }
+                        found_host = true;
+                        break;
+                    }
+                    let pass_index = actions
+                        .iter()
+                        .position(|action| matches!(action, A::Pass { actor } if *actor == decision.acting_player))
+                        .expect("priority pass before Replication resolves");
+                    step_next_five(&mut session, decision, pass_index as u32);
+                }
+                assert!(found_host, "native Replication Aura-host choice absent");
+            }
+            let copied_aura = crate::card_def::card_id_by_name("Bind the Monster").unwrap();
+            let copies = session
+                .fixture_state_v59()
+                .objects
+                .iter()
+                .filter(|(_, object)| {
+                    object.zone == Zone::Battlefield
+                        && object.v4.is_token
+                        && object.card_def == copied_aura
+                        && object
+                            .v4
+                            .attached_to
+                            .is_some_and(|link| link.object == host)
+                })
+                .count();
+            assert_eq!(
+                copies, 2,
+                "both Season-expanded Aura copies use the chosen host"
+            );
+        }
+    }
+
+    #[test]
+    fn infernal_death_order_labels_two_paid_native_triggers_and_restores_both_seats() {
+        use crate::{
+            engine::{self, Decision},
+            event::{self, ProposedEvent},
+        };
+
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, vessels) = paid_infernal_pair(actor);
+            for vessel in vessels {
+                let object = state.objects.get(vessel);
+                assert_eq!(object.owner, actor);
+                assert_eq!(object.controller, actor);
+                assert_eq!(object.zone, Zone::Battlefield);
+            }
+
+            event::propose_and_commit_batch(
+                &mut state,
+                vessels
+                    .into_iter()
+                    .map(|vessel| ProposedEvent::zone_change(vessel, Zone::Graveyard))
+                    .collect(),
+            );
+            assert!(vessels
+                .iter()
+                .all(|vessel| state.objects.get(*vessel).zone == Zone::Graveyard));
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::OrderTriggers { player, pending } if player == actor && pending.len() == 2
+            ));
+
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+            let (observation, decision, actions) = next_five_rows(&session);
+            let facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            let held = facts
+                .triggers
+                .iter()
+                .filter(|row| {
+                    row.family == crate::rules_meaning_next_five_v59::FamilyV59::Infernal
+                        && row.stage == crate::next_five_public_v59::TriggerStageV59::Held
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(held.len(), 2);
+            for vessel in vessels {
+                let trigger = held
+                    .iter()
+                    .find(|row| row.source.original_source.object == vessel.0)
+                    .expect("actual Infernal death produced a held source-bound trigger");
+                assert_eq!(trigger.source.captured_controller, actor.into());
+                let death = facts
+                    .infernal_deaths
+                    .iter()
+                    .find(|row| row.source.original_source.object == vessel.0)
+                    .expect("actual Infernal death public fact");
+                assert!(death.captured_not_demon && death.collection_completed);
+                assert!(death.return_incarnation_available_now);
+                assert_eq!(death.owner_on_return, actor.into());
+                assert_eq!(death.source.original_source.owner, actor.into());
+            }
+
+            let order_index = actions
+                .iter()
+                .position(|action| matches!(action,
+                    A::OrderTriggers { actor: chooser, pending_sources, order }
+                    if *chooser == actor.into()
+                        && pending_sources.len() == 2
+                        && pending_sources.iter().map(|source| source.arena_id).collect::<Vec<_>>()
+                            == vessels.iter().map(|vessel| vessel.0).collect::<Vec<_>>()
+                        && order == &[0, 1]
+                ))
+                .expect("authentic native Infernal trigger-order action");
+            let label = human_label_v59(
+                &observation,
+                &actions[order_index],
+                decision.acting_player,
+                &facts,
+            )
+            .unwrap();
+            assert!(label.contains("bottom to top"), "{label}");
+            assert_eq!(
+                label.matches("Infernal Vessel trigger:").count(),
+                2,
+                "{label}"
+            );
+            assert!(label.contains("under its owner's control"), "{label}");
+
+            let saved = session.snapshot_v59();
+            step_next_five(&mut session, decision, order_index as u32);
+            let placed =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            assert_eq!(placed.triggers.len(), 2);
+            assert!(placed.triggers.iter().all(|row| row.family
+                == crate::rules_meaning_next_five_v59::FamilyV59::Infernal
+                && row.stage == crate::next_five_public_v59::TriggerStageV59::Published
+                && row.placement_ordered
+                && row.source.captured_controller == actor.into()));
+
+            session.restore_v59(&saved).unwrap();
+            let (restored_observation, restored_decision, restored_actions) =
+                next_five_rows(&session);
+            let restored_facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            let restored_index = restored_actions
+                .iter()
+                .position(|action| action == &actions[order_index])
+                .expect("restored native Infernal order action");
+            assert_eq!(
+                human_label_v59(
+                    &restored_observation,
+                    &restored_actions[restored_index],
+                    restored_decision.acting_player,
+                    &restored_facts,
+                )
+                .unwrap(),
+                label
+            );
+            step_next_five(&mut session, restored_decision, restored_index as u32);
+            let restored_placed =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            assert_eq!(restored_placed.triggers, placed.triggers);
+        }
+    }
+
+    #[test]
+    fn owning_next_five_human_projects_paid_infernal_order_without_private_meaning_metadata() {
+        use crate::rl_session::FastActorResponseV1;
+
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, vessels) = paid_infernal_pair(actor);
+            let inner = FastActorSessionV1::from_next_five_v59_fixture_state(state);
+            let mut session =
+                crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(inner, actor.into())
+                    .unwrap();
+            let mut foreign = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(ready(actor)),
+                actor.into(),
+            )
+            .unwrap();
+            let snapshot = session.snapshot_v59();
+            assert_eq!(foreign.restore_v59(&snapshot), Err(Error::StaleDecision));
+
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("paid Infernal fixture should have an ordering decision");
+            };
+            let mut projector = crate::human_bo3_v1::HumanNextFiveProjectorV59::new(actor.into());
+            let visible = projector.project_current(&session, expected).unwrap();
+            let death_facts = &visible.state.next_five.infernal_deaths;
+            assert_eq!(death_facts.len(), 2);
+            assert_eq!(vessels.len(), 2);
+            for death in death_facts {
+                assert_eq!(death.source.original_source.name, "Infernal Vessel");
+                assert_eq!(death.source.original_source.owner, actor.into());
+                assert_eq!(death.owner_on_return, actor.into());
+                assert!(death.captured_not_demon && death.collection_completed);
+            }
+            let encoded = serde_json::to_string(&visible).unwrap();
+            for private_field in [
+                "producer_sha256",
+                "card_db_hash",
+                "root_sha256",
+                "selector",
+                "capability",
+                "model_admitted",
+                "sampler_admitted",
+                "full_engine_admitted",
+                "card_id",
+                "arena_id",
+            ] {
+                assert!(
+                    !encoded.contains(private_field),
+                    "Human V59 output leaked {private_field}"
+                );
+            }
+            let order = visible
+                .actions
+                .iter()
+                .find(|action| action.label.contains("bottom to top"))
+                .expect("actual native trigger order is labeled");
+            let receipt = projector
+                .submit(
+                    &mut session,
+                    crate::human_bo3_v1::HumanActionRequestV1 {
+                        prompt_seq: visible.prompt_seq,
+                        action_index: order.action_index,
+                    },
+                )
+                .unwrap();
+            assert_eq!(receipt.action_index, order.action_index);
+            session.restore_v59(&snapshot).unwrap();
+            let FastActorResponseV1::Decision(restored_expected) = session.current_response()
+            else {
+                panic!("restored paid Infernal fixture should have an ordering decision");
+            };
+            let restored = projector
+                .project_current(&session, restored_expected)
+                .unwrap();
+            assert_eq!(
+                restored
+                    .actions
+                    .iter()
+                    .map(|row| &row.label)
+                    .collect::<Vec<_>>(),
+                visible
+                    .actions
+                    .iter()
+                    .map(|row| &row.label)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                restored.state.next_five.infernal_deaths,
+                visible.state.next_five.infernal_deaths
+            );
+        }
+    }
+
+    #[test]
+    fn owning_v59_human_projects_and_submits_native_actions_for_four_families_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            // Giada's roster and restricted white mana are captured from the
+            // current battlefield and the actual native mana-ability row.
+            let state = paid_giada_entry(actor);
+            let mut session = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+                actor.into(),
+            )
+            .unwrap();
+            let mut projector = crate::human_bo3_v1::HumanNextFiveProjectorV59::new(actor.into());
+            let (_, visible) = owned_human_prompt(&mut session, &mut projector, actor);
+            let angel_row = visible
+                .state
+                .next_five
+                .angel_replacements
+                .iter()
+                .find(|row| row.source.name == "Giada, Font of Hope")
+                .expect("Giada's public entry roster");
+            assert_eq!(angel_row.current_angels.len(), 3);
+            assert!(angel_row
+                .current_angels
+                .iter()
+                .any(|angel| angel.name == "Serra Angel"));
+            assert!(angel_row
+                .current_angels
+                .iter()
+                .any(|angel| angel.name == "Giada, Font of Hope"));
+            assert_eq!(
+                angel_row
+                    .current_angels
+                    .iter()
+                    .filter(|angel| angel.name == "Serra Angel")
+                    .count(),
+                2
+            );
+            let mana = visible
+                .actions
+                .iter()
+                .find(|row| row.label.contains("only to cast Angel spells"))
+                .expect("native restricted Giada mana action");
+            assert!(mana.label.contains("add {W}"));
+            let mana_index = mana.action_index;
+            let saved = session.snapshot_v59();
+            submit_owned(&mut session, &mut projector, &visible, mana_index);
+            session.restore_v59(&saved).unwrap();
+            let (_, restored) = owned_human_prompt(&mut session, &mut projector, actor);
+            assert!(restored.actions.iter().any(|row| row.label == mana.label));
+            assert!(restored.state.next_five.angel_mana[actor.index()].is_empty());
+            let restored_mana = restored
+                .actions
+                .iter()
+                .find(|row| row.label == mana.label)
+                .expect("restored native Giada mana ability");
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &restored,
+                restored_mana.action_index,
+            );
+            let (_, after_mana) = owned_human_prompt(&mut session, &mut projector, actor);
+            assert!(after_mana.state.next_five.angel_mana[actor.index()]
+                .iter()
+                .any(|row| row
+                    .current_original_source
+                    .as_ref()
+                    .is_some_and(|source| { source.name == "Giada, Font of Hope" })));
+
+            // A native life-gain event supplies the exact current-turn public
+            // total used by the actual Snack activation label.
+            let mut state = ready(actor);
+            put(&mut state, actor, "Midnight Snack", Zone::Battlefield);
+            put(
+                &mut state,
+                actor.opponent(),
+                "Goblin Negotiation",
+                Zone::Hand,
+            );
+            state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::life_gain(actor, 3),
+            );
+            let mut session = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+                actor.into(),
+            )
+            .unwrap();
+            let mut projector = crate::human_bo3_v1::HumanNextFiveProjectorV59::new(actor.into());
+            let (_, visible) = owned_human_prompt(&mut session, &mut projector, actor);
+            assert_eq!(
+                visible.state.next_five.snack.gained_this_turn[actor.index()],
+                3
+            );
+            assert!(
+                !serde_json::to_string(&visible)
+                    .unwrap()
+                    .contains("Goblin Negotiation"),
+                "opponent's private card identity is absent from the Human DTO"
+            );
+            let activation = visible
+                .actions
+                .iter()
+                .find(|row| row.label.contains("sacrifice Midnight Snack"))
+                .expect("native paid Snack activation row");
+            assert!(activation
+                .label
+                .contains("total life you have gained this turn"));
+            let saved = session.snapshot_v59();
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &visible,
+                activation.action_index,
+            );
+            session.restore_v59(&saved).unwrap();
+            let (_, restored) = owned_human_prompt(&mut session, &mut projector, actor);
+            assert!(restored
+                .actions
+                .iter()
+                .any(|row| row.label == activation.label));
+
+            // Drive Goblin Negotiation through its real cast, target, and X
+            // prompts using the owning Human projection and action index.
+            let mut state = ready(actor);
+            for _ in 0..10 {
+                put(&mut state, actor, "Mountain", Zone::Battlefield);
+            }
+            put(&mut state, actor, "Twinflame Tyrant", Zone::Battlefield);
+            put(
+                &mut state,
+                actor.opponent(),
+                "Axgard Cavalry",
+                Zone::Battlefield,
+            );
+            put(&mut state, actor, "Goblin Negotiation", Zone::Hand);
+            let mut session = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+                actor.into(),
+            )
+            .unwrap();
+            let mut projector = crate::human_bo3_v1::HumanNextFiveProjectorV59::new(actor.into());
+            let (_, cast) = owned_human_prompt(&mut session, &mut projector, actor);
+            let cast_action = cast
+                .actions
+                .iter()
+                .find(|row| row.label.contains("Begin casting Goblin Negotiation"))
+                .expect("native Goblin cast action");
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &cast,
+                cast_action.action_index,
+            );
+            let (_, target) = owned_human_prompt(&mut session, &mut projector, actor);
+            let target_action = target
+                .actions
+                .iter()
+                .find(|row| {
+                    row.label.contains("creature target for Goblin Negotiation")
+                        && row.label.contains("Axgard Cavalry")
+                })
+                .expect("native Goblin creature target action");
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &target,
+                target_action.action_index,
+            );
+            let (_, x_choice) = owned_human_prompt(&mut session, &mut projector, actor);
+            let x_action = x_choice
+                .actions
+                .iter()
+                .find(|row| row.label.contains("X = 3"))
+                .expect("native Goblin X choice");
+            let saved = session.snapshot_v59();
+            let x_label = x_action.label.clone();
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &x_choice,
+                x_action.action_index,
+            );
+            session.restore_v59(&saved).unwrap();
+            let (_, restored_x) = owned_human_prompt(&mut session, &mut projector, actor);
+            assert!(restored_x.actions.iter().any(|row| row.label == x_label));
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &restored_x,
+                restored_x
+                    .actions
+                    .iter()
+                    .find(|row| row.label == x_label)
+                    .unwrap()
+                    .action_index,
+            );
+            let completed = (0..16).find_map(|_| {
+                let (_, prompt) = owned_human_prompt(&mut session, &mut projector, actor);
+                if !prompt.state.next_five.goblin_completed.is_empty() {
+                    return Some(prompt.state.next_five.goblin_completed.clone());
+                }
+                let pass = prompt
+                    .actions
+                    .iter()
+                    .find(|row| row.label == "Pass priority")
+                    .expect("native priority pass while Goblin spell resolves");
+                submit_owned(&mut session, &mut projector, &prompt, pass.action_index);
+                None
+            });
+            let completed = completed.expect("actual Goblin damage completion fact");
+            assert_eq!(completed.len(), 1);
+            assert_eq!(completed[0].original_x, 3);
+            assert_eq!(completed[0].lethal_damage, 2);
+            assert_eq!(completed[0].actual_damage, 6);
+            assert_eq!(completed[0].excess, 4);
+            assert_eq!(completed[0].tokens_created, 4);
+
+            // This fixture begins at the paid native Replication upkeep
+            // target. Restore must preserve the real payment and target menu.
+            let (state, source, target, _, _) = paid_replication_at_own_upkeep(actor);
+            let mut session = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+                actor.into(),
+            )
+            .unwrap();
+            let mut projector = crate::human_bo3_v1::HumanNextFiveProjectorV59::new(actor.into());
+            let (_, visible) = owned_human_prompt(&mut session, &mut projector, actor);
+            let target_action = visible
+                .actions
+                .iter()
+                .find(|row| row.label.contains("Bind the Monster"))
+                .expect("actual paid Replication upkeep target");
+            assert!(target_action.label.contains("another nonland permanent"));
+            assert!(visible.state.next_five.current.iter().any(|row| {
+                row.family == crate::rules_meaning_next_five_v59::FamilyV59::Replication
+                    && row.source.name == "Extravagant Replication"
+            }));
+            assert!(visible.state.next_five.triggers.iter().any(|row| {
+                row.family == crate::rules_meaning_next_five_v59::FamilyV59::Replication
+                    && row.source.original_source.name == "Extravagant Replication"
+            }));
+            let saved = session.snapshot_v59();
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &visible,
+                target_action.action_index,
+            );
+            session.restore_v59(&saved).unwrap();
+            let (_, restored) = owned_human_prompt(&mut session, &mut projector, actor);
+            assert!(restored
+                .actions
+                .iter()
+                .any(|row| row.label == target_action.label));
+            let restored_target_index = restored
+                .actions
+                .iter()
+                .find(|row| row.label == target_action.label)
+                .unwrap()
+                .action_index;
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &restored,
+                restored_target_index,
+            );
+            let mut host_choices = 0;
+            for _ in 0..32 {
+                let (_, prompt) = owned_human_prompt(&mut session, &mut projector, actor);
+                let copy = prompt.state.next_five.aura_copy.as_ref();
+                if let Some(host_action) = prompt.actions.iter().find(|row| {
+                    row.label.contains("Aura host") && row.label.contains("Llanowar Elves")
+                }) {
+                    let copy = copy.expect("public source-bound Aura-copy stage");
+                    assert_eq!(copy.expanded_count, 2);
+                    assert_eq!(copy.chosen_hosts.len(), host_choices);
+                    assert_eq!(copy.remaining_count, (2 - host_choices) as u64);
+                    assert!(copy
+                        .candidate_hosts
+                        .iter()
+                        .any(|row| row.name == "Llanowar Elves"));
+                    assert!(copy
+                        .candidate_hosts
+                        .iter()
+                        .any(|row| row.name == "Axgard Cavalry"));
+                    let host_index = host_action.action_index;
+                    if host_choices == 1 {
+                        let late_snapshot = session.snapshot_v59();
+                        let late_label = host_action.label.clone();
+                        submit_owned(&mut session, &mut projector, &prompt, host_index);
+                        session.restore_v59(&late_snapshot).unwrap();
+                        let (_, restored_late) =
+                            owned_human_prompt(&mut session, &mut projector, actor);
+                        assert!(restored_late
+                            .actions
+                            .iter()
+                            .any(|row| row.label == late_label));
+                        let same_host = restored_late
+                            .actions
+                            .iter()
+                            .find(|row| row.label == late_label)
+                            .unwrap()
+                            .action_index;
+                        submit_owned(&mut session, &mut projector, &restored_late, same_host);
+                    } else {
+                        submit_owned(&mut session, &mut projector, &prompt, host_index);
+                    }
+                    host_choices += 1;
+                    if host_choices == 2 {
+                        break;
+                    }
+                } else {
+                    let pass = prompt
+                        .actions
+                        .iter()
+                        .find(|row| row.label == "Pass priority")
+                        .expect("native priority pass while Replication resolves");
+                    submit_owned(&mut session, &mut projector, &prompt, pass.action_index);
+                }
+            }
+            assert_eq!(
+                host_choices, 2,
+                "both Season-expanded host choices occurred"
+            );
+            assert_ne!(source, target);
+        }
     }
 }

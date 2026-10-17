@@ -95,6 +95,70 @@ pub(super) fn census_hidden_source_conflicts_v1(
             .is_some_and(|pending| stack(&pending.resolving_item))
 }
 mod search_state;
+pub(super) fn redeterminize_call_v62(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_call_v62(state, actor, seed)
+}
+pub(super) fn same_current_unknown_pool_v69(
+    before: &crate::state::GameState,
+    current: &crate::state::GameState,
+    actor: crate::ids::PlayerId,
+) -> bool {
+    search_state::same_current_unknown_pool_v69(before, current, actor)
+}
+pub(super) fn redeterminize_muldrotha_v71(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_muldrotha_v71(state, actor, seed)
+}
+pub(super) fn redeterminize_tinybones_v72(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_tinybones_v72(state, actor, seed)
+}
+pub(super) fn redeterminize_liliana_v73(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_liliana_v73(state, actor, seed)
+}
+pub(super) fn redeterminize_kaito_v75(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_kaito_v75(state, actor, seed)
+}
+pub(super) fn redeterminize_chandra_v74(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_chandra_v74(state, actor, seed)
+}
+pub(super) fn redeterminize_genesis_wave_v69(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_genesis_wave_v69(state, actor, seed)
+}
+pub(super) fn redeterminize_end_turn_v68(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), search_state::V4SearchStateErrorV1> {
+    search_state::redeterminize_end_turn_v68(state, actor, seed)
+}
+
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 pub(crate) use search_state::V4SearchActionTokenV1;

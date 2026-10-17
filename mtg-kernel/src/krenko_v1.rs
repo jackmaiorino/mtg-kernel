@@ -576,6 +576,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .collect::<Vec<_>>();
         match (removals.as_slice(), live.as_slice()) {
             ([], [item]) if *item == p.item.as_ref() && inputs.is_empty() => {}
+            ([], [])
+                if inputs.is_empty() && crate::engine::time_stop_v1::disposed(state, &p.item)? => {}
             ([r], []) => {
                 let [input] = inputs.as_slice() else {
                     return Err("Krenko closure lost original actual removal input".into());

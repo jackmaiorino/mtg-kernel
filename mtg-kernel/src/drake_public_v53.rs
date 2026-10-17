@@ -189,11 +189,17 @@ pub fn producer_sha256() -> String {
             include_str!("rl.rs"),
             include_str!("planeswalker_v1.rs"),
             include_str!("standard_creatures_v1.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/standard_copy.rs"),
+            include_str!("standard_spell_copy.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             h.update((source.len() as u64).to_le_bytes());
             h.update(source.as_bytes());
         }
         h.update(meaning::producer_sha256().as_bytes());
+        h.update(b"legacy-graveyard-return-guard/v61\0");
+        h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         h.finalize().iter().map(|b| format!("{b:02x}")).collect()
     })
     .clone()
@@ -243,7 +249,11 @@ fn current_original(state: &GameState, source: AbilitySourceContractV4) -> Optio
             )
         })
 }
-fn counters(state: &GameState, id: ObjectId) -> Result<CountersV53, RlContractError> {
+fn counters(
+    state: &GameState,
+    id: ObjectId,
+    scope: crate::optional_trigger_public_v1::CounterScopeV61,
+) -> Result<CountersV53, RlContractError> {
     let live = state.objects.get(id);
     // Exhaustive destructuring requires a deliberate V53 decision for any
     // newly added storage family, rather than silently losing its counters.
@@ -259,7 +269,36 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV53, RlContractEr
         bait,
         soul,
         incubation,
+        revival,
+        fellowship,
+        stash,
     } = live.counters;
+    if stash != 0 && scope != crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72 {
+        return Err(error("public projection does not expose stash counters"));
+    }
+    if fellowship != 0
+        && !matches!(
+            scope,
+            crate::optional_trigger_public_v1::CounterScopeV61::CallV62
+                | crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72
+        )
+    {
+        return Err(error("V53 does not expose fellowship counters"));
+    }
+    if scope == crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72 {
+        crate::graveyard_return_public_v61::counter_values_tinybones_compat_v72(state, id)
+            .map_err(error)?;
+    }
+    if scope == crate::optional_trigger_public_v1::CounterScopeV61::CallV62 {
+        crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)
+            .map_err(error)?;
+    }
+    if scope == crate::optional_trigger_public_v1::CounterScopeV61::CompleteV61 {
+        crate::graveyard_return_public_v61::counter_values(state, id).map_err(error)?;
+    }
+    if revival != 0 && scope == crate::optional_trigger_public_v1::CounterScopeV61::Legacy {
+        return Err(error("V53 does not expose Nine-Lives revival counters"));
+    }
     let lifelink = live.v4.lifelink_keyword_counters;
     if [
         plus1_plus1,
@@ -407,7 +446,10 @@ fn temporary_boosts(state: &GameState, id: ObjectId) -> Vec<TemporaryBoostV53> {
         })
         .collect()
 }
-fn battlefield(state: &GameState) -> Result<[Vec<CardV53>; 2], RlContractError> {
+fn battlefield(
+    state: &GameState,
+    scope: crate::optional_trigger_public_v1::CounterScopeV61,
+) -> Result<[Vec<CardV53>; 2], RlContractError> {
     let mut result: [Vec<CardV53>; 2] = [Vec::new(), Vec::new()];
     let mut seen = Vec::new();
     for (seat, player) in state.players.iter().enumerate() {
@@ -450,7 +492,7 @@ fn battlefield(state: &GameState) -> Result<[Vec<CardV53>; 2], RlContractError> 
                 tapped: live.tapped,
                 summoning_sick: live.summoning_sick,
                 marked_damage: live.damage,
-                counters: counters(state, *id)?,
+                counters: counters(state, *id, scope)?,
                 form: form(state, *id)?,
                 temporary_boosts: temporary_boosts(state, *id),
                 attachments,
@@ -607,11 +649,57 @@ fn activation_outcome(
 /// Validate the genuine private inputs and complete operation replay first.
 /// Hashes and the current board never stand in for historical authority.
 pub fn capture(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_scoped(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::Legacy,
+    )
+}
+pub(crate) fn capture_complete_v61(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_scoped(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::CompleteV61,
+    )
+}
+pub(crate) fn capture_complete_call_v62(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_scoped(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::CallV62,
+    )
+}
+pub(crate) fn capture_tinybones_compat_v72(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_scoped(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
+    )
+}
+fn capture_scoped(
+    state: &GameState,
+    scope: crate::optional_trigger_public_v1::CounterScopeV61,
+) -> Result<FactsV53, RlContractError> {
+    crate::effect::require_no_copied_token_abilities_v1(state).map_err(error)?;
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| error(format!("native PT envelope exceeded for {id:?}")))?;
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Err(error(
             "V53 cannot publish a private synchronous operation tail",
+        ));
+    }
+    // Fellowship zero still leaves an incarnation-bound chosen type and a
+    // current-counter anthem. Neither that entry checkpoint nor its live
+    // metadata has a representation in this frozen V53 appendix. Inspect
+    // public battlefield rows only, never hidden hand/library printings.
+    if state
+        .engine
+        .linked_aura_operation_v1
+        .pending_kinship_v1
+        .is_some()
+        || state
+            .objects
+            .iter()
+            .any(|(_, live)| live.zone == Zone::Battlefield && live.v4.kinship_type_v1.is_some())
+    {
+        return Err(error(
+            "V53 does not expose native creature-type entry mechanics",
         ));
     }
     custody::validate(state).map_err(error)?;
@@ -714,7 +802,7 @@ pub fn capture(state: &GameState) -> Result<FactsV53, RlContractError> {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),
         meanings,
-        battlefield: battlefield(state)?,
+        battlefield: battlefield(state, scope)?,
         combat,
         activations,
     })

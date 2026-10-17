@@ -23,6 +23,8 @@ pub(super) mod fiery_printing;
 pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
+#[path = "ordinary_removal_printing.rs"]
+mod ordinary_removal_printing;
 #[path = "rallier_bloom_printing.rs"]
 pub(super) mod rallier_bloom_printing;
 #[path = "soulstone_printing.rs"]
@@ -345,7 +347,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     }
     if matches!(
         d.name,
-        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie"
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" | "Axgard Cavalry"
     ) {
         return early_activation_printing::baseline(id, d);
     }
@@ -357,6 +359,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     }
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
+    let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let think_twice = d.name == "Think Twice"
         && !d.is_token
         && !d.is_land
@@ -417,7 +420,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.activated_abilities.is_empty()
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
-        && d.mode2.is_none()
+        && (d.mode2.is_none() || (ordinary_removal.is_some() && d.name == "Abrade"))
         && d.mode3.is_none()
         && d.additional_modes.is_empty()
         && (d.flashback.is_none() || think_twice)
@@ -466,10 +469,18 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.token_counter_replacement_v48.is_none()
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
-        && d.other_controlled_nontoken_death_v1.is_none()
+        && (d.other_controlled_nontoken_death_v1.is_none() && d.creature_type_entry_v1.is_none())
         && crate::trigger::triggers_for(id).is_empty())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    if let Some(roots) = ordinary_removal {
+        return Ok(json!({"card_id":id,"primitive_printing":{
+            "cost":d.cost,"types":d.types.iter().map(|v|*v as u8).collect::<Vec<_>>(),
+            "subtypes":[],"supertypes":[],"colors":d.colors,"power":d.power,
+            "toughness":d.toughness,"keywords":d.keywords.0,"mana_value":d.mana_value,
+            "token":false,"ordered_cast_roots":roots
+        }}));
     }
     if think_twice {
         return Ok(json!({"card_id":id,"primitive_printing":{
@@ -614,7 +625,7 @@ pub(super) fn elenda_printing(id: u16) -> Result<Value> {
         crate::rules_meaning_elenda_v52::RootV52::CreatureSpellAndPrintedStatics,
     )
     .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
-    if d.other_controlled_nontoken_death_v1.is_some()
+    if (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
         || d.cost.x_count != 0
         || (d.spell_effect)()
             != Some(EffectOp::MoveObject {
@@ -704,7 +715,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
             return tyrant_herald_printing::printing(id, d)
         }
         "Squad Rallier" | "Bloom Tender" => return rallier_bloom_printing::printing(id, d),
-        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" => {
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" | "Axgard Cavalry" => {
             return early_activation_printing::printing(id, d)
         }
         "Arahbo, the First Fang" | "Zul Ashur, Lich Lord" => {
@@ -969,6 +980,7 @@ pub(super) fn validate_family_permanent_recipe(id: u16, d: &CardDef) -> Result<(
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
     if d.object_name != d.name
         || d.capability != CardCapability::Full
@@ -1044,7 +1056,7 @@ pub(super) fn validate_family_permanent_recipe(id: u16, d: &CardDef) -> Result<(
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1262,7 +1274,7 @@ pub(super) fn attack_or_banner_printing(id: u16, d: &CardDef) -> Result<Option<V
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1465,7 +1477,7 @@ pub(super) fn sower_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -1666,7 +1678,7 @@ pub(super) fn wildwood_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }

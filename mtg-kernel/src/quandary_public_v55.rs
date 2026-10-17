@@ -67,6 +67,31 @@ fn refs(
         .collect()
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV55, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::Legacy)
+}
+pub(crate) fn capture_complete_v61(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV55, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::CompleteV61)
+}
+pub(crate) fn capture_complete_call_v62(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV55, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::CallV62)
+}
+pub(crate) fn capture_tinybones_compat_v72(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV55, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::TinybonesV72)
+}
+fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    scope: public::CounterScopeV61,
+) -> Result<FactsV55, String> {
     let id =
         crate::card_def::card_id_by_name("Painful Quandary").ok_or("Quandary printing absent")?;
     let meaning = meaning::printed_meaning(id)?;
@@ -155,7 +180,15 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV55, String> 
         producer_sha256: meaning::producer_sha256(),
         viewer: viewer.into(),
         meaning,
-        current: public::current(state, id)?,
+        current: if scope == public::CounterScopeV61::TinybonesV72 {
+            public::current_tinybones_compat_v72(state, id)?
+        } else if scope == public::CounterScopeV61::CallV62 {
+            public::current_complete_call_v62(state, id)?
+        } else if scope == public::CounterScopeV61::CompleteV61 {
+            public::current_complete_v61(state, id)?
+        } else {
+            public::current(state, id)?
+        },
         held,
         stack,
     })

@@ -239,18 +239,19 @@ pub(super) fn normalize_candidates(
     if let Some(search) = &extension.decision_local_library {
         let mut ordered = Vec::with_capacity(normalized.len());
         for candidate in normalized.drain(..) {
-            let order = match &candidate.semantic {
+            // Preserve the frozen error distinction as well as ordering.
+            if !matches!(
+                candidate.semantic,
                 ActionSemanticV1::ChooseEffectTarget {
-                    target: TargetRefV1::Object { object },
+                    target: TargetRefV1::Object { .. },
                     ..
-                } => search
-                    .cards
-                    .iter()
-                    .position(|card| card.stable == *object)
-                    .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?,
-                ActionSemanticV1::FinishEffectSelection { .. } => usize::MAX,
-                _ => return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation),
-            };
+                } | ActionSemanticV1::FinishEffectSelection { .. }
+            ) {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            }
+            let order =
+                crate::rl::positionless_library_candidate_order(&candidate.semantic, search)
+                    .map_err(|_| FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
             ordered.push((order, candidate));
         }
         ordered.sort_by_key(|(order, _)| *order);

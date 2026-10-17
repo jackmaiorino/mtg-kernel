@@ -447,6 +447,18 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             );
             AmtF::Dynamic
         }
+        DynamicCountDef::ControllerAttackingCreatures => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Count,
+            );
+            // The frozen vocabulary has no current-attacker predicate. Do
+            // not identify this with the distinct attacked-this-turn count.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicCountDef::ControllerDrawsThisTurn => {
             // The caster's draws this turn. Vocabulary gap: no aggregate
             // for the number of events this turn.
@@ -577,6 +589,11 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             out.atoms.push(Atom::Opaque);
             ObjF::Typed(CardTypeF::Artifact)
         }
+        LibraryCardFilter::CreatureManaValueAtMost(_) => {
+            // The frozen vocabulary cannot express this mana-value ceiling.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Creature)
+        }
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             let _ = value;
             // The vocabulary lacks a disjunction of types and exact mana value.
@@ -603,6 +620,7 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
         PermanentFilter::Creature => (ObjF::Typed(CardTypeF::Creature), None),
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
         PermanentFilter::Token => (ObjF::Token, None),
+        PermanentFilter::AnotherWithSubtype(_) => (ObjF::Permanent, None),
     }
 }
 

@@ -1198,14 +1198,17 @@ fn policy_stage_id(value: PolicySurfaceStageV5) -> u8 {
     }
 }
 
-fn discard_resume_id(value: DiscardResumeSemanticV2) -> u8 {
-    match value {
+fn discard_resume_id(value: DiscardResumeSemanticV2) -> Result<u8, FlatDecisionErrorV1> {
+    Ok(match value {
         DiscardResumeSemanticV2::None => 0,
         DiscardResumeSemanticV2::FinishCast => 1,
         DiscardResumeSemanticV2::FinishActivation => 2,
         DiscardResumeSemanticV2::FinishSpellResolution => 3,
         DiscardResumeSemanticV2::FinishOptionalCost => 4,
-    }
+        DiscardResumeSemanticV2::TimeStopCleanupV68 => {
+            return Err(FlatDecisionErrorV1::ObservationContract)
+        }
+    })
 }
 
 fn spell_copy_stage_id(value: SpellCopyStageV2) -> u8 {
@@ -1818,16 +1821,18 @@ impl FlatDecisionEncoderV1 {
                 },
             )
             .transpose()?;
-        let pending_discard =
-            engine
-                .pending_discard
-                .as_ref()
-                .map(|pending| FlatPendingDiscardGlobalsV1 {
+        let pending_discard = engine
+            .pending_discard
+            .as_ref()
+            .map(|pending| {
+                Ok::<_, FlatDecisionErrorV1>(FlatPendingDiscardGlobalsV1 {
                     player: relative_player(pending.player, actor),
                     count: pending.count,
-                    resume_stage: discard_resume_id(pending.resume_stage),
+                    resume_stage: discard_resume_id(pending.resume_stage)?,
                     resume_source_present: pending.resume_source.is_some(),
-                });
+                })
+            })
+            .transpose()?;
         let pending_optional_cost =
             engine
                 .pending_optional_cost

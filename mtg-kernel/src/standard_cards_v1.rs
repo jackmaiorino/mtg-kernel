@@ -14,6 +14,14 @@ use crate::state::{GameState, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "drakuseth_v1_tests.rs"]
+mod drakuseth_tests;
+
 /// Per-game state for this module's cards. Absent until one of them needs
 /// it, so other catalogs keep their snapshots and hashes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -117,7 +125,7 @@ pub struct StandardStateV1 {
 
 /// One Assimilation Aegis copy effect: the Aegis and the creature, per exact
 /// battlefield incarnation, and the creature's values from before it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AegisCopyV1 {
     aegis: (ObjectId, u32),
@@ -128,8 +136,31 @@ struct AegisCopyV1 {
     color_mask: u8,
     subtype_ids: Vec<u16>,
     ward_generic: u16,
+    #[serde(default, skip_serializing_if = "nightmare_false_v1")]
+    copied_nightmare_v1: bool,
     #[serde(default)]
     attachment_timestamp: u64,
+}
+
+fn nightmare_false_v1(value: &bool) -> bool {
+    !*value
+}
+impl std::hash::Hash for AegisCopyV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.aegis.hash(h);
+        self.host.hash(h);
+        self.card_def.hash(h);
+        self.name.hash(h);
+        self.face_index.hash(h);
+        self.color_mask.hash(h);
+        self.subtype_ids.hash(h);
+        self.ward_generic.hash(h);
+        self.attachment_timestamp.hash(h);
+        if self.copied_nightmare_v1 {
+            "copied-nightmare/v1".hash(h);
+            self.copied_nightmare_v1.hash(h);
+        }
+    }
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -142,7 +173,7 @@ struct RoomDoorsV1 {
     unlocked: u8,
 }
 
-/// One-object battlefield target filters owned by this module
+/// Native target filters owned by this module
 /// (`TargetSpec::StandardV1`). "Opponent" is relative to the targeting
 /// controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -169,15 +200,85 @@ pub enum StandardTargetV1 {
     CardInAGraveyard,
     TappedOpponentCreature,
     CrewedSourceThisTurn,
+    /// A mandatory first any-target, then zero to two OTHER any-targets.
+    /// Slots remain ordered even when an earlier target becomes illegal.
+    OneToThreeDistinctAnyTargetsV1,
+    /// Zero to two distinct creatures the targeting player controls.
+    UpToTwoControlledCreatures,
+    /// Zero to two distinct artifacts and/or creatures that player controls.
+    UpToTwoControlledArtifactsOrCreatures,
+    /// One physical creature card put into any graveyard during this turn.
+    CreatureCardPutIntoGraveyardThisTurnV1,
+    /// Imprisoned in the Moon's exact battlefield union.
+    CreatureLandOrPlaneswalkerV1,
+    ArtifactEnchantmentOrFlyingCreatureV1,
+    UpToEightCreaturesOrPlaneswalkersV74,
+    /// Zero or one creature controlled by the targeting player.
+    UpToOneControlledCreatureV1,
 }
 
 impl StandardTargetV1 {
     /// How many targets this filter takes, and how many at least.
     pub(crate) fn counts(self) -> (u8, u8) {
         match self {
-            Self::UpToTwoAnyTargets => (2, 0),
-            Self::UpToOneCreature => (1, 0),
+            Self::UpToTwoAnyTargets
+            | Self::UpToTwoControlledCreatures
+            | Self::UpToTwoControlledArtifactsOrCreatures => (2, 0),
+            Self::OneToThreeDistinctAnyTargetsV1 => (3, 1),
+            Self::UpToOneCreature | Self::UpToOneControlledCreatureV1 => (1, 0),
+            Self::UpToEightCreaturesOrPlaneswalkersV74 => (8, 0),
             _ => (1, 1),
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod kaito_target_prerequisite_tests {
+    use super::*;
+
+    #[test]
+    fn optional_controlled_creature_domain_preserves_controller_and_old_filter_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            // Native scene primitives test the target domain, not a Kaito cast.
+            let mut state = crate::extra_turn_v1::tests::ready(actor);
+            let controlled = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let opposing = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Forest",
+                Zone::Battlefield,
+            );
+            let filter = StandardTargetV1::UpToOneControlledCreatureV1;
+            assert_eq!(filter.counts(), (1, 0));
+            assert_eq!(
+                legal_targets(filter, actor, None, &[], &state),
+                [Target::Object(controlled)]
+            );
+            let old = legal_targets(StandardTargetV1::UpToOneCreature, actor, None, &[], &state);
+            assert_eq!(old.len(), 2);
+            assert!(old.contains(&Target::Object(controlled)));
+            assert!(old.contains(&Target::Object(opposing)));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                legal_targets(filter, actor, None, &[], &restored),
+                [Target::Object(controlled)]
+            );
         }
     }
 }
@@ -186,7 +287,9 @@ impl StandardTargetV1 {
     fn in_graveyard(self) -> bool {
         matches!(
             self,
-            Self::InstantOrSorceryCardInOwnGraveyard | Self::CardInAGraveyard
+            Self::InstantOrSorceryCardInOwnGraveyard
+                | Self::CardInAGraveyard
+                | Self::CreatureCardPutIntoGraveyardThisTurnV1
         )
     }
 }
@@ -209,7 +312,10 @@ pub(crate) fn legal_targets(
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
-    if target == StandardTargetV1::UpToTwoAnyTargets {
+    if matches!(
+        target,
+        StandardTargetV1::UpToTwoAnyTargets | StandardTargetV1::OneToThreeDistinctAnyTargetsV1
+    ) {
         // 115.4: a creature, player or planeswalker; each target once.
         let players = [PlayerId::P0, PlayerId::P1].map(Target::Player);
         let permanents = [PlayerId::P0, PlayerId::P1]
@@ -226,7 +332,11 @@ pub(crate) fn legal_targets(
             .filter(|candidate| !prefix.contains(candidate))
             .collect();
     }
-    let candidates: Vec<ObjectId> = if target == StandardTargetV1::CardInAGraveyard {
+    let candidates: Vec<ObjectId> = if matches!(
+        target,
+        StandardTargetV1::CardInAGraveyard
+            | StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1
+    ) {
         [PlayerId::P0, PlayerId::P1]
             .iter()
             .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
@@ -241,6 +351,14 @@ pub(crate) fn legal_targets(
     };
     candidates
         .into_iter()
+        .filter(|&id| {
+            !matches!(
+                target,
+                StandardTargetV1::UpToEightCreaturesOrPlaneswalkersV74
+                    | StandardTargetV1::UpToTwoControlledCreatures
+                    | StandardTargetV1::UpToTwoControlledArtifactsOrCreatures
+            ) || !prefix.contains(&Target::Object(id))
+        })
         .filter(|&id| target_matches(target, controller, id, state))
         .filter(|&id| {
             target != StandardTargetV1::CrewedSourceThisTurn
@@ -278,6 +396,9 @@ pub(crate) fn target_matches(
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };
+    if target == StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1 {
+        return crate::effect::harvester_v1::eligible(state, object);
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -293,6 +414,18 @@ pub(crate) fn target_matches(
     }
     let has = |card_type| crate::engine::object_has_type(state, object, card_type);
     match target {
+        StandardTargetV1::UpToEightCreaturesOrPlaneswalkersV74 => {
+            has(CardType::Creature) || has(CardType::Planeswalker)
+        }
+        StandardTargetV1::ArtifactEnchantmentOrFlyingCreatureV1 => {
+            has(CardType::Artifact)
+                || has(CardType::Enchantment)
+                || has(CardType::Creature)
+                    && crate::engine::has_effective_keyword(state, object, Keywords::FLYING)
+        }
+        StandardTargetV1::CreatureLandOrPlaneswalkerV1 => {
+            has(CardType::Creature) || has(CardType::Land) || has(CardType::Planeswalker)
+        }
         StandardTargetV1::OpponentNonlandPermanentManaValueAtMost(maximum) => {
             live.controller != controller
                 && !has(CardType::Land)
@@ -307,8 +440,15 @@ pub(crate) fn target_matches(
         StandardTargetV1::ControlledArtifact => {
             live.controller == controller && has(CardType::Artifact)
         }
+        StandardTargetV1::UpToTwoControlledCreatures
+        | StandardTargetV1::UpToOneControlledCreatureV1 => {
+            live.controller == controller && has(CardType::Creature)
+        }
+        StandardTargetV1::UpToTwoControlledArtifactsOrCreatures => {
+            live.controller == controller && (has(CardType::Artifact) || has(CardType::Creature))
+        }
         StandardTargetV1::AnotherNonlandPermanent => !has(CardType::Land),
-        StandardTargetV1::UpToTwoAnyTargets => {
+        StandardTargetV1::UpToTwoAnyTargets | StandardTargetV1::OneToThreeDistinctAnyTargetsV1 => {
             has(CardType::Creature) || has(CardType::Planeswalker)
         }
         StandardTargetV1::UpToOneCreature | StandardTargetV1::CrewedSourceThisTurn => {
@@ -317,7 +457,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::TappedOpponentCreature => {
             live.controller != controller && live.tapped && has(CardType::Creature)
         }
-        StandardTargetV1::CardInAGraveyard => false,
+        StandardTargetV1::CardInAGraveyard
+        | StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1 => false,
         StandardTargetV1::AnotherNonlegendaryControlledCreature => {
             live.controller == controller
                 && has(CardType::Creature)
@@ -540,6 +681,20 @@ pub enum StandardOpV1 {
     /// Untap only the captured ability-source incarnation, through stun replacement.
     UntapCapturedSourceV1,
     ZulAshurPermissionV1,
+    /// Captured ability damage to the ORIGINAL first and subsequent target slots.
+    /// Drakuseth uses four for slot zero and three for each optional other slot.
+    DamageTargetsByPositionV1 {
+        first_amount: u8,
+        other_amount: u8,
+    },
+    /// Put one +1/+1 counter on each declared controlled-creature target.
+    PutPlusOneCountersOnTargets,
+    /// Add the current number of every counter kind to each declared target,
+    /// through the normal placement replacements and checked native widths.
+    DoubleAllCountersOnTargets,
+    /// CR 724. Only an authentic native resolving Time Stop may run this leaf.
+    EndTurnV1,
+    VivienReidEmblemV1,
 }
 
 impl StandardOpV1 {
@@ -692,6 +847,32 @@ pub(crate) fn register_reflection_delayed_sacrifice(
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::VivienReidEmblemV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        StandardOpV1::EndTurnV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        StandardOpV1::PutPlusOneCountersOnTargets => {
+            crate::counter_target_effects_v1::execute(
+                crate::counter_target_effects_v1::CounterTargetEffectV1::PutPlusOne,
+                ctx,
+                state,
+            );
+        }
+        StandardOpV1::DoubleAllCountersOnTargets => {
+            crate::counter_target_effects_v1::execute(
+                crate::counter_target_effects_v1::CounterTargetEffectV1::DoubleEachKind,
+                ctx,
+                state,
+            );
+        }
         StandardOpV1::ZulAshurPermissionV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -803,8 +984,8 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 {
                     event::propose_and_commit(
                         state,
-                        ProposedEvent::damage(
-                            ctx.source,
+                        crate::event::damage_from_exec_ctx_v1(
+                            ctx,
                             ctx.targets[index],
                             i32::from(ctx.x_value),
                         ),
@@ -1044,6 +1225,50 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         StandardOpV1::ExileTopFiveMayCastOneInstantOrSorcery => {
             exile_top_five_may_cast_one(state, ctx.controller);
         }
+        StandardOpV1::DamageTargetsByPositionV1 {
+            first_amount,
+            other_amount,
+        } => {
+            let Some(source) = ctx.ability_source_contract.filter(|source| {
+                source.source == ctx.source && source.controller == ctx.controller
+            }) else {
+                return;
+            };
+            let events = ctx
+                .targets
+                .iter()
+                .enumerate()
+                .filter_map(|(index, target)| {
+                    if ctx.target_incarnation_matches(index, state)
+                        && crate::engine::effect_target_is_legal_from_ability_source(
+                            state,
+                            source,
+                            ctx.controller,
+                            crate::card_def::TargetSpec::StandardV1(
+                                StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
+                            ),
+                            &ctx.targets,
+                            index,
+                        )
+                    {
+                        Some(event::damage_from_exec_ctx_v1(
+                            ctx,
+                            *target,
+                            i32::from(if index == 0 {
+                                *first_amount
+                            } else {
+                                *other_amount
+                            }),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            // Resolve all legal original slots in one batch. No target-vector
+            // compaction, intermediate SBA, or artificial extra damage event.
+            event::propose_and_commit_batch(state, events);
+        }
         StandardOpV1::DamageEachTarget { amount } => {
             for index in 0..ctx.targets.len() {
                 if ctx.target_incarnation_matches(index, state)
@@ -1060,7 +1285,11 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 {
                     event::propose_and_commit(
                         state,
-                        ProposedEvent::damage(ctx.source, ctx.targets[index], i32::from(*amount)),
+                        crate::event::damage_from_exec_ctx_v1(
+                            ctx,
+                            ctx.targets[index],
+                            i32::from(*amount),
+                        ),
                     );
                 }
             }
@@ -1159,13 +1388,25 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 let source = ctx.ability_source_contract.unwrap_or_else(|| {
                     crate::state::AbilitySourceContractV4::capture(state, ctx.source)
                 });
+                let copied_nightmare =
+                    match crate::effect::harvester_v1::copiable_nightmare(state, object) {
+                        Ok(value) => value,
+                        Err(_) => return,
+                    };
                 let mut proposal = ProposedEvent::create_token(definition, ctx.controller);
                 if let ProposedEvent::CreateToken(token) = &mut proposal {
                     token.entry_face_index = (face != 0).then_some(face);
                     token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
                         copied: true,
+                        copied_nightmare_v1: copied_nightmare,
                         haste_until_end_of_turn: true,
                         sacrifice_at_end_step: Some(source),
+                        copied_end_step_sacrifices_v1: match event::copiable_token_abilities_v1(
+                            state, object,
+                        ) {
+                            Ok(count) => count,
+                            Err(_) => return,
+                        },
                         ..Default::default()
                     });
                 }
@@ -1255,7 +1496,10 @@ pub(crate) fn create_token_copy(
     controller: PlayerId,
 ) -> Option<ObjectId> {
     if !crate::linked_aura_operation_v1::locally_owned(state)
-        && crate::heraldic_banner_v1::owns_definition(state.objects.get(original).card_def)
+        && (crate::heraldic_banner_v1::owns_definition(state.objects.get(original).card_def)
+            || crate::banner_of_kinship_v1::entry::owns_entry_definition(
+                state.objects.get(original).card_def,
+            ))
     {
         if state.objects.get(original).zone != Zone::Battlefield
             || state.objects.get(original).v4.face_down_v1.is_some()
@@ -1266,7 +1510,14 @@ pub(crate) fn create_token_copy(
         let history_start = state.engine.event_history.len();
         crate::linked_aura_operation_v1::event(
             state,
-            crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller },
+            if crate::banner_of_kinship_v1::entry::owns_entry_definition(source.card_def) {
+                crate::linked_aura_operation_v1::OperationV1::CopyTokenKinshipV1 {
+                    source,
+                    controller,
+                }
+            } else {
+                crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller }
+            },
         );
         return state.engine.event_history[history_start..]
             .iter()
@@ -1285,7 +1536,12 @@ pub(crate) fn create_token_copy_without_banner_owner(
 ) -> Option<ObjectId> {
     let live = state.objects.get(original);
     let (card_def, face) = (live.card_def, live.v4.face_index);
-    if crate::doubling_season_v48::requires_successor(state) {
+    let copied_abilities = event::copiable_token_abilities_v1(state, original).ok()?;
+    let copied_nightmare = crate::effect::harvester_v1::copiable_nightmare(state, original).ok()?;
+    if crate::doubling_season_v48::requires_successor(state)
+        || copied_abilities != 0
+        || copied_nightmare
+    {
         let (card_def, face) = if live.v4.face_down_v1.is_some() {
             let anonymous =
                 crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)?;
@@ -1301,6 +1557,8 @@ pub(crate) fn create_token_copy_without_banner_owner(
             token.entry_face_index = (face != 0).then_some(face);
             token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
                 copied: true,
+                copied_end_step_sacrifices_v1: copied_abilities,
+                copied_nightmare_v1: copied_nightmare,
                 ..Default::default()
             });
         }
@@ -1995,6 +2253,8 @@ pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &C
 /// Triggered abilities of this module's cards, by registry name.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
+        "Drakuseth, Maw of Flames" => &DRAKUSETH_TRIGGERS_V1,
+        "Etali, Primal Storm" => &ETALI_PRIMAL_STORM_TRIGGERS_V1,
         "Thousand Moons Smithy" => &SMITHY_TRIGGERS,
         "Etali, Primal Conqueror" => &ETALI_TRIGGERS,
         "Subterranean Schooner" => &SCHOONER_TRIGGERS,
@@ -2027,6 +2287,36 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         _ => &[],
     }
 }
+
+/// FDN193. Target zero is mandatory; optional targets keep their original slots.
+pub fn drakuseth_attack_v1() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::DamageTargetsByPositionV1 {
+        first_amount: 4,
+        other_amount: 3,
+    })
+}
+
+fn etali_primal_storm_attack_v1() -> EffectOp {
+    EffectOp::ExileTopEachPlayerThenCastV1
+}
+// FDN194 follows the actual contiguous Progenitus480 prerequisite.
+static ETALI_PRIMAL_STORM_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    face_index: 0,
+    effect: etali_primal_storm_attack_v1,
+}];
+
+static DRAKUSETH_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    face_index: 0,
+    effect: drakuseth_attack_v1,
+}];
 
 // ---- Blue Sun's Twilight ---------------------------------------------------
 
@@ -2891,6 +3181,8 @@ fn has_counters(state: &GameState, object: ObjectId) -> bool {
         || counters.net > 0
         || counters.charge > 0
         || counters.incubation > 0
+        || counters.fellowship > 0
+        || counters.stash > 0
         || live.v4.lifelink_keyword_counters > 0
         || live.v4.time_counters_v1 > 0
         || live
@@ -3755,6 +4047,19 @@ pub(crate) fn copied_departure_at(
         })
 }
 
+/// Include an effective definition hidden beneath a current Aegis copy when
+/// selecting a characteristic-only final-zone preflight. No hidden zones are read.
+pub(crate) fn has_battlefield_copy_origin_v1(state: &GameState, selected: fn(u16) -> bool) -> bool {
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard.aegis_copies.iter().any(|copy| {
+            selected(copy.card_def)
+                && state.objects.try_get(copy.host.0).is_some_and(|live| {
+                    live.zone == Zone::Battlefield && live.zone_change_count == copy.host.1
+                })
+        })
+    })
+}
+
 /// End expired copy effects before state-based actions. Starting one is a
 /// separate mandatory attachment trigger, resolved by the controller.
 pub(crate) fn refresh_aegis_copies(state: &mut GameState) {
@@ -3881,7 +4186,9 @@ pub(crate) fn apply_aegis_copy(
         color_mask: live.v4.effective_color_mask,
         subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
         ward_generic: live.v4.ward_generic,
+        copied_nightmare_v1: live.v4.copied_nightmare_v1,
     };
+    let record_nightmare = record.copied_nightmare_v1;
     let had = [record.card_def, copied].map(|def| (host.object, host.zone_change_count, def));
     let base = crate::state::ObjectStateV4::from_card_def(copied);
     live.card_def = copied;
@@ -3890,6 +4197,7 @@ pub(crate) fn apply_aegis_copy(
     live.v4.effective_color_mask = base.effective_color_mask;
     live.v4.effective_subtype_ids = base.effective_subtype_ids;
     live.v4.ward_generic = base.ward_generic;
+    live.v4.copied_nightmare_v1 = false;
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     standard.aegis_copies.push(record);
     for entry in had {
@@ -3897,6 +4205,7 @@ pub(crate) fn apply_aegis_copy(
             standard.copied_card_defs.push(entry);
         }
     }
+    crate::effect::harvester_v1::record_layer(state, host.object, record_nightmare);
 }
 
 /// Whether `object`'s battlefield incarnation `zone_change_count` was ever
@@ -3917,6 +4226,9 @@ pub(crate) fn had_card_def(
 /// Ends the copy at `index`: a later copy of the same creature inherits the
 /// values it saved; otherwise the creature gets them back.
 fn end_aegis_copy(state: &mut GameState, index: usize) {
+    end_aegis_copy_inner(state, index, true);
+}
+fn end_aegis_copy_inner(state: &mut GameState, index: usize, record_layer: bool) {
     let Some(standard) = state.standard_v1.as_mut() else {
         return;
     };
@@ -3931,6 +4243,7 @@ fn end_aegis_copy(state: &mut GameState, index: usize) {
         later.color_mask = record.color_mask;
         later.subtype_ids = record.subtype_ids;
         later.ward_generic = record.ward_generic;
+        later.copied_nightmare_v1 = record.copied_nightmare_v1;
         return;
     }
     if state
@@ -3946,7 +4259,12 @@ fn end_aegis_copy(state: &mut GameState, index: usize) {
     live.v4.face_index = record.face_index;
     live.v4.effective_color_mask = record.color_mask;
     live.v4.effective_subtype_ids = record.subtype_ids;
+    let prior_nightmare = live.v4.copied_nightmare_v1;
     live.v4.ward_generic = record.ward_generic;
+    live.v4.copied_nightmare_v1 = record.copied_nightmare_v1;
+    if record_layer {
+        crate::effect::harvester_v1::record_layer(state, record.host.0, prior_nightmare);
+    }
 }
 
 /// A copied creature leaving the battlefield stops being a copy first, so
@@ -3960,7 +4278,7 @@ pub(crate) fn end_aegis_copies_before_departure(state: &mut GameState, object: O
             .iter()
             .rposition(|copy| copy.host == (object, zone_change_count))
     }) {
-        end_aegis_copy(state, index);
+        end_aegis_copy_inner(state, index, false);
     }
 }
 

@@ -61,7 +61,23 @@ fn supported_v1_card_ids() -> Vec<u16> {
     let excluded: Vec<u16> = CARD_DEFS
         .iter()
         .enumerate()
-        .filter(|(_, def)| {
+        .filter(|(id, def)| {
+            if matches!(
+                (def.spell_effect)(),
+                Some(EffectOp::DealXDamageThenCreateTokensForExcess { .. })
+            ) {
+                return true;
+            }
+            if crate::trigger::triggers_for(*id as u16).iter().any(|t| {
+                matches!(
+                    (t.effect)(),
+                    EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+                        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
+                        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
+                )
+            }) {
+                return true;
+            }
             def.activated_abilities.iter().any(|a| {
                 a.cost.iter().any(|c| {
                     matches!(
@@ -77,7 +93,8 @@ fn supported_v1_card_ids() -> Vec<u16> {
                 || def.chosen_color_creature_boost_v1.is_some()
                 || !def.starting_life_self_bonuses_v1.is_empty()
                 || def.source_type_hexproof_v1.is_some()
-                || def.other_controlled_nontoken_death_v1.is_some()
+                || (def.other_controlled_nontoken_death_v1.is_some()
+                    || def.creature_type_entry_v1.is_some())
                 || def.token_counter_replacement_v48.is_some()
         })
         .map(|(id, _)| id as u16)
@@ -97,6 +114,10 @@ fn supported_v1_card_ids() -> Vec<u16> {
             expected.push(card_id("Spinner of Souls"));
             expected.push(card_id("Drake Hatcher"));
             expected.push(card_id("Doubling Season"));
+            expected.push(card_id("Extravagant Replication"));
+            expected.push(card_id("Infernal Vessel"));
+            expected.push(card_id("Giada, Font of Hope"));
+            expected.push(card_id("Goblin Negotiation"));
         }
         assert_eq!(excluded, expected);
         assert!(matches!(
@@ -885,6 +906,16 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Curator of Destinies",
+    "Lathril, Blade of the Elves",
+    // Native own-cast template is walked; reveal-until mill remains opaque.
+    "Consuming Aberration",
+    // Native per-successful-controller-draw template and captured target
+    // are walked; the repeat-mill body remains opaque in frozen v1.
+    "Sphinx's Tutelage",
+    // Native combat trigger is walked through triggers_for and its exact
+    // target extractor. New target refinement stays opaque in frozen v1.
+    "Zimone, Paradox Sculptor",
     "Drake Hatcher",
     // Both native programs are walked through triggers_for. Their exact
     // opponent-cast and ferocious predicates remain opaque in frozen v1.
@@ -970,6 +1001,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Campus Guide",
     "Cat Token",
     "Celestial Armor",
+    "Embercleave",
     "Cenote Scout",
     "Chrome Host Seedshark",
     "Clinquant Skymage",
@@ -978,6 +1010,10 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Conduit Pylons",
     "Cori-Steel Cutter",
     "Crackling Cyclops",
+    "Kykar, Zephyr Awakener",
+    "Quilled Greatwurm",
+    "Thousand-Year Storm",
+    "Sphinx of Forgotten Lore",
     "Cryogen Relic",
     "Crypt Feaster",
     "Darkstar Augur",
@@ -991,6 +1027,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Dragon 5/5 Token",
     "Dragon Token",
     "Dragon Trainer",
+    "Drakuseth, Maw of Flames",
     "Dwynen's Elite",
     "Dwynen, Gilt-Leaf Daen",
     "Eager Trufflesnout",
@@ -1129,6 +1166,34 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect/kaito_cunning_v75.rs", "Ninja Token", "exact private Kaito/copy permit dependency; raw creation and legacy consumers refuse"),
+    ("effect/kaito_cunning_v75.rs", "Kaito, Cunning Infiltrator", "exact native loyalty, combat/casting occurrences and independent emblem; legacy Opaque and consumer refusal"),
+    ("effect/chandra_flameshaper_v1.rs", "Chandra, Flameshaper", "exact native loyalty allocation, exile permission and copiable token abilities; legacy Opaque and consumer refusal"),
+    ("effect/vivien_reid_v1.rs", "Vivien Reid", "exact native loyalty and persistent timestamped emblem; legacy Opaque and consumer refusal"),
+    ("engine/time_stop_v1.rs", "Time Stop", "exact native end-turn disposal and cleanup remain Opaque; old consumers refuse"),
+    ("effect/standard_exile.rs", "Etali, Primal Storm", "exact native top-only free-cast family; new root remains Opaque and old consumers refuse"),
+    ("progenitus_v1.rs", "Progenitus", "native all-source protection and mandatory original-zone reveal/shuffle remain Opaque"),
+    ("leyline_axe_v1.rs", "Leyline Axe", "native optional kept-opening-hand checkpoint, equipment and equip; no old consumer permission"),
+    ("effect/harvester_v1.rs", "Abyssal Harvester", "native tap activation with exact turn/incarnation target, copiable Nightmare and token-only cleanup remains Opaque"),
+    ("effect/source_token_copy_v1.rs", "Homunculus Horde", "native current or last-known copiable source, not a fixed token"),
+    ("effect/source_token_copy_v1.rs", "Homunculus Horde Token", "source-copy ability inherited by the ordinary token printing"),
+    ("engine/omniscience_cast_v1.rs", "Omniscience", "native optional Hand-only free base cost with exact source/choice; no old cost/permission meaning"),
+    ("effect/thousand_year_storm_v1.rs", "Thousand-Year Storm", "captured finalized cast snapshots, own prior cast count and optional per-copy retargeting remain Opaque"),
+    ("effect/sphinx_lore_v1.rs", "Sphinx of Forgotten Lore", "captured attack/target and installed flashback with separate native cost route remain Opaque"),
+    ("effect/greatwurm_v1.rs", "Quilled Greatwurm", "final native combat wave counter capture remains opaque; no old permission"),
+    ("effect/kykar_v1.rs", "Kykar, Zephyr Awakener", "cast noncreature mode at announcement; exact exile and one-shot owner return remain Opaque"),
+    ("effect/kykar_v1.rs", "Kykar Spirit Token", "exact white 1/1 flying token remains within Opaque Kykar root"),
+    ("effect/kykar_v1.rs", "Spirit Token", "copiable name of the closed Limited 1/1 token; does not select the Standard 2/2 blueprint"),
+    ("effect/loot_v1.rs", "Loot, Exuberant Explorer", "closed effective-source land allowance and native private-library recipe; frozen V1 Opaque"),
+    ("effect/curator_v1.rs", "Curator of Destinies", "closed native entry/private-pile printing selector; frozen V1 Opaque"),
+    ("event.rs", "Lathril, Blade of the Elves", "positive final combat damage capture; token root remains opaque in frozen v1"),
+    ("effect.rs", "Elf Warrior Token", "private exact captured Lathril token batch; frozen v1 root opaque"),
+    ("effect.rs", "Fiend Artisan", "closed native chosen-X activation and BF-only layer7c count remain Opaque; no old consumer permission"),
+    ("effect.rs", "Blasphemous Edict", "definition-owned APNAP simultaneous sacrifice root remains opaque in frozen V1; conditional mana cost is extracted"),
+    ("effect.rs", "Consuming Aberration", "exact native revealed-mill answer-stage validation; reveal-until effect remains opaque"),
+    ("engine.rs", "Consuming Aberration", "native all-zone layer7a CDA; exact opponent-graveyard cardinality remains opaque in frozen V1"),
+    ("event.rs", "Sphinx's Tutelage",
+     "event-time draw source validation; ControllerDraws/TargetOpponent are extracted, exact captured repeat-mill remains opaque"),
     (
         "engine.rs",
         "Treasure Token",
@@ -1390,9 +1455,62 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
         "Incubator Token",
         "token created by Incubate, reached via BindIncubateToTriggerSpell",
     ),
+    ("effect.rs", "Electroduplicate", "native closed copy-source guard; copiable token exceptions remain Opaque in frozen V1"),
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[
+    (
+        "effect/chandra_flameshaper_v1.rs",
+        include_str!("../effect/chandra_flameshaper_v1.rs"),
+    ),
+    (
+        "effect/kaito_cunning_v75.rs",
+        include_str!("../effect/kaito_cunning_v75.rs"),
+    ),
+    (
+        "effect/vivien_reid_v1.rs",
+        include_str!("../effect/vivien_reid_v1.rs"),
+    ),
+    (
+        "engine/time_stop_v1.rs",
+        include_str!("../engine/time_stop_v1.rs"),
+    ),
+    ("progenitus_v1.rs", include_str!("../progenitus_v1.rs")),
+    ("leyline_axe_v1.rs", include_str!("../leyline_axe_v1.rs")),
+    (
+        "effect/harvester_v1.rs",
+        include_str!("../effect/harvester_v1.rs"),
+    ),
+    (
+        "effect/source_token_copy_v1.rs",
+        include_str!("../effect/source_token_copy_v1.rs"),
+    ),
+    ("effect/loot_v1.rs", include_str!("../effect/loot_v1.rs")),
+    ("effect/kykar_v1.rs", include_str!("../effect/kykar_v1.rs")),
+    (
+        "effect/greatwurm_v1.rs",
+        include_str!("../effect/greatwurm_v1.rs"),
+    ),
+    (
+        "engine/greatwurm_cast_v1.rs",
+        include_str!("../engine/greatwurm_cast_v1.rs"),
+    ),
+    (
+        "effect/sphinx_lore_v1.rs",
+        include_str!("../effect/sphinx_lore_v1.rs"),
+    ),
+    (
+        "engine/sphinx_lore_cast_v1.rs",
+        include_str!("../engine/sphinx_lore_cast_v1.rs"),
+    ),
+    (
+        "engine/omniscience_cast_v1.rs",
+        include_str!("../engine/omniscience_cast_v1.rs"),
+    ),
+    (
+        "effect/curator_v1.rs",
+        include_str!("../effect/curator_v1.rs"),
+    ),
     ("trigger.rs", include_str!("../trigger.rs")),
     (
         "trigger/standard_family_g_v1.rs",
@@ -1408,6 +1526,10 @@ const RULES_MODULES: &[(&str, &str)] = &[
     ),
     ("engine.rs", include_str!("../engine.rs")),
     ("effect.rs", include_str!("../effect.rs")),
+    (
+        "effect/standard_exile.rs",
+        include_str!("../effect/standard_exile.rs"),
+    ),
     (
         "effect/library_choice_search_v2.rs",
         include_str!("../effect/library_choice_search_v2.rs"),
@@ -1535,4 +1657,137 @@ fn full_ajani_keeps_each_native_program_opaque_in_frozen_v1() {
 #[should_panic(expected = "effect token and counter replacement requires its precise successor")]
 fn registered_partial_season_still_refuses_frozen_v1_extraction() {
     card_rules(card_id("Doubling Season"));
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+#[should_panic(
+    expected = "nonland token copy with Aura entry choice requires its precise successor"
+)]
+fn replication_partial_still_refuses_frozen_rules_vector_v1() {
+    card_rules(card_id("Extravagant Replication"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn tutelage_native_draw_trigger_and_captured_target_keep_repeat_opaque_in_frozen_v1() {
+    let id = card_id("Sphinx's Tutelage");
+    let [trigger] = crate::trigger::triggers_for(id) else {
+        panic!("Tutelage has one genuine draw trigger");
+    };
+    assert_eq!(
+        trigger.condition,
+        crate::trigger::TriggerCondition::ControllerDraws
+    );
+    assert_eq!((trigger.effect)(), EffectOp::BindSphinxsTutelageMillV1);
+    assert_eq!(
+        crate::trigger::trigger_target_spec(id),
+        TargetSpec::TargetOpponent
+    );
+    assert_eq!(
+        crate::trigger::target_spec_for_trigger(id, &EffectOp::BindSphinxsTutelageMillV1),
+        Some(TargetSpec::TargetOpponent)
+    );
+    let bound = EffectOp::SphinxsTutelageMillV1 {
+        capture_history_index: 0,
+    };
+    assert_eq!(
+        crate::trigger::target_spec_for_trigger(id, &bound),
+        Some(TargetSpec::TargetOpponent)
+    );
+    let actual = rules("Sphinx's Tutelage");
+    let triggered = actual
+        .abilities
+        .iter()
+        .filter(|ability| ability.ctx == CtxF::Trigger)
+        .collect::<Vec<_>>();
+    assert_eq!(triggered.len(), 1);
+    assert!(triggered[0].atoms.contains(&Atom::Trigger(TrigF::Draw {
+        by: RelF::You,
+        nth: 0
+    })));
+    assert!(triggered[0].atoms.contains(&Atom::Opaque));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn aberration_own_cast_untargeted_mill_and_all_zone_cda_remain_truthfully_opaque() {
+    let id = card_id("Consuming Aberration");
+    let [trigger] = crate::trigger::triggers_for(id) else {
+        panic!("one printed cast trigger");
+    };
+    assert_eq!(
+        trigger.condition,
+        crate::trigger::TriggerCondition::CastSpell
+    );
+    assert_eq!(crate::trigger::trigger_target_spec(id), TargetSpec::None);
+    assert_eq!(
+        (trigger.effect)(),
+        EffectOp::RevealUntilCardTypeAndMill {
+            player: crate::effect::PlayerRef::Opponent,
+            card_type: crate::card_def::CardType::Land
+        }
+    );
+    let actual = rules("Consuming Aberration");
+    assert!(actual
+        .abilities
+        .iter()
+        .any(|a| a.ctx == CtxF::Static && a.atoms.contains(&Atom::Opaque)));
+    assert!(actual
+        .abilities
+        .iter()
+        .any(|a| a.ctx == CtxF::Trigger && a.atoms.contains(&Atom::Opaque)));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn lathril_native_combat_tokens_and_ten_other_elf_cost_remain_opaque() {
+    let actual = rules("Lathril, Blade of the Elves");
+    let triggers = actual
+        .abilities
+        .iter()
+        .filter(|a| a.ctx == CtxF::Trigger)
+        .collect::<Vec<_>>();
+    assert_eq!(triggers.len(), 1);
+    assert!(triggers[0].atoms.contains(&Atom::Opaque));
+    let activations = actual
+        .abilities
+        .iter()
+        .filter(|a| a.ctx == CtxF::Activated)
+        .collect::<Vec<_>>();
+    assert_eq!(activations.len(), 1);
+    assert!(activations[0].atoms.contains(&Atom::Opaque));
+}
+
+#[test]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn edict_native_conditional_cost_and_simultaneous_choices_remain_opaque_in_frozen_v1() {
+    let actual = rules("Blasphemous Edict");
+    assert!(atoms(&actual).contains(&Atom::Opaque));
+    assert!(atoms(&actual).contains(&Atom::Read(ReadAtom {
+        player: RelF::EachPlayer,
+        zone: Some(ZoneF::Battlefield),
+        obj: Some(ObjF::Typed(CardTypeF::Creature)),
+        agg: AggF::AtLeast(13)
+    })));
+    assert_eq!(
+        crate::card_def::CARD_DEFS[usize::from(card_id("Blasphemous Edict"))].target_spec,
+        TargetSpec::None
+    );
 }

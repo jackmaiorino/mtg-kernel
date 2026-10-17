@@ -1,4 +1,4 @@
-//! Real paid paths across the four distinct model owners. The independent
+//! Real paid paths across the five distinct model owners. The independent
 //! native session is an assertion oracle, never executable model input.
 use super::*;
 use crate::{
@@ -9,17 +9,19 @@ use crate::{
 };
 use serde_json::{json, Value};
 
-const SOURCES: [Source; 4] = [
+const SOURCES: [Source; 5] = [
     Source::FakeV50,
     Source::RavenousV51,
     Source::ElendaV52,
     Source::PreparedV57,
+    Source::NextFiveV59,
 ];
 enum Owner {
     Fake(FakeSession),
     Ravenous(RavenousSession),
     Elenda(ElendaSession),
     Prepared(PreparedSession),
+    NextFive(NextFiveSession),
 }
 impl Owner {
     fn state(&self) -> &GameState {
@@ -28,6 +30,7 @@ impl Owner {
             Self::Ravenous(s) => s.inner.ravenous_fixture_state(),
             Self::Elenda(s) => s.fixture_state(),
             Self::Prepared(s) => s.fixture_state(),
+            Self::NextFive(s) => s.fixture_state(),
         }
     }
     fn counts(&self) -> (u64, u64) {
@@ -42,6 +45,7 @@ impl Owner {
             ),
             Self::Elenda(s) => s.fixture_counts(),
             Self::Prepared(s) => s.fixture_counts(),
+            Self::NextFive(s) => s.fixture_counts(),
         }
     }
 }
@@ -50,12 +54,14 @@ enum Choice {
     Ravenous(Box<RavenousDecision>),
     Elenda(Box<ElendaDecision>),
     Prepared(Box<PreparedDecision>),
+    NextFive(Box<NextFiveDecision>),
 }
 enum Snapshot {
     Fake(FakeSnapshot),
     Ravenous(RavenousSnapshot),
     Elenda(ElendaSnapshot),
     Prepared(PreparedSnapshot),
+    NextFive(NextFiveSnapshot),
 }
 impl Owner {
     fn from_raw(source: Source, raw: FastActorSessionV1) -> Self {
@@ -64,6 +70,21 @@ impl Owner {
             Source::RavenousV51 => Self::Ravenous(RavenousSession::from_session(raw).unwrap()),
             Source::ElendaV52 => Self::Elenda(ElendaSession::from_session(raw).unwrap()),
             Source::PreparedV57 => Self::Prepared(PreparedSession::from_session(raw).unwrap()),
+            Source::NextFiveV59 => Self::NextFive(NextFiveSession::from_session(raw).unwrap()),
+            Source::GraveyardReturnV61 | Source::GenesisWaveV69 => {
+                unreachable!("V61/V69 use their separate typed-candidate owner fixtures")
+            }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
+            }
+            Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75 => {
+                unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
+            }
         }
     }
     fn current(&self) -> FastActorResponseV1 {
@@ -72,6 +93,7 @@ impl Owner {
             Self::Ravenous(s) => s.current_response(),
             Self::Elenda(s) => s.current_response(),
             Self::Prepared(s) => s.current_response(),
+            Self::NextFive(s) => s.current_response(),
         }
     }
     fn encode(&self, e: FastActorDecisionV1) -> Choice {
@@ -80,6 +102,7 @@ impl Owner {
             Self::Ravenous(s) => Choice::Ravenous(Box::new(s.encode(e).unwrap())),
             Self::Elenda(s) => Choice::Elenda(Box::new(s.encode(e).unwrap())),
             Self::Prepared(s) => Choice::Prepared(Box::new(s.encode(e).unwrap())),
+            Self::NextFive(s) => Choice::NextFive(Box::new(s.encode(e).unwrap())),
         }
     }
     fn apply(&mut self, d: &Choice, index: u32) -> Result<FastActorResponseV1> {
@@ -88,6 +111,7 @@ impl Owner {
             (Self::Ravenous(s), Choice::Ravenous(d)) => s.apply(d, index),
             (Self::Elenda(s), Choice::Elenda(d)) => s.apply(d, index),
             (Self::Prepared(s), Choice::Prepared(d)) => s.apply(d, index),
+            (Self::NextFive(s), Choice::NextFive(d)) => s.apply(d, index),
             _ => Err(Error::StaleBinding),
         }
     }
@@ -97,6 +121,7 @@ impl Owner {
             Self::Ravenous(s) => Snapshot::Ravenous(s.snapshot()),
             Self::Elenda(s) => Snapshot::Elenda(s.snapshot()),
             Self::Prepared(s) => Snapshot::Prepared(s.snapshot()),
+            Self::NextFive(s) => Snapshot::NextFive(s.snapshot()),
         }
     }
     fn restore(&mut self, snapshot: &Snapshot) -> Result<()> {
@@ -105,6 +130,7 @@ impl Owner {
             (Self::Ravenous(s), Snapshot::Ravenous(v)) => s.restore(v),
             (Self::Elenda(s), Snapshot::Elenda(v)) => s.restore(v),
             (Self::Prepared(s), Snapshot::Prepared(v)) => s.restore(v),
+            (Self::NextFive(s), Snapshot::NextFive(v)) => s.restore(v),
             _ => Err(Error::ForeignSnapshot),
         }
     }
@@ -116,6 +142,7 @@ impl Choice {
             Self::Ravenous(d) => d.packet(),
             Self::Elenda(d) => d.packet(),
             Self::Prepared(d) => d.packet(),
+            Self::NextFive(d) => d.packet(),
         }
     }
 
@@ -125,6 +152,7 @@ impl Choice {
             Self::Ravenous(d) => &mut d.packet,
             Self::Elenda(d) => d.fixture_packet_mut(),
             Self::Prepared(d) => d.fixture_packet_mut(),
+            Self::NextFive(d) => d.fixture_packet_mut(),
         };
         packet.state = NumericTree::encode(&json!({})).unwrap();
     }
@@ -146,6 +174,21 @@ impl Harness {
             Source::RavenousV51 => FastActorSessionV1::from_ravenous_v51_fixture_state(state),
             Source::ElendaV52 => FastActorSessionV1::from_elenda_v52_fixture_state(state),
             Source::PreparedV57 => FastActorSessionV1::from_prepared_v57_fixture_state(state),
+            Source::NextFiveV59 => FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            Source::GraveyardReturnV61 | Source::GenesisWaveV69 => {
+                unreachable!("V61/V69 use their separate typed-candidate owner fixtures")
+            }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
+            }
+            Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75 => {
+                unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
+            }
         };
         Self {
             source,
@@ -177,6 +220,21 @@ impl Harness {
             Source::RavenousV51 => input!(ravenous_current_decision_input_v51),
             Source::ElendaV52 => input!(elenda_current_decision_input_v52),
             Source::PreparedV57 => input!(prepared_current_decision_input_v57),
+            Source::NextFiveV59 => input!(next_five_current_decision_input_v59),
+            Source::GraveyardReturnV61 | Source::GenesisWaveV69 => {
+                unreachable!("V61/V69 use their separate typed-candidate owner fixtures")
+            }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
+            }
+            Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75 => {
+                unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
+            }
         }
     }
     fn packet(&self) -> Packet {
@@ -255,6 +313,21 @@ impl Harness {
             Source::RavenousV51 => self.native.ravenous_fixture_state(),
             Source::ElendaV52 => self.native.elenda_fixture_state(),
             Source::PreparedV57 => self.native.prepared_fixture_state(),
+            Source::NextFiveV59 => self.native.next_five_fixture_state(),
+            Source::GraveyardReturnV61 | Source::GenesisWaveV69 => {
+                unreachable!("V61/V69 use their separate typed-candidate owner fixtures")
+            }
+            Source::CallV62 | Source::EndTurnV68 => {
+                unreachable!("V62/V68 use their separate typed-candidate owner fixtures")
+            }
+            Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75 => {
+                unreachable!("V70/V71 use their separate typed-candidate owner fixtures")
+            }
         };
         (
             serde_json::to_vec(state).unwrap(),

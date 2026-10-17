@@ -158,11 +158,12 @@ pub(crate) fn detach_illegal_nonauras(state: &mut GameState) -> bool {
                     state,
                     link.object,
                     crate::card_def::CardType::Creature,
-                ) || protects_from_colors(
-                    state,
-                    link.object,
-                    crate::engine::object_color_mask(state, id),
-                )))
+                ) || crate::progenitus_v1::attachment_forbidden(state, id, link.object)
+                    || protects_from_colors(
+                        state,
+                        link.object,
+                        crate::engine::object_color_mask(state, id),
+                    )))
             .then_some((id, link))
         })
         .collect();

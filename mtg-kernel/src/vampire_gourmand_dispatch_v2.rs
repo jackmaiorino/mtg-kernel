@@ -392,7 +392,13 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
                     })
                     .collect();
                 let closure_count = cost_closed.len() + counter_closed.len();
-                if closure_count == 0 {
+                if closure_count == 0 && crate::engine::time_stop_v1::disposed(state, original)? {
+                    if !counter_removed.is_empty() || !live.is_empty() || removed.is_some() {
+                        return Err(
+                            "Gourmand disposed publication has another removal/owner".into()
+                        );
+                    }
+                } else if closure_count == 0 {
                     validate_open_turn(state, capture)?;
                     crate::engine::validated_stack_item_target_spec(original, state)?;
                     if !counter_removed.is_empty()

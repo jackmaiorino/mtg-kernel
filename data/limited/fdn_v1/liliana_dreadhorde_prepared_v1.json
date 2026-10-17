@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "admission": "native_partial_source_only",
+  "source_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "registration_dependency": "Satisfied by actual Tinybones490 commit 8fe859c1978517ef22b9f85083a3ec794b221302",
+  "cards": [
+    {
+      "name": "Liliana, Dreadhorde General",
+      "mana_cost": "{4}{B}{B}",
+      "mana_value": 6,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Liliana"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "starting_loyalty": 6,
+      "mechanics": [
+        "controlled_creature_dies_draw",
+        "native_loyalty_zombie",
+        "apnap_simultaneous_sacrifice_two",
+        "opponent_keep_each_permanent_type_sacrifice_rest"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LilianaDreadhordeGeneral.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_liliana_dreadhorde_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false,
+      "power": null,
+      "toughness": null
+    },
+    {
+      "name": "Zombie Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/ZombieToken.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "is_token": true
+    }
+  ],
+  "frozen_token_edge": "e29a360b-11fd-42ba-82ba-de8f7e136c20",
+  "qualification": "Source and genuine paid fixture preparation only. All new Rust remains uncompiled and unrun. No catalog/profile/consumer/model/sampler admission."
+}

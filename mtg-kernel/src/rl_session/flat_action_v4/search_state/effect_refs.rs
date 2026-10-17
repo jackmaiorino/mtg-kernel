@@ -7,6 +7,7 @@ use crate::state::AbilitySourceContractV4;
 struct Scan<'a> {
     state: &'a GameState,
     pool: &'a [ObjectId],
+    scope: ReferenceScopeV68,
 }
 impl Scan<'_> {
     fn raw(&self, id: ObjectId) -> bool {
@@ -50,15 +51,72 @@ impl Scan<'_> {
                     .is_some_and(|item| self.raw(item.source)),
             })
     }
+    // Full native Storm snapshots retain cast choices, including physical cost
+    // references. Do not resample a currently hidden object named by that history.
+    fn storm_snapshot(&self, spell: &crate::state::StackItem) -> bool {
+        self.copy(spell)
+            || spell.discarded.iter().any(|id| self.raw(*id))
+            || spell.v4.paid_cost_refs.iter().any(|r| self.raw(r.object))
+            || spell.v4.ability_source_contract.is_some_and(|a| self.a(&a))
+            || spell.v4.granted_by.is_some_and(|a| self.a(&a))
+            || spell
+                .v4
+                .source_contract
+                .and_then(|s| s.finalized_cast_binding)
+                .and_then(|b| b.chosen_creature_cost)
+                .is_some_and(|r| self.raw(r.object))
+    }
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
-            AjaniLoyaltyV42 { .. }
+            // These native owners have no hidden-source resampling contract.
+            BindLathrilCombatTokensV1
+            | LathrilCombatTokensV1 { .. }
+            | KykarChooseModeV1
+            | KykarExileV1
+            | KykarSpiritV1
+            | KykarReturnV1 { .. }
+            | BindGreatwurmCountersV1
+            | GreatwurmCountersV1 { .. }
+            | CreateTokenCopyOfSourceV1
+            | BindSphinxLoreV1
+            | SphinxLoreV1 { .. }
+            | HarvesterExileAndCopyV1
+            | FiendArtisanSearchV1 => true,
+            LilianaZombieV1 | LilianaSacrificeV1 { .. } => !matches!(self.scope, ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito),
+            KaitoCunningV75{..}=>self.scope != ReferenceScopeV68::Kaito,
+            ChandraFlameshaperV74{..}=>!matches!(self.scope, ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito),
+            TinybonesStashV72 {discard,observer} => !matches!(self.scope,ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito)
+                || crate::engine::tinybones_v72::sampler_stash_conflicts_v72(self.state,self.pool,*discard,*observer).unwrap_or(true),
+            GenesisWaveV1 => !matches!(self.scope, ReferenceScopeV68::GenesisWave | ReferenceScopeV68::Muldrotha | ReferenceScopeV68::Tinybones | ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito),
+            BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
+            | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
+            | SphinxsTutelageMillV1 { .. }
+            | MaySacrificeNonlandOtherwiseV1 { .. }
+            | AjaniLoyaltyV42 { .. }
             | DrakeIncubationFromCaptureV1 { .. }
             | DrakeCreateTokenFromPaidV1
+            | LoseLifeEqualControllerTurnGainsV1
+            | CreateAnotherControlledNonlandTargetCopyV1
+            | CreateAttachedAuraCopyV1 {..}
             | FiendishPandaCounterFromCaptureV1 { .. }
             | ConquerorGainFromCaptureV49 { .. }
+            | ConquerorGainFromWideCaptureV59 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,
+            BindAleshaRaidReturn | AleshaRaidReturn { .. }
+            | BindNineLivesFamiliarReturnV1 | BindValkyriesCallDeathV1 => {
+                self.scope == ReferenceScopeV68::Legacy
+            }
+            ScheduleNineLivesFamiliarReturnV1 { graveyard, .. }
+            | ReturnNineLivesFamiliarV1 { graveyard, .. } => {
+                self.scope == ReferenceScopeV68::Legacy
+                    || self.same(graveyard.object, graveyard.zone_change_count)
+            }
+            ReturnValkyriesCallCreatureV1 { source, graveyard, .. } => {
+                self.scope == ReferenceScopeV68::Legacy
+                    || self.a(source)
+                    || self.same(graveyard.object, graveyard.zone_change_count)
+            }
             AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
                 let crate::event::CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else { return true; };
@@ -113,6 +171,7 @@ impl Scan<'_> {
             DiscardUpToThenDraw { .. }
             | ExileRandomGraveyardCardPlayableThisTurn { .. }
             | ExileUntilThenCastV1 { .. }
+            | ExileTopEachPlayerThenCastV1
             | Discover { .. }
             | Hideaway { .. }
             | PlayHideawayIfThreeDistinctPowers
@@ -204,6 +263,7 @@ impl Scan<'_> {
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
             | DrawCardsDynamic { .. }
+            | NivMizzetVisionaryDrawV1 { .. }
             | DiscardBasicLandOrCards { .. }
             | LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
             | GainLifeEqualToPaidCostManaValue { .. }
@@ -226,6 +286,7 @@ impl Scan<'_> {
             | RevealUntilCardTypeAndMill { .. }
             | RevealUntilCardTypeToHandRandomBottomV1 { .. }
             | DealDamageDynamic { .. }
+            | BindThousandYearStormV1 | ThousandYearStormCaptureV1 { .. }
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
             | BindDoublePlusOneCountersToTriggerSource
@@ -262,6 +323,8 @@ impl Scan<'_> {
             | ExileSingleGraveyardTargetsThenDrainTwoV1
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
+            | ReturnSourceAsDemonWithTwoCountersV1
+            | DealXDamageThenCreateTokensForExcess { .. }
             | SearchLibraryCardsToDestination { .. }
             | CreateTokensDynamic { .. }
             | BackupTarget { .. }
@@ -314,6 +377,46 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
+            GenesisWaveV1 { choice, cards } => {
+                !matches!(
+                    self.scope,
+                    ReferenceScopeV68::GenesisWave
+                        | ReferenceScopeV68::Muldrotha
+                        | ReferenceScopeV68::Tinybones
+                        | ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
+                        | ReferenceScopeV68::Kaito
+                ) || self.bs(&crate::effect::genesis_wave_v1::sampler_bindings_v69(
+                    choice,
+                )) || self.bs(cards)
+            }
+            LilianaV1 { choice, selected } => {
+                !matches!(
+                    self.scope,
+                    ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
+                        | ReferenceScopeV68::Kaito
+                ) || crate::effect::liliana_dreadhorde_v1::sampler_choice_conflicts_v73(
+                    self.state, self.pool, choice,
+                )
+                .unwrap_or(true)
+                    || self.bs(selected)
+            }
+            ChandraExileGrantV74 { capture, chosen } => {
+                !matches!(
+                    self.scope,
+                    ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito
+                ) || crate::effect::chandra_flameshaper_v1::sampler_exile_conflicts_v74(
+                    self.state, self.pool, *capture,
+                )
+                .unwrap_or(true)
+                    || self.raw(chosen.object)
+            }
+            CuratorV1 { .. }
+            | BlasphemousEdictV1 { .. }
+            | NonlandSacrificePaymentV1 { .. }
+            | AleshaRaidAnswerV1 { .. }
+            | SphinxsTutelageMillV1 { .. } => true,
             CopyTarget { choice, selected } => {
                 self.copy(&choice.spell)
                     || self.fs(&choice.remaining)
@@ -566,6 +669,43 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
+            GenesisWaveCardsV1 { choice } => {
+                !matches!(
+                    self.scope,
+                    ReferenceScopeV68::GenesisWave
+                        | ReferenceScopeV68::Muldrotha
+                        | ReferenceScopeV68::Tinybones
+                        | ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
+                        | ReferenceScopeV68::Kaito
+                ) || self.bs(&crate::effect::genesis_wave_v1::sampler_bindings_v69(
+                    choice,
+                ))
+            }
+            LilianaV1 { choice } => {
+                !matches!(
+                    self.scope,
+                    ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
+                        | ReferenceScopeV68::Kaito
+                ) || crate::effect::liliana_dreadhorde_v1::sampler_choice_conflicts_v73(
+                    self.state, self.pool, choice,
+                )
+                .unwrap_or(true)
+            }
+            ChandraExileV74 { capture } => {
+                !matches!(
+                    self.scope,
+                    ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito
+                ) || crate::effect::chandra_flameshaper_v1::sampler_exile_conflicts_v74(
+                    self.state, self.pool, *capture,
+                )
+                .unwrap_or(true)
+            }
+            CuratorCardsV1 { .. }
+            | BlasphemousEdictV1 { .. }
+            | NonlandSacrificePaymentV1 { .. }
+            | SphinxsTutelageMillOrderV1 { .. } => true,
             ChooseNewlyExiledCard { .. } => true,
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
             DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),
@@ -582,6 +722,7 @@ impl Scan<'_> {
             ConvokeLook { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
             WardCards { choice } => self.bs(&choice.candidates) || self.fs(&choice.remaining),
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
+            OrderProgenitusGraveyardV1 { original, .. } => self.bs(original),
             StandardBreachChoiceV1 {
                 chosen,
                 original_candidates,
@@ -592,6 +733,7 @@ impl Scan<'_> {
                     || self.bs(original_candidates)
                     || later.as_ref().is_some_and(|(_, cards)| self.bs(cards))
             }
+            AttachCopiedAuraV1 { .. } => true,
             AttachReturningAura {
                 aura,
                 original_candidates,
@@ -798,6 +940,8 @@ impl Scan<'_> {
             PendingEffectChoice::ChooseBoolean { purpose, .. } => {
                 use EffectBooleanChoicePurpose::*;
                 match purpose {
+                    CuratorPileV1 { .. } => true,
+                    AleshaRaidReturnV1 => self.scope == ReferenceScopeV68::Legacy,
                     ExilePlay { choice } => {
                         choice.card.is_some_and(|b| self.b(&b))
                             || self.bs(&choice.rejected)
@@ -841,7 +985,92 @@ impl Scan<'_> {
 }
 
 pub(super) fn op_conflicts(state: &GameState, pool: &[ObjectId], op: &EffectOp) -> bool {
-    Scan { state, pool }.op(op)
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Legacy,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_call_v62(state: &GameState, pool: &[ObjectId], op: &EffectOp) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Call,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_genesis_wave_v69(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::GenesisWave,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_muldrotha_v71(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Muldrotha,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_tinybones_v72(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Tinybones,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_liliana_v73(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Liliana,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_chandra_v74(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Chandra,
+    }
+    .op(op)
+}
+pub(super) fn op_conflicts_end_turn_v68(
+    state: &GameState,
+    pool: &[ObjectId],
+    op: &EffectOp,
+) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::EndTurn,
+    }
+    .op(op)
 }
 
 fn continuation_conflicts(
@@ -924,6 +1153,7 @@ fn continuation_conflicts(
             | SearchLibraryToBattlefieldTapped { frame }
             | UndercityRoute { frame }
             | UndercityThrone { frame } => s.f(frame),
+            AttachCopiedAuraV1 { .. } => true,
             AttachReturningAura {
                 aura,
                 host,
@@ -979,11 +1209,220 @@ fn continuation_conflicts(
     false
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReferenceScopeV68 {
+    Legacy,
+    EndTurn,
+    Call,
+    GenesisWave,
+    Muldrotha,
+    Tinybones,
+    Liliana,
+    Chandra,
+    Kaito,
+}
+
 pub(super) fn conflicts(
     state: &GameState,
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Legacy)
+}
+pub(super) fn conflicts_end_turn_v68(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::EndTurn)
+}
+pub(super) fn conflicts_call_v62(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Call)
+}
+pub(super) fn conflicts_genesis_wave_v69(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::GenesisWave)
+}
+pub(super) fn conflicts_muldrotha_v71(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Muldrotha)
+}
+pub(super) fn conflicts_tinybones_v72(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Tinybones)
+}
+pub(super) fn conflicts_liliana_v73(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Liliana)
+}
+pub(super) fn op_conflicts_kaito_v75(state: &GameState, pool: &[ObjectId], op: &EffectOp) -> bool {
+    Scan {
+        state,
+        pool,
+        scope: ReferenceScopeV68::Kaito,
+    }
+    .op(op)
+}
+
+pub(super) fn conflicts_kaito_v75(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Kaito)
+}
+pub(super) fn conflicts_chandra_v74(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    conflicts_in_scope(state, pool, plan, ReferenceScopeV68::Chandra)
+}
+fn conflicts_in_scope(
+    state: &GameState,
+    pool: &[ObjectId],
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    scope: ReferenceScopeV68,
+) -> bool {
+    if scope != ReferenceScopeV68::Legacy
+        && state
+            .engine
+            .event_log
+            .iter()
+            .any(|event| matches!(event, crate::event::CommittedEvent::AleshaPowerLkiV1 { .. }))
+        && [PlayerId::P0, PlayerId::P1].into_iter().any(|viewer| {
+            if matches!(
+                scope,
+                ReferenceScopeV68::Tinybones
+                    | ReferenceScopeV68::Liliana
+                    | ReferenceScopeV68::Chandra
+                    | ReferenceScopeV68::Kaito
+            ) {
+                crate::graveyard_return_public_v61::capture_tinybones_compat_v72(state, viewer)
+                    .is_err()
+            } else {
+                crate::graveyard_return_public_v61::capture_complete_call_v62(state, viewer)
+                    .is_err()
+            }
+        })
+    {
+        return true;
+    }
+    if matches!(
+        scope,
+        ReferenceScopeV68::EndTurn
+            | ReferenceScopeV68::GenesisWave
+            | ReferenceScopeV68::Muldrotha
+            | ReferenceScopeV68::Tinybones
+            | ReferenceScopeV68::Liliana
+            | ReferenceScopeV68::Chandra
+            | ReferenceScopeV68::Kaito
+    ) && crate::engine::time_stop_v1::sampler_conflicts_v68(state, pool).unwrap_or(true)
+    {
+        return true;
+    }
+    if state.engine.event_history.has_any(&[
+        EventKindV1::MuldrothaOptionsV1,
+        EventKindV1::MuldrothaSelectedV1,
+        EventKindV1::MuldrothaPlayedV1,
+    ]) && (!matches!(
+        scope,
+        ReferenceScopeV68::Muldrotha
+            | ReferenceScopeV68::Tinybones
+            | ReferenceScopeV68::Liliana
+            | ReferenceScopeV68::Chandra
+            | ReferenceScopeV68::Kaito
+    ) || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, pool).unwrap_or(true))
+    {
+        return true;
+    }
+    if state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::TinybonesV72])
+        && (!matches!(
+            scope,
+            ReferenceScopeV68::Tinybones
+                | ReferenceScopeV68::Liliana
+                | ReferenceScopeV68::Chandra
+                | ReferenceScopeV68::Kaito
+        ) || crate::engine::tinybones_v72::sampler_conflicts_v72(state, pool).unwrap_or(true))
+    {
+        return true;
+    }
+    if state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::LilianaDreadhordeV1])
+        && (!matches!(
+            scope,
+            ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito
+        ) || crate::effect::liliana_dreadhorde_v1::sampler_conflicts_v73(state, pool)
+            .unwrap_or(true))
+    {
+        return true;
+    }
+    if state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::ChandraFlameshaperV74])
+        && (!matches!(scope, ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito)
+            || crate::effect::chandra_flameshaper_v1::sampler_conflicts_v74(state, pool)
+                .unwrap_or(true))
+    {
+        return true;
+    }
+    if (state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::KaitoCunningV75])
+        || state
+            .engine
+            .event_log
+            .iter()
+            .any(|e| matches!(e, crate::event::CommittedEvent::KaitoCunningV75 { .. })))
+        && (scope != ReferenceScopeV68::Kaito
+            || crate::effect::kaito_cunning_v75::sampler_conflicts_v75(state, pool).unwrap_or(true))
+    {
+        return true;
+    }
+    if state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::VivienReidV1])
+        || state.engine.event_log.iter().any(|e| {
+            matches!(
+                e,
+                crate::event::CommittedEvent::VivienReidV1 { .. }
+                    | crate::event::CommittedEvent::TinybonesV72 { .. }
+                    | crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }
+                    | crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
+            )
+        })
+    {
+        return true;
+    }
+    if crate::engine::ordinary_cleanup_v1::validate(state).is_err()
+        || crate::engine::ordinary_cleanup_v1::conflicts(state, pool)
+    {
+        return true;
+    }
     // Retained original-world mechanisms require their qualified sampler.
     if crate::drake_hatcher_v1::custody::relevant(state)
         || state.engine.event_history.iter().any(|e| {
@@ -1018,79 +1457,126 @@ pub(super) fn conflicts(
         .engine
         .event_history
         .scan_for_v1(&[
-            EventKindV1::BaitTransferAppliedV48,
-            EventKindV1::BaitTransferInputV48,
+            EventKindV1::TimeStopJournalV1,
+            EventKindV1::GenesisWaveProgressV1,
+            EventKindV1::GenesisWaveFinishedV1,
+            EventKindV1::SphinxsTutelageDrawV1,
+            EventKindV1::SphinxsTutelageCollectedV1,
+            EventKindV1::SphinxsTutelagePublishedV1,
+            EventKindV1::SphinxsTutelageMillStartedV1,
+            EventKindV1::SphinxsTutelageMillBatchV1,
+            EventKindV1::KinshipEntryV1,
+            EventKindV1::BannerEntryOperationStartedV1,
             EventKindV1::BannerEntryColorCapturedV1,
             EventKindV1::BannerEntryColorChosenV1,
             EventKindV1::BannerEntryColorCommittedV1,
             EventKindV1::BannerEntryOperationCompletedV1,
-            EventKindV1::BannerEntryOperationStartedV1,
-            EventKindV1::EquipmentDamageClosedV4,
-            EventKindV1::EquipmentDamageCounterRemovalV4,
-            EventKindV1::EquipmentDamageDepartureV4,
-            EventKindV1::EquipmentDamagePreparedV4,
-            EventKindV1::EquipmentDamagePublishedV4,
-            EventKindV1::FaebloomJournalV43,
-            EventKindV1::FakeJournalV50,
-            EventKindV1::GorehornCrystalBeginV1,
-            EventKindV1::GorehornCrystalCompletionV1,
-            EventKindV1::GorehornDamageOperationV1,
-            EventKindV1::GorehornDepartureV1,
-            EventKindV1::GorehornOperationV1,
-            EventKindV1::GorehornPreparedV1,
-            EventKindV1::GorehornPublishedV1,
-            EventKindV1::InspirationEngineDepartureV1,
-            EventKindV1::InspirationResolutionBoundaryV1,
-            EventKindV1::InspirationResolutionInputV1,
-            EventKindV1::InspirationResolutionOperationV1,
             EventKindV1::LibrarianActivationCommittedV1,
             EventKindV1::LibrarianActivationCounterRemovalV1,
-            EventKindV1::LibrarianActivationFinishedV1,
             EventKindV1::LibrarianActivationOperationV1,
-            EventKindV1::MandatoryCastPaymentInputV1,
-            EventKindV1::MandatoryCastPaymentV1,
-            EventKindV1::PlusCounterInputV48,
-            EventKindV1::PlusCounterReplacementV48,
-            EventKindV1::ProtectionSourceColorDepartureV1,
-            EventKindV1::RaidEntryCaptureV1,
-            EventKindV1::RaidEntryCounteredV1,
-            EventKindV1::RaidEntryDroppedV1,
-            EventKindV1::RaidEntryPublishedV1,
-            EventKindV1::RaidEntryStartedV1,
-            EventKindV1::TokenAttachmentJournalV48,
-            EventKindV1::TokenCreationInputV48,
-            EventKindV1::TokenCreationReplacementV48,
-            EventKindV1::TwinflameCombatInputV38,
-            EventKindV1::TwinflameCombatOperationV38,
-            EventKindV1::TwinflameCombatPublishedV38,
-            EventKindV1::TwinflameDamagePreparationV38,
-            EventKindV1::TwinflameDynamicDamageSampleV38,
-            EventKindV1::TwinflameFieryCaptureV38,
-            EventKindV1::TwinflameFieryFinishedV38,
-            EventKindV1::TwinflameReplacementInputV38,
-            EventKindV1::TwinflameReplacementOperationV38,
-            EventKindV1::VampireGourmandAttackCaptureV2,
-            EventKindV1::VampireGourmandCleanupV2,
-            EventKindV1::VampireGourmandCollectedV2,
-            EventKindV1::VampireGourmandCostOperationV2,
-            EventKindV1::VampireGourmandCounterClosedV2,
-            EventKindV1::VampireGourmandCounterRemovedV2,
-            EventKindV1::VampireGourmandExpiredV2,
-            EventKindV1::VampireGourmandPublishedV2,
+            EventKindV1::LibrarianActivationFinishedV1,
             EventKindV1::VampireGourmandResolutionBoundaryV1,
+            EventKindV1::VampireGourmandCostOperationV2,
+            EventKindV1::VampireGourmandCleanupV2,
+            EventKindV1::VampireGourmandExpiredV2,
+            EventKindV1::VampireGourmandAttackCaptureV2,
+            EventKindV1::VampireGourmandCollectedV2,
+            EventKindV1::VampireGourmandPublishedV2,
+            EventKindV1::VampireGourmandCounterRemovedV2,
+            EventKindV1::VampireGourmandCounterClosedV2,
+            EventKindV1::RaidEntryCaptureV1,
+            EventKindV1::RaidEntryPublishedV1,
+            EventKindV1::RaidEntryDroppedV1,
+            EventKindV1::RaidEntryCounteredV1,
+            EventKindV1::RaidEntryStartedV1,
+            EventKindV1::GorehornDepartureV1,
+            EventKindV1::GorehornPublishedV1,
+            EventKindV1::GorehornPreparedV1,
+            EventKindV1::GorehornDamageOperationV1,
+            EventKindV1::GorehornOperationV1,
+            EventKindV1::GorehornCrystalBeginV1,
+            EventKindV1::GorehornCrystalCompletionV1,
+            EventKindV1::EquipmentDamagePublishedV4,
+            EventKindV1::EquipmentDamageDepartureV4,
+            EventKindV1::EquipmentDamagePreparedV4,
+            EventKindV1::EquipmentDamageClosedV4,
+            EventKindV1::EquipmentDamageCounterRemovalV4,
+            EventKindV1::ProtectionSourceColorDepartureV1,
+            EventKindV1::ZulAshurPublishedV1,
+            EventKindV1::ZulAshurRemovedV1,
+            EventKindV1::ZulAshurInstalledV1,
             EventKindV1::ZulAshurCleanupEnteredV1,
             EventKindV1::ZulAshurCleanupV1,
             EventKindV1::ZulAshurExpiredV1,
-            EventKindV1::ZulAshurInstalledV1,
-            EventKindV1::ZulAshurPublishedV1,
             EventKindV1::ZulAshurRemovalInputV1,
-            EventKindV1::ZulAshurRemovedV1,
+            EventKindV1::FaebloomJournalV43,
+            EventKindV1::FakeJournalV50,
+            EventKindV1::InspirationResolutionBoundaryV1,
+            EventKindV1::TwinflameReplacementInputV38,
+            EventKindV1::TwinflameReplacementOperationV38,
+            EventKindV1::TwinflameDamagePreparationV38,
+            EventKindV1::TwinflameCombatPublishedV38,
+            EventKindV1::TwinflameCombatInputV38,
+            EventKindV1::TwinflameCombatOperationV38,
+            EventKindV1::TwinflameDynamicDamageSampleV38,
+            EventKindV1::TwinflameFieryCaptureV38,
+            EventKindV1::TwinflameFieryFinishedV38,
+            EventKindV1::InspirationResolutionInputV1,
+            EventKindV1::InspirationResolutionOperationV1,
+            EventKindV1::InspirationEngineDepartureV1,
+            EventKindV1::MandatoryCastPaymentV1,
+            EventKindV1::MandatoryCastPaymentInputV1,
+            EventKindV1::TokenCreationReplacementV48,
+            EventKindV1::PlusCounterReplacementV48,
+            EventKindV1::TokenCreationInputV48,
+            EventKindV1::TokenAttachmentJournalV48,
+            EventKindV1::BaitTransferInputV48,
+            EventKindV1::BaitTransferAppliedV48,
+            EventKindV1::PlusCounterInputV48,
         ])
         .iter()
         .any(|event| {
+            if matches!(
+                event,
+                crate::event::CommittedEvent::TimeStopJournalV1 { .. }
+            ) {
+                return !matches!(
+                    scope,
+                    ReferenceScopeV68::EndTurn
+                        | ReferenceScopeV68::GenesisWave
+                        | ReferenceScopeV68::Muldrotha
+                        | ReferenceScopeV68::Tinybones
+                        | ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
+                        | ReferenceScopeV68::Kaito
+                );
+            }
+            if matches!(
+                event,
+                crate::event::CommittedEvent::GenesisWaveProgressV1 { .. }
+                    | crate::event::CommittedEvent::GenesisWaveFinishedV1 { .. }
+            ) {
+                return !matches!(
+                    scope,
+                    ReferenceScopeV68::GenesisWave
+                        | ReferenceScopeV68::Muldrotha
+                        | ReferenceScopeV68::Tinybones
+                        | ReferenceScopeV68::Liliana
+                        | ReferenceScopeV68::Chandra
+                        | ReferenceScopeV68::Kaito
+                );
+            }
             matches!(
                 event,
-                crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
+                crate::event::CommittedEvent::GenesisWaveProgressV1 { .. }
+                    | crate::event::CommittedEvent::GenesisWaveFinishedV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelageMillStartedV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }
+                    | crate::event::CommittedEvent::KinshipEntryV1 { .. }
+                    | crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
                     | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
                     | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
                     | crate::event::CommittedEvent::BannerEntryColorCommittedV1 { .. }
@@ -1184,7 +1670,7 @@ pub(super) fn conflicts(
     {
         return true;
     }
-    let s = Scan { state, pool };
+    let s = Scan { state, pool, scope };
     if state
         .engine
         .event_history
@@ -1251,6 +1737,56 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
+            // Future native owning histories are not sampler permissions.
+            // Refuse them until their complete retained-reference walk exists.
+            LathrilCombatDamageV1 { .. }
+            | LathrilCombatCollectedV1 { .. }
+            | LathrilCombatPublishedV1 { .. }
+            | LathrilCombatResolvedV1 { .. }
+            | LathrilCombatCounteredV1 { .. }
+            | LathrilCombatObservedV1 { .. }
+            | CopiedTokenAbilitiesEnteredV1 { .. }
+            | CopiedTokenEndStepV1 { .. }
+            | CopiedTokenEndStepCollectedV1 { .. }
+            | CopiedTokenSacrificePublishedV1 { .. }
+            | CopiedTokenSacrificeFinishedV1 { .. }
+            | CuratorEnteredV1 { .. }
+            | CuratorCollectedV1 { .. }
+            | CuratorPublishedV1 { .. }
+            | CuratorFinishedV1 { .. }
+            | GenesisWaveProgressV1 { .. } | GenesisWaveFinishedV1 { .. }
+            | CuratorProgressV1 { .. }
+            | KykarExiledV1 { .. }
+            | KykarDelayedCollectedV1 { .. }
+            | GreatwurmCounterPaymentV1 { .. }
+            | GreatwurmCombatCaptureV1 { .. }
+            | GreatwurmCombatBoundV1 { .. }
+            | GreatwurmCollectedV1 { .. }
+            | GreatwurmPublishedV1 { .. }
+            | GreatwurmFinishedV1 { .. }
+            | GreatwurmCounterInputV1 { .. }
+            | SourceCopyDepartureV1 { .. }
+            | SphinxLoreV1 { .. }
+            | SphinxLoreCastOptionsV1 { .. }
+            | SphinxLoreCastSelectedV1 { .. }
+            | OmniscienceCastOptionsV1 { .. }
+            | OmniscienceCastSelectedV1 { .. }
+            | NightmareCopyEnteredV1 { .. }
+            | NightmareCopyLayerV1 { .. }
+            | HarvesterGraveyardEntryV1 { .. }
+            | HarvesterResolvedV1 { .. }
+            | HarvesterCastAnnouncedV1 { .. }
+            | HarvesterCastReversedV1 { .. }
+            | ProgenitusInputV1 { .. }
+            | ProgenitusShuffledV1 { .. }
+            | LeylineOpeningV1 { .. }
+            | MuldrothaOptionsV1 { .. }
+            | MuldrothaSelectedV1 { .. }
+            | MuldrothaPlayedV1 { .. }
+            | FiendArtisanInputV1 { .. }
+            | FiendArtisanPaidV1 { .. }
+            | FiendArtisanSearchStartedV1 { .. }
+            | FiendArtisanSearchFinishedV1 { .. } => true,
             DrakeJournalV1 { .. }
             | DrakeHistoryRefV1 { .. }
             | ConquerorGainReplayBorrowV49 { .. }
@@ -1264,9 +1800,24 @@ pub(super) fn conflicts(
             | StromkirkCounterRemovedV2 { .. }
             | StromkirkOperationV2 { .. }
             | StromkirkCompletedV2 { .. } => true,
+            // Only native-validated Combat/Cast records may be current Kaito inputs.
+            KaitoCunningV75 { .. } => scope != ReferenceScopeV68::Kaito,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            BannerEntryOperationStartedV1 { .. }
+            PublishedCastIdentityV1 { .. }
+            | TinybonesV72 { .. }
+            | LilianaDreadhordeV1 { .. }
+            | ChandraFlameshaperV74{..}
+            | VivienReidV1 { .. }
+            | OrdinaryCleanupStageV1 { .. }
+            | TimeStopJournalV1 { .. }
+            | SphinxsTutelageDrawV1 { .. }
+            | SphinxsTutelageCollectedV1 { .. }
+            | SphinxsTutelagePublishedV1 { .. }
+            | SphinxsTutelageMillStartedV1 { .. }
+            | SphinxsTutelageMillBatchV1 { .. }
+            | KinshipEntryV1 { .. }
+            | BannerEntryOperationStartedV1 { .. }
             | BannerEntryColorCapturedV1 { .. }
             | BannerEntryColorChosenV1 { .. }
             | BannerEntryColorCommittedV1 { .. }
@@ -1498,6 +2049,7 @@ pub(super) fn conflicts(
             | VampireGourmandCounterRemovedV2 { .. }
             | VampireGourmandCounterClosedV2 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
+            | LifeLossWideV59 { .. } | LifeGainWideV59 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }
             | LifeGainTurnBeganV1 { .. }
@@ -1511,7 +2063,16 @@ pub(super) fn conflicts(
             // This receipt is history-only. Active snapshot references are
             // already visited through the owning pending continuation above.
             | InspirationResolutionBoundaryV1 { .. } => false,
-            TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
+            ThousandYearStormV1 { journal } => match journal {
+                crate::effect::thousand_year_storm_v1::JournalV1::Cast { spell, observers, .. } => s.storm_snapshot(spell) || observers.iter().any(|source| s.a(source)),
+                crate::effect::thousand_year_storm_v1::JournalV1::Collected { .. } => false,
+                crate::effect::thousand_year_storm_v1::JournalV1::Published { item, .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { item, .. } => s.storm_snapshot(item),
+            },
+            AleshaPowerLkiV1 { .. } => scope == ReferenceScopeV68::Legacy,
+            NivMizzetVisionaryDamageV1 { .. }
+            | NivMizzetVisionaryTriggerStackedV1 { .. }
+            | NivMizzetVisionaryDamageSourceDepartureV1 { .. }
+            | TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }
                 | FakeJournalV50 { .. }
@@ -1521,7 +2082,7 @@ pub(super) fn conflicts(
                 | FiendishPandaCaptureCollectedV1 { .. }
                 | FiendishPandaJournalV1 { .. }
                 | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. }
-                | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. }
+                | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. } | ConquerorObserverInputV59 { .. } | ConquerorLossBatchV59 { .. } | ConquerorCapturedV59 { .. } | ConquerorCollectedV59 { .. } | ConquerorJournalV59 { .. } | FiendishPandaWideGainCaptureV59 { .. }
                 | SoulCounterInputV1 { .. } | RavenousPaymentV1 { .. } | RavenousRemovedV1 { .. } | RavenousCompletedV1 { .. } => true,
         }
     })
@@ -1529,6 +2090,261 @@ pub(super) fn conflicts(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn paid_time_stop_private_journal_refuses_hidden_slot_sampling_both_seats() {
+        use crate::{
+            engine::{self, Action, Decision},
+            ids::PlayerId,
+            policy_observation_v6::tests::put,
+            state::{GameState, Step, Zone},
+        };
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let island = crate::card_def::card_id_by_name("Island").unwrap();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[island; 40],
+                &[island; 40],
+                crate::rl::card_name,
+                110_486,
+                actor,
+            );
+            state.step = Step::Main1;
+            let pool = state.players[actor.opponent().index()].library.clone();
+            assert!(!conflicts(&state, &pool, None));
+            let lands = (0..6)
+                .map(|_| put(&mut state, actor, "Island", Zone::Battlefield))
+                .collect::<Vec<_>>();
+            let spell = put(&mut state, actor, "Time Stop", Zone::Hand);
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass{castable_spells,..} if castable_spells.contains(&spell))
+            );
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+            );
+            assert!(state.engine.pending_cast.is_none());
+            assert!(lands.iter().all(|id| state.objects.get(*id).tapped));
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            assert!(state.stack.iter().any(|row| row.source == spell));
+            for _ in 0..16 {
+                let d = engine::advance_until_decision(&mut state);
+                assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
+                if state.objects.get(spell).zone == Zone::Exile
+                    && state.engine.time_stop_v1.is_empty()
+                {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.objects.get(spell).zone, Zone::Exile);
+            assert!(state
+                .engine
+                .event_history
+                .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1]));
+            assert!(conflicts(&state, &pool, None));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(state, restored);
+            assert!(conflicts(&restored, &pool, None));
+        }
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn paid_ordinary_cleanup_keeps_lawful_current_slot_sampling_restore_and_forgery_guards_both_seats(
+    ) {
+        use crate::engine::{self, Action, Decision};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = crate::extra_turn_v1::tests::ready(actor);
+            let land = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let target = put(&mut state, actor, "Axgard Cavalry", Zone::Battlefield);
+            for _ in 0..9 {
+                put(&mut state, actor, "Forest", Zone::Hand);
+            }
+            put(&mut state, actor.opponent(), "Island", Zone::Hand);
+            let spell = put(&mut state, actor, "Giant Growth", Zone::Hand);
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&spell))
+            );
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(target)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            assert!(state.objects.get(land).tapped);
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            assert!(state.engine.pending_cast.is_none());
+            assert!(state
+                .stack
+                .iter()
+                .any(|row| row.source == spell && row.controller == actor));
+            let mut issued = None;
+            for _ in 0..200 {
+                let decision = engine::advance_until_decision(&mut state);
+                assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+                if let Decision::Discard {
+                    player,
+                    count,
+                    choices,
+                } = decision
+                {
+                    assert_eq!(player, actor);
+                    assert_eq!(count, 2);
+                    assert_eq!(choices.len(), 9);
+                    issued = Some(choices);
+                    break;
+                }
+                crate::graveyard_return_public_v61::tests::quiet(&mut state, decision);
+            }
+            let choices = issued.expect("actual ordinary cleanup discard");
+            assert_eq!(
+                engine::checked_effective_pt(&state, target).unwrap(),
+                (5, 5)
+            );
+            assert!(!state.engine.ordinary_cleanup_v1.is_empty());
+            assert!(state.engine.time_stop_v1.is_empty());
+            assert!(!state
+                .engine
+                .event_history
+                .has_any(&[EventKindV1::TimeStopJournalV1]));
+            let original_hand = state.players[actor.index()].hand.clone();
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(state, restored);
+            let pool = state.players[actor.opponent().index()].library.clone();
+            assert!(!conflicts(&state, &pool, None));
+            assert!(conflicts(&state, &original_hand, None));
+            let mut sampled = restored.clone();
+            super::super::sampler::redeterminize(&mut sampled, actor, 110_514).unwrap();
+            assert_eq!(
+                sampled.engine.ordinary_cleanup_v1,
+                state.engine.ordinary_cleanup_v1
+            );
+            assert_eq!(sampled.players[actor.index()].hand, original_hand);
+            engine::ordinary_cleanup_v1::validate(&sampled).unwrap();
+            assert_eq!(
+                crate::rl::observe_v1(&state, actor, 0).unwrap(),
+                crate::rl::observe_v1(&sampled, actor, 0).unwrap()
+            );
+            // All active fields affect state identity. Each isolated edit is
+            // rejected before native discard writes, including after warming
+            // the existing read-only validation frame on the genuine world.
+            crate::drake_hatcher_v1::custody::with_observation_replay_keys(&state, |original| {
+                crate::drake_hatcher_v1::custody::validate(original).unwrap();
+                for edit in 0..6 {
+                    let mut value = serde_json::to_value(original).unwrap();
+                    match edit {
+                        0 => value["engine"]["ordinary_cleanup_v1"] = serde_json::Value::Null,
+                        1 => value["engine"]["ordinary_cleanup_v1"]["phase"] = "Priority".into(),
+                        2 => {
+                            value["engine"]["ordinary_cleanup_v1"]["turn"] =
+                                original.turn_key_v1().checked_add(1).unwrap().into()
+                        }
+                        3 => value["engine"]["ordinary_cleanup_v1"]["hand"][0][1] = u32::MAX.into(),
+                        4 => value["engine"]["pending_discard"]["count"] = 1.into(),
+                        _ => {
+                            let index = value["engine"]["ordinary_cleanup_v1"]["stage_index"]
+                                .as_u64()
+                                .unwrap() as usize;
+                            value["engine"]["event_history"][index]["OrdinaryCleanupStageV1"]
+                                ["stage"]["phase"] = "Priority".into();
+                        }
+                    }
+                    let mut forged: GameState = serde_json::from_value(value).unwrap();
+                    assert_ne!(forged.state_hash(), original.state_hash());
+                    let before = forged.clone();
+                    assert!(
+                        engine::step(&mut forged, Action::Discard(choices[..2].to_vec())).is_err()
+                    );
+                    assert_eq!(forged, before);
+                }
+            });
+            // The actual discard has completed but the actual Growth has not
+            // expired. A forged terminal suffix cannot suppress that next
+            // mandatory native operation by erasing the transient owner.
+            let mut expiration = state.clone();
+            engine::step(&mut expiration, Action::Discard(choices[..2].to_vec())).unwrap();
+            assert_eq!(
+                engine::checked_effective_pt(&expiration, target).unwrap(),
+                (5, 5)
+            );
+            let expiration_value = serde_json::to_value(&expiration).unwrap();
+            assert_eq!(
+                expiration_value["engine"]["ordinary_cleanup_v1"]["phase"],
+                "Expiration"
+            );
+            for terminal in ["Finished", "GameOver"] {
+                let mut value = expiration_value.clone();
+                let index = value["engine"]["ordinary_cleanup_v1"]["stage_index"]
+                    .as_u64()
+                    .unwrap() as usize;
+                let mut suffix = value["engine"]["event_history"][index].clone();
+                suffix["OrdinaryCleanupStageV1"]["stage"]["phase"] = terminal.into();
+                value["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(suffix);
+                value["engine"]["ordinary_cleanup_v1"] = serde_json::Value::Null;
+                let forged: GameState = serde_json::from_value(value).unwrap();
+                let restored_forged: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+                assert_eq!(forged, restored_forged);
+                for mut branch in [forged, restored_forged] {
+                    assert_eq!(
+                        engine::checked_effective_pt(&branch, target).unwrap(),
+                        (5, 5)
+                    );
+                    assert!(engine::ordinary_cleanup_v1::validate(&branch).is_err());
+                    assert!(conflicts(&branch, &pool, None));
+                    let before = branch.clone();
+                    assert!(engine::step(&mut branch, Action::Pass).is_err());
+                    assert_eq!(branch, before);
+                    assert!(
+                        super::super::sampler::redeterminize(&mut branch, actor, 110_516).is_err()
+                    );
+                    assert_eq!(branch, before);
+                }
+            }
+            let mut replay = restored;
+            for branch in [&mut state, &mut replay, &mut sampled] {
+                engine::step(branch, Action::Discard(choices[..2].to_vec())).unwrap();
+                for _ in 0..48 {
+                    let decision = engine::advance_until_decision(branch);
+                    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+                    if branch.active_player != actor {
+                        break;
+                    }
+                    crate::graveyard_return_public_v61::tests::quiet(branch, decision);
+                }
+                assert_eq!(branch.active_player, actor.opponent());
+                assert!(branch.engine.ordinary_cleanup_v1.is_empty());
+                assert!(branch.engine.time_stop_v1.is_empty());
+                assert_eq!(
+                    engine::checked_effective_pt(branch, target).unwrap(),
+                    (2, 2)
+                );
+                assert_eq!(branch.players[actor.index()].hand.len(), 7);
+                let pool = branch.players[actor.index()].library.clone();
+                assert!(!conflicts(branch, &pool, None));
+                let mut again = branch.clone();
+                super::super::sampler::redeterminize(&mut again, actor.opponent(), 110_515)
+                    .unwrap();
+                engine::ordinary_cleanup_v1::validate(&again).unwrap();
+            }
+            assert_eq!(state, replay);
+        }
+    }
+
     use super::*;
     use crate::ids::PlayerId;
     use crate::policy_observation_v6::tests::{put, ready_state};
@@ -1574,6 +2390,7 @@ mod tests {
             let scan = Scan {
                 state: &state,
                 pool: &[object],
+                scope: ReferenceScopeV68::Legacy,
             };
             assert!(scan.op(&op));
             assert!(scan.purpose(&purpose));
@@ -1581,6 +2398,7 @@ mod tests {
         let scan = Scan {
             state: &state,
             pool: &[other],
+            scope: ReferenceScopeV68::Legacy,
         };
         assert!(!scan.op(&op));
         assert!(!scan.purpose(&purpose));
@@ -1640,6 +2458,7 @@ mod tests {
             let scan = Scan {
                 state: &state,
                 pool: &pool,
+                scope: ReferenceScopeV68::Legacy,
             };
             assert!(scan.f(&frame));
             assert!(scan.purpose(&purpose));
@@ -1648,6 +2467,7 @@ mod tests {
         let scan = Scan {
             state: &state,
             pool: &pool,
+            scope: ReferenceScopeV68::Legacy,
         };
         assert!(!scan.f(&frame));
         assert!(!scan.purpose(&purpose));
@@ -1656,6 +2476,7 @@ mod tests {
         let scan = Scan {
             state: &state,
             pool: &pool,
+            scope: ReferenceScopeV68::Legacy,
         };
         assert!(!scan.f(&frame));
         assert!(!scan.purpose(&purpose));

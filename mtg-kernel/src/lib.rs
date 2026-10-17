@@ -44,6 +44,7 @@ pub mod async_rollout_v2;
 pub mod attack_target_v1;
 pub mod banishing_light_v1;
 pub mod banner_observation_v1;
+pub mod banner_of_kinship_v1;
 pub mod bloodthirsty_conqueror_v49;
 pub mod bo3_match;
 pub mod bo3_session;
@@ -55,8 +56,10 @@ pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
+pub mod creature_types_v60;
 pub mod elenda_observation_v52;
 pub mod elenda_public_v52;
+pub mod embercleave_public_v65;
 pub mod fake_your_own_death_v50;
 pub mod fiendish_panda_v1;
 pub mod game_outcome_observation_v41;
@@ -73,16 +76,26 @@ pub mod linked_aura_return_v1;
 pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
+pub mod niv_mizzet_public_v63;
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod niv_mizzet_visionary_v1;
 pub mod panda_observation_v47;
 pub mod panda_public_v47;
 pub mod phoenix_public_v56;
 pub mod planeswalker_v1;
+pub(crate) mod progenitus_v1;
 pub mod rules_meaning_elenda_v52;
+pub mod rules_meaning_embercleave_v65;
 pub mod rules_meaning_fake_your_own_death_v50;
 pub mod rules_meaning_fiendish_panda_v1;
 pub mod rules_meaning_game_outcome_protection_v1;
 pub mod rules_meaning_heraldic_banner_v1;
 pub mod rules_meaning_librarian_v1;
+pub mod rules_meaning_niv_mizzet_v63;
 pub mod rules_meaning_phoenix_v56;
 mod soul_shackled_zombie_v1;
 pub mod source_type_hexproof_v1;
@@ -206,6 +219,7 @@ pub mod unclamped_softmax_sampler_v1;
 #[cfg_attr(not(windows), allow(dead_code))]
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
+pub(crate) mod leyline_axe_v1;
 pub mod limited_common_session_v1;
 pub mod limited_common_session_v2;
 pub mod limited_common_session_v3;
@@ -562,6 +576,8 @@ mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
 pub(crate) mod combat_static_rules_v1;
+mod counter_target_effects_v1;
+mod extravagant_replication_v1;
 pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub(crate) mod life_loss_turn_v1;
@@ -600,6 +616,7 @@ pub mod trigger;
 mod wildwood_capture_v1;
 mod wildwood_scourge_v1;
 pub mod xmage_observed_inference_v1;
+mod zimone_paradox_sculptor_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
@@ -739,7 +756,25 @@ pub mod rules_meaning_quandary_v55;
 pub mod rules_meaning_spinner_v54;
 pub mod spinner_public_v54;
 
+pub mod alesha_v1;
+pub mod artist_public_v64;
+pub mod chosen_type_public_v66;
+pub mod giada_v1;
+pub mod graveyard_return_candidates_v61;
+pub mod graveyard_return_observation_v61;
+pub mod graveyard_return_public_v61;
+pub mod infernal_vessel_v1;
+pub mod midnight_snack_v1;
+pub mod nine_lives_familiar_v1;
 pub mod prepared_observation_v57;
+pub mod rules_meaning_artist_v64;
+pub mod rules_meaning_chosen_type_v66;
+pub mod rules_meaning_graveyard_return_v61;
+pub mod rules_meaning_valkyries_call_v62;
+pub mod snack_wide_life_v59;
+pub mod snack_wide_public_v59;
+pub mod valkyries_call_public_v62;
+pub mod valkyries_call_v1;
 
 #[cfg(all(
     test,
@@ -754,3 +789,77 @@ pub(crate) mod fake_full_engine_admission_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 pub(crate) mod ravenous_full_engine_admission_v1_tests;
+
+pub mod midnight_snack_public_v58;
+pub mod rules_meaning_midnight_snack_v58;
+
+pub mod goblin_negotiation_v1;
+pub mod next_five_public_v59;
+pub mod rules_meaning_next_five_v59;
+
+pub mod next_five_observation_v59;
+
+pub mod limited_graveyard_return_session_v7;
+pub mod limited_next_five_session_v6;
+
+pub mod drakuseth_public_v67;
+pub mod rules_meaning_drakuseth_v67;
+
+pub mod call_candidates_v62;
+pub mod call_observation_v62;
+pub mod cast_identity_v1;
+
+pub mod limited_call_session_v8;
+
+pub mod end_turn_candidates_v68;
+pub mod end_turn_observation_v68;
+pub mod rules_meaning_time_stop_v68;
+pub mod time_stop_public_v68;
+
+pub mod limited_end_turn_session_v9;
+
+pub mod genesis_wave_candidates_v69;
+pub mod genesis_wave_observation_v69;
+pub mod genesis_wave_public_v69;
+pub mod limited_genesis_wave_session_v10;
+pub mod rules_meaning_genesis_wave_v69;
+
+pub mod rules_meaning_vivien_v70;
+pub mod vivien_public_v70;
+
+pub mod vivien_candidates_v70;
+pub mod vivien_observation_v70;
+
+pub mod limited_vivien_session_v11;
+
+pub mod chandra_public_v74;
+pub mod liliana_public_v73;
+pub mod muldrotha_public_v71;
+pub mod rules_meaning_chandra_v74;
+pub mod rules_meaning_liliana_v73;
+pub mod rules_meaning_muldrotha_v71;
+pub mod rules_meaning_tinybones_v72;
+pub mod tinybones_public_v72;
+
+pub mod limited_muldrotha_session_v12;
+pub mod muldrotha_candidates_v71;
+pub mod muldrotha_observation_v71;
+pub mod tinybones_candidates_v72;
+pub mod tinybones_observation_v72;
+
+pub mod kaito_public_v75;
+pub mod liliana_candidates_v73;
+pub mod liliana_observation_v73;
+pub mod rules_meaning_kaito_v75;
+
+pub mod chandra_candidates_v74;
+pub mod chandra_observation_v74;
+pub mod kaito_candidates_v75;
+pub mod kaito_observation_v75;
+pub mod limited_tinybones_session_v13;
+
+pub mod limited_liliana_session_v14;
+
+pub mod limited_chandra_session_v15;
+
+pub mod limited_kaito_session_v16;

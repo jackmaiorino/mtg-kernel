@@ -517,12 +517,18 @@ fn action_source_id(action: &ActionSemanticV1) -> Option<u16> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn label(
     action: &ActionSemanticV1,
     observation: &RavenousObservationV51,
     handles: &Handles,
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+    next_five: Option<&crate::next_five_public_v59::FactsV59>,
+    graveyard_return: Option<
+        &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
+    >,
+    call: Option<CompleteObservationV68<'_>>,
 ) -> Result<String, Error> {
     if let Some(label) = ravenous_facts::label(action, observation, handles, human)? {
         return Ok(label);
@@ -847,7 +853,19 @@ fn label(
     )? {
         return Ok(label);
     }
-    super::labels::label_parts_v8(action, &parts(observation), handles, human)
+    let parts = parts(observation);
+    if let Some(obs) = call {
+        return obs.label_parts(action, &parts, handles, human);
+    }
+    if let Some(obs) = graveyard_return {
+        return super::labels::label_parts_graveyard_return_v61(
+            action, &parts, handles, human, obs,
+        );
+    }
+    match next_five {
+        Some(facts) => super::labels::label_parts_v59(action, &parts, handles, human, facts),
+        None => super::labels::label_parts_v8(action, &parts, handles, human),
+    }
 }
 
 pub(super) fn project_base_with_handles(
@@ -856,7 +874,18 @@ pub(super) fn project_base_with_handles(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<ProjectionWithHandles, Error> {
-    project_with_handles(observation, actions, human, families, true, None, None)
+    project_with_handles(
+        observation,
+        actions,
+        human,
+        families,
+        true,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 /// Shared by fixed-seat Human and actor-facing V3 transport. The complete
@@ -906,6 +935,9 @@ pub(super) fn project_elenda_base_with_handles(
         true,
         Some(elenda),
         None,
+        None,
+        None,
+        None,
     )?;
     let state = exact_state::project(state, observation, &handles)?;
     Ok((state, actions, indexes, handles))
@@ -935,6 +967,9 @@ pub(super) fn project_prepared_base_with_handles(
         true,
         Some(&observation.common.elenda),
         Some(observation),
+        None,
+        None,
+        None,
     )?;
     let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
     let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
@@ -949,6 +984,724 @@ pub(super) fn project_prepared_base_with_handles(
     ))
 }
 
+/// NextFive V59 validates its own nested compatibility artifacts and reuses
+/// only the inherited typed Human component builders below that boundary.
+pub(super) fn project_next_five_base_with_handles(
+    observation: &crate::next_five_observation_v59::NextFiveObservationV59,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        Some(observation),
+        None,
+        None,
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+/// The complete V61 validator owns all compatibility artifacts. No legacy
+/// validator or predecessor envelope grants access to revival-bearing state.
+pub(super) fn project_call_base_with_handles(
+    candidates: &crate::call_candidates_v62::CallCandidatesV62,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Call(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+pub(super) fn project_end_turn_base_with_handles(
+    candidates: &crate::end_turn_candidates_v68::EndTurnCandidatesV68,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::EndTurn(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+pub(super) fn project_genesis_wave_base_with_handles(
+    candidates: &crate::genesis_wave_candidates_v69::GenesisWaveCandidatesV69,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::GenesisWave(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+pub(super) fn project_vivien_base_with_handles(
+    candidates: &crate::vivien_candidates_v70::VivienCandidatesV70,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Vivien(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+pub(super) fn project_muldrotha_base_with_handles(
+    candidates: &crate::muldrotha_candidates_v71::MuldrothaCandidatesV71,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Muldrotha(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+pub(super) fn project_tinybones_base_with_handles(
+    candidates: &crate::tinybones_candidates_v72::TinybonesCandidatesV72,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Tinybones(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+pub(super) fn project_liliana_base_with_handles(
+    candidates: &crate::liliana_candidates_v73::LilianaCandidatesV73,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Liliana(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+pub(super) fn project_chandra_base_with_handles(
+    candidates: &crate::chandra_candidates_v74::ChandraCandidatesV74,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Chandra(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+pub(super) fn project_kaito_base_with_handles(
+    candidates: &crate::kaito_candidates_v75::KaitoCandidatesV75,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(CompleteCandidatesV68::Kaito(candidates)),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+pub(super) fn project_graveyard_return_base_with_handles(
+    candidates: &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        Some(candidates),
+        None,
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+#[derive(Clone, Copy)]
+enum CompleteCandidatesV68<'a> {
+    Call(&'a crate::call_candidates_v62::CallCandidatesV62),
+    EndTurn(&'a crate::end_turn_candidates_v68::EndTurnCandidatesV68),
+    GenesisWave(&'a crate::genesis_wave_candidates_v69::GenesisWaveCandidatesV69),
+    Vivien(&'a crate::vivien_candidates_v70::VivienCandidatesV70),
+    Muldrotha(&'a crate::muldrotha_candidates_v71::MuldrothaCandidatesV71),
+    Tinybones(&'a crate::tinybones_candidates_v72::TinybonesCandidatesV72),
+    Liliana(&'a crate::liliana_candidates_v73::LilianaCandidatesV73),
+    Chandra(&'a crate::chandra_candidates_v74::ChandraCandidatesV74),
+    Kaito(&'a crate::kaito_candidates_v75::KaitoCandidatesV75),
+}
+#[derive(Clone, Copy)]
+enum CompleteOriginalV68<'a> {
+    Call(&'a crate::call_observation_v62::CallObservationV62),
+    EndTurn(&'a crate::end_turn_observation_v68::EndTurnObservationV68),
+    GenesisWave(&'a crate::genesis_wave_observation_v69::GenesisWaveObservationV69),
+    Vivien(&'a crate::vivien_observation_v70::VivienObservationV70),
+    Muldrotha(&'a crate::muldrotha_observation_v71::MuldrothaObservationV71),
+    Tinybones(&'a crate::tinybones_observation_v72::TinybonesObservationV72),
+    Liliana(&'a crate::liliana_observation_v73::LilianaObservationV73),
+    Chandra(&'a crate::chandra_observation_v74::ChandraObservationV74),
+    Kaito(&'a crate::kaito_observation_v75::KaitoObservationV75),
+}
+#[derive(Clone, Copy)]
+struct CompleteObservationV68<'a> {
+    common: &'a crate::elenda_observation_v52::ElendaObservationV52,
+    drake: &'a crate::drake_public_v53::FactsV53,
+    spinner: &'a crate::spinner_public_v54::FactsV54,
+    quandary: &'a crate::quandary_public_v55::FactsV55,
+    phoenix: &'a crate::phoenix_public_v56::FactsV56,
+    next_five: &'a crate::next_five_public_v59::FactsV59,
+    graveyard_return: &'a crate::graveyard_return_public_v61::FactsV61,
+    call: &'a crate::valkyries_call_public_v62::FactsV62,
+    end_turn: Option<&'a crate::time_stop_public_v68::FactsV68>,
+    genesis_wave: Option<&'a crate::genesis_wave_public_v69::FactsV69>,
+    original: CompleteOriginalV68<'a>,
+}
+impl<'a> CompleteCandidatesV68<'a> {
+    fn view(self) -> CompleteObservationV68<'a> {
+        match self {
+            Self::Call(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: None,
+                    genesis_wave: None,
+                    original: CompleteOriginalV68::Call(o),
+                }
+            }
+            Self::EndTurn(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: None,
+                    original: CompleteOriginalV68::EndTurn(o),
+                }
+            }
+            Self::GenesisWave(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::GenesisWave(o),
+                }
+            }
+            Self::Muldrotha(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::Muldrotha(o),
+                }
+            }
+            Self::Tinybones(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::Tinybones(o),
+                }
+            }
+            Self::Liliana(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::Liliana(o),
+                }
+            }
+            Self::Chandra(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::Chandra(o),
+                }
+            }
+            Self::Kaito(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::Kaito(o),
+                }
+            }
+            Self::Vivien(v) => {
+                let o = &v.observation;
+                CompleteObservationV68 {
+                    common: &o.common,
+                    drake: &o.drake,
+                    spinner: &o.spinner,
+                    quandary: &o.quandary,
+                    phoenix: &o.phoenix,
+                    next_five: &o.next_five,
+                    graveyard_return: &o.graveyard_return,
+                    call: &o.call,
+                    end_turn: Some(&o.end_turn),
+                    genesis_wave: Some(&o.genesis_wave),
+                    original: CompleteOriginalV68::Vivien(o),
+                }
+            }
+        }
+    }
+    fn drake_activation(
+        self,
+        index: usize,
+    ) -> Option<&'a crate::next_five_observation_v59::NextFiveActivationV59> {
+        match self {
+            Self::Call(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::EndTurn(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::GenesisWave(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::Muldrotha(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::Tinybones(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::Liliana(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::Chandra(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::Kaito(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+            Self::Vivien(v) => v.candidates.get(index)?.drake_activation.as_ref(),
+        }
+    }
+}
+impl CompleteObservationV68<'_> {
+    fn validate(self) -> Result<(), Error> {
+        match self.original {
+            CompleteOriginalV68::Call(v) => crate::call_observation_v62::validate_artifact(v),
+            CompleteOriginalV68::EndTurn(v) => {
+                crate::end_turn_observation_v68::validate_artifact(v)
+            }
+            CompleteOriginalV68::Muldrotha(v) => {
+                crate::muldrotha_observation_v71::validate_artifact(v)
+            }
+            CompleteOriginalV68::Tinybones(v) => {
+                crate::tinybones_observation_v72::validate_artifact(v)
+            }
+            CompleteOriginalV68::Liliana(v) => crate::liliana_observation_v73::validate_artifact(v),
+            CompleteOriginalV68::Chandra(v) => crate::chandra_observation_v74::validate_artifact(v),
+            CompleteOriginalV68::Kaito(v) => crate::kaito_observation_v75::validate_artifact(v),
+            CompleteOriginalV68::Vivien(v) => crate::vivien_observation_v70::validate_artifact(v),
+            CompleteOriginalV68::GenesisWave(v) => {
+                crate::genesis_wave_observation_v69::validate_artifact(v)
+            }
+        }
+        .map_err(|_| Error::InvalidVisibleReference)
+    }
+    fn choice_label(self, a: &ActionSemanticV1, h: &Handles) -> Result<Option<String>, Error> {
+        match self.original {
+            CompleteOriginalV68::Call(v) => super::call_v62::choice_label(v, a, h),
+            CompleteOriginalV68::EndTurn(v) => super::end_turn_v68::choice_label(v, a, h),
+            CompleteOriginalV68::GenesisWave(v) => super::genesis_wave_v69::choice_label(v, a, h),
+            CompleteOriginalV68::Muldrotha(v) => super::muldrotha_v71::choice_label(v, a, h),
+            CompleteOriginalV68::Tinybones(v) => super::tinybones_v72::choice_label(v, a, h),
+            CompleteOriginalV68::Liliana(v) => super::liliana_v73::choice_label(v, a, h),
+            CompleteOriginalV68::Chandra(v) => super::chandra_v74::choice_label(v, a, h),
+            CompleteOriginalV68::Kaito(v) => super::kaito_v75::choice_label(v, a, h),
+            CompleteOriginalV68::Vivien(v) => super::vivien_v70::choice_label(v, a, h),
+        }
+    }
+    fn label_parts(
+        self,
+        a: &ActionSemanticV1,
+        p: &super::life_ward_v8::ProjectionPartsV8<'_>,
+        h: &Handles,
+        human: PlayerSeatV1,
+    ) -> Result<String, Error> {
+        match self.original {
+            CompleteOriginalV68::Call(v) => super::labels::label_parts_call_v62(a, p, h, human, v),
+            CompleteOriginalV68::EndTurn(v) => {
+                super::labels::label_parts_end_turn_v68(a, p, h, human, v)
+            }
+            CompleteOriginalV68::Muldrotha(v) => {
+                super::labels::label_parts_muldrotha_v71(a, p, h, human, v)
+            }
+            CompleteOriginalV68::Tinybones(v) => {
+                super::labels::label_parts_tinybones_v72(a, p, h, human, v)
+            }
+            CompleteOriginalV68::Liliana(v) => {
+                super::labels::label_parts_liliana_v73(a, p, h, human, v)
+            }
+            CompleteOriginalV68::Chandra(v) => {
+                super::labels::label_parts_chandra_v74(a, p, h, human, v)
+            }
+            CompleteOriginalV68::Kaito(v) => {
+                super::labels::label_parts_kaito_v75(a, p, h, human, v)
+            }
+            CompleteOriginalV68::Vivien(v) => {
+                super::labels::label_parts_vivien_v70(a, p, h, human, v)
+            }
+            CompleteOriginalV68::GenesisWave(v) => {
+                super::labels::label_parts_genesis_wave_v69(a, p, h, human, v)
+            }
+        }
+    }
+}
+
 type ProjectionWithHandles = (
     HumanVisibleStateV1<HumanRavenousExtensionsV51>,
     Vec<HumanLegalActionV1>,
@@ -956,6 +1709,7 @@ type ProjectionWithHandles = (
     Handles,
 );
 
+#[allow(clippy::too_many_arguments)]
 fn project_with_handles(
     observation: &RavenousObservationV51,
     actions: &[ActionSemanticV1],
@@ -964,14 +1718,50 @@ fn project_with_handles(
     limited: bool,
     elenda: Option<&crate::elenda_public_v52::FactsV52>,
     prepared: Option<&crate::prepared_observation_v57::PreparedObservationV57>,
+    next_five: Option<&crate::next_five_observation_v59::NextFiveObservationV59>,
+    graveyard_candidates: Option<
+        &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
+    >,
+    call_candidates: Option<CompleteCandidatesV68<'_>>,
 ) -> Result<ProjectionWithHandles, Error> {
+    let graveyard_return = graveyard_candidates.map(|v| &v.observation);
+    let call = call_candidates.map(CompleteCandidatesV68::view);
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
     }
     if actions.is_empty() {
         return Err(Error::UnsupportedPrompt);
     }
-    if let Some(prepared) = prepared {
+    if let Some(obs) = call {
+        obs.validate()?;
+        if &obs.common.common != observation
+            || Some(&obs.common.elenda) != elenda
+            || graveyard_return.is_some()
+            || next_five.is_some()
+            || prepared.is_some()
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+    } else if let Some(obs) = graveyard_return {
+        crate::graveyard_return_observation_v61::validate_artifact(obs)
+            .map_err(|_| Error::InvalidVisibleReference)?;
+        if &obs.common.common != observation
+            || Some(&obs.common.elenda) != elenda
+            || next_five.is_some()
+            || prepared.is_some()
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+    } else if let Some(next_five) = next_five {
+        crate::next_five_observation_v59::validate_artifact(next_five)
+            .map_err(|_| Error::InvalidVisibleReference)?;
+        if &next_five.common.common != observation
+            || Some(&next_five.common.elenda) != elenda
+            || prepared.is_some()
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+    } else if let Some(prepared) = prepared {
         crate::prepared_observation_v57::validate_artifact(prepared)
             .map_err(|_| Error::InvalidVisibleReference)?;
         if &prepared.common.common != observation || Some(&prepared.common.elenda) != elenda {
@@ -1020,6 +1810,32 @@ fn project_with_handles(
     fake_facts::register(&observation.fake, &mut handles)?;
     ravenous_facts::register(&observation.ravenous, &mut handles)?;
     super::akroma_families_v40::register(families, &mut handles)?;
+    let next_five_facts = next_five
+        .map(|o| &o.next_five)
+        .or_else(|| graveyard_return.map(|o| &o.next_five))
+        .or_else(|| call.map(|o| o.next_five))
+        .map(|facts| super::next_five_v59::register(facts, &mut handles))
+        .transpose()?;
+    let graveyard_facts = graveyard_return
+        .map(|o| super::graveyard_return_v61::facts(&o.graveyard_return, &mut handles))
+        .transpose()?;
+    let graveyard_facts = match graveyard_facts {
+        Some(v) => Some(v),
+        None => call
+            .map(|o| super::graveyard_return_v61::facts(o.graveyard_return, &mut handles))
+            .transpose()?,
+    };
+    let call_facts = call
+        .map(|obs| super::call_v62::call_facts(obs.call, &mut handles))
+        .transpose()?;
+    let end_turn_facts = call
+        .and_then(|o| o.end_turn)
+        .map(|v| super::end_turn_v68::end_turn_facts(v, &mut handles))
+        .transpose()?;
+    let genesis_wave_facts = call
+        .and_then(|o| o.genesis_wave)
+        .map(|v| super::genesis_wave_v69::genesis_wave_facts(v, &mut handles))
+        .transpose()?;
     for row in &observation.ajani.permanents {
         handles.insert(&row.source)?;
     }
@@ -1073,9 +1889,38 @@ fn project_with_handles(
     for row in &observation.eaten.payments {
         handles.insert(&row.source_at_payment)?;
     }
-    let prepared_facts = prepared
-        .map(|obs| super::prepared_v57::facts(obs, &mut handles, true))
-        .transpose()?;
+    let prepared_facts = if let Some(obs) = call {
+        Some(super::prepared_v57::facts_parts(
+            obs.drake,
+            obs.spinner,
+            obs.quandary,
+            obs.phoenix,
+            &mut handles,
+            true,
+        )?)
+    } else if let Some(obs) = graveyard_return {
+        Some(super::prepared_v57::facts_parts(
+            &obs.drake,
+            &obs.spinner,
+            &obs.quandary,
+            &obs.phoenix,
+            &mut handles,
+            true,
+        )?)
+    } else if let Some(obs) = prepared {
+        Some(super::prepared_v57::facts(obs, &mut handles, true)?)
+    } else if let Some(obs) = next_five {
+        Some(super::prepared_v57::facts_parts(
+            &obs.drake,
+            &obs.spinner,
+            &obs.quandary,
+            &obs.phoenix,
+            &mut handles,
+            true,
+        )?)
+    } else {
+        None
+    };
     let initial = state(observation, &mut handles, human, families)?;
     let mut unary = BTreeMap::<String, Vec<String>>::new();
     if let Some(row) = &initial.extensions.eaten.pending {
@@ -1272,7 +2117,43 @@ fn project_with_handles(
         rows.dedup();
     }
     if let Some(facts) = &prepared_facts {
-        handles.canonicalize_parts_with_prepared(&initial, unary, facts)?;
+        if let Some(next_five) = &next_five_facts {
+            if let Some(graveyard) = &graveyard_facts {
+                if let Some(call) = &call_facts {
+                    if let Some(end_turn) = &end_turn_facts {
+                        if let Some(genesis) = &genesis_wave_facts {
+                            handles.canonicalize_parts_with_prepared(
+                                &initial,
+                                unary,
+                                &(facts, next_five, graveyard, call, end_turn, genesis),
+                            )?;
+                        } else {
+                            handles.canonicalize_parts_with_prepared(
+                                &initial,
+                                unary,
+                                &(facts, next_five, graveyard, call, end_turn),
+                            )?;
+                        }
+                    } else {
+                        handles.canonicalize_parts_with_prepared(
+                            &initial,
+                            unary,
+                            &(facts, next_five, graveyard, call),
+                        )?;
+                    }
+                } else {
+                    handles.canonicalize_parts_with_prepared(
+                        &initial,
+                        unary,
+                        &(facts, next_five, graveyard),
+                    )?;
+                }
+            } else {
+                handles.canonicalize_parts_with_prepared(&initial, unary, &(facts, next_five))?;
+            }
+        } else {
+            handles.canonicalize_parts_with_prepared(&initial, unary, facts)?;
+        }
     } else {
         handles.canonicalize_parts(&initial, unary)?;
     }
@@ -1282,8 +2163,29 @@ fn project_with_handles(
         .enumerate()
         .map(|(index, action)| {
             Ok((
-                if let Some(label) = prepared
+                if let Some(row)=call_candidates.and_then(|v|v.drake_activation(index)) {
+                    let source=handles.name(&row.source)?;
+                    format!("Activate {source}: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",row.count,row.before,row.after)
+                } else if let Some(label) = call.map(|obs|obs.choice_label(action,&handles)).transpose()?.flatten() { label
+                } else if let Some(row)=graveyard_candidates.and_then(|v|v.candidates.get(index)).and_then(|v|v.drake_activation.as_ref()) {
+                    let source=handles.name(&row.source)?;
+                    format!("Activate {source}: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",row.count,row.before,row.after)
+                } else if let Some(label) = graveyard_return.map(|obs|super::graveyard_return_v61::choice_label(obs,action,&handles)).transpose()?.flatten() {
+                    label
+                } else if let Some(label) = prepared
                     .map(|obs| super::prepared_v57::activation_label(obs, index, &handles))
+                    .transpose()?
+                    .flatten()
+                {
+                    label
+                } else if let Some(label) = next_five
+                    .map(|obs| {
+                        super::prepared_v57::activation_label_next_five(
+                            &obs.action_meanings,
+                            index,
+                            &handles,
+                        )
+                    })
                     .transpose()?
                     .flatten()
                 {
@@ -1294,16 +2196,40 @@ fn project_with_handles(
                     .flatten()
                 {
                     label
+                } else if let Some(label) = next_five
+                    .map(|obs| super::prepared_v57::choice_label_next_five(obs, action, &handles))
+                    .transpose()?
+                    .flatten()
+                {
+                    label
                 } else if let Some(label) = fake_facts::label(action, observation, &handles, human)?
                 {
                     label
                 } else if limited {
                     match super::limited_common_v1::label(action, &handles, human)? {
                         Some(label) => label,
-                        None => label(action, observation, &handles, human, families)?,
+                        None => label(
+                            action,
+                            observation,
+                            &handles,
+                            human,
+                            families,
+                            next_five.map(|value| &value.next_five),
+                            graveyard_return,
+                            call,
+                        )?,
                     }
                 } else {
-                    label(action, observation, &handles, human, families)?
+                    label(
+                        action,
+                        observation,
+                        &handles,
+                        human,
+                        families,
+                        next_five.map(|value| &value.next_five),
+                        graveyard_return,
+                        call,
+                    )?
                 },
                 u32::try_from(index).map_err(|_| Error::InvalidAction)?,
             ))

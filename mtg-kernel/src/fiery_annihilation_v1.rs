@@ -202,7 +202,10 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     let mut source = AbilitySourceContractV4::capture(state, ctx.source);
     source.controller = ctx.controller;
     if creature_legal {
-        event::propose_and_commit(state, ProposedEvent::damage(ctx.source, ctx.targets[0], 5));
+        event::propose_and_commit(
+            state,
+            crate::event::damage_from_exec_ctx_v1(ctx, ctx.targets[0], 5),
+        );
     }
     if equipment_legal {
         let Target::Object(equipment) = ctx.targets[1] else {

@@ -48,6 +48,8 @@ pub enum RemovalV1 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+// Historical native records retain their original by-value source contracts.
+#[allow(clippy::large_enum_variant)]
 pub enum JournalV1 {
     CombatInput {
         world: Box<GameState>,
@@ -1694,8 +1696,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 .filter(|i| i.v4.stack_item_id == item.v4.stack_item_id)
                 .collect::<Vec<_>>();
             let live_once = matches!((lives.as_slice(), removals.as_slice()), ([live], []) if *live == item.as_ref());
-            if removals.len() > 1
-                || !(local || live_once || lives.is_empty() && removals.len() == 1)
+            let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+            if (disposed && (!lives.is_empty() || !removals.is_empty()))
+                || removals.len() > 1
+                || !(local || live_once || lives.is_empty() && removals.len() == 1 || disposed)
             {
                 return Err("Drake issued stack row lost/duplicated/replayed".into());
             }

@@ -78,12 +78,11 @@ fn owns_program(state: &GameState, source: ObjectId) -> bool {
 /// Commit only for an actual entry by a definition owning this program.
 /// This history-only receipt fixes the ETB controller independently of the
 /// mutable pending/stack contracts and emits nothing on predecessor paths.
-pub(crate) fn record_entry(state: &mut GameState, source: ObjectId) {
+pub(crate) fn record_entry(state: &mut GameState, source: ObjectId, entry_event_index: usize) {
     if !owns_program(state, source) {
         return;
     }
     let source_contract = AbilitySourceContractV4::capture(state, source);
-    let entry_event_index = state.engine.event_history.len() - 1;
     state
         .engine
         .event_history

@@ -1,0 +1,38 @@
+# Kykar native source checkpoint
+
+Exact frozen printing: Kykar, Zephyr Awakener, FDN 122, Scryfall `6c980998-7124-4ec6-a0b6-e8d9a2364925`. Frozen token dependency: Spirit `278adad2-49a6-4baa-8dbe-93474545eef7`. Frozen 286-card membership and 24 token records are unchanged.
+
+Pinned Mage commit `a5c90fe180021e70e2a644ade00eeab07f857a40`: `Mage.Sets/src/mage/cards/k/KykarZephyrAwakener.java`, `Mage/src/main/java/mage/game/permanent/token/SpiritWhiteToken.java`, and `Mage/src/main/java/mage/abilities/effects/common/ExileReturnBattlefieldNextEndStepTargetEffect.java`. The last source uses the next beginning of any end step and the exiled card's physical owner. Kykar costs 2WU, is a legendary 3/4 Bird Wizard with flying, and triggers on its controller's noncreature casts. The Standard catalog's existing Spirit Token is a different 2/2 definition, so Limited appends a distinct Kykar Spirit Token, white 1/1 flying, with copiable name Spirit Token.
+
+Native IDs 474 and 475 are executable Partial only. No Full-deck reset, current owning/model/Human/transport, sampling or training permission is granted. Generic creation of the new Partial token refuses; the exact closed token shape is admitted only through a consumed permit borrowing the genuine native Kykar mode row, before the existing token batch/Season/entry-observer machinery. The general token-Full build invariant has one exact Limited Kykar exception. Existing partial permanent-copy blueprints retain their behavior.
+
+Modes use the original printed order at trigger announcement, before mandatory target choice and the response window. The exile mode rechecks another controlled creature against the captured ability source and original target incarnation. An actual battlefield-to-exile move emits the original-source/exiled-incarnation/physical-owner receipt. The first later beginning-of-end-step occurrence consumes the one-shot schedule, including an opponent's end step; an already begun end step is excluded. Return uses the exact exile incarnation and owner, without requiring Kykar to survive. A stale card or ceased token does not return, and countering the delayed trigger does not recreate its schedule. These are native mutable-world structural history contracts, not cryptographic provenance or a public execution capability.
+
+Four effect variants and two private history variants append at their enum tails. No GameState field or absent-world serialized/hash extension is added. Existing producer source lists explicitly include `effect/kykar_v1.rs`. Legacy projections refuse the visible new printing/token and historical delayed/token facts instead of omitting them. Frozen V1 mechanics remain Opaque for the custom mode/return roots.
+
+Ten Rust source fixture groups cover genuine paid Kykar/noncreature casts, announcement and targets, paid target/source removal responses, token/Season batches, physical-owner control primitives, exact exile generations, one-shot counter/removal primitives and later end steps after consumption, labelled native copied-Kykar source with a genuinely paid opposite-seat cast, next-any-end-step timing, serialized restore, independent initial opponent hidden worlds with equal native mode/target decisions, and native/public operation refusals. Setup/control/exile/counter primitives are labelled where they do not represent paid spells. All Rust is uncompiled and unrun. Affected Python tests and pinned formatting/static checks are reported separately; they do not qualify native gameplay or consumers.
+
+A later equal-valued beginning-of-end-step cannot reconstruct an erased consumed
+marker: an unconsumed schedule requires its first later end step to remain the
+latest end-step occurrence in native history, plus the existing event-input value
+check. This is a mutable-world structural refusal, not cryptographic event
+attestation. An added paid/countered-return source fixture retains one marker
+through two later equal-valued native end steps, then explicitly deletes only
+that marker in a separate restored world and requires readonly collection refusal.
+The original ten fixture bodies remain unchanged; all eleven Rust source groups
+remain uncompiled and unrun.
+
+
+Genuine Self-Reflection and Electroduplicate copies of the white 1/1 flying
+Spirit use a distinct lexical native-copy permit. Its original cast or native
+spell-copy row, complete context, exact target incarnation, closed Spirit
+blueprint and complete single-token proposal are authenticated before the
+existing replacement/entry batch. Season applies once to the request, and
+inherited copiable haste/end-step abilities remain attached to each resulting
+token. Raw Partial-token creation and Kykar's separate mode-only permit keep
+their existing refusal/authority boundaries. No registry, world/schema or
+consumer admission changes are made. Four added genuine paid/native both-seat
+source groups cover copy-of-copy, Season, restore, target removal, private
+permit/context/proposal and copy-ancestry corruption, plus independently
+initialized hidden worlds. Native spell copying and target removal are labelled
+primitives, not paid card routes. These Rust fixtures are uncompiled and unrun.

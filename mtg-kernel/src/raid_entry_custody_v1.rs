@@ -697,7 +697,11 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 if counters.len() > 1 || (!gorehorn && !counters.is_empty() && completed) {
                     return Err("Raid published instruction has duplicate closure".into());
                 }
-                if completed || !counters.is_empty() {
+                let disposed = crate::engine::time_stop_v1::disposed(state, &p.item)?;
+                if disposed && (completed || !counters.is_empty()) {
+                    return Err("Raid instruction was disposed and completed twice".into());
+                }
+                if completed || !counters.is_empty() || disposed {
                     if !live.is_empty() {
                         return Err("closed Raid instruction was reintroduced".into());
                     }

@@ -38,6 +38,47 @@ without changing any frozen measurements.
 Start with gameplay from already-built decks. Draft picks, sealed-pool deck
 construction and BO3 Limited sideboarding are separate extensions. Define the
 target card pool by names, not collector-number cutoffs or every FDN product.
+
+The separate Python `limited_pool_v1.construct_deck` contract now validates
+construction from acquired inventory. It reuses `ImportedDeck` and exact-name
+catalog lookup: both zones of the acquired `.dck` file are owned copies; the
+proposed `.dck` mainboard and `SB:` reserve must partition all those copies,
+plus exactly the explicitly declared additional basics. Nonbasic copies cannot
+be reused between zones, and an owned fifth copy is legal. Both output zones
+retain the proposed row/copy order and optional printing annotations; annotations
+remain metadata, as in the existing parser. Partial/no-effect inventory may stay
+in reserve, but executable mainboard IDs come only from the existing Full-only
+`resolve_mainboard`, with at least 40 cards and the native 10,000-card safety
+limit. Invalid construction returns no result and never consumes inventory.
+
+Run `python python/tools/limited_pool_v1.py --pool acquired.dck --deck built.dck`
+and, when adding basics, supply `--basic-additions basics.dck`. That optional
+file also uses the existing `.dck` format and permits only the five basic land
+names. Omitting it permits no extra basics. This is a pool-conservation contract,
+not pack collation, draft picks, automatic deck selection, BO3 sideboarding or
+a claim of full-printing qualification. Focused tests live in
+`python/tests/test_limited_pool_v1.py`; the existing import parser is unchanged.
+
+The separate `limited_draft_v1.DraftSession` accepts explicitly supplied rounds
+of ordered `ImportedDeck` packs, one per seat, for any pod of at least two seats.
+Both `.dck` zones contribute pickable copies in row/copy order. Packs must have
+the same positive size within a round; different rounds may have different
+sizes. Round zero passes to seat+1 modulo the pod size, then direction alternates.
+Passing waits for every seat to pick. Trusted internal state and host records
+retain physical copy IDs with the original round, pack seat and copy ordinal,
+including repeated copies of the same name. Actor card values contain only
+count-one `DeckEntry` fields, never original physical IDs or hidden-derived aliases.
+Only `view(seat)` goes to that authenticated actor: it contains that seat's
+current pack, ordered picks and a session-bound prompt. Invalid or already-used
+prompts and invalid indexes change nothing. `record()` is trusted-host data
+containing hidden packs; never route it to actors. JSON records retain optional
+seed/provenance and input identity, and `DraftSession.replay(record)` rebuilds
+the state with fresh prompts. Completed `acquired_pool(seat)` results feed
+`construct_deck` directly; extra basics still require explicit additions there.
+No pack collation, rarity probabilities, native gameplay qualification, model,
+training or DraftZero runtime integration is provided by this Python contract.
+Focused tests are in `python/tests/test_limited_draft_v1.py`.
+
 The source reference has 286 names, including all five basics. Before card
 implementation it had seven registry matches and 279 missing names. The two
 starting fixtures contain 39 unique names, originally with 36 missing. Their

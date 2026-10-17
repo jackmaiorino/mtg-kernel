@@ -84,13 +84,62 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
-        EffectOp::DrakeIncubationFromCaptureV1 { .. }
+        EffectOp::ExileTopEachPlayerThenCastV1 => out.atoms.push(Atom::Opaque),
+        EffectOp::LookTopSelectV1 { rule, .. }
+            if rule.selection.is_some_and(|r| {
+                matches!(
+                    r.filter,
+                    crate::effect::LibraryPickFilterV1::CreatureManaValueAtMostControlledLands
+                        | crate::effect::LibraryPickFilterV1::CreatureOrLandV1
+                )
+            }) =>
+        {
+            out.atoms.push(Atom::Opaque)
+        }
+        EffectOp::BindThousandYearStormV1
+        | EffectOp::ThousandYearStormCaptureV1 { .. }
+        | EffectOp::GenesisWaveV1
+        | EffectOp::TinybonesStashV72 { .. }
+        | EffectOp::LilianaZombieV1
+        | EffectOp::LilianaSacrificeV1 { ultimate: _ }
+        | EffectOp::KaitoCunningV75 { .. }
+        | EffectOp::ChandraFlameshaperV74 { .. }
+        | EffectOp::FiendArtisanSearchV1
+        | EffectOp::BindSphinxLoreV1
+        | EffectOp::SphinxLoreV1 { .. }
+        | EffectOp::BindGreatwurmCountersV1
+        | EffectOp::GreatwurmCountersV1 { .. }
+        | EffectOp::KykarChooseModeV1
+        | EffectOp::KykarExileV1
+        | EffectOp::KykarSpiritV1
+        | EffectOp::KykarReturnV1 { .. }
+        | EffectOp::BindCuratorDestiniesV1
+        | EffectOp::CuratorDestiniesV1 { .. }
+        | EffectOp::ElectroduplicateCopyV1
+        | EffectOp::CopiedTokenEndStepSacrificeV1 { .. }
+        | EffectOp::BindLathrilCombatTokensV1
+        | EffectOp::LathrilCombatTokensV1 { .. }
+        | EffectOp::BlasphemousEdictV1
+        | EffectOp::BindSphinxsTutelageMillV1
+        | EffectOp::SphinxsTutelageMillV1 { .. }
+        | EffectOp::BindAleshaRaidReturn
+        | EffectOp::AleshaRaidReturn { .. }
+        | EffectOp::BindNineLivesFamiliarReturnV1
+        | EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
+        | EffectOp::ReturnNineLivesFamiliarV1 { .. }
+        | EffectOp::BindValkyriesCallDeathV1
+        | EffectOp::ReturnValkyriesCallCreatureV1 { .. }
+        | EffectOp::DrakeIncubationFromCaptureV1 { .. }
         | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::LoseLifeEqualControllerTurnGainsV1
+        | EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+        | EffectOp::CreateAttachedAuraCopyV1 { .. }
         | EffectOp::IncubationFromCombatDamageV1 { amount: _ }
         | EffectOp::AddSoulCounterToAbilitySourceV1
         | EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { .. }
         | EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
         | EffectOp::ConquerorGainFromCaptureV49 { .. }
+        | EffectOp::ConquerorGainFromWideCaptureV59 { .. }
         | EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::KrenkoCreateGoblinsV1
@@ -115,6 +164,13 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // Pre-move creature type and exact source identity have no v1 facets.
             out.atoms.push(Atom::Opaque);
         }
+        EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::DamageTargetsByPositionV1 { .. },
+        ) => {
+            // Positional amounts and simultaneous per-slot legality have no
+            // complete frozen v1 facets. Preserve the exact typed source.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::StandardV1(_) => {
             // Preserve the exact serialized payload in the source record.
             // Do not invent ordinary facets for new histories, counters,
@@ -133,6 +189,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LoseLife { .. }
         | EffectOp::DrawCards { .. }
         | EffectOp::DrawCardsDynamic { .. }
+        | EffectOp::NivMizzetVisionaryDrawV1 { .. }
         | EffectOp::RevealTopAndPartitionByType { .. }
         | EffectOp::DiscardCards { .. }
         | EffectOp::DiscardBasicLandOrCards { .. }
@@ -288,7 +345,8 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
             effect_g::effect_op(op, env, out)
         }
-        EffectOp::MayDiscardCardOtherwiseV1 { .. } => out.atoms.push(Atom::Opaque),
+        EffectOp::MayDiscardCardOtherwiseV1 { .. }
+        | EffectOp::MaySacrificeNonlandOtherwiseV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::CastExiledWithoutMana { .. }
         | EffectOp::PlayExiledLand { .. }
         | EffectOp::DiscardUpToThenDraw { .. }
@@ -326,6 +384,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
+        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
         EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 => {
@@ -333,7 +392,17 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // to this once-only drain. A rooted successor is required.
             out.atoms.push(Atom::Opaque);
         }
+        EffectOp::HarvesterExileAndCopyV1 => out.atoms.push(Atom::Opaque),
+        EffectOp::CreateTokenCopyOfSourceV1 => {
+            let mut copy = EffectAtom::new(EvF::Copy)
+                .player(RelF::You)
+                .obj(ObjF::ThisObject);
+            copy.from = Some(ZoneF::Battlefield);
+            copy.to = Some(ZoneF::Battlefield);
+            out.effect(copy);
+        }
         EffectOp::CreateControlledCreatureTargetCopyV1 => out.atoms.push(Atom::Opaque),
+        EffectOp::DealXDamageThenCreateTokensForExcess { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
         | EffectOp::StandardLegendV1(_)

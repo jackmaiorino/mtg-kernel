@@ -1,0 +1,9 @@
+# Next-five process transport V6
+
+`kernel_limited_next_five_env_v6` uses the distinct `kernel_limited_next_five_jsonl` protocol and schema 6 over the sealed NextFive V59 owner. Requests contain deck rows, public prompt identifiers and an action index. The wire never accepts engine state, an executable candidate or a private snapshot. Production deck reset retains the Full-only preflight; the five new Partial printings remain fixture-only.
+
+The current actor receives complete inherited Human facts and the five V59 families, exact native-width battlefield values, ordered meanings, staged targets and X, retained source/controller facts, copied Aura choices, restricted mana and completed Goblin facts. London mulligans and Foundations combat assignments retain their explicit public fields and use the same canonical Human handles. The predecessor V1 through V5 protocols are unchanged.
+
+The server binds the complete current decision, safe prompt and original native index vector before execution. Reset and restore advance authority generation; accepted retries are bound to their original owner and generation. Snapshot handles are process-local and cannot cross a reset. Unsupported projections preserve the engine state without applying a fallback action.
+
+Thirteen Rust source cases retain the twelve inherited genuine RPC regressions and add both-seat paid casts of all five new printings, native action/index and full-state parity, Goblin target/X staging, stale-X refusal and restored resolution. These use explicit private test factories; no wire state injection is added. Formatting and diff checks have passed. Rust compilation, fixture execution and external process replay remain pending. This source checkpoint makes no Full, runtime, model, sampling, search, training or playing-strength claim.

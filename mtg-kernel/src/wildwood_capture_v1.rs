@@ -462,6 +462,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .filter(|candidate| candidate.v4.stack_item_id == id)
             .count();
         match closures.as_slice() {
+            [] if live == 0
+                && starts.is_empty()
+                && operations.is_empty()
+                && counters.is_empty()
+                && crate::engine::time_stop_v1::disposed(state, item)? => {}
             [] if live == 1
                 && starts.is_empty()
                 && operations.is_empty()

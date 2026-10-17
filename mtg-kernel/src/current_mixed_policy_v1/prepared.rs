@@ -450,8 +450,9 @@ fn hatcher_foreign_fields_absent(d: &crate::card_def::CardDef) -> bool {
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
-    d.other_controlled_nontoken_death_v1.is_none()
+    (d.other_controlled_nontoken_death_v1.is_none() && d.creature_type_entry_v1.is_none())
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
         && d.mode2.is_none()

@@ -656,6 +656,23 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     || original.is_some_and(|(_, p)| p.v4.stack_item_id == i.v4.stack_item_id)
             })
             .collect::<Vec<_>>();
+        let disposed = match original {
+            Some((_, item)) => crate::engine::time_stop_v1::disposed(state, item)?,
+            None => false,
+        };
+        if completed.is_empty() && disposed {
+            if !live.is_empty()
+                || !held.is_empty()
+                || logged != 0
+                || collected.len() != 1
+                || !removed.is_empty()
+                || !operations.is_empty()
+                || !installed.is_empty()
+            {
+                return Err("Ashroot disposed occurrence has another owner/outcome".into());
+            }
+            continue;
+        }
         if completed.is_empty() {
             let JournalV2::Capture { attack } = journal(state, capture)? else {
                 unreachable!()

@@ -870,7 +870,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     |j| matches!(j,JournalV43::RemovalInput {publication,..} if *publication==index),
                 );
                 if inputs.is_empty() {
-                    if live != 1 {
+                    let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+                    if live != usize::from(!disposed) {
                         return Err("Faebloom mandatory live owner erased".into());
                     }
                 } else if inputs.len() != 1 || live != 0 || inputs[0].0 <= index {

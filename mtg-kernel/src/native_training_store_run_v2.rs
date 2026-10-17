@@ -9011,8 +9011,51 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 452);
-        assert!(partials.is_empty());
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 496);
+        assert_eq!(
+            partials,
+            [
+                (457, "Alesha, Who Laughs at Fate"),
+                (458, "Nine-Lives Familiar"),
+                (459, "Valkyrie's Call"),
+                (460, "Perforating Artist"),
+                (461, "Niv-Mizzet, Visionary"),
+                (462, "Embercleave"),
+                (463, "Banner of Kinship"),
+                (464, "Drakuseth, Maw of Flames"),
+                (465, "Zimone, Paradox Sculptor"),
+                (466, "Sphinx's Tutelage"),
+                (467, "Consuming Aberration"),
+                (468, "Lathril, Blade of the Elves"),
+                (469, "Blasphemous Edict"),
+                (470, "Secluded Courtyard"),
+                (471, "Electroduplicate"),
+                (472, "Curator of Destinies"),
+                (473, "Loot, Exuberant Explorer"),
+                (474, "Kykar, Zephyr Awakener"),
+                (475, "Kykar Spirit Token"),
+                (476, "Quilled Greatwurm"),
+                (477, "Sphinx of Forgotten Lore"),
+                (478, "Omniscience"),
+                (479, "Abyssal Harvester"),
+                (480, "Progenitus"),
+                (481, "Etali, Primal Storm"),
+                (482, "Leyline Axe"),
+                (483, "Fiend Artisan"),
+                (484, "Imprisoned in the Moon"),
+                (485, "Thousand-Year Storm"),
+                (486, "Time Stop"),
+                (487, "Genesis Wave"),
+                (488, "Vivien Reid"),
+                (489, "Muldrotha, the Gravetide"),
+                (490, "Tinybones, Bauble Burglar"),
+                (491, "Liliana, Dreadhorde General"),
+                (492, "Zombie Token"),
+                (493, "Chandra, Flameshaper"),
+                (494, "Kaito, Cunning Infiltrator"),
+                (495, "Ninja Token"),
+            ]
+        );
         let mut playable = Vec::new();
         for (id, name) in [
             (442, "Fake Your Own Death"),
@@ -9025,6 +9068,11 @@ mod tests {
             (449, "Drake Token"),
             (450, "Bloodthirsty Conqueror"),
             (451, "Doubling Season"),
+            (452, "Midnight Snack"),
+            (453, "Extravagant Replication"),
+            (454, "Infernal Vessel"),
+            (455, "Giada, Font of Hope"),
+            (456, "Goblin Negotiation"),
         ] {
             assert_eq!(crate::card_def::card_id_by_name(name), Some(id));
             assert_eq!(
@@ -9050,8 +9098,38 @@ mod tests {
                 playable.push(id);
             }
         }
-        assert_eq!(playable, [442, 443, 444, 445, 446, 447, 448, 450, 451]);
+        assert_eq!(
+            playable,
+            [442, 443, 444, 445, 446, 447, 448, 450, 451, 452, 453, 454, 455, 456]
+        );
         crate::card_def::preflight_fully_supported_deck(&playable).unwrap();
+        // The appended native source recipes grant no Full-deck permission.
+        // Check the complete actual registry, including every Full token.
+        let mut all_playable = Vec::new();
+        for (index, definition) in crate::card_def::CARD_DEFS.iter().enumerate() {
+            let id = u16::try_from(index).unwrap();
+            let result = crate::card_def::preflight_fully_supported_deck(&[id]);
+            if definition.is_token {
+                assert!(matches!(result,
+                    Err(crate::card_def::DeckPreflightError::TokenInDeck {
+                        index: 0, card_def, name,
+                    }) if card_def == id && name == definition.name));
+            } else if definition.capability == crate::card_def::CardCapability::Full {
+                result.unwrap();
+                all_playable.push(id);
+            } else {
+                assert_eq!(
+                    definition.capability,
+                    crate::card_def::CardCapability::Partial
+                );
+                assert!(matches!(result,
+                    Err(crate::card_def::DeckPreflightError::NotFullySupported {
+                        index: 0, card_def, name, capability: crate::card_def::CardCapability::Partial,
+                    }) if card_def == id && name == definition.name));
+            }
+        }
+        assert!(playable.iter().all(|id| all_playable.contains(id)));
+        crate::card_def::preflight_fully_supported_deck(&all_playable).unwrap();
     }
 
     #[test]

@@ -240,7 +240,8 @@ fn validate_operation(
             let ordering = matches!(
                 operation.after.as_deref().and_then(|p| p.choice.as_ref()),
                 Some(PendingEffectChoice::SelectTargets {
-                    purpose: EffectTargetSelectionPurpose::OrderMilledIntoGraveyard,
+                    purpose: EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
+                        | EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. },
                     ..
                 })
             );
@@ -249,7 +250,50 @@ fn validate_operation(
                     return Err("Inspiration ordered mill moved early".into());
                 }
             } else if let Some(mill) = &input.mill {
-                check_moves(mill, &operation.mill_moves, Zone::Library, Zone::Graveyard)?;
+                if events
+                    .iter()
+                    .any(|e| matches!(e, CommittedEvent::ProgenitusShuffledV1 { .. }))
+                {
+                    // A mandatory Progenitus replacement is authenticated by its
+                    // independent original-input and actual completed shuffle in
+                    // this exact native operation interval, never by current name
+                    // or an editable result flag. Every other original mill member
+                    // must still have its exact Library-to-Graveyard move.
+                    crate::progenitus_v1::validate(state)?;
+                    let actual = mill
+                        .iter()
+                        .copied()
+                        .filter(|binding| {
+                            !state.engine.event_history
+                                [input.index as usize + 1..operation.index as usize]
+                                .iter()
+                                .any(|entry| {
+                                    let CommittedEvent::ProgenitusShuffledV1 {
+                                        input_history_index,
+                                        source,
+                                        move_history_index: None,
+                                    } = entry
+                                    else {
+                                        return false;
+                                    };
+                                    *input_history_index > u64::from(input.index)
+                                        && *input_history_index < u64::from(operation.index)
+                                        && source.source == binding.object
+                                        && source.zone == Zone::Library
+                                        && source.zone_change_count
+                                            == binding.expected_zone_change_count
+                                })
+                        })
+                        .collect::<Vec<_>>();
+                    check_moves(
+                        &actual,
+                        &operation.mill_moves,
+                        Zone::Library,
+                        Zone::Graveyard,
+                    )?;
+                } else {
+                    check_moves(mill, &operation.mill_moves, Zone::Library, Zone::Graveyard)?;
+                }
             } else if !operation.mill_moves.is_empty() {
                 return Err("Inspiration execution invented mill".into());
             }
@@ -284,6 +328,7 @@ fn validate_operation(
             if !matches!(
                 purpose,
                 EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
+                    | EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. }
             ) && !matches!(purpose, EffectTargetSelectionPurpose::SelectObjectsV1 { rule, .. } if rule.filter == ObjectSelectionFilterV1::InstantOrSorcery)
             {
                 return Err("Inspiration answer changed its selection purpose".into());
@@ -313,7 +358,8 @@ fn validate_operation(
                         selected.append(legal);
                     }
                     if selected.len() == usize::from(*max_targets) {
-                        complete_resumable_target_selection(&mut expected)?;
+                        // The closed Inspiration purposes above cannot be an Artisan search.
+                        complete_resumable_target_selection(&mut expected, false)?;
                     }
                 }
                 InspirationInputKindV1::Finish => {
@@ -321,7 +367,7 @@ fn validate_operation(
                     {
                         return Err("Inspiration finish skipped a mandatory available card".into());
                     }
-                    complete_resumable_target_selection(&mut expected)?;
+                    complete_resumable_target_selection(&mut expected, false)?;
                 }
                 InspirationInputKindV1::Drive => unreachable!(),
             }
@@ -521,7 +567,7 @@ pub(crate) fn resume_owned(
     with_row_loan(state, owner, |state| drive_owned(state, owner))
 }
 
-fn tracked(state: &GameState) -> Result<bool, String> {
+pub(super) fn tracked(state: &GameState) -> Result<bool, String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(false);
     };
