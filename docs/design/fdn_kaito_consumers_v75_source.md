@@ -50,3 +50,35 @@ The four new semantic children are appended once to the current ordered Time
 Stop and Genesis source lists; numeric identity binds these plus actual Kaito
 meaning/public/native source bytes. Original pathname/length/content framing
 and existing source order remain. No source identity or catalog hash is guessed.
+
+## V75 current-slot sampler source checkpoint
+
+The distinct Kaito owner validates its complete issued binding before sampling
+only unchanged eligible current unknown slots in a disposable clone. It rebuilds
+the full observation, native candidates and original-index map, requires equality
+and returns a new owner Arc. The numeric sibling independently compares the
+complete packet. Old decisions and foreign snapshots retain their refusals.
+
+The exhaustive native reference walk protects original payment/cost/source and
+optional-target contracts, combat observer and damaging-creature incarnations,
+persistent emblem and original cast snapshots, token-operation rows, and original
+private discard-hand alternatives/answer. Physical references stay binding through
+later hidden incarnations. Whole-operation refusal never removes one particular
+identity from the unknown pool or conditions a placement on private old order.
+Authentic Combat/Cast dispatch records are accepted only in this distinct scope,
+after the native validator checks exact original occurrences and uniqueness;
+private or changed journal records still refuse before any permutation.
+
+Existing closed Time Stop/Genesis/Muldrotha/Tinybones/Liliana/Chandra walks stay
+mandatory; old scopes still refuse Kaito. Whole-world entry/Drake/Season/Crystal,
+unsupported foreign continuations and pending copied-token sacrifice retain the
+same conservative boundaries. No Human V16 API or Full admission is introduced.
+
+Six new both-seat source groups use actual paid Kaito/creature/spell histories,
+original native index parity, zero/one targets, private discard, Ninja creation,
+combat/emblem/cast roles, independent pre-paid hidden worlds, numeric packets,
+serialization/restore/stale/foreign refusals and forged journals. Counter setup,
+simultaneous combat departure, virtual copying and hidden returns are explicitly
+native primitives. The inherited Crystal fixture is actual paid Chandra/Tyrant,
+not an asserted Kaito damage ability. All Rust remains UNCOMPILED and UNRUN;
+source checks do not establish runtime correctness or playing strength.

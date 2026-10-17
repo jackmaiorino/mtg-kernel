@@ -1634,6 +1634,10 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/effect/chandra_flameshaper_v1.rs",
                     include_str!("chandra_flameshaper_v1.rs"),
                 ),
+                (
+                    "mtg-kernel/src/effect/kaito_cunning_v75.rs",
+                    include_str!("kaito_cunning_v75.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());
