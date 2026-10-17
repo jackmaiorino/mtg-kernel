@@ -36,6 +36,8 @@
 //! In `s4a-budget` and `s4a-diag`, `S4A_BACKUP=bestline-m<m>` (m = 3 or 8)
 //! uses the opt-in best-line backup (`stage4a/tree.rs` `BestLine`); unset or
 //! `mean` is the formal backup, and rows carry `"backup"` only when it is on.
+//! `S4A_REUSE_WITNESS=1` in searched `s4a-budget` records passive witnesses
+//! at every executed reused decision; unset or `0` leaves rows unchanged.
 
 mod allocation_experiment;
 mod arms;
@@ -55,6 +57,7 @@ mod process_cpu;
 mod profile_roots;
 mod refresh;
 mod replay_labels;
+mod reuse_witness;
 mod root_allocation;
 mod root_rebuild;
 mod seeds;
@@ -1284,6 +1287,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         // off unless set, so existing budget runs are unchanged.
         let interchange = parse_interchange(std::env::var("S4A_INTERCHANGE"))?;
         let bestline = parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
+        let reuse_witnesses = reuse_witness::Recording::parse(std::env::var("S4A_REUSE_WITNESS"))?;
         let plain = match std::env::var("BUDGET_ARM").as_deref() {
             Ok("plain-v1") => {
                 if total != 0 || interchange || bestline.is_some() {
@@ -1294,6 +1298,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             Ok("search-v1") | Err(std::env::VarError::NotPresent) => false,
             _ => return Err("BUDGET_ARM must be plain-v1 or search-v1".into()),
         };
+        if plain && reuse_witnesses == reuse_witness::Recording::Enabled {
+            return Err("S4A_REUSE_WITNESS=1 requires BUDGET_ARM=search-v1".into());
+        }
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1313,6 +1320,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                             mode,
                             interchange,
                             bestline,
+                            reuse_witnesses,
                             &binding,
                         )
                     })
@@ -1633,5 +1641,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     })
 }
 
+#[cfg(test)]
+mod history_guard_tests;
 #[cfg(test)]
 mod tests;

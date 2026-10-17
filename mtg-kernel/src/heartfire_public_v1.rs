@@ -1,5 +1,6 @@
 //! Public saved-power companion. The selected V9 transport keeps its identity.
 //! New historical facts refer only to its public stack ordinal, never raw IDs.
+use crate::event_history_v1::EventKindV1;
 use crate::policy_observation_v9::ObservationV9;
 use crate::rl::{PlayerSeatV1, RlContractError, StackItemKindV2};
 use crate::rules_meaning_heartfire_v1::{self, HeartfireRootMeaningV1};
@@ -103,6 +104,7 @@ pub(crate) fn saved_for_akroma_v40(
         let power = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
             .iter()
             .find_map(|event| match event {
                 crate::event::CommittedEvent::SourcePowerActivationCommittedV1 {
@@ -180,6 +182,7 @@ pub(crate) fn from_authenticated_v9(
         let power = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
             .iter()
             .find_map(|event| match event {
                 crate::event::CommittedEvent::SourcePowerActivationCommittedV1 {

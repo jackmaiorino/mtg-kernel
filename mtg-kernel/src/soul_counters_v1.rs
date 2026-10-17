@@ -1,5 +1,6 @@
 //! Privileged original-world records for the appended soul-counter primitive.
 //! These establish placement replay consistency, not printed-ability ownership.
+use crate::event_history_v1::EventKindV1;
 use crate::{
     doubling_season_v48::ReplacementInputV48,
     event::CommittedEvent,
@@ -39,16 +40,27 @@ impl PlacementInputV1 {
 }
 
 pub(crate) fn has_history(state: &GameState) -> bool {
-    state.engine.event_history.iter().any(|event| {
-        matches!(
-            event,
-            CommittedEvent::SoulCounterInputV1 { .. }
-                | CommittedEvent::SoulCounterAddedV1 { .. }
-                | CommittedEvent::RavenousPaymentV1 { .. }
-                | CommittedEvent::RavenousRemovedV1 { .. }
-                | CommittedEvent::RavenousCompletedV1 { .. }
-        )
-    })
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::RavenousCompletedV1,
+            EventKindV1::RavenousPaymentV1,
+            EventKindV1::RavenousRemovedV1,
+            EventKindV1::SoulCounterAddedV1,
+            EventKindV1::SoulCounterInputV1,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                CommittedEvent::SoulCounterInputV1 { .. }
+                    | CommittedEvent::SoulCounterAddedV1 { .. }
+                    | CommittedEvent::RavenousPaymentV1 { .. }
+                    | CommittedEvent::RavenousRemovedV1 { .. }
+                    | CommittedEvent::RavenousCompletedV1 { .. }
+            )
+        })
 }
 
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {

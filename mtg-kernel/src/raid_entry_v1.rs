@@ -2,6 +2,7 @@
 use crate::card_def::CARD_DEFS;
 use crate::effect::EffectOp;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
 
 pub(crate) fn owns_definition(card: u16) -> bool {
@@ -87,6 +88,7 @@ pub(crate) fn validate_source_for_program(
     let entries = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::RaidEntrySourceV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {

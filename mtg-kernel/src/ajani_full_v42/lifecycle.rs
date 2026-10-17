@@ -4,6 +4,7 @@ use crate::card_def::{Keywords, TargetSpec};
 use crate::effect::{EffectObjectBinding, ExecCtx};
 use crate::engine::{PendingActivation, UntilEndOfTurnEffect};
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{PlayerId, StackItemId};
 use crate::state::{
     AbilityKindV4, AbilitySourceContractV4, GameState, StackItem, StackItemKind,
@@ -70,6 +71,7 @@ fn rows(state: &GameState) -> impl DoubleEndedIterator<Item = (u64, &JournalV42)
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::AjaniJournalV42])
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
@@ -564,7 +566,7 @@ pub(crate) fn cleanup(state: &mut GameState) -> Result<(), String> {
         return Err("Ajani expiry is not an actual Cleanup entry".into());
     }
     let epoch = epoch(state)?;
-    let beginning = state.engine.event_history.iter().enumerate().rev().find_map(|(i, event)|
+    let beginning = state.engine.event_history.scan_for_v1(&[EventKindV1::BeginningEndStep]).iter().enumerate().rev().find_map(|(i, event)|
         matches!(event, CommittedEvent::BeginningEndStep { active_player, .. } if *active_player == state.active_player)
             .then_some(i as u64)).ok_or("Ajani Cleanup lost its actual End occurrence")?;
     if beginning <= epoch {

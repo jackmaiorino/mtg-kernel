@@ -1,5 +1,6 @@
 //! Scoped Crystal static facts and affected-controller prevention choices.
 //! No frozen observation or model schema is relabeled.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_surface_v5::PolicySurfaceV5;
 use crate::rl::{
@@ -334,6 +335,7 @@ pub(crate) fn damage_origin(
     let power = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
         .iter()
         .find_map(|e| match e {
             crate::event::CommittedEvent::SourcePowerActivationCommittedV1 {

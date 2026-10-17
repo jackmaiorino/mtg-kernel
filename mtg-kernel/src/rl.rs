@@ -17,6 +17,7 @@ use crate::engine::{
     PlayPermissionExpiry, UntilEndOfTurnEffect,
 };
 use crate::event::{self, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::policy_observation_v6::{
@@ -10811,6 +10812,7 @@ pub(crate) fn crystal_resolving_source_ref(
         let captured = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::GorehornPublishedV1])
             .iter()
             .find_map(|event| match event {
                 crate::event::CommittedEvent::GorehornPublishedV1 { publication }

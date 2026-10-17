@@ -52,6 +52,11 @@ tensorize-cost-profile-v1 = []
 # (`s4a-search-profile` rows). Off by default; default builds compile the
 # spans to nothing, so uninstrumented timings use a build without it.
 s4a-profile-v1 = []
+# Test tooling only: test processes write the first committed event of each
+# kind to `MTG_EVENT_SAMPLES_V1` (event_history_v1::sample_harvest_v1), so
+# integration tests can supply the every-kind fixtures. Off by default; unit
+# tests have it without the feature.
+event-sample-harvest-v1 = []
 # Windows-only production admission for the native V2 training-store writer.
 # Non-Windows builds retain parser/stub support but never emit a production
 # build-capture tuple.
@@ -163,6 +168,7 @@ toml = "0.8"
 
 [dev-dependencies]
 semver = "1"
+syn = { version = "2", features = ["full", "visit"] }
 toml = "0.8"
 
 [[test]]

@@ -31,6 +31,7 @@ use super::bank::{
 use super::canon2::{KeyMode, KeyStats, Keyer, Step as KeyStep};
 use super::labels::{classify, spy_defs};
 use super::play::{acting, apply, decision, Counters, Meter};
+use super::reuse_witness::{Recording, Selected};
 use super::seeds::RootSeeds;
 use super::tree::{live_index, Found, Tree, MAX_DEPTH};
 use crate::ids::PlayerId;
@@ -129,6 +130,8 @@ pub(super) struct GuideRun {
     /// Best-line backup threshold in every search (`tree.rs` `BestLine`);
     /// None is the formal mean backup.
     pub(super) bestline: Option<u64>,
+    /// Passive actual reused-decision evidence; never changes execution.
+    pub(super) reuse_witnesses: Recording,
 }
 
 impl GuideRun {
@@ -137,6 +140,7 @@ impl GuideRun {
         mode: KeyMode::Legacy,
         interchange: false,
         bestline: None,
+        reuse_witnesses: Recording::Disabled,
     };
 }
 
@@ -233,6 +237,43 @@ impl Cursor {
     fn live(&self, hit: &Hit, e: usize) -> Result<u32, String> {
         let (_, _, _, cn) = self.keyer.storage(&hit.step);
         live_index(cn, &cn.edges[e]).map_err(err)
+    }
+
+    /// Read the already matched storage mapping before advance consumes it.
+    fn reuse_witness(
+        &self,
+        recording: Recording,
+        session: &FastActorSessionV1,
+        hit: &Hit,
+        edge: usize,
+        applied: u32,
+        searches: &[Value],
+    ) -> Result<Option<Value>, String> {
+        if recording == Recording::Disabled {
+            return Ok(None);
+        }
+        let record = searches
+            .get(self.search)
+            .ok_or("reused-decision search record missing")?;
+        let (key, parent, parent_edge, canon) = self.keyer.storage(&hit.step);
+        if hit.key != Some(key) {
+            return Err("reused-decision matched node key differs".into());
+        }
+        recording.capture(
+            || super::bank::decision_identity(session),
+            self.search,
+            record,
+            Selected {
+                tree: &self.tree,
+                key,
+                parent,
+                parent_edge,
+                canon,
+                edge,
+                backups: hit.backups,
+                applied,
+            },
+        )
     }
 
     /// Advances along the chosen live action (a matched node, any chooser).
@@ -555,6 +596,15 @@ fn guide_inner(
                 Some(h) if cursor.matching => cursor.keyer.representative(&h.step, a),
                 _ => a,
             };
+            let reuse_witness = if chooser == "reused" {
+                let h = hit.as_ref().expect("a reused execution has a matched node");
+                let Lookup::Supported(edge) = lookup else {
+                    return Err("reused execution lacks a supported storage edge".into());
+                };
+                cursor.reuse_witness(run.reuse_witnesses, &s, h, edge, a, &searches.records)?
+            } else {
+                None
+            };
             if let Some(h) = hit {
                 if cursor.matching {
                     cursor.advance(h, a);
@@ -586,6 +636,9 @@ fn guide_inner(
                 "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
                 "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen}),
             );
+            if let Some(witness) = reuse_witness {
+                decisions.last_mut().expect("just recorded decision")["reuse_witness"] = witness;
+            }
             a
         } else if acting(&d) == focal {
             0
@@ -636,15 +689,14 @@ fn guide_inner(
             eprintln!("S4A_PATH_LOG: guide log not written: {e}");
         }
     }
-    Ok((
-        json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
+    let mut game = json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
             "end":end,"actions":actions,"decisions":decisions,"learner_starts":starts.len(),
             "searches":searches.records,"transitions_used":searches.used,
             "key_mode":run.mode.label(),"search_keys":searches.keys.json(),"execution_keys":cursor_keys.json(),
             "sequence":suffix.as_ref().map(|x| x.json()),"real_transitions":meter.spent,
-            "wall":started.elapsed().as_secs_f64()}),
-        kept,
-    ))
+            "wall":started.elapsed().as_secs_f64()});
+    run.reuse_witnesses.annotate(&mut game);
+    Ok((game, kept))
 }
 
 /// One total-budget arm-game from an ordinary opening (collab
@@ -664,6 +716,7 @@ pub(super) fn budget_case(
     mode: KeyMode,
     interchange: bool,
     bestline: Option<u64>,
+    reuse_witnesses: Recording,
     binding: &str,
 ) -> Result<Value, String> {
     let started = Instant::now();
@@ -696,6 +749,7 @@ pub(super) fn budget_case(
             mode,
             interchange,
             bestline,
+            reuse_witnesses,
         },
     )?;
     let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -1044,6 +1098,129 @@ mod tests {
         bank_roles(policy, std::slice::from_ref(policy)).unwrap()
     }
 
+    /// A real V4 decision plus a deterministic stored-node fixture exercises
+    /// the actual cursor mapping/capture/advance boundary. No search runs.
+    #[test]
+    #[ignore = "native qualification: at most 64 prefix steps and two fixture policy calls"]
+    fn reused_decision_witness_is_passive_on_cloned_live_state() {
+        let mut state = game(11);
+        let mut current = None;
+        for _ in 0..64 {
+            let d = decision(&state).expect("fixture ended before a focal decision");
+            if acting(&d) == PlayerId(0) && d.legal_action_count >= 2 {
+                current = Some(d);
+                break;
+            }
+            state.step(d.episode_id, d.step, 0).unwrap();
+        }
+        let d = current.expect("fixture must expose a focal choice within 64 transitions");
+        let build_cursor = || {
+            let mut cursor = Cursor::new(Tree::default(), 0, KeyMode::Repaired, true);
+            let st = cursor.keyer.step(&state, d).unwrap();
+            let (key, parent, parent_edge, cn) = cursor.keyer.storage(&st);
+            let mut node = super::super::tree::Node::with_perm(
+                parent,
+                parent_edge,
+                cn.clone(),
+                2,
+                (0..cn.edges.len()).collect(),
+            );
+            node.skip = cursor.keyer.skipped(&st);
+            let edge = (0..node.n.len())
+                .find(|&e| !node.skip.get(e).copied().unwrap_or(false))
+                .unwrap();
+            node.n.fill(8);
+            node.wins[edge] = 8;
+            node.visits = 8 * node.n.len() as u64;
+            cursor.tree.nodes.insert(key, node);
+            cursor.advanced = true;
+            cursor
+        };
+        let mut observed_cursor = build_cursor();
+        let mut reference_cursor = build_cursor();
+        let records =
+            vec![json!({"search":0,"step":d.step,"tree":{"hash":observed_cursor.tree.hash()}})];
+        let (lookup, hit) = observed_cursor.lookup(&state, d).unwrap();
+        let (reference_lookup, reference_hit) = reference_cursor.lookup(&state, d).unwrap();
+        assert_eq!(lookup, reference_lookup);
+        let Lookup::Supported(edge) = lookup else {
+            panic!("fixture needs a supported stored node")
+        };
+        let hit = hit.unwrap();
+        let reference_hit = reference_hit.unwrap();
+        let applied = observed_cursor
+            .keyer
+            .representative(&hit.step, observed_cursor.live(&hit, edge).unwrap());
+        let reference_applied = reference_cursor.keyer.representative(
+            &reference_hit.step,
+            reference_cursor.live(&reference_hit, edge).unwrap(),
+        );
+        assert_eq!(applied, reference_applied);
+        let before = (
+            state.diagnostic_state_hash(),
+            state.privileged_core_environment_hash(),
+            state.policy_step_count(),
+            state.physical_decision_count(),
+            observed_cursor.keyer.stats.json(),
+        );
+        let witness = observed_cursor
+            .reuse_witness(Recording::Enabled, &state, &hit, edge, applied, &records)
+            .unwrap()
+            .unwrap();
+        assert!(reference_cursor
+            .reuse_witness(
+                Recording::Disabled,
+                &state,
+                &reference_hit,
+                edge,
+                reference_applied,
+                &[],
+            )
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            witness["decision"],
+            super::super::bank::decision_identity(&state).unwrap()
+        );
+        assert_eq!(witness["applied_live_index"], applied);
+        assert_eq!(witness["natural_terminal_backups"], 8);
+        assert_eq!(
+            before,
+            (
+                state.diagnostic_state_hash(),
+                state.privileged_core_environment_hash(),
+                state.policy_step_count(),
+                state.physical_decision_count(),
+                observed_cursor.keyer.stats.json()
+            )
+        );
+        observed_cursor.advance(hit, applied);
+        reference_cursor.advance(reference_hit, reference_applied);
+        let mut observed = state.clone();
+        let mut reference = state.clone();
+        observed.step(d.episode_id, d.step, applied).unwrap();
+        reference
+            .step(d.episode_id, d.step, reference_applied)
+            .unwrap();
+        assert_eq!(
+            observed.diagnostic_state_hash(),
+            reference.diagnostic_state_hash()
+        );
+        assert_eq!(
+            observed.privileged_core_environment_hash(),
+            reference.privileged_core_environment_hash()
+        );
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut a = policy.fork_for_collection_v3().unwrap();
+        let mut b = policy.fork_for_collection_v3().unwrap();
+        a.reset_sampling_v1([7, 9]);
+        b.reset_sampling_v1([7, 9]);
+        assert_eq!(
+            a.select_fast_session_v1(&observed).unwrap(),
+            b.select_fast_session_v1(&reference).unwrap()
+        );
+    }
+
     fn plain_control_fixture(
         seat: u8,
         starting_player: u8,
@@ -1258,6 +1435,7 @@ mod tests {
                         KeyMode::Repaired,
                         false,
                         None,
+                        Recording::Disabled,
                         "fixture",
                     )
                     .unwrap();

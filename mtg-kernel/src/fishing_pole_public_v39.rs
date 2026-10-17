@@ -1,5 +1,6 @@
 //! Authenticated Fishing facts. Historical hosts expose incarnation only.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::fishing_pole_v39::lifecycle::JournalV39;
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
@@ -134,7 +135,13 @@ pub fn facts_v39(state: &GameState) -> Result<FactsV39, RlContractError> {
         });
     }
     let mut operations = Vec::new();
-    for (origin, event) in state.engine.event_history.iter().enumerate() {
+    for (origin, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FishingPoleJournalV39])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::FishingPoleJournalV39 { journal } = event else {
             continue;
         };
@@ -158,7 +165,11 @@ pub fn facts_v39(state: &GameState) -> Result<FactsV39, RlContractError> {
         let mut removed = None;
         let mut after = None;
         let mut token = None;
-        for e in &state.engine.event_history {
+        for e in state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::FishingPoleJournalV39])
+        {
             if let CommittedEvent::FishingPoleJournalV39 { journal } = e {
                 match journal.as_ref() {
                     JournalV39::Published {

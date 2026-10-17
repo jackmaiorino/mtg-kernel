@@ -3,6 +3,7 @@
 use super::*;
 use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, SquadRallierStartedBindingV1};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -207,7 +208,13 @@ fn tracked(state: &GameState) -> Result<bool, String> {
 
 fn history(state: &GameState) -> Result<Vec<&SquadRallierResolutionReceiptV1>, String> {
     let mut receipts: Vec<&SquadRallierResolutionReceiptV1> = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::SquadRallierResolutionBoundaryV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::SquadRallierResolutionBoundaryV1 { receipt } = event else {
             continue;
         };
@@ -531,11 +538,16 @@ pub(super) fn record_boundary(state: &mut GameState) -> Result<(), String> {
             .as_ref()
             .and_then(|pending| pending.resolving_item.inline_effect.as_ref())
             .is_some_and(super::private_keep_one_v1::is_recipe)
-        && !state.engine.event_history.iter().any(|event| {
-            matches!(event,
+        && !state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::PrivateKeepOneLibraryCapturedV1])
+            .iter()
+            .any(|event| {
+                matches!(event,
             CommittedEvent::PrivateKeepOneLibraryCapturedV1 { binding }
                 if binding.stack_item_id == Some(previous.stack_item_id))
-        })
+            })
     {
         if previous.ordinal != 0 || state.player_attacked_this_turn_v1(previous.source.controller) {
             return Err("keep-one completion skipped a required private operation".into());
@@ -569,7 +581,7 @@ pub(super) fn record_boundary(state: &mut GameState) -> Result<(), String> {
     }
     if state.engine.pending_effect.is_none()
         && previous.pending.as_ref().and_then(|p| p.resolving_item.inline_effect.as_ref()).is_some_and(super::exile_top_choose_v1::is_recipe)
-        && !state.engine.event_history.iter().any(|e| matches!(e, CommittedEvent::ExilePlaySelectionCapturedV1 { resolving_stack_item, .. } if *resolving_stack_item == previous.stack_item_id)) {
+        && !state.engine.event_history.scan_for_v1(&[EventKindV1::ExilePlaySelectionCapturedV1]).iter().any(|e| matches!(e, CommittedEvent::ExilePlaySelectionCapturedV1 { resolving_stack_item, .. } if *resolving_stack_item == previous.stack_item_id)) {
         if previous.ordinal != 0 || state.player_attacked_this_turn_v1(previous.source.controller) { return Err("Strongbox skipped required exile operation".into()); }
         let stack_item_id=previous.stack_item_id; let first=previous.history_index; let source=previous.source;
         state.engine.event_history.push(CommittedEvent::StrongboxRaidSkippedV1 { resolving_stack_item:stack_item_id, initial_boundary_history_index:first });

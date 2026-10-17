@@ -3,6 +3,7 @@
 use crate::card_def::{CardType, Keywords, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{AbilitySourceContractV4, GameObject, GameState, StackItem, Zone};
 use crate::trigger::PendingTrigger;
@@ -458,7 +459,7 @@ pub(crate) fn validate_source(
         return Ok(());
     };
     let capture = capture_at(state, index)?;
-    if source!=Some(capture.source) || state.engine.event_history.iter().filter(|event|matches!(event,
+    if source!=Some(capture.source) || state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawCollectedV1]).iter().filter(|event|matches!(event,
         CommittedEvent::GarrukDrawCollectedV1 {capture_history_index} if *capture_history_index==index)).count()!=1 {
         return Err("Garruk source changed its capture or collection".into())
     }
@@ -476,7 +477,7 @@ pub(crate) fn collect(
         };
         let index = capture.history_index;
         if capture_at(state,index).ok()!=Some(capture) || !used.insert(index)
-            || state.engine.event_history.iter().any(|event|matches!(event,
+            || state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawCollectedV1]).iter().any(|event|matches!(event,
                 CommittedEvent::GarrukDrawCollectedV1 {capture_history_index} if *capture_history_index==index)) {
             return Err(capture.source.source)
         }
@@ -498,9 +499,13 @@ pub(crate) fn collect(
             paid_cost_refs: Vec::new(),
         });
     }
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::GarrukDrawCaptureV1])
+    {
         if let CommittedEvent::GarrukDrawCaptureV1 { capture } = event {
-            let collected=state.engine.event_history.iter().any(|event|matches!(event,
+            let collected=state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawCollectedV1]).iter().any(|event|matches!(event,
                 CommittedEvent::GarrukDrawCollectedV1 {capture_history_index} if *capture_history_index==capture.history_index));
             if !collected && !used.contains(&capture.history_index) {
                 return Err(capture.source.source);
@@ -522,6 +527,7 @@ fn publications(state: &GameState, index: u64) -> Vec<(usize, &StackItem)> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::GarrukDrawPublishedV1])
         .iter()
         .enumerate()
         .filter_map(|(at, event)| match event {
@@ -633,7 +639,7 @@ fn record_removal(
     kind: RemovalKindV1,
 ) -> Result<usize, String> {
     if state.stack.iter().any(|item|item.v4.stack_item_id==owner.item.v4.stack_item_id)
-        || state.engine.event_history.iter().any(|event|matches!(event,
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawRemovedV1]).iter().any(|event|matches!(event,
             CommittedEvent::GarrukDrawRemovedV1 {capture_history_index,..} if *capture_history_index==owner.index)) {
         return Err("Garruk private removed owner still exists or was consumed".into())
     }
@@ -735,7 +741,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for (observation, event) in state.engine.event_history.iter().enumerate() {
+    for (observation, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::GarrukEntryObservationV1])
+        .iter()
+        .enumerate()
+    {
         if let CommittedEvent::GarrukEntryObservationV1 { entry, sources, .. } = event {
             let original = usize::try_from(entry.entry_history_index)
                 .map_err(|_| "Garruk entry index overflow")?;
@@ -750,7 +762,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 return Err("Garruk observation lost its actual entry".into());
             }
             for (source, root) in sources {
-                if state.engine.event_history.iter().filter(|event|matches!(event,
+                if state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawCaptureV1]).iter().filter(|event|matches!(event,
                     CommittedEvent::GarrukDrawCaptureV1 {capture} if capture.observation_history_index==observation as u64
                         && capture.source==*source && capture.root==*root)).count()!=1 {
                     return Err("Garruk original observer lost its mandatory draw capture".into())
@@ -758,7 +770,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::GarrukDrawCaptureV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::GarrukDrawCaptureV1 { capture } = event else {
             continue;
         };
@@ -767,7 +785,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             return Err("Garruk capture moved in its original journal".into());
         }
         let index = capture.history_index;
-        let collections: Vec<_> = state.engine.event_history.iter().enumerate().filter_map(|(at,event)|
+        let collections: Vec<_> = state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawCollectedV1]).iter().enumerate().filter_map(|(at,event)|
             matches!(event,CommittedEvent::GarrukDrawCollectedV1 {capture_history_index} if *capture_history_index==index).then_some(at)).collect();
         let collected = collections.len();
         if collections.iter().any(|collection| *collection <= at) {
@@ -846,6 +864,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let completions: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::GarrukDrawCompletedV1])
             .iter()
             .enumerate()
             .filter_map(|(at, event)| match event {
@@ -862,6 +881,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let removals: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::GarrukDrawRemovedV1])
             .iter()
             .enumerate()
             .filter_map(|(at, event)| match event {
@@ -927,6 +947,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         || state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::GarrukDrawCaptureV1])
             .iter()
             .any(|event| matches!(event, CommittedEvent::GarrukDrawCaptureV1 { .. }))
 }

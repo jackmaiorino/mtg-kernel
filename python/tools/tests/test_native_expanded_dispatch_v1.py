@@ -81,7 +81,12 @@ class AdmissionTestCase(unittest.TestCase):
                             "reserve_bytes": dispatch.DISK_RESERVE_BYTES, "projected_additional_bytes": 1000,
                             "projected_volume_bytes": {self.root.drive.upper(): 1000}}}
 
-    def trial(self, workers, seconds, e_packet=None):
+    def trial(self, workers, seconds, e_packet=None, update_seconds=None, stdout_updates=1,
+              artifact_timing=None):
+        """A one-update qualification report. With `update_seconds` it pins a
+        stdout whose `stdout_updates` update lines carry that native timing, and
+        records `artifact_timing` (by default a 1 s fingerprint and a 0.5 s
+        archive; {} leaves it out)."""
         request = self.request(workers)
         original = dispatch.read(dispatch.checked(request["config"]))
         config = dispatch.placed_config(request, original, True)
@@ -117,6 +122,18 @@ class AdmissionTestCase(unittest.TestCase):
                   "archive": self.save({"mismatches": 0, "native_root": str(native),
                       "scheme": "two-deflate1-shards-full-readback/v1",
                       "shards": [{"archive": self.save({"archive": i})} for i in range(2)]})}
+        if update_seconds is not None:
+            stdout = Path(request["root"]) / "stdout.jsonl"
+            stdout.parent.mkdir(parents=True, exist_ok=True)
+            timing = {"schema": "phase1-scheduler-wall/v1", "iteration_wall_seconds": update_seconds}
+            stdout.write_text("".join(json.dumps({"completed_iteration": i, "scheduler_timing": timing}) + "\n"
+                                      for i in range(stdout_updates)) + json.dumps(result) + "\n",
+                              encoding="utf-8")
+            report["native_stdout"] = dispatch.pin(stdout)
+            artifact = ({"fingerprint_seconds": 1, "archive_seconds": .5}
+                        if artifact_timing is None else artifact_timing)
+            if artifact:
+                report["artifact_timing"] = artifact
         return self.save(report)
 
     def choice(self):
@@ -474,6 +491,45 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             choice["qualifications"] = choice["qualifications"][1:]
             with self.assertRaisesRegex(ValueError, "serial"):
                 dispatch.require_choice(self.save(choice), request, verify_outputs=True)
+
+    def test_training_projection_pays_start_up_once(self):
+        # 64 updates. w1: a 10 s trial with a 6 s update, a 1 s fingerprint and a
+        # 0.5 s archive pays 2.5 s once, then 6.5 s per update and the
+        # fingerprint over one worker (1 GiB placement): 2.5 + 64 x 7.5.
+        # w2: 6 s, 4 s, 1 s, 0.5 s.
+        choice = self.choice()
+        choice["qualifications"] = [self.trial(1, 10, update_seconds=6), self.trial(2, 6, update_seconds=4)]
+        choice["selected"] = {dispatch.workload(self.config, "training"): choice["qualifications"][1]}
+        report = dispatch.read(choice["qualifications"][0]["path"])
+        self.assertEqual(dispatch.projected_seconds(report, self.config, "training"), 482.5)
+        # Four fingerprint workers spread the fingerprint: 2.5 + 64 x (6.5 + 1/4).
+        wide = report | {"placement": report["placement"] | {"cpu_affinity": [0, 1, 2, 3],
+                                                              "memory_bytes": 4 * 1024**3}}
+        self.assertEqual(dispatch.fingerprint_workers(wide["placement"]), 4)
+        self.assertEqual(dispatch.projected_seconds(wide, self.config, "training"), 434.5)
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
+            result = dispatch.require_choice(self.save(choice), self.request(2), verify_outputs=True)
+        self.assertEqual(result["projected_seconds"], .5 + 64 * 5.5)
+
+    def test_training_projection_bases_and_timing_are_checked(self):
+        choice = self.choice()
+        request = self.request(2)
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
+            # One trial timed per update and one from before the pinned stdout.
+            choice["qualifications"][1] = self.trial(2, 6, update_seconds=4)
+            with self.assertRaisesRegex(ValueError, "one projection basis"):
+                dispatch.require_choice(self.save(choice), request, verify_outputs=True)
+            for kwargs, message in (({"update_seconds": 4, "stdout_updates": 0}, "exactly one update"),
+                                    ({"update_seconds": 4, "stdout_updates": 2}, "exactly one update"),
+                                    ({"update_seconds": 9.5}, "outlasts its native execution"),
+                                    ({"update_seconds": 8.75}, "outlast its trial"),
+                                    ({"update_seconds": 0}, "native update seconds"),
+                                    ({"update_seconds": 4, "artifact_timing": {}}, "artifact timing"),
+                                    ({"update_seconds": 4, "artifact_timing": {"fingerprint_seconds": 1}},
+                                     "archive seconds")):
+                report = dispatch.read(self.trial(1, 10, **kwargs)["path"])
+                with self.assertRaisesRegex(ValueError, message):
+                    dispatch.projected_seconds(report, self.config, "training")
 
     def test_changed_trajectory_and_eligible_unmeasured_host_are_refused(self):
         choice = self.choice()

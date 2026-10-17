@@ -2,6 +2,7 @@
 use crate::card_def::{TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ObjectRef};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{
     AbilitySourceContractV4, GameState, LinkedExileRecordV4, StackItem, StackItemKind, Zone,
@@ -48,6 +49,7 @@ pub(crate) fn original_token(
     let rows: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::BanishingLinkInstalledV1])
         .iter()
         .filter_map(|event| {
             let CommittedEvent::BanishingLinkInstalledV1 {
@@ -123,6 +125,7 @@ pub(crate) fn validate_source(
     let rows: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::BanishingEntryV1])
         .iter()
         .enumerate()
         .filter_map(|(at, event)| {
@@ -168,6 +171,7 @@ pub(crate) fn collect(
     let entries: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::BanishingEntryV1])
         .iter()
         .filter_map(|event| {
             if let CommittedEvent::BanishingEntryV1 {
@@ -183,7 +187,7 @@ pub(crate) fn collect(
         .collect();
     let mut result = Vec::new();
     for (source, entry) in entries {
-        let collected=state.engine.event_history.iter().filter(|event|
+        let collected=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingCollectedV1]).iter().filter(|event|
             matches!(event,CommittedEvent::BanishingCollectedV1 {source:captured} if *captured==source)).count();
         if collected != 0 {
             continue;
@@ -285,6 +289,7 @@ pub(crate) fn acquire(
     let rows: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::BanishingPublishedV1])
         .iter()
         .filter_map(|event| {
             if let CommittedEvent::BanishingPublishedV1 { item: published } = event {
@@ -454,25 +459,30 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
         if crate::trigger::battlefield_entry_object(logged).is_none() {
             continue;
         }
-        let waiting = state.engine.event_history.iter().filter(|event| {
+        let waiting = state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingEntryV1]).iter().filter(|event| {
             let CommittedEvent::BanishingEntryV1 {source,entry_history_index}=event else {return false};
             let actual=usize::try_from(*entry_history_index).ok().and_then(|at|state.engine.event_history.get(at));
             actual==Some(logged) && !state.engine.event_history.iter().any(|event|
                 matches!(event,CommittedEvent::BanishingCollectedV1 {source:original} if original==source))
         }).count();
-        let previously_tracked = state.engine.event_history.iter().any(|event| {
-            let CommittedEvent::BanishingEntryV1 {
-                entry_history_index,
-                ..
-            } = event
-            else {
-                return false;
-            };
-            usize::try_from(*entry_history_index)
-                .ok()
-                .and_then(|at| state.engine.event_history.get(at))
-                == Some(logged)
-        });
+        let previously_tracked = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::BanishingEntryV1])
+            .iter()
+            .any(|event| {
+                let CommittedEvent::BanishingEntryV1 {
+                    entry_history_index,
+                    ..
+                } = event
+                else {
+                    return false;
+                };
+                usize::try_from(*entry_history_index)
+                    .ok()
+                    .and_then(|at| state.engine.event_history.get(at))
+                    == Some(logged)
+            });
         if previously_tracked
             && state
                 .engine
@@ -485,15 +495,33 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
             return Err("Banishing collected entry was reintroduced into mutable log".into());
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::BanishingAuraHostChosenV1,
+            EventKindV1::BanishingAuraHostsCapturedV1,
+            EventKindV1::BanishingCollectedV1,
+            EventKindV1::BanishingEntryV1,
+            EventKindV1::BanishingFinishedV1,
+            EventKindV1::BanishingLinkExpiredV1,
+            EventKindV1::BanishingLinkInstalledV1,
+            EventKindV1::BanishingNoTargetsV1,
+            EventKindV1::BanishingPublishedV1,
+            EventKindV1::BanishingRecipientCeasedV1,
+            EventKindV1::BanishingRemovedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::BanishingEntryV1 {source,entry_history_index}=> {
                 validate_source(state,*source)?;
-                let collected=state.engine.event_history.iter().filter(|event|matches!(event,
+                let collected=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingCollectedV1]).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingCollectedV1 {source:original} if original==source)).count();
-                let no_targets=state.engine.event_history.iter().filter(|event|matches!(event,
+                let no_targets=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingNoTargetsV1]).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingNoTargetsV1 {source:original} if original==source)).count();
-                let published=state.engine.event_history.iter().filter(|event|matches!(event,
+                let published=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingPublishedV1]).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingPublishedV1 {item} if item.v4.ability_source_contract==Some(*source))).count();
                 let pending=pending_owners(state).filter(|pending|pending.source_contract==Some(*source)
                     && pending.effect==recipe() && pending.controller==source.controller
@@ -510,17 +538,17 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                 let source=item.v4.ability_source_contract.ok_or("Banishing publication lost source")?;
                 validate_source(state,source)?;
                 if !exact_item(item,source) {return Err("Banishing publication root changed".into())}
-                let removals:Vec<_>=state.engine.event_history.iter().enumerate().filter_map(|(index,event)|
+                let removals:Vec<_>=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingRemovedV1]).iter().enumerate().filter_map(|(index,event)|
                     if let CommittedEvent::BanishingRemovedV1 {item:removed,outcome}=event {
                         (removed.v4.stack_item_id==item.v4.stack_item_id).then_some((index,removed.as_ref(),outcome))
                     } else {None}).collect();
                 let live:Vec<_>=state.stack.iter().filter(|live|live.v4.stack_item_id==item.v4.stack_item_id).collect();
-                let closed=state.engine.event_history.iter().filter(|event|matches!(event,
+                let closed=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingFinishedV1]).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingFinishedV1 {stack_item_id} if *stack_item_id==item.v4.stack_item_id)).count();
                 match removals.as_slice() {
                     [] if live.as_slice()==[item.as_ref()] && closed==0=>{},
                     [(removed_at,original,outcome)] if *removed_at>at && *original==item.as_ref() && live.is_empty() && closed==1=> {
-                        let finished_at=state.engine.event_history.iter().position(|event|matches!(event,
+                        let finished_at=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingFinishedV1]).iter().position(|event|matches!(event,
                             CommittedEvent::BanishingFinishedV1 {stack_item_id} if *stack_item_id==item.v4.stack_item_id)).expect("one finish");
                         if finished_at<=*removed_at {return Err("Banishing completion preceded actual removal".into())}
                         if let RemovalV1::Resolving {source_present:true,target_legal:true}=outcome {
@@ -528,7 +556,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                             for (offset,event) in state.engine.event_history[removed_at+1..finished_at].iter().enumerate() {
                                 if matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,to:Zone::Exile,..} if *object==target) {
                                     let actual=removed_at+1+offset;
-                                    let installs=state.engine.event_history.iter().filter(|event|matches!(event,
+                                    let installs=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingLinkInstalledV1]).iter().filter(|event|matches!(event,
                                         CommittedEvent::BanishingLinkInstalledV1 {record,exile_history_index,..}
                                             if record.source==source && record.exiled==target && usize::try_from(*exile_history_index).ok()==Some(actual))).count();
                                     if installs!=1 {return Err("Banishing successful exile lost its original installation".into())}
@@ -541,7 +569,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
             }
             CommittedEvent::BanishingLinkInstalledV1 {record,exile_history_index,recipient_was_token}=> {
                 validate_source(state,record.source)?;
-                if state.engine.event_history.iter().filter(|event|matches!(event,
+                if state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingLinkInstalledV1]).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingLinkInstalledV1 {record:original,..} if original==record)).count()!=1 {
                     return Err("Banishing original installation duplicated".into());
                 }
@@ -561,11 +589,11 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                 if *object!=record.exiled || *owner!=record.exiled_owner || zone_change_count.checked_add(1)!=Some(record.exiled_zone_change_count) {
                     return Err("Banishing link changed original target owner or incarnation".into())
                 }
-                let expiry:Vec<_>=state.engine.event_history.iter().enumerate().filter_map(|(index,event)|
+                let expiry:Vec<_>=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingLinkExpiredV1]).iter().enumerate().filter_map(|(index,event)|
                     if let CommittedEvent::BanishingLinkExpiredV1 {record:expired,departure_history_index,return_history_index,no_return_reason}=event {
                         (*expired==*record).then_some((index,*departure_history_index,*return_history_index,no_return_reason.as_ref()))
                     } else {None}).collect();
-                let ceased=state.engine.event_history.iter().filter(|event|matches!(event,
+                let ceased=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingRecipientCeasedV1]).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingRecipientCeasedV1 {record:original} if original==record)).count();
                 let active=state.engine.linked_exile_records.iter().filter(|active|**active==*record).count();
                 match expiry.as_slice() {
@@ -674,6 +702,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
         if state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::BanishingLinkInstalledV1])
             .iter()
             .filter(|event| {
                 matches!(event,

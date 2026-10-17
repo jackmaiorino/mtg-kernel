@@ -1,5 +1,6 @@
 //! Panda-specific ownership of mandatory roots and their actual operations.
 use super::*;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{GameObject, StackItem, StackItemKind, StackStateV4, StackTargetContractV4};
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +87,7 @@ impl WorldV1 {
         if !original.engine.event_history.is_empty() {
             return Err("Panda private world contains recursive history".into());
         }
-        original.engine.event_history = state.engine.event_history[..count].to_vec();
+        original.engine.event_history = state.engine.event_history[..count].to_vec().into();
         Ok(original)
     }
 }
@@ -131,6 +132,10 @@ fn captures(state: &GameState) -> Vec<u64> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[
+            EventKindV1::FiendishPandaDeathCaptureV1,
+            EventKindV1::FiendishPandaLifeGainCaptureV1,
+        ])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| {
@@ -233,7 +238,7 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     {
         return Err("Panda publication did not acquire the actual complete unique row".into());
     }
-    if state.engine.event_history.iter().any(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal }
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().any(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal }
         if matches!(journal.as_ref(), JournalV1::Published { capture: old, .. } | JournalV1::Unavailable { capture: old, .. } if *old == capture)))
     { return Err("Panda captured occurrence published or dropped twice".into()); }
     let world = WorldV1::capture(state)?;
@@ -337,7 +342,7 @@ fn validated_live_publication(state: &GameState, item: &StackItem) -> Result<Opt
     {
         return Err("Panda owner did not acquire its actual full unique row".into());
     }
-    let publications = state.engine.event_history.iter().enumerate().filter_map(|(at, e)| match e {
+    let publications = state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().enumerate().filter_map(|(at, e)| match e {
         CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Published { capture: old, item: original, .. } if *old == capture && original.as_ref() == item) => Some(at as u64),
         _ => None,
     }).collect::<Vec<_>>();
@@ -398,7 +403,7 @@ fn record_removal(
     kind: RemovalV1,
 ) -> Result<u64, String> {
     if owner.original != *item || state.stack.iter().any(|i| i.v4.stack_item_id == item.v4.stack_item_id)
-        || state.engine.event_history.iter().any(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal }
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().any(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal }
             if matches!(journal.as_ref(), JournalV1::Removed { publication, .. } if *publication == owner.publication)))
     { return Err("Panda genuine removal lost its private loan or was replayed".into()); }
     let input = append(
@@ -778,6 +783,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         && !state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::FiendishPandaJournalV1])
             .iter()
             .any(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { .. }))
         && !waiting.clone().any(|p| binding(&p.effect).is_some())
@@ -788,7 +794,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     let waiting = waiting.collect::<Vec<_>>();
     for capture in &captures {
         root_at(state, *capture as usize)?;
-        let collection = state.engine.event_history.iter().enumerate().filter_map(|(at, e)| matches!(e,
+        let collection = state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaCaptureCollectedV1]).iter().enumerate().filter_map(|(at, e)| matches!(e,
             CommittedEvent::FiendishPandaCaptureCollectedV1 { capture_history_index } if capture_history_index == capture).then_some(at as u64)).collect::<Vec<_>>();
         let fresh = state
             .engine
@@ -800,7 +806,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|p| binding(&p.effect) == Some(*capture))
             .collect::<Vec<_>>();
-        let finals = state.engine.event_history.iter().enumerate().filter_map(|(at, e)| match e {
+        let finals = state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().enumerate().filter_map(|(at, e)| match e {
             CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Published { capture: old, .. } | JournalV1::Unavailable { capture: old, .. } if old == capture) => Some((at as u64, journal.as_ref())),
             _ => None,
         }).collect::<Vec<_>>();
@@ -841,7 +847,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     .filter(|i| i.v4.stack_item_id == item.v4.stack_item_id)
                     .collect::<Vec<_>>();
                 let publication_at = *at;
-                let removals = state.engine.event_history.iter().enumerate().filter_map(|(at, e)| match e {
+                let removals = state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().enumerate().filter_map(|(at, e)| match e {
                     CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Removed { publication, .. } if *publication == publication_at) => Some((at as u64, journal.as_ref())),
                     _ => None,
                 }).collect::<Vec<_>>();
@@ -867,7 +873,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                         return Err("Panda removed root changed or was reintroduced".into());
                     }
                     validate_removal(state, *removed_at)?;
-                    let closed = state.engine.event_history.iter().enumerate().filter_map(|(at, e)| match e {
+                    let closed = state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().enumerate().filter_map(|(at, e)| match e {
                         CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Closed { removal, .. } if removal == removed_at) => Some((at as u64, journal.as_ref())),
                         _ => None,
                     }).collect::<Vec<_>>();
@@ -922,6 +928,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             let publications = state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::FiendishPandaJournalV1])
                 .iter()
                 .filter_map(|e| match e {
                     CommittedEvent::FiendishPandaJournalV1 { journal } => match journal.as_ref() {
@@ -951,7 +958,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FiendishPandaJournalV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::FiendishPandaJournalV1 { journal: phase } = event else {
             continue;
         };
@@ -962,7 +975,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
             JournalV1::DropInput { capture, .. } => {
                 root_at(state, *capture as usize)?;
-                if state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Unavailable { input, .. } if *input == at as u64))).count() != 1 {
+                if state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Unavailable { input, .. } if *input == at as u64))).count() != 1 {
                     return Err("Panda original placement input was erased or reused".into());
                 }
                 *capture
@@ -975,7 +988,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 if !matches!(journal(state, *publication)?, JournalV1::Published { .. }) {
                     return Err("Panda removal lost original publication".into());
                 }
-                if state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Removed { input, .. } if *input == at as u64))).count() != 1 {
+                if state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Removed { input, .. } if *input == at as u64))).count() != 1 {
                     return Err("Panda independent removal input was erased or reused".into());
                 }
                 *publication
@@ -996,7 +1009,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     return Err("Panda operation input lost genuine resolution removal".into());
                 };
                 if at as u64 != removal + 1 || context.as_ref() != &canonical_context(item)
-                    || state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Operation { input, .. } if *input == at as u64))).count() != 1
+                    || state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Operation { input, .. } if *input == at as u64))).count() != 1
                 { return Err("Panda independent operation input was changed, erased or replayed".into()); }
                 *removal
             }
@@ -1008,7 +1021,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
             JournalV1::Operation { input, .. } => {
                 validate_operation(state, at as u64)?;
-                if state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Closed { operation: Some(reference), .. } if *reference == at as u64))).count() != 1 {
+                if state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaJournalV1]).iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Closed { operation: Some(reference), .. } if *reference == at as u64))).count() != 1 {
                     return Err("Panda actual operation was unused or borrowed twice".into());
                 }
                 *input
