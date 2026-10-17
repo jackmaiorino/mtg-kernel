@@ -951,13 +951,13 @@ impl ExpandedEpisodeV1 {
 
     /// Validation for the public-feature collector only, which admits the D3
     /// search pin and the opt-in opponent kinds. Conflicting opponent fields
-    /// fail closed before collection. That collector builds its own games,
-    /// so it refuses runtime rules and reset starts.
+    /// fail closed before collection. The shared episode-session builder
+    /// applies declared runtime rules; reset starts remain unsupported here.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn configurations_for_public_collector_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         ensure(
-            self.runtime_rules.is_none() && self.reset.is_none(),
-            "runtime rules and reset starts are admitted only by the expanded collector",
+            self.reset.is_none(),
+            "reset starts are admitted only by the expanded collector",
         )?;
         self.configurations_checked_v1()
     }
@@ -1837,8 +1837,8 @@ impl From<CollectEpisodeErrorV1> for String {
     }
 }
 
-/// The collection session for `episode`. The line (b) root replay builds its
-/// game through this same call.
+/// The collection session for `episode`. Expanded and public collectors,
+/// opponent-menu replay and line (b) root replay share this runtime profile.
 fn episode_session_v1(
     episode: &ExpandedEpisodeV1,
     configs: &[DeckConfigurationV1; 2],
