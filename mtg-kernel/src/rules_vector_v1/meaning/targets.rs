@@ -683,9 +683,9 @@ fn mana_value_bucket(maximum: u16) -> u8 {
 fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> ObjF {
     use crate::standard_cards_v1::StandardTargetV1 as S;
     match filter {
-        S::CreatureLandOrPlaneswalkerV1 | S::ArtifactEnchantmentOrFlyingCreatureV1 => {
-            ObjF::Permanent
-        }
+        S::UpToEightCreaturesOrPlaneswalkersV74
+        | S::CreatureLandOrPlaneswalkerV1
+        | S::ArtifactEnchantmentOrFlyingCreatureV1 => ObjF::Permanent,
         S::OpponentNonlandPermanentManaValueAtMost(_)
         | S::OpponentNonlandPermanent
         | S::AnotherNonlandPermanent => ObjF::NonlandPermanent,
@@ -720,6 +720,7 @@ pub(super) fn standard_target_origin(
         | S::OpponentArtifactOrCreature
         | S::TappedOpponentCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
         S::AnotherNonlandPermanent
+        | S::UpToEightCreaturesOrPlaneswalkersV74
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1
         | S::UpToTwoAnyTargets
@@ -737,7 +738,9 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
     let (zone, relation) = standard_target_origin(filter);
     let zone = zone.expect("every Standard object target has a zone");
     match filter {
-        S::CreatureLandOrPlaneswalkerV1 | S::ArtifactEnchantmentOrFlyingCreatureV1 => {
+        S::UpToEightCreaturesOrPlaneswalkersV74
+        | S::CreatureLandOrPlaneswalkerV1
+        | S::ArtifactEnchantmentOrFlyingCreatureV1 => {
             // The old facet vocabulary does not encode this union or land override.
             out.atoms.push(Atom::Opaque);
         }

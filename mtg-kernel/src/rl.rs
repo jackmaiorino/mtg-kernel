@@ -1936,6 +1936,8 @@ pub fn observe_v1(
         .map_err(RlContractError)?;
     crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
+    crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::vivien_reid_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -2395,6 +2397,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     if text_mode != ObservationTextModeV2::MuldrothaV71Artifact {
         crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
@@ -3005,6 +3009,8 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     crate::effect::liliana_dreadhorde_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::engine::tinybones_v72::require_legacy(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::effect::chandra_flameshaper_v1::require_legacy(state, Some(acting_player))
         .map_err(RlContractError)?;
     if text_mode != ObservationTextModeV2::MuldrothaV71Artifact {
         crate::engine::muldrotha_v1::require_legacy(state, Some(acting_player))
@@ -4860,6 +4866,11 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     .map_err(RlContractError)?;
     crate::engine::tinybones_v72::require_legacy(request.state, Some(request.acting_player))
         .map_err(RlContractError)?;
+    crate::effect::chandra_flameshaper_v1::require_legacy(
+        request.state,
+        Some(request.acting_player),
+    )
+    .map_err(RlContractError)?;
     if request.text_mode != ObservationTextModeV2::MuldrothaV71Artifact {
         crate::engine::muldrotha_v1::require_legacy(request.state, Some(request.acting_player))
             .map_err(RlContractError)?;
@@ -11645,6 +11656,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
 |CommonProjectionScopeV42::MuldrothaV71)) {return Err(RlContractError("Genesis Wave requires its distinct complete consumer".into()));}
                                 crate::effect::genesis_wave_v1::selection_purpose_v69(choice)
                             },
+                            crate::effect::EffectTargetSelectionPurpose::ChandraExileV74{..}=>return Err(RlContractError("Chandra requires its complete V74 consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {

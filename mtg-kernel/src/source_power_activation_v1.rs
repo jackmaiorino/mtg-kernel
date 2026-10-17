@@ -357,6 +357,9 @@ pub(crate) fn damage_source(
     source: ObjectId,
     id: StackItemId,
 ) -> Result<HistoricalDamageSourceV1, String> {
+    if crate::effect::chandra_flameshaper_v1::has_damage_publication(state, id) {
+        return crate::effect::chandra_flameshaper_v1::damage_source(state, source, id);
+    }
     if crate::equipment_damage_source_v4::has_publication(state, id) {
         return crate::equipment_damage_source_v4::damage_source(state, source, id);
     }

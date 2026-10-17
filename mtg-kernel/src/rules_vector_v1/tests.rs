@@ -1166,6 +1166,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect/chandra_flameshaper_v1.rs", "Chandra, Flameshaper", "exact native loyalty allocation, exile permission and copiable token abilities; legacy Opaque and consumer refusal"),
     ("effect/vivien_reid_v1.rs", "Vivien Reid", "exact native loyalty and persistent timestamped emblem; legacy Opaque and consumer refusal"),
     ("engine/time_stop_v1.rs", "Time Stop", "exact native end-turn disposal and cleanup remain Opaque; old consumers refuse"),
     ("effect/standard_exile.rs", "Etali, Primal Storm", "exact native top-only free-cast family; new root remains Opaque and old consumers refuse"),
@@ -1456,6 +1457,10 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[
+    (
+        "effect/chandra_flameshaper_v1.rs",
+        include_str!("../effect/chandra_flameshaper_v1.rs"),
+    ),
     (
         "effect/vivien_reid_v1.rs",
         include_str!("../effect/vivien_reid_v1.rs"),
