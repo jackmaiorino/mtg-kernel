@@ -26,7 +26,9 @@ REMOTE_INPUT = "C:/mtg-node/public-device-placement-001"
 HOSTNAMES = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
 DISK_RESERVE_BYTES = 60 * 1024**3
 REMOTE_INPUT_ENV = "MTG_PUBLIC_TRAINING_REMOTE_INPUT_ROOT"
-BUSY_PATTERN = r"^(cargo|rustc|public_.*|native_.*|expanded_deck_.*|learned_sideboard_v1|trainer|mtg_kernel.*)\.exe$"
+BUSY_PATTERN = (r"^(cargo|rustc|public_.*|native_.*|expanded_deck_.*|learned_sideboard.*|"
+                r"stack_feature_training.*|stack_policy_replay.*|own_registration_training.*|"
+                r"phase1_native_actor.*|trainer|mtg_kernel.*)\.exe$")
 
 
 def host_binding(host, placements):
@@ -101,18 +103,25 @@ def require_target_context(spec):
                 helpers={key: runtime[key] for key in ("host_reservation", "host_slots")})
 
 
-def wait_target_dispatch(result, reservations, timeout):
+def wait_target_dispatch(result, reservations, timeout, previous_events=()):
     """Observe existing canonical state only; never retry, reclaim or release."""
     if result["state"] not in ("dispatched", "finished-before-handoff"):
         raise RuntimeError("remote dispatch unconfirmed or refused; do not redispatch: " + result["state"])
+    boundary = {json.dumps(event, sort_keys=True) for event in previous_events}
     deadline = time.monotonic()+timeout
     while True:
         state = reservations.status(result["token"])
         fate = state.get("token_fate")
         events = state.get("events", []) if fate == "holds" else state.get("token_events", [])
         if result["nested"]:
-            completed = [event for event in events if event["kind"] == "nested-done"
-                         and event["by_pid"] == result["pid"]]
+            fresh = [event for event in events if json.dumps(event, sort_keys=True) not in boundary]
+            identities = {event["creation_time"] for event in fresh
+                          if event["kind"] in ("handoff", "adopt") and event.get("pid") == result["pid"]
+                          and type(event.get("creation_time")) is int}
+            if len(identities) > 1:
+                raise RuntimeError("nested supervisor creation identity is ambiguous; preserve and inspect")
+            completed = [event for event in fresh if event["kind"] == "nested-done"
+                         and event["by_pid"] == result["pid"] and event["by_process_creation_time"] in identities]
             if completed:
                 event = completed[-1]
                 if reservations.process_state(event["by_pid"], event["by_process_creation_time"]) == "absent":
@@ -144,11 +153,16 @@ def reserve_worker_group(path):
         cores = target_cores(placements)
         reservations, slots = target_helpers(group["target_runtime"])
         parent_token = os.environ.get(reservations.TOKEN_ENV)
+        previous_events = []
         if parent_token:
             timed = slots.timed_state()
             if (timed.get("token_sha256") == slots.token_hash(parent_token)
                     and timed.get("why") == "timed work declared its cores"):
                 raise ValueError("outer reservation already has a timed declaration; run the worker group inside that owner")
+            previous_events, unreadable = reservations.read_events(parent_token)
+            if unreadable:
+                raise ValueError("cannot bind nested dispatch to an incomplete canonical event log")
+            result["prior_event_count"] = len(previous_events)
         python = reservations.supervisor_python(sys.executable)
         command = [python, "-B", str(checked(group["target_runtime"]["host_slots"])), "timed",
                    "--cores", slots.format_cores(cores), "--",
@@ -170,7 +184,7 @@ def reserve_worker_group(path):
         if "pid" not in observed and "pid" in created:
             observed["pid"] = created["pid"]
         limit = sum(job["wall_seconds"] for job in group["jobs"].values())+720
-        result["terminal"] = wait_target_dispatch(observed, reservations, limit)
+        result["terminal"] = wait_target_dispatch(observed, reservations, limit, previous_events)
         if result["terminal"].get("outcome") != "success":
             raise RuntimeError("canonical remote supervisor reported failure")
         executions = [read(Path(job["request"]["path"]).parent/"execution.json") for job in group["jobs"].values()]
@@ -395,10 +409,10 @@ def preflight(host, placements, target_drive):
         raise ValueError("single target drive letter required")
     script=r'''$ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-$active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer\.exe$|public_feature_training|learned_sideboard|expanded_deck_training|phase1_native_actor|stack_feature_training|stack_policy_replay|public_feature_evaluation|cargo|rustc'} | Select-Object Name,ProcessId,CommandLine)
+$active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '__BUSY_PATTERN__'} | Select-Object Name,ProcessId,CommandLine)
 $disk=Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='__TARGET_DRIVE__:'"
 if (-not $disk) {throw 'target volume unavailable'}
-[pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;disk_free_bytes=[int64]$disk.FreeSpace;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''.replace("__TARGET_DRIVE__",drive)
+[pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;disk_free_bytes=[int64]$disk.FreeSpace;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''.replace("__TARGET_DRIVE__",drive).replace("__BUSY_PATTERN__",BUSY_PATTERN)
     if host == "computehost":
         result=json.loads(ssh_ps(script))
     else:

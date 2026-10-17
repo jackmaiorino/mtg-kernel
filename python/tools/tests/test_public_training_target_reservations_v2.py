@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from types import SimpleNamespace
@@ -72,8 +73,9 @@ class TargetOwnershipTests(unittest.TestCase):
 class TerminalObservationTests(unittest.TestCase):
     def test_nested_completion_does_not_wait_for_or_release_outer_owner(self):
         event = dict(kind="nested-done", by_pid=123, by_process_creation_time=45, outcome="success")
+        birth = dict(kind="adopt", pid=123, creation_time=45)
         reservations = Mock()
-        reservations.status.return_value = dict(token_fate="holds", events=[event])
+        reservations.status.return_value = dict(token_fate="holds", events=[birth, event])
         reservations.process_state.side_effect = ["alive", "absent"]
         with patch.object(dispatch.time, "sleep") as sleep:
             result = dispatch.wait_target_dispatch(dict(state="dispatched", nested=True, pid=123, token="outer"),
@@ -83,6 +85,23 @@ class TerminalObservationTests(unittest.TestCase):
         sleep.assert_called_once_with(1)
         reservations.release.assert_not_called()
         reservations.reclaim.assert_not_called()
+
+    def test_old_completed_reused_pid_cannot_finish_current_nested_dispatch(self):
+        old_birth = dict(kind="adopt", pid=123, creation_time=45)
+        old_done = dict(kind="nested-done", by_pid=123, by_process_creation_time=45, outcome="success")
+        new_birth = dict(kind="adopt", pid=123, creation_time=99)
+        new_done = dict(kind="nested-done", by_pid=123, by_process_creation_time=99, outcome="success")
+        reservations = Mock()
+        reservations.status.side_effect = [dict(token_fate="holds", events=[old_birth, old_done, new_birth]),
+            dict(token_fate="holds", events=[old_birth, old_done, new_birth, new_done])]
+        reservations.process_state.return_value = "absent"
+        with patch.object(dispatch.time, "sleep") as sleep:
+            result = dispatch.wait_target_dispatch(dict(state="dispatched", nested=True, pid=123, token="outer"),
+                reservations, 30, previous_events=[old_birth, old_done])
+        self.assertEqual(result, new_done)
+        self.assertEqual(reservations.status.call_count, 2)
+        reservations.process_state.assert_called_once_with(123, 99)
+        sleep.assert_called_once_with(1)
 
     def test_outer_completion_requires_canonical_release(self):
         event = dict(kind="release", outcome="success")
@@ -163,6 +182,29 @@ class ReservedAdapterTests(unittest.TestCase):
                     result = dispatch.reserve_worker_group(group_ref["path"])
                 self.assertEqual(result["setup_seconds"], expected_setup)
                 self.assertEqual(result["recovery_and_release_seconds"], 120-second_end)
+
+    def test_nested_adapter_captures_event_boundary_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            group, reservations, slots = self.fixture(root)
+            slots.token_hash = lambda token: "hash-"+token
+            slots.timed_state = Mock(return_value=dict(token_sha256="hash-outer", why="no core declaration"))
+            old = dict(kind="nested-done", by_pid=123, by_process_creation_time=45, outcome="success")
+            reservations.read_events.return_value = ([old], [])
+            reservations.dispatch.return_value = dict(state="dispatched", token="outer", nested=True, pid=123)
+            def dispatched(**kwargs):
+                reservations.read_events.assert_called_once_with("outer")
+                return reservations.dispatch.return_value
+            reservations.dispatch.side_effect = dispatched
+            with patch.dict(os.environ, {reservations.TOKEN_ENV: "outer"}), \
+                    patch.object(dispatch, "target_helpers", return_value=(reservations, slots)), \
+                    patch.object(dispatch.platform, "node", return_value="COMPUTEHOST"), \
+                    patch.object(dispatch, "wait_target_dispatch", return_value=dict(outcome="success")) as wait, \
+                    patch.object(dispatch.time, "time", side_effect=[100, 115]):
+                result = dispatch.reserve_worker_group(group["path"])
+            self.assertTrue(result["complete"])
+            self.assertEqual(result["prior_event_count"], 1)
+            self.assertEqual(wait.call_args.args[3], [old])
 
     def test_busy_refusal_or_lost_response_is_retained_without_retry(self):
         for lost in (False, True):
@@ -248,6 +290,23 @@ class ReservedAdapterTests(unittest.TestCase):
             self.assertEqual(report["reservation_setup_seconds"], 4)
             self.assertGreaterEqual(report["staging_seconds"], 4)
             self.assertGreaterEqual(report["recovery_seconds"], 5)
+
+
+class BusyFamilyTests(unittest.TestCase):
+    def test_busy_families_cover_all_known_training_and_replay_competitors(self):
+        for process in ("stack_feature_training_v1.exe", "stack_policy_replay_v1.exe",
+                        "own_registration_training_v1.exe", "phase1_native_actor.exe",
+                        "phase1_native_actor_v2.exe", "cargo.exe", "rustc.exe", "trainer.exe",
+                        "public_feature_training_v1.exe", "expanded_deck_training_v1.exe"):
+            with self.subTest(process=process):
+                self.assertIsNotNone(re.search(dispatch.BUSY_PATTERN, process, re.IGNORECASE))
+        self.assertIsNone(re.search(dispatch.BUSY_PATTERN, "python.exe", re.IGNORECASE))
+
+    def test_preflight_uses_the_same_canonical_post_acquire_busy_pattern(self):
+        report = dict(host="COMPUTEHOST", active=[], disk_free_bytes=dispatch.DISK_RESERVE_BYTES, gpu=[])
+        with patch.object(dispatch, "ssh_ps", return_value=json.dumps(report)) as ssh:
+            dispatch.preflight("computehost", [], "C")
+        self.assertIn("-match '"+dispatch.BUSY_PATTERN+"'", ssh.call_args.args[0])
 
 
 if __name__ == "__main__":
