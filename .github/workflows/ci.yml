@@ -482,9 +482,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
+        # Pull requests run the Limited groups on Linux only.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "windows-2025"]') }}
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - limited
@@ -509,22 +508,9 @@ jobs:
           - limited-model-13
           - limited-model-14
           - limited-model-15
-        # Pull requests run the Limited groups on Linux only.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"limited-model-8"},{"os":"windows-2025","group":"limited-model-9"},{"os":"windows-2025","group":"limited-model-10"},{"os":"windows-2025","group":"limited-model-11"},{"os":"windows-2025","group":"limited-model-12"},{"os":"windows-2025","group":"limited-model-13"},{"os":"windows-2025","group":"limited-model-14"},{"os":"windows-2025","group":"limited-model-15"}]' || '[]') }}
-        include:
-          # Linux groups use GitHub's hosted runners, which are free for
-          # this public repository: the WSL runners can't be pinned to
-          # cores, so they pause for any host reservation.
-          - os: ubuntu-24.04
-            runner: '"ubuntu-24.04"'
-          # Windows groups default to GitHub's hosted runners: on the local
-          # pool they queued for over an hour behind research claims. The
-          # repository variable routes them elsewhere, for example
-          # '["self-hosted", "mtg-ci-windows"]' for the local pool.
-          - os: windows-2025
-            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
-    # Pull requests from forks never run on the self-hosted runners.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
+    # Linux uses hosted runners. Windows follows the routing variable of the
+    # other groups; pull requests from forks never run on self-hosted runners.
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     steps:
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
