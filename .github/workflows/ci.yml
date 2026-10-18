@@ -80,7 +80,7 @@ jobs:
             # also relevant because they determine which tests execute.
             # Other non-embedded python, docs, and markdown are irrelevant.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -141,11 +141,10 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --release --locked --workspace --all-targets -- -D warnings
 
-      - name: Check joined serializer fixture and warmed encoder allocations
-        run: |
-          cargo test --release --locked -p mtg-kernel --lib joined_frame_
-          cargo test --release --locked -p mtg-kernel --test flat_policy_allocation
-
+      # Lint only. The joined serializer, warmed encoder allocation and
+      # default rules-vector tests run in the workspace group on both systems,
+      # and the Limited rules-vector tests in the Limited group; repeating
+      # them here cost three more release test builds.
       - name: Run non-Windows native Store feature Clippy
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features native-training-store-v2-production -- -D warnings
 
@@ -184,13 +183,15 @@ jobs:
       - name: Run CUDA backend feature Clippy (compile gate, no device)
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1 -- -D warnings
 
-      - name: Check rules-vector trigger context and event classes
-        run: |
-          cargo test --release --locked -p mtg-kernel --lib rules_vector_v1::tests
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib rules_vector_v1::tests
+      - name: Save compiled quality output
+        if: success()
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: quality
+          mode: save
 
-  # Each group builds a different feature set, so they run as parallel
-  # jobs; `rust-tests` below keeps the per-OS check names.
+  # Groups that build their own feature set run as parallel jobs;
+  # `rust-tests` below keeps the per-OS check names.
   rust-test-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: detect-changes
@@ -209,30 +210,8 @@ jobs:
           - windows-2025
         # Slowest groups first: runners take matrix jobs in this order.
         group:
-          - limited
-          - limited-v2
-          - limited-v3
-          - limited-v1
-          - limited-v4
-          - limited-v5
-          - limited-model
-          - limited-model-1
-          - limited-model-2
-          - limited-model-3
-          - limited-model-4
-          - limited-model-5
-          - limited-model-6
-          - limited-model-7
-          - limited-model-8
-          - limited-model-9
-          - limited-model-10
-          - limited-model-11
-          - limited-model-12
-          - limited-model-13
-          - limited-model-14
-          - limited-model-15
-          - standard
           - workspace
+          - standard
           - cuda
           - native-store
           - trace
@@ -243,7 +222,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"limited-model-8"},{"os":"windows-2025","group":"limited-model-9"},{"os":"windows-2025","group":"limited-model-10"},{"os":"windows-2025","group":"limited-model-11"},{"os":"windows-2025","group":"limited-model-12"},{"os":"windows-2025","group":"limited-model-13"},{"os":"windows-2025","group":"limited-model-14"},{"os":"windows-2025","group":"limited-model-15"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -354,17 +333,317 @@ jobs:
         with:
           scope: tests-${{ matrix.group }}
 
-      - name: Validate London mulligans and original fixture games
-        if: matrix.group == 'limited'
-        run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 -- --nocapture
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib london_session_snapshot_restores
-
       - name: Validate MageZero Standard catalog
         if: matrix.group == 'standard'
         run: |
           python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: rl_session::heartfire_v12:: human_bo3_v1::sower_v14:: human_bo3_v1::heartfire_v12:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: human_bo3_v1::frenzied_v15:: human_bo3_v1::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: human_bo3_v1::authority_v17:: human_bo3_v1::employment_v18:: human_bo3_v1::cerberus_v19::
           python python/tools/run_rust_integration_tests.py standard_integration --features standard-magezero-fixtures
+
+      - name: Run Rust release tests
+        if: matrix.group == 'workspace'
+        run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
+
+      - name: Check opt-in gameplay decision tracing
+        if: matrix.group == 'trace'
+        run: |
+          cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
+          cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
+
+      - name: Saved input scalar diagnostic guards
+        if: matrix.group == 'saved-input'
+        run: |
+          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 -- -D warnings
+          cargo test --release --locked -p mtg-kernel --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 --lib saved_input_scalar_diagnostic::
+          cargo test --release --locked -p mtg-kernel --features gameplay-checkpoint-reconstruction-v1 --lib gameplay_checkpoint_reconstruction_v1::tests
+
+      - name: Validate native Store production feature boundary
+        if: matrix.group == 'native-store'
+        run: |
+          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
+          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
+
+      - name: Validate FDN profiles under the native Store feature
+        if: matrix.group == 'limited-store'
+        run: |
+          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" pre_fdn_profile prior_fdn_batch fdn_profile_record_round_trips fdn_dual_full_batch dual_engine_full_inventory_preserves_printing_ids fdn_ravenous_partial_batch_remains_readable_but_is_not_live effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19::
+
+      - name: Validate ordinary departures under the native Store feature
+        if: matrix.group == 'limited-store'
+        run: |
+          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" ordinary_departure_retains_color_proof actual_grant_source_still_requires_successor
+
+      - name: Test host-safe experimental CUDA feature surface
+        if: matrix.group == 'cuda'
+        run: |
+          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1 --lib experimental_burn_net8_packed_v1::
+
+      - name: Save compiled test output
+        if: success() && runner.environment == 'github-hosted'
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: tests-${{ matrix.group }}
+          mode: save
+
+  # Every Limited group uses one feature set. One job per system builds the
+  # library tests and the Limited process binaries once, as two parallel
+  # parts, instead of each of 22 groups compiling them again.
+  limited-build:
+    name: Build shared Limited tests (${{ matrix.os }}, ${{ matrix.part }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust_relevant == 'true'
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pull requests run the Limited groups on Linux only.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        part:
+          - tests
+          - binaries
+    # Hosted runners only: every hosted job checks out to the same path, so
+    # the source paths in Cargo's freshness records stay valid.
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Windows can resolve `bash` to the WSL launcher in System32 first;
+      # put Git Bash ahead of it for every later step.
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-tests-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-tests-${{ matrix.os }}-
+
+      - name: Build the shared Limited ${{ matrix.part }}
+        run: |
+          if [ '${{ matrix.part }}' = tests ]; then
+            cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib --no-run
+          else
+            # Every Limited process binary, including ones added later.
+            bins=()
+            for source in mtg-kernel/src/bin/kernel_limited_*.rs; do
+              name="${source##*/}"
+              bins+=(--bin "${name%.rs}")
+            done
+            cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures "${bins[@]}"
+          fi
+
+      # Keep Cargo's fingerprints and dep-info with the outputs, so the
+      # Limited groups reuse them only through Cargo's own freshness checks.
+      - name: Package the shared Limited ${{ matrix.part }}
+        run: |
+          tar -cf limited-${{ matrix.part }}.tar --exclude=release/incremental -C target release
+          ls -l limited-${{ matrix.part }}.tar
+
+      - name: Upload the shared Limited ${{ matrix.part }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: limited-build-${{ matrix.os }}-${{ matrix.part }}-${{ github.run_attempt }}
+          path: limited-${{ matrix.part }}.tar
+          retention-days: 1
+          compression-level: 1
+
+  # The Limited groups start from the shared build above.
+  rust-limited-groups:
+    name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
+    needs: [detect-changes, limited-build]
+    if: needs.detect-changes.outputs.rust_relevant == 'true'
+    # The limit includes any wait in the self-hosted job-started hook.
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2025
+        # Slowest groups first: runners take matrix jobs in this order.
+        group:
+          - limited
+          - limited-v2
+          - limited-v5
+          - limited-v3
+          - limited-v1
+          - limited-v4
+          - limited-model
+          - limited-model-1
+          - limited-model-2
+          - limited-model-3
+          - limited-model-4
+          - limited-model-5
+          - limited-model-6
+          - limited-model-7
+          - limited-model-8
+          - limited-model-9
+          - limited-model-10
+          - limited-model-11
+          - limited-model-12
+          - limited-model-13
+          - limited-model-14
+          - limited-model-15
+        # Pull requests run the Limited groups on Linux only.
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"limited-model-8"},{"os":"windows-2025","group":"limited-model-9"},{"os":"windows-2025","group":"limited-model-10"},{"os":"windows-2025","group":"limited-model-11"},{"os":"windows-2025","group":"limited-model-12"},{"os":"windows-2025","group":"limited-model-13"},{"os":"windows-2025","group":"limited-model-14"},{"os":"windows-2025","group":"limited-model-15"}]' || '[]') }}
+        include:
+          # Linux groups use GitHub's hosted runners, which are free for
+          # this public repository: the WSL runners can't be pinned to
+          # cores, so they pause for any host reservation.
+          - os: ubuntu-24.04
+            runner: '"ubuntu-24.04"'
+          # Windows groups default to GitHub's hosted runners: on the local
+          # pool they queued for over an hour behind research claims. The
+          # repository variable routes them elsewhere, for example
+          # '["self-hosted", "mtg-ci-windows"]' for the local pool.
+          - os: windows-2025
+            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
+    # Pull requests from forks never run on the self-hosted runners.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
+    steps:
+      # Windows can resolve `bash` to the WSL launcher in System32 first;
+      # put Git Bash ahead of it for every later step.
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Prepare the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          # Runners without a configured target root keep one beside their
+          # work directory, so builds still persist between jobs.
+          if [ -z "${MTG_CI_TARGET_ROOT:-}" ]; then
+            printf 'MTG_CI_TARGET_ROOT=%s\n' "$RUNNER_WORKSPACE/../../mtg-ci-target" >> "$GITHUB_ENV"
+          fi
+          cargo_bin=
+          if ! command -v rustup >/dev/null && [ -x "$HOME/.cargo/bin/rustup" ]; then
+            cargo_bin="$HOME/.cargo/bin"
+          elif [ "$RUNNER_OS" = Windows ] && command -v cargo >/dev/null; then
+            cargo_bin="$(dirname "$(command -v cargo)")"
+          fi
+          if [ -n "$cargo_bin" ]; then
+            # Python's subprocess calls launch cargo through Windows, which
+            # cannot read a bash path such as /c/Users/...; publish a plain
+            # Windows path there.
+            if [ "$RUNNER_OS" = Windows ]; then
+              cargo_bin="$(cygpath -w "$cargo_bin")"
+            fi
+            echo "Adding the Cargo directory to PATH: $cargo_bin"
+            printf '%s\n' "$cargo_bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        shell: bash
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          # Each self-hosted runner keeps its own toolchain directory between
+          # jobs; runners on one machine must not share one, because
+          # concurrent rustup installs race on its download directory.
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            ci_root="$MTG_CI_TARGET_ROOT"
+            if [ "$RUNNER_OS" = Windows ]; then
+              ci_root="$(cygpath -u "$ci_root")"
+            fi
+            RUSTUP_HOME="${ci_root%/}-fdn-rustup"
+          fi
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+
+      - name: Set up pinned Python for grouped Rust filters
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Use the runner's persistent target directory
+        run: |
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            target_dir="$MTG_CI_TARGET_ROOT/${{ matrix.group }}"
+            if [ "$RUNNER_OS" = Windows ]; then
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
+            fi
+            printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+            # With a persistent target directory, incremental compilation
+            # rebuilds only the changed parts of the mtg-kernel crate. It
+            # does not change program semantics.
+            echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
+          fi
+
+      - name: Cache cargo registry
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-tests-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-tests-${{ matrix.os }}-
+
+      # Self-hosted runners keep their own persistent target directories.
+      - name: Download the shared Limited build
+        if: runner.environment == 'github-hosted'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: limited-build-${{ matrix.os }}-*-${{ github.run_attempt }}
+          merge-multiple: true
+          path: limited-build
+
+      # Cargo reuses an output only when it is newer than every source file
+      # it recorded. Unpacked files get one time after this checkout, so the
+      # Cargo commands below reuse them; anything whose sources, settings or
+      # toolchain differ is still rebuilt as usual.
+      - name: Unpack the shared Limited build as current output
+        if: runner.environment == 'github-hosted'
+        run: |
+          mkdir -p target
+          for archive in limited-build/limited-*.tar; do
+            tar -xf "$archive" -C target
+          done
+          rm -rf limited-build
+          stamp=$(date +%s)
+          find target -exec touch -d "@$stamp" {} +
+
+      - name: Validate London mulligans and original fixture games
+        if: matrix.group == 'limited'
+        run: |
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 -- --nocapture
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib london_session_snapshot_restores
 
       - name: Report generated Limited catalog
         if: always() && matrix.group == 'limited' && matrix.os == 'ubuntu-24.04'
@@ -394,48 +673,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Run Rust release tests
-        if: matrix.group == 'workspace'
-        run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
-
-      - name: Check opt-in gameplay decision tracing
-        if: matrix.group == 'trace'
-        run: |
-          cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
-          cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
-      - name: Saved input scalar diagnostic guards
-        if: matrix.group == 'saved-input'
-        run: |
-          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 -- -D warnings
-          cargo test --release --locked -p mtg-kernel --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 --lib saved_input_scalar_diagnostic::
-          cargo test --release --locked -p mtg-kernel --features gameplay-checkpoint-reconstruction-v1 --lib gameplay_checkpoint_reconstruction_v1::tests
-
-      - name: Validate native Store production feature boundary
-        if: matrix.group == 'native-store'
-        run: |
-          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
-          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
-
       - name: Validate FDN Limited gameplay and catalog separation
         if: matrix.group == 'limited'
         run: |
           python python/tools/run_rust_integration_tests.py fdn_integration --features limited-fdn-fixtures
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl::genuine_paid_conqueror_projection_proof_keeps_original_state_rows_and_full_projection_both_seats rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ effect::condemn_tests:: effect::run_away_together_tests:: bloodwitch_ engine::anytarget_planeswalker_tests:: rules_meaning_v2:: flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: effect::divine_variable_targets_tests:: engine::divine_variable_targeting_tests:: effect::scavenging_ooze_v1:: ooze_public_v1:: rules_meaning_ooze_v1:: soul_shackled_zombie_v1:: soul_shackled_zombie_public_v1:: rules_meaning_soul_shackled_zombie_v1:: source_power_activation_v1:: heartfire_history_v1:: heartfire_public_v1:: rules_meaning_heartfire_v1:: rl_session::heartfire_v12:: rl_session::heartfire_history_v1:: rl_session::soul_shackled_zombie_v13:: searslicer_goblin_tests:: rules_meaning_searslicer_v1:: effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: high_society_hunter_ hunter_observation_v45:: rl_session::hunter_v45:: eaten_alive_v1:: eaten_observation_v46:: eaten_public_v46:: rl_session::eaten_v46:: engine::fiendish_panda_targeting_tests:: fiendish_panda_v1:: panda_public_v47:: rl_session::panda_v47::
 
-      - name: Validate FDN profiles under the native Store feature
-        if: matrix.group == 'limited-store'
-        run: |
-          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" pre_fdn_profile prior_fdn_batch fdn_profile_record_round_trips fdn_dual_full_batch dual_engine_full_inventory_preserves_printing_ids fdn_ravenous_partial_batch_remains_readable_but_is_not_live effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19::
-
       - name: Validate new FDN family cores and owned consumers
         if: ${{ !cancelled() && matrix.group == 'limited' }}
         run: |
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures krenko_v1:: krenko_public_v1:: krenko_observation_v1:: rules_meaning_krenko_v1:: rl_session::krenko_v34:: zul_ashur_v1:: zul_ashur_public_v1:: zul_ashur_observation_v1:: rules_meaning_zul_ashur_v1:: rl_session::zul_ashur_v35:: heraldic_banner_v1:: banner_observation_v1:: rules_meaning_heraldic_banner_v1:: rl_session::banner_v36:: effect::inspiration_resolution_v1:: inspiration_observation_v1:: rules_meaning_inspiration_v1:: rl_session::inspiration_v37:: controlled_creature_grants_v1:: twinflame_tyrant_v1:: twinflame_observation_v1:: rl_session::twinflame_v38:: fishing_pole_v39:: fishing_pole_public_v39:: fishing_pole_observation_v39:: rules_meaning_fishing_pole_v39:: rl_session::fishing_pole_v39:: game_outcome_protection_v1:: game_outcome_protection_public_v1:: game_outcome_observation_v41:: rules_meaning_game_outcome_protection_v1:: rl_session::game_outcome_v41:: ajani_full_v42:: ajani_public_v42:: ajani_observation_v42:: rules_meaning_ajani_v42:: rl_session::ajani_v42:: faebloom_trick_v43:: faebloom_public_v43:: faebloom_observation_v43:: rules_meaning_faebloom_v43:: rl_session::faebloom_v43:: fake_your_own_death_v50::
 
-      - name: Validate ordinary departures under the native Store feature
-        if: matrix.group == 'limited-store'
-        run: |
-          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" ordinary_departure_retains_color_proof actual_grant_source_still_requires_successor
+      - name: Check Limited rules-vector trigger context and event classes
+        if: matrix.group == 'limited'
+        run: cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib rules_vector_v1::tests
 
       # Each protocol keeps its complete checks in a separate job. Serial
       # gameplay plus the three process replays exceeded the two-hour limit.
@@ -497,10 +748,11 @@ jobs:
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_prepared_env_v5
           MTG_LIMITED_PREPARED_TIMING_V5=1 python python/tools/check_limited_prepared_client_v5.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_prepared_env_v5$binary_suffix"
 
-      # Enumerate the compiled subtree in each job and partition exact names.
+      # Enumerate both compiled subtrees in each job and partition their exact
+      # names by recorded duration (python/tools/rust_case_seconds.json).
       # Give each exact case its own 30-minute bound with at most four children,
       # retaining immediate panic details and the complete original inventories.
-      - name: Validate complete current mixed model subtree
+      - name: Validate complete current mixed model and Human subtrees
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-model') }}
         run: |
           shard=0
@@ -508,26 +760,11 @@ jobs:
             shard='${{ matrix.group }}'
             shard="${shard##*-}"
           fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --isolated-cases --nocapture current_mixed_policy_v1::
-
-      - name: Validate complete Human subtree in the same compiled shards
-        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-model') }}
-        run: |
-          shard=0
-          if [ '${{ matrix.group }}' != limited-model ]; then
-            shard='${{ matrix.group }}'
-            shard="${shard##*-}"
-          fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --isolated-cases --skip-ignored --nocapture human_bo3_v1::
-
-      - name: Test host-safe experimental CUDA feature surface
-        if: matrix.group == 'cuda'
-        run: |
-          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1 --lib experimental_burn_net8_packed_v1::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --isolated-cases --skip-ignored --nocapture current_mixed_policy_v1:: human_bo3_v1::
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})
-    needs: [detect-changes, rust-test-groups]
+    needs: [detect-changes, rust-test-groups, limited-build, rust-limited-groups]
     if: always() && needs.detect-changes.outputs.rust_relevant == 'true'
     timeout-minutes: 10
     strategy:
@@ -538,7 +775,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Require every Rust test group
-        run: test "${{ needs.rust-test-groups.result }}" = success
+        run: |
+          test "${{ needs.rust-test-groups.result }}" = success
+          test "${{ needs.limited-build.result }}" = success
+          test "${{ needs.rust-limited-groups.result }}" = success
 
   python-tests:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
@@ -666,6 +906,14 @@ jobs:
 
       - name: Build release JSONL environment
         run: cargo build --release --locked --bin kernel_rl_env
+
+      # Shards of one system build the same output; the first one saves it.
+      - name: Save compiled Python environment
+        if: success() && matrix.shard == 0 && runner.environment == 'github-hosted'
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: python-env
+          mode: save
 
       - name: Run Python test shard against the real Rust environment
         run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.shard_count }}

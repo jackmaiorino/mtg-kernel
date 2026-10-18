@@ -4,6 +4,10 @@ inputs:
   scope:
     description: Feature/test group, shared by equivalent Python shards
     required: true
+  mode:
+    description: restore (at job start) or save (at job end)
+    required: false
+    default: restore
 runs:
   using: composite
   steps:
@@ -19,15 +23,27 @@ runs:
           printf '%s\n' "${CARGO_PROFILE_RELEASE_LTO:-}" "${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-}" "${CARGO_PROFILE_RELEASE_INCREMENTAL:-}"
         } | sha256sum | cut -d ' ' -f 1)
         echo "hash=$identity" >> "$GITHUB_OUTPUT"
+        echo "inputs=${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}" >> "$GITHUB_OUTPUT"
+    # Commit-specific writes let later commits refresh the immutable cache.
+    # Compatible restores retain dependencies; Cargo checks all source and
+    # build-script inputs before reusing workspace artifacts. Only main,
+    # tags and manual runs save: pull request caches are visible to no other
+    # branch and pushed main's entries out of the 10 GB repository limit.
     - name: Restore compiled Cargo output
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: inputs.mode == 'restore'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           target
           ~/.cargo/registry/src
-        # Commit-specific writes let later commits refresh the immutable
-        # cache. Compatible restores retain dependencies; Cargo checks all
-        # source/build-script inputs before reusing workspace artifacts.
-        key: cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ steps.identity.outputs.hash }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}-${{ github.sha }}
+        key: cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ steps.identity.outputs.hash }}-${{ steps.identity.outputs.inputs }}-${{ github.sha }}
         restore-keys: |
-          cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ steps.identity.outputs.hash }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}-
+          cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ steps.identity.outputs.hash }}-${{ steps.identity.outputs.inputs }}-
+    - name: Save compiled Cargo output
+      if: inputs.mode == 'save' && github.event_name != 'pull_request'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          target
+          ~/.cargo/registry/src
+        key: cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ steps.identity.outputs.hash }}-${{ steps.identity.outputs.inputs }}-${{ github.sha }}
