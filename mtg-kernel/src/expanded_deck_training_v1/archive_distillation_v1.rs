@@ -1152,6 +1152,13 @@ fn reproduce_bank_v1(
             && bank.rows_sha256 == rows_sha256_v1(&bank.rows)?,
         "archive bank identity differs",
     )?;
+    let cache = bank_cache::entry_path_v1(parent, lineage, games, bank_pin)?;
+    if let Some(rows) = cache
+        .as_deref()
+        .and_then(|path| bank_cache::load_v1(path, &bank))
+    {
+        return Ok((bank, rows));
+    }
     let (status, extracted) = extract_all_v1(inputs);
     ensure(
         status == bank.game_status
@@ -1162,6 +1169,9 @@ fn reproduce_bank_v1(
                 .all(|((row, _), recorded)| row == recorded),
         "archive rows differ from the pinned bank",
     )?;
+    if let Some(path) = &cache {
+        bank_cache::store_v1(path, &extracted);
+    }
     Ok((bank, extracted))
 }
 
@@ -1721,6 +1731,17 @@ fn write_checkpoint_v1(
 
 /// `ArchiveDistillationPhase1`.
 #[allow(clippy::too_many_arguments)]
+/// Measurement only: cumulative phase times on stderr when
+/// `MTG_KERNEL_PHASE_TIMING` is set.
+fn phase_mark_v1(label: &str, started: std::time::Instant) {
+    if std::env::var_os("MTG_KERNEL_PHASE_TIMING").is_some() {
+        eprintln!(
+            "phase-timing {label} {:.3}",
+            started.elapsed().as_secs_f64()
+        );
+    }
+}
+
 pub(super) fn phase1_v1(
     parent: ExpandedModelSourceV1,
     lineage: String,
@@ -1745,16 +1766,19 @@ pub(super) fn phase1_v1(
         "a reproduction run stops after the reproduction step",
     )?;
     let inputs = load_inputs_v1(&parent, &lineage, &games)?;
+    phase_mark_v1("load_inputs", started);
     let generation = inputs.policy.feature_identity_v1().generation;
     let parent_pin = parent.checkpoint.clone().expect("checked by load");
     let parent_checkpoint = read_ordinary_checkpoint_v1(&parent_pin, inputs.policy.identity_v1())?;
     let (bank_record, rows) = reproduce_bank_v1(&inputs, &parent, &lineage, &games, &bank)?;
+    phase_mark_v1("reproduce_bank", started);
     let keep = options
         .as_ref()
         .and_then(|o| o.keep_sets.as_ref())
         .map(|pin| keep_sets_v1(pin, &lineage, &bank_record.rows_sha256, &rows))
         .transpose()?;
     let selected = select_rows_v1(&rows, arm, &lineage, options.as_ref(), keep.as_ref())?;
+    phase_mark_v1("keep_select", started);
     let mut ids = BTreeSet::new();
     let anchor_train = load_anchor_split_v1(
         &anchor.training,
@@ -1770,6 +1794,7 @@ pub(super) fn phase1_v1(
     )?
     .len();
     let parent_model = inputs.state.model_v1();
+    phase_mark_v1("anchors", started);
     let verified = verify_parent_outputs_v1(
         parent_model,
         generation,
@@ -1781,6 +1806,7 @@ pub(super) fn phase1_v1(
                     .map(|row| (&row.tensor, row.logits.as_slice(), row.value)),
             ),
     )?;
+    phase_mark_v1("verify_parent", started);
     let plan = plan_v1(
         &rows,
         &selected,
@@ -1860,6 +1886,7 @@ pub(super) fn phase1_v1(
         &recipe_values,
         update_scope,
     )?;
+    phase_mark_v1("preflight", started);
     if dry_run {
         let result = json!({"schema":PHASE1_SCHEMA,"dry_run":true,"identity":identity,
             "census":census,"anchor_preflight_rows":preflight_rows});
@@ -2324,6 +2351,7 @@ pub(super) fn probe_v1(
         extracted.push((bank.role.clone(), rows));
         parent_inputs.get_or_insert(inputs);
     }
+    phase_mark_v1("probe_banks", started);
     ensure(
         roles.contains("training"),
         "the probe reads the training bank",
@@ -2337,12 +2365,14 @@ pub(super) fn probe_v1(
         &inputs.state_sha256,
         &mut episode_ids,
     )?;
+    phase_mark_v1("probe_held_out", started);
     let mut offer_rows = Vec::new();
     for pin in &offers {
         let trajectory =
             read_parent_trajectory_v1(pin, &inputs.policy, &inputs.state_sha256, &mut episode_ids)?;
         offer_rows.extend(offers_v1(&trajectory)?);
     }
+    phase_mark_v1("probe_offers", started);
     let verified = verify_parent_outputs_v1(
         inputs.state.model_v1(),
         generation,
@@ -2361,6 +2391,7 @@ pub(super) fn probe_v1(
                     .map(|row| (&row.tensor, row.logits.as_slice(), row.value)),
             ),
     )?;
+    phase_mark_v1("probe_verify", started);
     let parent_targets = anchor_targets_v1(&held_out)?;
     let mut readouts = Vec::new();
     for candidate in &candidates {
@@ -2556,6 +2587,7 @@ pub(super) fn probe_v1(
     Ok(result)
 }
 
+mod bank_cache;
 mod retention_trace;
 pub(super) use retention_trace::retention_trace_v1;
 
