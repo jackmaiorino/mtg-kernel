@@ -275,9 +275,12 @@ fn matters(c: &Class, total: &HashMap<u64, usize>, menu: &[Value]) -> bool {
             return true;
         }
     }
-    // Exchanging x and y changes only the menu entries that name either
-    // (`swap_handles` rewrites exactly the handles `handles` collects), so
-    // the whole menu's multiset changes exactly when those entries' does.
+    // Exchanging x and y changes no menu entry that names neither: every
+    // handle `swap_handles` rewrites is one `handles` collects (`handles`
+    // also collects ids inside objects nested in `attachments`, which
+    // `swap_handles` leaves alone, so `touched` may include unchanged
+    // entries). Entries outside `touched` are the same before and after, so
+    // the whole menu's multiset changes exactly when `touched`'s does.
     let x = c.members[0];
     let named: Vec<(&Value, Vec<u64>)> = menu
         .iter()
@@ -317,26 +320,37 @@ pub(crate) struct Frame {
     cache: Arc<FrameCache>,
 }
 
-/// What `qualifies` reads from an earlier frame, a pure function of that
-/// frame's view and menu (which never change), computed at most once and
-/// shared by every clone of the step and frame: later frames of the path,
-/// and later simulations through a memoized step, reuse it. It changes
-/// cost, never a result.
 /// `shown`'s result: (masked entry, zone, incarnation), if shown.
 type Shown = Option<(String, Value, Value)>;
 
+/// Small results `qualifies` reads from an earlier frame, each a pure
+/// function of that frame's view and menu (which never change), shared by
+/// every clone of the step and frame: later frames of the path, and later
+/// simulations through a memoized step, reuse them. Each map keeps at most
+/// `FRAME_CACHE_ENTRIES` entries and computes anything past that afresh, and
+/// no copy of the view is kept, so it changes cost, never a result, and its
+/// memory stays small next to the frame itself.
 #[derive(Debug, Default)]
 pub(crate) struct FrameCache {
     shown: std::sync::Mutex<HashMap<u64, Shown>>,
-    multisets: std::sync::OnceLock<(Value, Vec<String>)>,
     exchange: std::sync::Mutex<HashMap<(u64, u64), bool>>,
 }
+
+/// Entries per `FrameCache` map.
+const FRAME_CACHE_ENTRIES: usize = 64;
 
 impl FrameCache {
     /// `shown(obs, id)`.
     fn shown(&self, obs: &Value, id: u64) -> Shown {
+        if let Some(known) = self.shown.lock().expect("frame cache").get(&id) {
+            return known.clone();
+        }
+        let value = shown(obs, id);
         let mut cache = self.shown.lock().expect("frame cache");
-        cache.entry(id).or_insert_with(|| shown(obs, id)).clone()
+        if cache.len() < FRAME_CACHE_ENTRIES {
+            cache.insert(id, value.clone());
+        }
+        value
     }
 
     /// Whether exchanging `x` and `y` leaves the view's unordered-list
@@ -345,9 +359,6 @@ impl FrameCache {
         if let Some(&known) = self.exchange.lock().expect("frame cache").get(&(x, y)) {
             return known;
         }
-        let (base_obs, base_menu) = self
-            .multisets
-            .get_or_init(|| (as_multisets(obs), menu_multiset(menu)));
         let mut o = obs.clone();
         swap_handles(&mut o, x, y);
         let swapped: Vec<Value> = menu
@@ -358,11 +369,12 @@ impl FrameCache {
                 m
             })
             .collect();
-        let symmetric = as_multisets(&o) == *base_obs && menu_multiset(&swapped) == *base_menu;
-        self.exchange
-            .lock()
-            .expect("frame cache")
-            .insert((x, y), symmetric);
+        let symmetric =
+            as_multisets(&o) == as_multisets(obs) && menu_multiset(&swapped) == menu_multiset(menu);
+        let mut cache = self.exchange.lock().expect("frame cache");
+        if cache.len() < FRAME_CACHE_ENTRIES {
+            cache.insert((x, y), symmetric);
+        }
         symmetric
     }
 }
