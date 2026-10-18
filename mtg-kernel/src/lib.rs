@@ -27,8 +27,11 @@
 pub use mimalloc::MiMalloc as FastAllocatorV1;
 
 /// Installs [`FastAllocatorV1`] as the binary's global allocator. Call it
-/// once at the top level of each binary's main file. (Examples and tests that
-/// count allocations install their own allocator instead.)
+/// once at the top level of each binary's main file. Not installed in: the
+/// limited env servers v3, v4 and v5, whose own source is part of the
+/// `producer_sha256` they report; `viewer_capture_v1`, whose output depends on
+/// how much fits in a wall-clock limit; and examples and tests that count
+/// allocations with their own allocator.
 #[macro_export]
 macro_rules! fast_global_allocator {
     () => {

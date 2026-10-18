@@ -1,6 +1,4 @@
 //! Separate executable opt-in. The frozen kernel_limited_env stays unchanged.
-mtg_kernel::fast_global_allocator!();
-
 use mtg_kernel::limited_common_session_v3::LimitedCommonJsonlServerV3;
 use mtg_kernel::limited_session_v1::MAX_LIMITED_LINE_BYTES_V1;
 use std::io::{self, BufRead, Read, Write};
