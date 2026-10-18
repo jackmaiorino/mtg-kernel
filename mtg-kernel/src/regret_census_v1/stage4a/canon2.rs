@@ -581,6 +581,27 @@ pub(crate) struct Step {
 /// (and keeps serving the ones it has, the hot top of the tree) at this size.
 pub(crate) const KEY_MEMO_BYTES: usize = 256 << 20;
 
+/// The memo's size limit: `KEY_MEMO_BYTES` unless `S4A_KEY_MEMO_MIB` names
+/// another whole number of MiB (1 to 65536, and representable in bytes). The
+/// limit only decides which steps are stored, never a key, tree, selection
+/// or statistic of a transition- or work-limited search. A CPU-second budget
+/// (the allocation experiment) is timing-dependent: like `S4A_KEY_MEMO`
+/// itself or host load, the limit can change how many simulations fit.
+fn key_memo_max_bytes() -> usize {
+    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| match std::env::var("S4A_KEY_MEMO_MIB") {
+        Err(_) => KEY_MEMO_BYTES,
+        Ok(v) => v
+            .parse::<usize>()
+            .ok()
+            .filter(|mib| (1..=65536).contains(mib))
+            .and_then(|mib| mib.checked_mul(1 << 20))
+            .unwrap_or_else(|| {
+                panic!("S4A_KEY_MEMO_MIB must be 1 to 65536 MiB and fit in memory, got {v:?}")
+            }),
+    })
+}
+
 /// Exact per-search memo of key steps (`S4A_KEY_MEMO=1`).
 ///
 /// A keyer's step is a deterministic function of its mode, its starting
@@ -612,7 +633,7 @@ struct MemoEntry {
 
 impl KeyMemo {
     pub(crate) fn new() -> Self {
-        Self::with_max_bytes(KEY_MEMO_BYTES)
+        Self::with_max_bytes(key_memo_max_bytes())
     }
 
     fn with_max_bytes(max_bytes: usize) -> Self {
