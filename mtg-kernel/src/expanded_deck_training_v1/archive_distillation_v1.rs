@@ -2312,9 +2312,14 @@ pub(super) fn probe_v1(
     anchor: ArchiveDistillationAnchorV1,
     offers: Vec<PinnedFileV1>,
     evidence: Option<ArchiveDistillationProbeEvidenceV1>,
+    evidence_logits: bool,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
+    ensure(
+        !evidence_logits || evidence.is_some(),
+        "evidence logits need the evidence keep sets",
+    )?;
     ensure(
         !output_directory.exists(),
         "probe output directory must be fresh",
@@ -2550,11 +2555,18 @@ pub(super) fn probe_v1(
                 .expect("the probe reads the training bank")
                 .1;
             let mut fit = serde_json::Map::new();
+            let mut scored = serde_json::Map::new();
             for (name, members) in [("training", training), ("held_out", held)] {
                 let mut readings = Vec::with_capacity(members.len());
+                let mut rows = Vec::new();
                 for member in members {
                     let (row, tensor) = &bank_rows[member.index];
                     let (logits, _) = forward_v1(model, tensor, generation)?;
+                    if evidence_logits {
+                        rows.push(json!({"game":row.game,"step":row.step,
+                            "logit_bits":logits.iter().map(|x| x.to_bits()).collect::<Vec<u32>>(),
+                            "deployed":deployed_v1(&logits)?}));
+                    }
                     readings.push(EvidenceReadingV1 {
                         game: &row.game,
                         step: row.step,
@@ -2573,8 +2585,14 @@ pub(super) fn probe_v1(
                     name.into(),
                     evidence_summary_v1(&readings, name == "held_out"),
                 );
+                if evidence_logits {
+                    scored.insert(name.into(), rows.into());
+                }
             }
             readout["evidence"] = fit.into();
+            if evidence_logits {
+                readout["evidence_rows"] = scored.into();
+            }
             readout["anchor_held_out_decks"] = anchor_decks_v1(&deck_readings);
         }
         readouts.push(readout);
