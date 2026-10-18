@@ -1975,6 +1975,37 @@ pub(super) fn phase1_v1(
             "the zero rules pathway changes the parent's card table",
         )?;
     }
+    if representation.is_some() {
+        // RC1's clean step 0: on true inputs, the training forward at the
+        // start parameters (the effective table for a rules arm) equals the
+        // parent's model forward bit for bit, logits and value, on every bank
+        // row (evidence and test) and both anchor splits.
+        let base = state.model_v1().parameter_snapshot_v1();
+        let start = match &pathway {
+            Some(pathway) => pathway
+                .effective_parameters_v1(&base)
+                .map_err(|e| format!("rules pathway: {e:?}"))?,
+            None => base,
+        };
+        let mut checked = 0usize;
+        for tensor in rows
+            .iter()
+            .map(|(_, tensor)| tensor)
+            .chain(anchor_train.iter().map(|row| &row.tensor))
+            .chain(held_out.iter().map(|row| &row.tensor))
+        {
+            let (logits, value) =
+                training_forward_v1(parent_model, generation, &start, view_v1(tensor, generation))
+                    .map_err(|e| format!("training forward: {e:?}"))?;
+            let (model_logits, model_value) = forward_v1(parent_model, tensor, generation)?;
+            ensure(
+                bits(&logits) == bits(&model_logits) && value.to_bits() == model_value.to_bits(),
+                "the step-0 training forward differs from the parent's model forward",
+            )?;
+            checked += 1;
+        }
+        census["step0_forward_identity_rows"] = json!(checked);
+    }
     let preflight_rows = anchor_identity_preflight_v1(
         &state,
         generation,

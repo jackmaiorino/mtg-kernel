@@ -145,10 +145,11 @@ pub(super) fn rules_rows_v1(
 ) -> Result<RulesRowsV1, String> {
     let (rows, cards, width, table_sha256) = true_rows_v1().as_ref().map_err(Clone::clone)?;
     let (rows, cards, width) = (rows.clone(), *cards, *width);
-    ensure(
-        representation.rules_table_sha256.as_deref() == Some(table_sha256.as_str()),
-        "the rules table differs from the cell's pinned table",
-    )?;
+    if representation.rules_table_sha256.as_deref() != Some(table_sha256.as_str()) {
+        return Err(format!(
+            "the rules table differs from the cell's pinned table: this build's is {table_sha256}"
+        ));
+    }
     let row = |c: usize| &rows[c * width..(c + 1) * width];
     let (rows, salt, mapping) = match representation.arm {
         ArchiveDistillationRepresentationArmV1::Rules => (rows.clone(), None, None),
