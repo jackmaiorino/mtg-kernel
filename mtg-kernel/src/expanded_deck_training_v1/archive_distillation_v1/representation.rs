@@ -75,7 +75,10 @@ pub(super) fn validate_representation_v1(
         &representation.rules_rows_sha256,
     ) {
         (true, Some(sha)) => ensure(
-            sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+            sha.len() == 64
+                && sha
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
             "a rules rows SHA-256 is 64 lowercase hex digits",
         ),
         (false, None) => Ok(()),
@@ -127,7 +130,11 @@ fn true_rows_v1() -> &'static Result<TrueRowsV1, String> {
         let cards = table.cards.len();
         ensure(
             cards == crate::card_def::CARD_DEFS.len()
-                && table.cards.iter().enumerate().all(|(i, r)| usize::from(r.id) == i),
+                && table
+                    .cards
+                    .iter()
+                    .enumerate()
+                    .all(|(i, r)| usize::from(r.id) == i),
             "the rules table lists every card in id order",
         )?;
         let width = table.vocabulary.len();
@@ -169,9 +176,7 @@ pub(super) fn rules_rows_v1(
         ArchiveDistillationRepresentationArmV1::WrongRules => {
             let (salt, mapping) = (0..1024u64)
                 .map(|salt| (salt, permutation_v1(salt, cards)))
-                .find(|(_, m)| {
-                    (0..cards).all(|c| bits(row(c)) != bits(row(usize::from(m[c]))))
-                })
+                .find(|(_, m)| (0..cards).all(|c| bits(row(c)) != bits(row(usize::from(m[c])))))
                 .ok_or("no salt below 1024 moves every card's row")?;
             let permuted = (0..cards)
                 .flat_map(|c| row(usize::from(mapping[c])).to_vec())
@@ -210,8 +215,10 @@ pub(super) fn require_covered_v1<'a>(
         }
     }
     let padding = seen.remove(&0).unwrap_or(0);
-    Ok(json!({"distinct_card_tokens":seen.len(),"padding_objects":padding,
-        "objects_by_token":seen.iter().map(|(t, n)| (t.to_string(), *n)).collect::<BTreeMap<_, _>>()}))
+    Ok(
+        json!({"distinct_card_tokens":seen.len(),"padding_objects":padding,
+        "objects_by_token":seen.iter().map(|(t, n)| (t.to_string(), *n)).collect::<BTreeMap<_, _>>()}),
+    )
 }
 
 /// The evidence row's copy with fresh state codes for `optimizer_step`.
@@ -297,7 +304,12 @@ pub(super) fn displacement_v1(
     base: &[NativeNamedParameterV1],
     parent: &[NativeNamedParameterV1],
 ) -> Value {
-    let norm = |v: &[f32]| v.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>().sqrt();
+    let norm = |v: &[f32]| {
+        v.iter()
+            .map(|&x| f64::from(x) * f64::from(x))
+            .sum::<f64>()
+            .sqrt()
+    };
     let (table, parent_table) = (&base[0].values, &parent[0].values);
     let mut added = Vec::new();
     let mut moved = Vec::new();
@@ -363,7 +375,8 @@ pub(super) fn validate_rules_checkpoint_v1(
     for token in 1..=rows.cards {
         let delta = pathway.delta_v1(token);
         for (k, d) in delta.iter().enumerate() {
-            let mut value = f32::from_bits(sidecar.base_card_rows[(token - 1) * CARD_EMBEDDING_DIM_V1 + k]);
+            let mut value =
+                f32::from_bits(sidecar.base_card_rows[(token - 1) * CARD_EMBEDDING_DIM_V1 + k]);
             if *d != 0.0 {
                 value += d;
             }

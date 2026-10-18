@@ -169,7 +169,8 @@ impl RulesPathwayV1 {
         }
         for token in 1..=self.cards {
             let delta = self.delta_v1(token);
-            let row = &mut table[token * CARD_EMBEDDING_DIM_V1..(token + 1) * CARD_EMBEDDING_DIM_V1];
+            let row =
+                &mut table[token * CARD_EMBEDDING_DIM_V1..(token + 1) * CARD_EMBEDDING_DIM_V1];
             for (value, d) in row.iter_mut().zip(delta) {
                 if d != 0.0 {
                     *value += d;
@@ -190,7 +191,8 @@ impl RulesPathwayV1 {
         }
         let mut gradient = vec![0.0f32; self.weight.len()];
         for token in 1..=self.cards {
-            let g = &table_gradient[token * CARD_EMBEDDING_DIM_V1..(token + 1) * CARD_EMBEDDING_DIM_V1];
+            let g =
+                &table_gradient[token * CARD_EMBEDDING_DIM_V1..(token + 1) * CARD_EMBEDDING_DIM_V1];
             let x = &self.rows[(token - 1) * self.width..token * self.width];
             for (k, &gk) in g.iter().enumerate() {
                 if gk == 0.0 {

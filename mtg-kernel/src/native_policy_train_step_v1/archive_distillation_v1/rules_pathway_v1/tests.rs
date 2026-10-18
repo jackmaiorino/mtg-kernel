@@ -36,7 +36,10 @@ fn config(model: &NativePolicyValueNetV1) -> NativePolicyValueModelConfigV1 {
 }
 
 /// A target far from the model: one-hot at its lowest-probability action.
-fn far_target(model: &NativePolicyValueNetV1, tensor: &NativeFlatDecisionTensorV3) -> LineBSoftmaxV1 {
+fn far_target(
+    model: &NativePolicyValueNetV1,
+    tensor: &NativeFlatDecisionTensorV3,
+) -> LineBSoftmaxV1 {
     let logits = model
         .forward_feature_transfer_v3(encoded_decision_view_v3(tensor))
         .unwrap()
@@ -77,7 +80,9 @@ fn loss_and_gradient(
         .map(|p| vec![0.0; p.values.len()])
         .collect();
     let mut gauge = ScorerBiasGaugeAccumulatorV1::default();
-    let result = terms.combine_v1(parameters, &mut gradients, &mut gauge).unwrap();
+    let result = terms
+        .combine_v1(parameters, &mut gradients, &mut gauge)
+        .unwrap();
     (result.auxiliary_loss, gradients)
 }
 
@@ -163,10 +168,19 @@ fn weight_gradient_matches_finite_differences() {
     let mut pathway = pathway(&tensor);
     nonzero_weight(&mut pathway);
     let parameters = model.parameter_snapshot_v1();
-    let (_, gradients) =
-        loss_and_gradient(&pathway.effective_parameters_v1(&parameters).unwrap(), config, &input);
-    let analytic = pathway.weight_gradient_v1(&gradients[CARD_EMBEDDING]).unwrap();
-    let norm = analytic.iter().map(|&g| f64::from(g) * f64::from(g)).sum::<f64>().sqrt();
+    let (_, gradients) = loss_and_gradient(
+        &pathway.effective_parameters_v1(&parameters).unwrap(),
+        config,
+        &input,
+    );
+    let analytic = pathway
+        .weight_gradient_v1(&gradients[CARD_EMBEDDING])
+        .unwrap();
+    let norm = analytic
+        .iter()
+        .map(|&g| f64::from(g) * f64::from(g))
+        .sum::<f64>()
+        .sqrt();
     assert!(norm > 0.0, "the pathway has no gradient");
     // Along the unit gradient direction d the directional derivative is |g|;
     // a central difference over the whole weight pools every entry's signal.
@@ -179,7 +193,12 @@ fn weight_gradient_matches_finite_differences() {
             .map(|(&w, &g)| (f64::from(w) + h * f64::from(g) / norm) as f32)
             .collect();
         p.set_weight_v1(w);
-        loss_and_gradient(&p.effective_parameters_v1(&parameters).unwrap(), config, &input).0
+        loss_and_gradient(
+            &p.effective_parameters_v1(&parameters).unwrap(),
+            config,
+            &input,
+        )
+        .0
     };
     for h in [1e-2, 3e-2] {
         let numeric = (at(h) - at(-h)) / (2.0 * h);
@@ -261,7 +280,10 @@ fn parent_targets_leave_a_zero_weight_at_zero() {
         )
         .unwrap();
     assert_eq!(pathway.state_bits_v1(), before.state_bits_v1());
-    assert_eq!(model.parameter_snapshot_v1(), state.model_v1().parameter_snapshot_v1());
+    assert_eq!(
+        model.parameter_snapshot_v1(),
+        state.model_v1().parameter_snapshot_v1()
+    );
 }
 
 #[test]

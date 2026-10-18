@@ -270,14 +270,16 @@ impl NativePolicyValueTrainStateV1 {
         // The pathway's step is computed first and assigned only after the
         // network's step commits, so a failed step changes neither.
         let pathway_next = match &pathway {
-            Some(pathway) => Some(pathway.adam_step_v1(
-                &gradients[CARD_EMBEDDING],
-                self.adam_step
-                    .checked_add(1)
-                    .ok_or(NativePolicyTrainErrorV1::AdamStepOverflow)?,
-                learning_rate,
-                self.training_math,
-            )?),
+            Some(pathway) => Some(
+                pathway.adam_step_v1(
+                    &gradients[CARD_EMBEDDING],
+                    self.adam_step
+                        .checked_add(1)
+                        .ok_or(NativePolicyTrainErrorV1::AdamStepOverflow)?,
+                    learning_rate,
+                    self.training_math,
+                )?,
+            ),
             None => None,
         };
         self.commit_adam_step_v1(

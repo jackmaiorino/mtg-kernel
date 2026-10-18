@@ -53,18 +53,22 @@ fn rules_rows_are_the_normalized_table_and_refuse_another_table() {
 #[test]
 fn the_wrong_association_moves_every_card_to_another_row() {
     let truth = rules_rows_v1(&rules(ArchiveDistillationRepresentationArmV1::Rules)).unwrap();
-    let wrong =
-        rules_rows_v1(&rules(ArchiveDistillationRepresentationArmV1::WrongRules)).unwrap();
+    let wrong = rules_rows_v1(&rules(ArchiveDistillationRepresentationArmV1::WrongRules)).unwrap();
     let mapping = wrong.mapping.clone().unwrap();
     let w = truth.width;
     let mut targets: Vec<u16> = mapping.clone();
     targets.sort_unstable();
-    assert_eq!(targets, (0..truth.cards as u16).collect::<Vec<_>>(), "a bijection");
-    for c in 0..truth.cards {
-        assert_ne!(usize::from(mapping[c]), c);
+    assert_eq!(
+        targets,
+        (0..truth.cards as u16).collect::<Vec<_>>(),
+        "a bijection"
+    );
+    for (c, &target) in mapping.iter().enumerate() {
+        let target = usize::from(target);
+        assert_ne!(target, c);
         assert_eq!(
             bits(&wrong.rows[c * w..(c + 1) * w]),
-            bits(&truth.rows[usize::from(mapping[c]) * w..(usize::from(mapping[c]) + 1) * w])
+            bits(&truth.rows[target * w..(target + 1) * w])
         );
         assert_ne!(
             bits(&wrong.rows[c * w..(c + 1) * w]),
@@ -72,8 +76,7 @@ fn the_wrong_association_moves_every_card_to_another_row() {
         );
     }
     // Deterministic.
-    let again =
-        rules_rows_v1(&rules(ArchiveDistillationRepresentationArmV1::WrongRules)).unwrap();
+    let again = rules_rows_v1(&rules(ArchiveDistillationRepresentationArmV1::WrongRules)).unwrap();
     assert_eq!(again.rows_sha256, wrong.rows_sha256);
     assert_eq!(again.salt, wrong.salt);
 }

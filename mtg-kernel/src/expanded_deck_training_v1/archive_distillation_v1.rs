@@ -54,23 +54,23 @@ use super::*;
 use crate::line_b_teacher_target_v1::{
     line_b_divergence_v1, line_b_softmax_v1, LineBDivergenceV1, LineBSoftmaxV1,
 };
+use crate::native_policy_train_step_v1::training_forward_v1;
 use crate::native_policy_train_step_v1::{
     one_hot_target_v1, ArchiveDistillationUpdateScopeV1, ExternalAuxiliaryInputV1,
     ExternalAuxiliaryRowV1, RulesPathwayV1,
 };
-use crate::native_policy_train_step_v1::training_forward_v1;
 use crate::regret_census_v1::stage4a::{decision_replay_key, spy_menu_flags_v1};
 use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 use std::collections::{BTreeMap, HashMap};
 
 mod representation;
-pub use representation::{
-    ArchiveDistillationRepresentationArmV1, ArchiveDistillationRepresentationV1,
-    ArchiveDistillationRulesPathwayV1,
-};
 use representation::{
     displacement_v1, fresh_state_codes_v1, require_covered_v1, rules_rows_v1, sidecar_v1,
     validate_representation_v1, validate_rules_checkpoint_v1,
+};
+pub use representation::{
+    ArchiveDistillationRepresentationArmV1, ArchiveDistillationRepresentationV1,
+    ArchiveDistillationRulesPathwayV1,
 };
 
 pub const ARCHIVE_DISTILLATION_NAMESPACE_V1: &str = "spy-archive-distillation-v1";
@@ -1994,9 +1994,13 @@ pub(super) fn phase1_v1(
             .chain(anchor_train.iter().map(|row| &row.tensor))
             .chain(held_out.iter().map(|row| &row.tensor))
         {
-            let (logits, value) =
-                training_forward_v1(parent_model, generation, &start, view_v1(tensor, generation))
-                    .map_err(|e| format!("training forward: {e:?}"))?;
+            let (logits, value) = training_forward_v1(
+                parent_model,
+                generation,
+                &start,
+                view_v1(tensor, generation),
+            )
+            .map_err(|e| format!("training forward: {e:?}"))?;
             let (model_logits, model_value) = forward_v1(parent_model, tensor, generation)?;
             ensure(
                 bits(&logits) == bits(&model_logits) && value.to_bits() == model_value.to_bits(),
@@ -2067,10 +2071,7 @@ pub(super) fn phase1_v1(
                 .iter()
                 .enumerate()
                 .map(|(j, &i)| ExternalAuxiliaryRowV1 {
-                    encoded: view_v1(
-                        if fresh_codes { &fresh[j] } else { &rows[i].1 },
-                        generation,
-                    ),
+                    encoded: view_v1(if fresh_codes { &fresh[j] } else { &rows[i].1 }, generation),
                     target: &archive_targets[i],
                 })
                 .collect(),
@@ -2113,8 +2114,10 @@ pub(super) fn phase1_v1(
         if number == REPRODUCTION_STEP || plan.checkpoints.contains(&number) {
             let mut record = json!({"step":number,"phase1_state_sha256":phase1_state});
             if let Some(pathway) = &pathway {
-                record["rules_state_sha256"] =
-                    json!(sha(&serde_json::to_vec(&pathway.state_bits_v1()).map_err(err)?));
+                record["rules_state_sha256"] = json!(sha(&serde_json::to_vec(
+                    &pathway.state_bits_v1()
+                )
+                .map_err(err)?));
             }
             state_hashes.push(record);
         }
@@ -2222,10 +2225,17 @@ fn fresh_codes_census_v1(
         )?;
         let p = log_softmax(&recorded_logits(&row.parent_logits));
         let q = log_softmax(&logits);
-        kls.push(p.iter().zip(&q).map(|(a, b)| a.exp() * (a - b)).sum::<f64>());
+        kls.push(
+            p.iter()
+                .zip(&q)
+                .map(|(a, b)| a.exp() * (a - b))
+                .sum::<f64>(),
+        );
     }
-    Ok(json!({"rows":kls.len(),"mean_kl":mean(&kls),"median_kl":median(kls.clone()),
-        "max_kl":kls.iter().copied().fold(0.0, f64::max)}))
+    Ok(
+        json!({"rows":kls.len(),"mean_kl":mean(&kls),"median_kl":median(kls.clone()),
+        "max_kl":kls.iter().copied().fold(0.0, f64::max)}),
+    )
 }
 
 fn median(mut values: Vec<f64>) -> Option<f64> {
