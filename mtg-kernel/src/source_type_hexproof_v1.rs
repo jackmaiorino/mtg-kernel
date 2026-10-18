@@ -131,7 +131,40 @@ pub(crate) fn capture_type_input(
     })
 }
 
+/// History validation runs this for every retained departure on every
+/// decision, and each run replays a scratch arena. The result depends only on
+/// the snapshot and, through the single `arena_len > arena_bound` check, on
+/// the bound. A snapshot that passed once therefore passes again exactly when
+/// its arena length is within the new bound; every other case, including
+/// every failure, takes the full check below.
 pub(crate) fn validate_snapshot_types(
+    snapshot: &crate::controlled_creature_grants_v1::DepartureColorV1,
+    arena_bound: usize,
+) -> Result<(), String> {
+    type Passed = std::collections::HashSet<crate::controlled_creature_grants_v1::DepartureColorV1>;
+    thread_local! {
+        static PASSED: std::cell::RefCell<Passed> = std::cell::RefCell::default();
+    }
+    let within_bound = snapshot
+        .source_type_input_v1
+        .0
+        .as_ref()
+        .is_some_and(|input| input.arena_len as usize <= arena_bound);
+    if within_bound && PASSED.with(|passed| passed.borrow().contains(snapshot)) {
+        return Ok(());
+    }
+    validate_snapshot_types_full(snapshot, arena_bound)?;
+    PASSED.with(|passed| {
+        let mut passed = passed.borrow_mut();
+        if passed.len() >= 4096 {
+            passed.clear();
+        }
+        passed.insert(snapshot.clone());
+    });
+    Ok(())
+}
+
+fn validate_snapshot_types_full(
     snapshot: &crate::controlled_creature_grants_v1::DepartureColorV1,
     arena_bound: usize,
 ) -> Result<(), String> {
