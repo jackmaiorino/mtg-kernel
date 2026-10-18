@@ -1926,11 +1926,19 @@ pub(super) fn phase1_v1(
             "line_rows":line_divergences,
             "gauge_raw_residual":gauge.raw_gradient_residual,
             "gauge_bound":gauge.derived_absolute_bound}));
-        let phase1_state = hex(&state.state_sha256_v1().map_err(err)?);
-        if number == REPRODUCTION_STEP || plan.checkpoints.contains(&number) {
-            state_hashes.push(json!({"step":number,"phase1_state_sha256":phase1_state}));
-        }
+        // Every step validates the state, as hashing it does; only the steps
+        // the result records pay for the digest, a pass over the parameters
+        // and both moments.
+        let phase1_state = if number == REPRODUCTION_STEP || plan.checkpoints.contains(&number) {
+            let digest = hex(&state.state_sha256_v1().map_err(err)?);
+            state_hashes.push(json!({"step":number,"phase1_state_sha256":digest}));
+            Some(digest)
+        } else {
+            state.validate_state_v1().map_err(err)?;
+            None
+        };
         if stop_after_steps.is_none() && plan.checkpoints.contains(&number) {
+            let phase1_state = phase1_state.expect("every checkpoint step is recorded");
             let parameters = state.model_v1().parameter_snapshot_v1();
             let provenance = ArchiveDistillationProvenanceV1 {
                 method: METHOD.into(),
