@@ -150,13 +150,20 @@ pub(crate) fn validate_snapshot_types(
         .0
         .as_ref()
         .is_some_and(|input| input.arena_len as usize <= arena_bound);
-    if within_bound && PASSED.with(|passed| passed.borrow().contains(snapshot)) {
+    // try_with: during thread teardown the set may be gone; then this is
+    // simply the full check.
+    if within_bound
+        && PASSED
+            .try_with(|passed| passed.borrow().contains(snapshot))
+            .unwrap_or(false)
+    {
         return Ok(());
     }
     validate_snapshot_types_full(snapshot, arena_bound)?;
-    PASSED.with(|passed| {
+    let _ = PASSED.try_with(|passed| {
         let mut passed = passed.borrow_mut();
-        if passed.len() >= 4096 {
+        // A game retains few departures; the small cap bounds memory.
+        if passed.len() >= 256 {
             passed.clear();
         }
         passed.insert(snapshot.clone());
