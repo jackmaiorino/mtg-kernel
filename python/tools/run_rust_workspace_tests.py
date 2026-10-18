@@ -11,7 +11,32 @@ from run_rust_integration_tests import SUITES, run_suite, suite_modules
 
 
 TIMING_TEST = "snapshot::tests::snapshot_clone_cost_is_bounded"
-PARTS = {"lib": ["--lib"], "targets": ["--bins", "--test", "*", "--benches", "--examples"]}
+PARTS = {"lib": ["--lib"], "targets": ["--bins", "--benches", "--examples"]}
+
+
+def default_integration_tests() -> list[str]:
+    """`--test NAME` for every integration test --all-targets would build.
+
+    Naming a test whose required features are off is an error, while
+    --all-targets skips it, so keep only tests the default features enable.
+    """
+    metadata = json.loads(subprocess.run(
+        ["cargo", "metadata", "--no-deps", "--locked", "--format-version", "1"],
+        check=True, capture_output=True, text=True,
+    ).stdout)
+    selected = []
+    for package in metadata["packages"]:
+        features = package["features"]
+        enabled, pending = set(), ["default"] if "default" in features else []
+        while pending:
+            name = pending.pop()
+            if name in features and name not in enabled:
+                enabled.add(name)
+                pending.extend(features[name])
+        for target in package["targets"]:
+            if target["kind"] == ["test"] and set(target.get("required-features", [])) <= enabled:
+                selected += ["--test", target["name"]]
+    return selected
 
 
 def main() -> int:
@@ -43,6 +68,8 @@ def main() -> int:
     targets = ["--all-targets"]
     if arguments[:1] == ["--part"] and len(arguments) >= 2:
         targets = PARTS.get(arguments[1], [])
+        if arguments[1] == "targets":
+            targets = [*targets, *default_integration_tests()]
         arguments = arguments[2:]
     if not targets or arguments not in ([], ["--no-fail-fast"]):
         raise ValueError("Workspace suite runner accepts [--part lib|targets] [--no-fail-fast]")
