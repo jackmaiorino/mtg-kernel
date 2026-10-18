@@ -275,17 +275,37 @@ fn matters(c: &Class, total: &HashMap<u64, usize>, menu: &[Value]) -> bool {
             return true;
         }
     }
-    let base = menu_multiset(menu);
+    // Exchanging x and y changes no menu entry that names neither: every
+    // handle `swap_handles` rewrites is one `handles` collects (`handles`
+    // also collects ids inside objects nested in `attachments`, which
+    // `swap_handles` leaves alone, so `touched` may include unchanged
+    // entries). Entries outside `touched` are the same before and after, so
+    // the whole menu's multiset changes exactly when `touched`'s does.
+    let x = c.members[0];
+    let named: Vec<(&Value, Vec<u64>)> = menu
+        .iter()
+        .map(|m| {
+            let mut hs = Vec::new();
+            handles(m, &mut hs);
+            (m, hs)
+        })
+        .collect();
     c.members[1..].iter().any(|&y| {
-        let swapped: Vec<Value> = menu
+        let touched: Vec<&Value> = named
+            .iter()
+            .filter(|(_, hs)| hs.contains(&x) || hs.contains(&y))
+            .map(|(m, _)| *m)
+            .collect();
+        let swapped: Vec<Value> = touched
             .iter()
             .map(|m| {
-                let mut m = m.clone();
-                swap_handles(&mut m, c.members[0], y);
+                let mut m = (*m).clone();
+                swap_handles(&mut m, x, y);
                 m
             })
             .collect();
-        menu_multiset(&swapped) != base
+        let before: Vec<Value> = touched.into_iter().cloned().collect();
+        menu_multiset(&swapped) != menu_multiset(&before)
     })
 }
 
@@ -296,6 +316,67 @@ pub(crate) struct Frame {
     pub(crate) obs: Arc<Value>,
     pub(crate) menu: Arc<Vec<Value>>,
     pub(crate) taken: Value,
+    /// `qualifies` results for this view and menu, shared with the step.
+    cache: Arc<FrameCache>,
+}
+
+/// `shown`'s result: (masked entry, zone, incarnation), if shown.
+type Shown = Option<(String, Value, Value)>;
+
+/// Small results `qualifies` reads from an earlier frame, each a pure
+/// function of that frame's view and menu (which never change), shared by
+/// every clone of the step and frame: later frames of the path, and later
+/// simulations through a memoized step, reuse them. Each map keeps at most
+/// `FRAME_CACHE_ENTRIES` entries and computes anything past that afresh, and
+/// no copy of the view is kept, so it changes cost, never a result, and its
+/// memory stays small next to the frame itself.
+#[derive(Debug, Default)]
+pub(crate) struct FrameCache {
+    shown: std::sync::Mutex<HashMap<u64, Shown>>,
+    exchange: std::sync::Mutex<HashMap<(u64, u64), bool>>,
+}
+
+/// Entries per `FrameCache` map.
+const FRAME_CACHE_ENTRIES: usize = 64;
+
+impl FrameCache {
+    /// `shown(obs, id)`.
+    fn shown(&self, obs: &Value, id: u64) -> Shown {
+        if let Some(known) = self.shown.lock().expect("frame cache").get(&id) {
+            return known.clone();
+        }
+        let value = shown(obs, id);
+        let mut cache = self.shown.lock().expect("frame cache");
+        if cache.len() < FRAME_CACHE_ENTRIES {
+            cache.insert(id, value.clone());
+        }
+        value
+    }
+
+    /// Whether exchanging `x` and `y` leaves the view's unordered-list
+    /// multisets and the menu's multiset unchanged.
+    fn exchange_symmetric(&self, obs: &Value, menu: &[Value], x: u64, y: u64) -> bool {
+        if let Some(&known) = self.exchange.lock().expect("frame cache").get(&(x, y)) {
+            return known;
+        }
+        let mut o = obs.clone();
+        swap_handles(&mut o, x, y);
+        let swapped: Vec<Value> = menu
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                swap_handles(&mut m, x, y);
+                m
+            })
+            .collect();
+        let symmetric =
+            as_multisets(&o) == as_multisets(obs) && menu_multiset(&swapped) == menu_multiset(menu);
+        let mut cache = self.exchange.lock().expect("frame cache");
+        if cache.len() < FRAME_CACHE_ENTRIES {
+            cache.insert((x, y), symmetric);
+        }
+        symmetric
+    }
 }
 
 /// (masked entry, zone, incarnation) of the entry a handle names, if shown in
@@ -357,7 +438,7 @@ fn qualifies(c: &Class, now: &Value, prefix: &[Frame]) -> Result<(), Fallback> {
     for f in prefix {
         let mut masks = Vec::new();
         for (id, cur) in c.members.iter().zip(&current) {
-            let (m, z, n) = shown(&f.obs, *id).ok_or(Fallback::MemberAbsent)?;
+            let (m, z, n) = f.cache.shown(&f.obs, *id).ok_or(Fallback::MemberAbsent)?;
             if (z, n) != *cur {
                 return Err(Fallback::ContinuityBroken);
             }
@@ -371,21 +452,8 @@ fn qualifies(c: &Class, now: &Value, prefix: &[Frame]) -> Result<(), Fallback> {
         if hs.iter().any(|h| c.members.contains(h)) {
             return Err(Fallback::ActionNamedMember);
         }
-        let base_obs = as_multisets(&f.obs);
-        let base_menu = menu_multiset(&f.menu);
         for &y in &c.members[1..] {
-            let mut o = (*f.obs).clone();
-            swap_handles(&mut o, c.members[0], y);
-            let menu: Vec<Value> = f
-                .menu
-                .iter()
-                .map(|m| {
-                    let mut m = m.clone();
-                    swap_handles(&mut m, c.members[0], y);
-                    m
-                })
-                .collect();
-            if as_multisets(&o) != base_obs || menu_multiset(&menu) != base_menu {
+            if !f.cache.exchange_symmetric(&f.obs, &f.menu, c.members[0], y) {
                 return Err(Fallback::PrefixAsymmetric);
             }
         }
@@ -574,6 +642,8 @@ pub(crate) struct Step {
     orbits: Option<Vec<usize>>,
     /// The `KeyMemo` entry this step came from or was stored as, if any.
     memo_entry: Option<u32>,
+    /// Shared with the `Frame` this step becomes (`FrameCache`).
+    cache: Arc<FrameCache>,
 }
 
 /// Estimated heap bytes one `KeyMemo` may hold. Late-game views take up to
@@ -961,6 +1031,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 resolved: Vec::new(),
                 orbits,
                 memo_entry: None,
+                cache: Arc::default(),
             }
         } else {
             let (view, tried, mattering) = repaired_view(
@@ -986,6 +1057,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         resolved: members,
                         orbits,
                         memo_entry: None,
+                        cache: Arc::default(),
                     }
                 }
                 Err(f) => {
@@ -1005,6 +1077,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         resolved: Vec::new(),
                         orbits,
                         memo_entry: None,
+                        cache: Arc::default(),
                     }
                 }
             }
@@ -1100,6 +1173,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 obs: st.obs,
                 menu: st.menu,
                 taken,
+                cache: st.cache,
             });
         }
     }
@@ -1143,6 +1217,93 @@ mod tests {
     use super::super::tree::{canon_values, live_index};
     use super::*;
     use serde_json::json;
+
+    /// `matters`' menu test as it was: the whole menu's multiset.
+    fn menu_changes_by_whole_menu(menu: &[Value], x: u64, y: u64) -> bool {
+        let swapped: Vec<Value> = menu
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                swap_handles(&mut m, x, y);
+                m
+            })
+            .collect();
+        menu_multiset(&swapped) != menu_multiset(menu)
+    }
+
+    #[test]
+    fn matters_reads_only_entries_naming_the_pair() {
+        let menus = [
+            vec![
+                json!({"cast":{"arena_id":1}}),
+                json!({"cast":{"arena_id":2}}),
+            ],
+            vec![
+                json!({"cast":{"arena_id":1},"t":"a"}),
+                json!({"cast":{"arena_id":2},"t":"b"}),
+            ],
+            vec![
+                json!({"pass":true}),
+                json!({"attack":{"arena_id":1,"attachments":[2]}}),
+            ],
+            vec![
+                json!({"target":[{"arena_id":3},{"arena_id":1}]}),
+                json!({"target":[{"arena_id":3},{"arena_id":2}]}),
+                json!({"pass":true}),
+            ],
+            vec![json!({"pass":true})],
+        ];
+        for menu in &menus {
+            for (x, y) in [(1u64, 2u64), (2, 1), (1, 3), (3, 4)] {
+                let c = Class {
+                    members: vec![x, y],
+                    foreign: false,
+                    inside: vec![1, 1],
+                };
+                // No other occurrences, so only the menu test decides.
+                let total: HashMap<u64, usize> = [(x, 1), (y, 1)].into_iter().collect();
+                assert_eq!(
+                    matters(&c, &total, menu),
+                    menu_changes_by_whole_menu(menu, x, y),
+                    "{menu:?} {x} {y}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cached_exchange_check_matches_direct_and_repeats() {
+        let obs = json!({"battlefield":[[{"arena_id":1,"name":"Elf"},{"arena_id":2,"name":"Elf"}],
+            [{"arena_id":3,"name":"Bear","attachments":[1]}]]});
+        let menu = vec![
+            json!({"attack":{"arena_id":1}}),
+            json!({"attack":{"arena_id":2}}),
+        ];
+        let cache = FrameCache::default();
+        for (x, y) in [(1u64, 2u64), (1, 3), (2, 3), (1, 2)] {
+            let mut o = obs.clone();
+            swap_handles(&mut o, x, y);
+            let swapped: Vec<Value> = menu
+                .iter()
+                .map(|m| {
+                    let mut m = m.clone();
+                    swap_handles(&mut m, x, y);
+                    m
+                })
+                .collect();
+            let direct = as_multisets(&o) == as_multisets(&obs)
+                && menu_multiset(&swapped) == menu_multiset(&menu);
+            assert_eq!(
+                cache.exchange_symmetric(&obs, &menu, x, y),
+                direct,
+                "{x} {y}"
+            );
+        }
+        for id in [1u64, 2, 3, 9] {
+            assert_eq!(cache.shown(&obs, id), shown(&obs, id));
+            assert_eq!(cache.shown(&obs, id), shown(&obs, id));
+        }
+    }
 
     /// A creature entry: handle, card, incarnation, damage, tapped, attachments.
     fn cr(id: u64, card: u64, zcc: u64, damage: u64, tapped: bool, att: Vec<u64>) -> Value {
