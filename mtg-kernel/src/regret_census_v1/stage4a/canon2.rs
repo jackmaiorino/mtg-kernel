@@ -686,6 +686,14 @@ fn key_memo_max_bytes() -> usize {
 #[derive(Default)]
 pub(crate) struct KeyMemo {
     index: HashMap<(u32, [u8; 32]), u32>,
+    /// First-level index by the raw frame's digest (`raw_frame_digest`):
+    /// equal raw frames prepare equally, so a raw hit names the entry the
+    /// prepared lookup would find, without building or preparing the view.
+    raw_index: HashMap<(u32, [u8; 32]), u32>,
+    /// Estimated bytes of `raw_index`, against its own budget (a sixteenth
+    /// of `max_bytes`), so step storage and every recorded memo counter stay
+    /// exactly as without it.
+    raw_bytes: usize,
     entries: Vec<MemoEntry>,
     nodes: u32,
     /// Estimated heap bytes of the stored steps, and their limit.
@@ -701,7 +709,21 @@ struct MemoEntry {
     children: HashMap<u32, u32>,
 }
 
+/// Estimated bytes of one `raw_index` entry.
+const RAW_INDEX_ENTRY_BYTES: usize = 96;
+
 impl KeyMemo {
+    /// Records that raw frame `raw` at `node` resolves to entry `e`, within
+    /// the raw index's own budget.
+    fn remember_raw(&mut self, node: u32, raw: Option<[u8; 32]>, e: u32) {
+        let Some(raw) = raw else { return };
+        if self.raw_bytes + RAW_INDEX_ENTRY_BYTES <= self.max_bytes / 16
+            && self.raw_index.insert((node, raw), e).is_none()
+        {
+            self.raw_bytes += RAW_INDEX_ENTRY_BYTES;
+        }
+    }
+
     pub(crate) fn new() -> Self {
         Self::with_max_bytes(key_memo_max_bytes())
     }
@@ -730,6 +752,40 @@ impl KeyMemo {
         }
         id
     }
+}
+
+/// SHA-256 over the raw actor-visible observation and menu as their JSON
+/// text, written straight from their types. For the fixed engine types
+/// (`ObservationV6` and `ActionSemanticV1`, and `Value` in tests), equal text
+/// gives equal `serde_json::to_value` results: both come from the same
+/// `Serialize` calls, and the text encodes them unambiguously for those
+/// types. (It would not for arbitrary types: an `f32` and an `f64` can print
+/// alike yet widen to different values; never mix types at one memo.) So
+/// frames with equal raw digests prepare to equal views and menus.
+fn raw_frame_digest<O: serde::Serialize, M: serde::Serialize>(
+    obs: &O,
+    menu: &[M],
+) -> Result<[u8; 32], PlayErr> {
+    struct Hashing<'a>(&'a mut Sha256);
+    impl std::io::Write for Hashing<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let fault = |e: serde_json::Error| PlayErr::Fault(e.to_string());
+    let mut h = Sha256::new();
+    h.update(b"key-memo-raw-v1");
+    serde_json::to_writer(Hashing(&mut h), obs).map_err(fault)?;
+    h.update((menu.len() as u64).to_le_bytes());
+    for m in menu {
+        h.update(b"\n");
+        serde_json::to_writer(Hashing(&mut h), m).map_err(fault)?;
+    }
+    Ok(h.finalize().into())
 }
 
 /// SHA-256 over a prepared observation and its menu: a tagged,
@@ -911,11 +967,58 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         if memo.is_none() || self.memo_node.is_none() || self.interchange {
             return self.step(s, d);
         }
-        let (raw_obs, raw_menu) = raw_decision(s, d)?;
-        self.key_raw_memo(raw_obs, raw_menu, memo)
+        let (obs, sem) = s
+            .actor_visible_decision_v4(d)
+            .map_err(|e| PlayErr::Fault(format!("actor-visible decision: {e:?}")))?;
+        self.key_typed_memo(&obs, &sem, memo)
     }
 
-    /// `key_raw` through `memo` (see `step_memo`).
+    /// `key_raw_memo` on an observation and menu not yet turned into JSON
+    /// values: the raw digest is looked up first, and the values are built
+    /// and prepared only when it misses.
+    fn key_typed_memo<O: serde::Serialize, M: serde::Serialize>(
+        &mut self,
+        obs: &O,
+        sem: &[M],
+        memo: Option<&mut KeyMemo>,
+    ) -> Result<Step, PlayErr> {
+        let fault = |e: serde_json::Error| PlayErr::Fault(e.to_string());
+        let (Some(memo), Some(node), false) = (memo, self.memo_node, self.interchange) else {
+            let raw_obs = serde_json::to_value(obs).map_err(fault)?;
+            let raw_menu = sem
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<_, _>>();
+            return self.key_raw(raw_obs, raw_menu.map_err(fault)?);
+        };
+        let t0 = Instant::now();
+        let raw = raw_frame_digest(obs, sem)?;
+        if let Some(&e) = memo.raw_index.get(&(node, raw)) {
+            return Ok(self.memo_hit(memo, e, t0));
+        }
+        let raw_obs = serde_json::to_value(obs).map_err(fault)?;
+        let raw_menu = sem
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<Result<_, _>>();
+        self.key_raw_memo_at(raw_obs, raw_menu.map_err(fault)?, memo, node, Some(raw), t0)
+    }
+
+    /// A memo hit on entry `e`: replays its statistics increments and
+    /// returns its step.
+    fn memo_hit(&mut self, memo: &mut KeyMemo, e: u32, t0: Instant) -> Step {
+        memo.hits += 1;
+        let entry = &memo.entries[e as usize];
+        self.stats.borrow_mut().merge(&entry.delta);
+        let mut st = entry.step.clone();
+        st.memo_entry = Some(e);
+        self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
+        st
+    }
+
+    /// `key_raw` through `memo` (see `step_memo`), on frames already turned
+    /// into JSON values (tests).
+    #[cfg(test)]
     pub(crate) fn key_raw_memo(
         &mut self,
         raw_obs: Value,
@@ -925,17 +1028,25 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         let (Some(memo), Some(node), false) = (memo, self.memo_node, self.interchange) else {
             return self.key_raw(raw_obs, raw_menu);
         };
-        let t0 = Instant::now();
+        self.key_raw_memo_at(raw_obs, raw_menu, memo, node, None, Instant::now())
+    }
+
+    /// `key_raw_memo` at memo node `node`; `raw`, when given, is the frame's
+    /// `raw_frame_digest`, recorded for the entry this frame resolves to.
+    fn key_raw_memo_at(
+        &mut self,
+        raw_obs: Value,
+        raw_menu: Vec<Value>,
+        memo: &mut KeyMemo,
+        node: u32,
+        raw: Option<[u8; 32]>,
+        t0: Instant,
+    ) -> Result<Step, PlayErr> {
         let (obs, menu) = prepare(raw_obs, raw_menu);
         let digest = prepared_digest(&obs, &menu);
         if let Some(&e) = memo.index.get(&(node, digest)) {
-            memo.hits += 1;
-            let entry = &memo.entries[e as usize];
-            self.stats.borrow_mut().merge(&entry.delta);
-            let mut st = entry.step.clone();
-            st.memo_entry = Some(e);
-            self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
-            return Ok(st);
+            memo.remember_raw(node, raw, e);
+            return Ok(self.memo_hit(memo, e, t0));
         }
         memo.misses += 1;
         let before = self.stats.borrow().clone();
@@ -950,6 +1061,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 children: HashMap::new(),
             });
             memo.index.insert((node, digest), e);
+            memo.remember_raw(node, raw, e);
             st.memo_entry = Some(e);
         }
         Ok(st)
@@ -1706,7 +1818,10 @@ mod tests {
             vec![(f2(), menu(&[11, 12]), 2), (f1(11), menu(&[]), 0)],
             vec![(f2(), menu(&[11, 12]), 1), (f1(11), menu(&[]), 0)],
         ];
-        for mode in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow] {
+        for (mode, typed) in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow]
+            .into_iter()
+            .flat_map(|m| [(m, false), (m, true)])
+        {
             let run = |memo: Option<&mut KeyMemo>| {
                 let mut memo = memo;
                 let mut stats = KeyStats::default();
@@ -1717,9 +1832,12 @@ mod tests {
                         k.start_memo();
                     }
                     for (o, m, live) in path {
-                        let st = k
-                            .key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
-                            .unwrap();
+                        let st = if typed {
+                            k.key_typed_memo(o, m, memo.as_deref_mut()).unwrap()
+                        } else {
+                            k.key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
+                                .unwrap()
+                        };
                         let (key, pk, pe, cn) = k.storage(&st);
                         out.push((
                             st.legacy_key,
@@ -1742,6 +1860,8 @@ mod tests {
             let memoized = run(Some(&mut memo));
             assert_eq!(plain, memoized, "{mode:?}");
             assert_eq!((memo.hits, memo.misses), (7, 7), "{mode:?}");
+            // The typed path answers repeated raw frames from the raw index.
+            assert_eq!(memo.raw_index.is_empty(), !typed, "{mode:?}");
             assert_eq!(memo.json()["nodes"], 10, "{mode:?}");
             // A full memo stops storing frames and stays exact.
             let mut small = KeyMemo::with_max_bytes(memo.bytes / 3);
