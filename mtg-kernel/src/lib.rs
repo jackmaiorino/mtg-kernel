@@ -21,9 +21,13 @@
 //! - Strict single-session JSONL reset/step boundary; parallelism and batching
 //!   are orchestrated outside the Rust process.
 
-/// The global allocator every binary in this crate installs with
-/// [`fast_global_allocator!`]. It changes cost, never output: no result
-/// depends on where an allocation lands.
+/// The global allocator binaries in this crate install with
+/// [`fast_global_allocator!`]. It changes cost, not results: no result depends
+/// on where an allocation lands. Work bounded by time rather than by a fixed
+/// amount of work (a CPU-second search budget, as in the allocation
+/// experiment) is timing-dependent, as it is under host load, so a faster
+/// allocator can fit more into it. Provenance hashes over source files change
+/// with this commit as with any other.
 pub use mimalloc::MiMalloc as FastAllocatorV1;
 
 /// Installs [`FastAllocatorV1`] as the binary's global allocator. Call it
