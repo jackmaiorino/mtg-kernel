@@ -140,7 +140,7 @@ fn miss<T>(path: &Path, reason: &str) -> Option<T> {
     None
 }
 
-/// A reader that hashes every byte it passes on.
+/// A reader or writer that hashes every byte it passes on.
 struct Hashing<R> {
     inner: R,
     hash: Sha256,
@@ -151,6 +151,17 @@ impl<R: Read> Read for Hashing<R> {
         let read = self.inner.read(buffer)?;
         self.hash.update(&buffer[..read]);
         Ok(read)
+    }
+}
+
+impl<W: Write> Write for Hashing<W> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buffer)?;
+        self.hash.update(&buffer[..written]);
+        Ok(written)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -208,13 +219,13 @@ pub(super) fn store_rows_v1(entry: &EntryV1, trajectories: &[TrajectoryRowsV1]) 
     if entry.path().exists() {
         return;
     }
-    let mut payload = Vec::new();
-    if encode_rows_v1(&mut payload, &entry.key, trajectories).is_err() {
-        return;
-    }
-    let digest: [u8; 32] = Sha256::digest(&payload).into();
     publish_v1(entry.path(), |out| {
-        out.write_all(&payload)?;
+        let mut hashing = Hashing {
+            inner: &mut *out,
+            hash: Sha256::new(),
+        };
+        encode_rows_v1(&mut hashing, &entry.key, trajectories)?;
+        let digest: [u8; 32] = hashing.hash.finalize().into();
         out.write_all(&digest)
     });
 }
