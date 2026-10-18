@@ -52,19 +52,38 @@ struct Handles {
     order: Vec<u64>,
     /// Smallest `zone_change_count` shown per object.
     min_zcc: HashMap<u64, u64>,
-    /// Distinct continuous-effect `timestamp` values (sorted later).
+    /// Each handle's position in `order`.
+    position: HashMap<u64, u64>,
+    /// Distinct continuous-effect `timestamp` values, sorted before `rewrite`.
     stamps: Vec<u64>,
 }
 
 impl Handles {
     fn see(&mut self, id: u64) {
-        if !self.order.contains(&id) {
+        let next = self.order.len() as u64;
+        if let std::collections::hash_map::Entry::Vacant(e) = self.position.entry(id) {
+            e.insert(next);
             self.order.push(id);
         }
     }
 
     fn index(&self, id: u64) -> u64 {
-        self.order.iter().position(|&x| x == id).expect("collected") as u64
+        *self.position.get(&id).expect("collected")
+    }
+
+    /// Sorts and dedups `stamps`, so a timestamp's rank is a binary search.
+    fn finish(&mut self) {
+        self.stamps.sort_unstable();
+        self.stamps.dedup();
+    }
+
+    /// The number of distinct shown timestamps below `t`.
+    fn stamp_rank(&self, t: u64) -> u64 {
+        debug_assert!(
+            self.stamps.windows(2).all(|w| w[0] < w[1]),
+            "finish() first"
+        );
+        self.stamps.partition_point(|&s| s < t) as u64
     }
 }
 
@@ -82,9 +101,7 @@ fn collect_ids(v: &Value, h: &mut Handles) {
                 a.iter().filter_map(Value::as_u64).for_each(|id| h.see(id));
             }
             if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
-                if !h.stamps.contains(&t) {
-                    h.stamps.push(t);
-                }
+                h.stamps.push(t);
             }
             for x in m.values() {
                 collect_ids(x, h);
@@ -117,8 +134,7 @@ fn rewrite(v: &mut Value, h: &Handles) {
                 }
             }
             if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
-                let rank = h.stamps.iter().filter(|&&s| s < t).count() as u64;
-                m.insert("timestamp".into(), Value::from(rank));
+                m.insert("timestamp".into(), Value::from(h.stamp_rank(t)));
             }
             m.remove("zone_change_generation");
             for (k, x) in m.iter_mut() {
@@ -135,23 +151,37 @@ fn rewrite(v: &mut Value, h: &Handles) {
 /// Sort key of an observation element: its JSON with engine handles and
 /// incarnation counters masked.
 pub(crate) fn masked(v: &Value) -> String {
-    fn mask(v: &mut Value) {
-        match v {
-            Value::Object(m) => {
-                for k in ["arena_id", "zone_change_count", "attachments"] {
-                    if m.contains_key(k) {
-                        m.insert(k.into(), Value::Null);
+    /// Serializes as `v` with every `arena_id`, `zone_change_count` and
+    /// `attachments` value replaced by null, without cloning `v`: the same
+    /// bytes as nulling those fields in a copy and calling `to_string`.
+    struct Masked<'a>(&'a Value);
+    impl serde::Serialize for Masked<'_> {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::{SerializeMap, SerializeSeq};
+            match self.0 {
+                Value::Object(m) => {
+                    let mut map = s.serialize_map(Some(m.len()))?;
+                    for (k, x) in m {
+                        if matches!(k.as_str(), "arena_id" | "zone_change_count" | "attachments") {
+                            map.serialize_entry(k, &Value::Null)?;
+                        } else {
+                            map.serialize_entry(k, &Masked(x))?;
+                        }
                     }
+                    map.end()
                 }
-                m.values_mut().for_each(mask);
+                Value::Array(a) => {
+                    let mut seq = s.serialize_seq(Some(a.len()))?;
+                    for x in a {
+                        seq.serialize_element(&Masked(x))?;
+                    }
+                    seq.end()
+                }
+                other => other.serialize(s),
             }
-            Value::Array(a) => a.iter_mut().for_each(mask),
-            _ => {}
         }
     }
-    let mut x = v.clone();
-    mask(&mut x);
-    x.to_string()
+    serde_json::to_string(&Masked(v)).expect("a JSON value serializes")
 }
 
 /// Observation lists whose order carries no game information in this card
@@ -269,7 +299,7 @@ fn rank_counters(v: &mut Value) {
         match v {
             Value::Object(m) => {
                 if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
-                    let rank = all.iter().filter(|&&s| s < t).count() as u64;
+                    let rank = all.partition_point(|&s| s < t) as u64;
                     m.insert("timestamp".into(), Value::from(rank));
                 }
                 m.remove("zone_change_generation");
@@ -360,6 +390,7 @@ pub(crate) fn canon_prepared(
     for x in by_content {
         collect_ids(x, &mut handles);
     }
+    handles.finish();
     rewrite(&mut obs, &handles);
     for x in &mut sem {
         rewrite(x, &handles);
@@ -913,6 +944,79 @@ pub(crate) fn live_index(c: &Canon, edge: &[u8]) -> Result<u32, PlayErr> {
 mod tests {
     use super::*;
 
+    /// The clone-and-mask `masked` this module used before the streaming one.
+    fn masked_by_clone(v: &Value) -> String {
+        fn mask(v: &mut Value) {
+            match v {
+                Value::Object(m) => {
+                    for k in ["arena_id", "zone_change_count", "attachments"] {
+                        if m.contains_key(k) {
+                            m.insert(k.into(), Value::Null);
+                        }
+                    }
+                    m.values_mut().for_each(mask);
+                }
+                Value::Array(a) => a.iter_mut().for_each(mask),
+                _ => {}
+            }
+        }
+        let mut x = v.clone();
+        mask(&mut x);
+        x.to_string()
+    }
+
+    #[test]
+    fn streaming_mask_matches_clone_and_mask_bytes() {
+        let cases = [
+            serde_json::json!(null),
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!({"arena_id":7,"zone_change_count":2,"attachments":[3,4],"name":"Bolt"}),
+            serde_json::json!({"a":[{"arena_id":1,"x":{"arena_id":2,"attachments":[{"arena_id":9}]}}],
+                "f":1.5e-7,"g":-0.0,"h":18446744073709551615u64,"i":-9007199254740993i64,
+                "s":"quote \" back \\ tab \t uni \u{e9} ctl \u{1}","t":true,"n":null,
+                "zone_change_count":{"arena_id":3},"zz":[[{"zone_change_count":1}],[]]}),
+        ];
+        for v in &cases {
+            assert_eq!(masked(v), masked_by_clone(v), "{v}");
+            let mut w = v.clone();
+            sort_object_lists(&mut w);
+            assert_eq!(masked(&w), masked_by_clone(&w));
+        }
+    }
+
+    #[test]
+    fn stamp_ranks_count_distinct_smaller_timestamps() {
+        let v = serde_json::json!({"e":[{"timestamp":700},{"timestamp":40},{"timestamp":700},
+            {"timestamp":41},{"x":{"timestamp":5}}]});
+        let mut h = Handles::default();
+        collect_ids(&v, &mut h);
+        h.finish();
+        let distinct = [5u64, 40, 41, 700];
+        for t in [0u64, 5, 6, 40, 41, 699, 700, 701] {
+            let expected = distinct.iter().filter(|&&s| s < t).count() as u64;
+            assert_eq!(h.stamp_rank(t), expected, "{t}");
+        }
+        let mut r = v.clone();
+        rank_counters(&mut r);
+        assert_eq!(r["e"][0]["timestamp"], 3);
+        assert_eq!(r["e"][1]["timestamp"], 1);
+        assert_eq!(r["e"][3]["timestamp"], 2);
+        assert_eq!(r["e"][4]["x"]["timestamp"], 0);
+    }
+
+    #[test]
+    fn handle_positions_are_first_appearance() {
+        let mut h = Handles::default();
+        for id in [9u64, 3, 9, 7, 3, 1] {
+            h.see(id);
+        }
+        assert_eq!(h.order, vec![9, 3, 7, 1]);
+        for (i, id) in h.order.iter().enumerate() {
+            assert_eq!(h.index(*id), i as u64);
+        }
+    }
+
     fn node(k: usize) -> Node {
         let seeds = RootSeeds {
             model: "r1".into(),
@@ -1153,6 +1257,7 @@ mod tests {
             "b":[{"arena_id":12,"zone_change_count":3},{"arena_id":90,"zone_change_count":9}]});
         let mut h = Handles::default();
         collect_ids(&v, &mut h);
+        h.finish();
         rewrite(&mut v, &h);
         assert_eq!(v["a"]["arena_id"], 0);
         assert_eq!(v["a"]["zone_change_count"], 0);
@@ -1165,6 +1270,7 @@ mod tests {
             "p":{"object":{"arena_id":9},"zone_change_generation":31}});
         let mut h = Handles::default();
         collect_ids(&w, &mut h);
+        h.finish();
         rewrite(&mut w, &h);
         assert_eq!(w["c"]["attachments"], serde_json::json!([1, 0]));
         assert_eq!(
