@@ -1,4 +1,6 @@
 //! Offline tensor scoring only. No environment, RNG, or policy mutation.
+mtg_kernel::fast_global_allocator!();
+
 fn main() {
     if let Err(error) = mtg_kernel::saved_input_scalar_diagnostic::run() {
         eprintln!("saved input scoring refused: {error}");

@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)

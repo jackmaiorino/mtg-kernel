@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::native_expanded_training_run_v1::{
     run_native_expanded_training_v1, NativeExpandedTrainingRunV1,
 };

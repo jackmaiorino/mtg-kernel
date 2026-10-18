@@ -4,6 +4,11 @@ version = "0.0.4"
 edition.workspace = true
 
 [dependencies]
+# Global allocator for most binaries (`fast_global_allocator!`; the exclusions
+# are listed in lib.rs): faster than the system allocator on the search,
+# training and evaluation hot paths. Fixed-work outputs are unchanged; see
+# `FastAllocatorV1` for time-bounded work and provenance hashes.
+mimalloc = { version = "=0.1.43", default-features = false }
 burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff"], optional = true }
 burn-cuda = { version = "=0.21.0", default-features = false, features = ["std"], optional = true }
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "runtime", "nvrtc", "cublas", "cuda-12080", "dynamic-loading"], optional = true }

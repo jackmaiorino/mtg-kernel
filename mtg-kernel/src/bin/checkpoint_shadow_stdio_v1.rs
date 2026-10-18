@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::kernel_native_search_opponent_v1::KernelNativeSearchTierV1;
 use mtg_kernel::native_checkpoint_shadow_stdio_v1::{
     run_checkpoint_shadow_stdio_with_model_guided_search_v1,

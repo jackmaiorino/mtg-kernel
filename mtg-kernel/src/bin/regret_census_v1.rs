@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::regret_census_v1::{run_v1, CensusConfigV1};
 
 fn main() {

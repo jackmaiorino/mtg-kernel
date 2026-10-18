@@ -54,6 +54,8 @@
 //! nothing. The refresh builder then authors `refresh-00.manifest.json` from
 //! that identity. On a Store that already holds a genesis it is exit 3.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::native_cycle4_arm_v1::{
     cycle4_arm_build_identity_json_v1, run_native_cycle4_arm_bootstrap_genesis_v1,
     run_native_cycle4_arm_check_slot_locator_v1, run_native_cycle4_arm_v1,

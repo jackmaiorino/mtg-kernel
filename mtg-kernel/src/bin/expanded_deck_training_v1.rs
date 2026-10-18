@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::expanded_deck_training_v1::{execute_v1, ExpandedTrainingCommandV1};
 
 fn main() {
