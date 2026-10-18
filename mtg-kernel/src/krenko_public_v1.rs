@@ -46,28 +46,35 @@ pub struct FactsV1 {
     pub activations: Vec<ActivationV1>,
 }
 pub fn producer_sha256_v1() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("krenko_public_v1.rs"),
-        include_str!("krenko_v1.rs"),
-        include_str!("rules_meaning_krenko_v1.rs"),
-        include_str!("engine.rs"),
-        include_str!("event.rs"),
-        include_str!("effect.rs"),
-        include_str!("state.rs"),
-        include_str!("card_def.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("standard_keywords_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("../build.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("krenko_public_v1.rs"),
+            include_str!("krenko_v1.rs"),
+            include_str!("rules_meaning_krenko_v1.rs"),
+            include_str!("engine.rs"),
+            include_str!("event.rs"),
+            include_str!("effect.rs"),
+            include_str!("state.rs"),
+            include_str!("card_def.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("standard_keywords_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("../build.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
+        ] {
+            hash.update([0]);
+            hash.update(source.as_bytes());
+        }
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 fn root(id: u16) -> Result<String, RlContractError> {
     let selector = crate::rules_meaning_krenko_v1::live_selector()

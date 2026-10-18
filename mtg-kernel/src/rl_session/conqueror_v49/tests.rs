@@ -79,7 +79,10 @@ fn registered_predecessor_parity_all_parts_raw_order_and_owning_restore_both_sea
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn paid_source_departure_original_ref_genuine_counter_closed_input_and_old_mode_readonly_refusal() {
     use crate::bloodthirsty_conqueror_v49::{self as conqueror, tests::future_printed};
     use crate::event::{self, ProposedEvent};
@@ -157,7 +160,10 @@ fn paid_source_departure_original_ref_genuine_counter_closed_input_and_old_mode_
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn eight_genuine_loss_occurrences_stage_full_roster_without_partial_engine_order_after_owning_restore(
 ) {
     use crate::bloodthirsty_conqueror_v49::tests::future_printed;
@@ -206,7 +212,10 @@ fn eight_genuine_loss_occurrences_stage_full_roster_without_partial_engine_order
 }
 
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn mixed_seven_saved_losses_and_registered_pridemate_stage_one_complete_real_permutation_both_seats(
 ) {
     use crate::bloodthirsty_conqueror_v49::tests::future_printed;
@@ -353,7 +362,10 @@ fn real_registered_generic_ward_payment_or_decline_keeps_original_spell_and_full
 }
 
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn legacy_episode_profiled_advance_refuses_fresh_and_closed_original_history_readonly_after_restore(
 ) {
     use crate::bloodthirsty_conqueror_v49::tests::future_printed;

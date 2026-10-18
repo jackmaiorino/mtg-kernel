@@ -64,6 +64,45 @@ impl TriggerOrderV45 {
     }
 }
 impl PolicySurfaceV5 {
+    /// A large trigger group's policy prefix belongs to this authenticated
+    /// surface, while the frozen engine origin remains one physical decision.
+    pub(crate) fn validate_observation_origin_substeps_v45(
+        &self,
+        state: &GameState,
+        actor: PlayerId,
+        origin: &PolicyDecisionV5,
+        substeps: (u32, u32),
+    ) -> Result<(), String> {
+        let expected = if let Some((player, pending, prefix)) =
+            self.hunter_order_parts_v45(state)?
+        {
+            if actor != player
+                || *origin
+                    != PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                        Decision::OrderTriggers {
+                            player,
+                            pending: pending.to_vec(),
+                        },
+                    ))
+            {
+                return Err("trigger-order observation changed its original group or actor".into());
+            }
+            (
+                u32::try_from(prefix.len()).map_err(|_| "trigger-order prefix exceeds u32")?,
+                u32::try_from(pending.len()).map_err(|_| "trigger-order group exceeds u32")?,
+            )
+        } else {
+            if origin.actor(state).is_some_and(|owner| owner != actor) {
+                return Err("observation changed its original decision actor".into());
+            }
+            origin.substep()
+        };
+        if expected != substeps {
+            return Err("observation changed its original policy substeps".into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn enable_hunter_order_v45(&mut self) {
         self.hunter_order_enabled_v45 = true;
     }

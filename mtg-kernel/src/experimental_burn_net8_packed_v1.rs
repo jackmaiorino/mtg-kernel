@@ -9,6 +9,7 @@ pub(crate) mod bridge;
 pub(crate) mod cell_zero_arm_v1;
 mod training;
 pub use training::entropy::run_gradient_probe as run_public_entropy_gradient_probe_v1;
+pub(crate) use training::own_registration as own_registration_training;
 pub(crate) use training::public_inputs as public_training;
 pub(crate) use training::stack_inputs as stack_training;
 #[cfg(test)]
@@ -235,6 +236,26 @@ impl<B: Backend> ProductionNet8<B> {
         public: Option<(Tensor<B, 2>, Tensor<B, 2>)>,
         stack: Option<(&training::stack_inputs::StackBatch<B>, Tensor<B, 2>)>,
     ) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        self.forward_core_with_additions::<D>(batch, public, stack, None)
+    }
+
+    /// Registration adds only to the first state preactivation. Objects take
+    /// the original None branch; even a zero object addition changes the graph.
+    fn forward_core_with_registration<D: ProductionNet8DimsV1>(
+        &self,
+        batch: &DevicePackedBatch<B>,
+        registration: Tensor<B, 2>,
+    ) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        self.forward_core_with_additions::<D>(batch, None, None, Some(registration))
+    }
+
+    fn forward_core_with_additions<D: ProductionNet8DimsV1>(
+        &self,
+        batch: &DevicePackedBatch<B>,
+        public: Option<(Tensor<B, 2>, Tensor<B, 2>)>,
+        stack: Option<(&training::stack_inputs::StackBatch<B>, Tensor<B, 2>)>,
+        registration: Option<Tensor<B, 2>>,
+    ) -> (Tensor<B, 1>, Tensor<B, 1>) {
         let object_card = self
             .card_embedding
             .forward(batch.object_card_ids.clone().unsqueeze_dim::<2>(1))
@@ -317,8 +338,12 @@ impl<B: Backend> ProductionNet8<B> {
         )
         .reshape([batch.decision_count, OBJECT_GROUP_COUNT_V1 * D::HIDDEN_DIM]);
         let state_input = Tensor::cat(vec![batch.state.clone(), pooled_objects], 1);
-        let state_hidden = match public {
-            Some((_, addition)) => self
+        let state_addition = match public {
+            Some((_, addition)) => Some(addition),
+            None => registration,
+        };
+        let state_hidden = match state_addition {
+            Some(addition) => self
                 .state_encoder
                 .second
                 .forward((self.state_encoder.first.forward(state_input) + addition).tanh())

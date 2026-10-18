@@ -387,7 +387,6 @@ mod owned_frame;
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_replaced_counter_power_primitive_keeps_actual_count_and_sample_across_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
@@ -401,8 +400,12 @@ fn genuine_replaced_counter_power_primitive_keeps_actual_count_and_sample_across
         let recipient = put(
             &mut state,
             actor.opponent(),
-            "Twinblade Paladin",
+            "Shivan Dragon",
             Zone::Battlefield,
+        );
+        assert_eq!(
+            crate::engine::checked_effective_pt(&state, recipient).unwrap(),
+            (5, 5)
         );
         let bite = crate::card_def::card_id_by_name("Bite Down").unwrap();
         let mut op = (crate::card_def::CARD_DEFS[usize::from(bite)].spell_effect)().unwrap();
@@ -459,6 +462,7 @@ fn genuine_replaced_counter_power_primitive_keeps_actual_count_and_sample_across
                 crate::event::ProposedEvent::Damage(damage),
             );
             assert_eq!(branch.objects.get(recipient).damage, 4);
+            assert_eq!(branch.objects.get(recipient).zone, Zone::Battlefield);
             let restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&branch).unwrap()).unwrap();
             assert_eq!(restored, branch);

@@ -5,6 +5,8 @@ use super::super::replay_audit::admits_public_trajectory;
 use super::super::{collect_with_opponent, weights, Trajectory};
 use super::*;
 
+mod current;
+
 fn pin(path: &str, sha256: &str) -> PinnedFileV1 {
     PinnedFileV1 {
         path: path.into(),
@@ -120,6 +122,115 @@ fn play(episode: &ExpandedEpisodeV1, seat: OpponentSeatV1) -> Trajectory {
         seat,
     )
     .unwrap()
+}
+
+#[test]
+fn public_runtime_rules_reach_session_preserve_defaults_and_refuse_reset() {
+    for kind in [None, Some(recent_kind())] {
+        let mut episode = episode(0, kind);
+        let original_bytes = serde_json::to_vec(&episode).unwrap();
+        let original_wire: Value = serde_json::from_slice(&original_bytes).unwrap();
+        assert!(original_wire.get("runtime_rules").is_none());
+        assert!(original_wire.get("reset").is_none());
+        let configs = episode.configurations_for_public_collector_v1().unwrap();
+        let default_session = episode_session_v1(&episode, &configs).unwrap();
+        let historical_session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+            1, episode.seed, episode.max_physical_decisions, episode.max_policy_steps,
+            episode.selected.each_ref().map(|d| d.label.clone()),
+            configs.each_ref().map(|c| c.mainboard().to_vec()), PlayerId(episode.starting_player),
+        ).unwrap();
+        assert_eq!(
+            default_session.current_response(),
+            historical_session.current_response()
+        );
+        assert_eq!(
+            default_session.diagnostic_state_hash(),
+            historical_session.diagnostic_state_hash()
+        );
+        assert_eq!(
+            default_session.game_state().engine.runtime_rules,
+            crate::engine::RuntimeRulesV1::default()
+        );
+
+        episode.runtime_rules = Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1);
+        let configs = episode.configurations_for_public_collector_v1().unwrap();
+        let configured = episode_session_v1(&episode, &configs).unwrap();
+        assert_eq!(
+            configured.game_state().engine.runtime_rules,
+            crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1
+        );
+        // Applying the profile happens before the first policy decision; its
+        // current opening menu is unchanged and subsequent effects inherit it.
+        assert_eq!(
+            configured.current_response(),
+            default_session.current_response()
+        );
+        assert_eq!(
+            serde_json::to_value(&episode).unwrap()["runtime_rules"],
+            "resolution-boundary-v1"
+        );
+        episode.runtime_rules = None;
+        assert_eq!(serde_json::to_vec(&episode).unwrap(), original_bytes);
+
+        episode.reset = Some(ExpandedResetStartV1 {
+            guide: "public-reset-refusal".into(),
+            game_seed: episode.seed,
+            prefix: Vec::new(),
+            cut_physical_decision_id: 0,
+            cut_observation_sha256: "0".repeat(64),
+            cut_menu_sha256: "0".repeat(64),
+            cut_state_hash: "0".repeat(16),
+        });
+        for rules in [None, Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1)] {
+            episode.runtime_rules = rules;
+            assert_eq!(
+                episode
+                    .configurations_for_public_collector_v1()
+                    .unwrap_err(),
+                "reset starts are admitted only by the expanded collector"
+            );
+        }
+    }
+}
+
+#[test]
+fn public_runtime_rules_keep_delve_refusal_in_collection_and_opponent_replay() {
+    let swamp = crate::card_def::card_id_by_name("Swamp").unwrap();
+    let mut delve = ExpandedDeckListV1 {
+        label: "public-runtime-delve".into(),
+        mainboard: vec![swamp; 60],
+        sideboard: vec![swamp; 15],
+    };
+    delve.mainboard[0] = crate::card_def::card_id_by_name("Gurmag Angler").unwrap();
+    for delve_seat in [0, 1] {
+        let mut episode = episode(0, Some(recent_kind()));
+        episode.registered[delve_seat] = delve.clone();
+        episode.selected[delve_seat] = delve.clone();
+        episode.runtime_rules = Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1);
+        // Declaration admission succeeds, but the real session refuses a Delve
+        // reader in either player's deck before any policy forward or action.
+        episode
+            .configurations_for_public_collector_v1()
+            .unwrap_or_else(|error| {
+                panic!("Delve fixture registration for seat {delve_seat} must be valid: {error}")
+            });
+        let error = collect_with_opponent(
+            &mut learner(),
+            &episode,
+            "config",
+            "state",
+            false,
+            None,
+            public_seat(),
+        )
+        .err()
+        .expect("Delve collection must be refused");
+        assert!(error.contains("graveyard order (Delve)"), "{error}");
+        let record =
+            OpponentRecordV1::new("public_checkpoint", 1, json!({"fixture":true}), Vec::new());
+        let error = record.replay_menus(&episode, &[]).unwrap_err();
+        assert!(error.contains("graveyard order (Delve)"), "{error}");
+    }
 }
 
 #[test]
@@ -883,16 +994,7 @@ fn legacy_seat_matches_the_evaluator_dispatch() {
         // forced dispatch is compared as well.
         let (episode, trajectory) = legacy_games(1, forced, spell_adapter).pop().unwrap();
         let configs = episode.configurations_for_public_collector_v1().unwrap();
-        let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
-            1,
-            episode.seed,
-            episode.max_physical_decisions,
-            episode.max_policy_steps,
-            episode.selected.each_ref().map(|d| d.label.clone()),
-            configs.each_ref().map(|c| c.mainboard().to_vec()),
-            PlayerId(episode.starting_player),
-        )
-        .unwrap();
+        let mut session = episode_session_v1(&episode, &configs).unwrap();
         let mut evaluator = crate::learned_bo3_v1::public_evaluation::legacy_play_for_test(
             FrozenPlayPolicyV1::training_fixture_v3(),
             forced,

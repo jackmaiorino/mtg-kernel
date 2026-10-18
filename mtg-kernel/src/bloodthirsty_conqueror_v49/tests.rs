@@ -259,7 +259,10 @@ pub(crate) mod future_printed {
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
     #[test]
-    #[ignore = "genuine Conqueror registration and native qualification belong to parent"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_paid_capture_held_publication_removal_gain_and_closed_forgeries_refuse_original_journals(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -353,7 +356,230 @@ pub(crate) mod future_printed {
         }
     }
     #[test]
-    #[ignore = "genuine Conqueror registration and native qualification belong to parent"]
+    fn genuine_paid_hatcher_conqueror_panda_gain_keeps_enclosing_replay_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let conqueror = put(&mut state, actor, "Bloodthirsty Conqueror", Zone::Hand);
+            let panda = put(&mut state, actor, "Fiendish Panda", Zone::Hand);
+            let hatcher = put(&mut state, actor, "Drake Hatcher", Zone::Hand);
+            let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+            for (object, pool) in [
+                (conqueror, [(ManaColor::B, 2), (ManaColor::C, 3)]),
+                (panda, [(ManaColor::B, 1), (ManaColor::W, 3)]),
+                (hatcher, [(ManaColor::U, 1), (ManaColor::C, 1)]),
+            ] {
+                assert!(
+                    matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+                );
+                for (color, amount) in pool {
+                    state.players[actor.index()].mana_pool[color.pool_index()] = amount;
+                }
+                engine::step(&mut state, Action::CastSpell(object)).unwrap();
+                assert!(
+                    matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+                );
+                assert!(state.engine.pending_cast.is_none());
+                assert_eq!(state.objects.get(object).zone, Zone::Stack);
+                assert!(state.stack.iter().any(|item| item.source == object));
+                assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+                finish(&mut state);
+                assert_eq!(state.objects.get(object).zone, Zone::Battlefield);
+            }
+            assert!(crate::drake_hatcher_v1::custody::relevant(&state));
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+            let Decision::ChooseTargets {
+                player,
+                legal_targets,
+                ..
+            } = next(&mut state)
+            else {
+                panic!("actual paid Bolt target menu absent");
+            };
+            assert_eq!(player, actor);
+            assert!(legal_targets.contains(&Target::Player(actor.opponent())));
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(Target::Player(actor.opponent())),
+            )
+            .unwrap();
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            assert!(state.stack.iter().any(|item| item.source == bolt));
+            for _ in 0..32 {
+                let decision = next(&mut state);
+                if state.stack.iter().any(|item| {
+                    item.source == conqueror
+                        && matches!(
+                            item.inline_effect,
+                            Some(EffectOp::ConquerorGainFromCaptureV49 { .. })
+                        )
+                }) {
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    Decision::OrderTriggers { pending, .. } => engine::step(
+                        &mut state,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    )
+                    .unwrap(),
+                    other => panic!("paid Bolt/Conqueror publication {other:?}"),
+                }
+            }
+            assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+            let item = state
+                .stack
+                .iter()
+                .find(|item| {
+                    item.source == conqueror
+                        && matches!(
+                            item.inline_effect,
+                            Some(EffectOp::ConquerorGainFromCaptureV49 { .. })
+                        )
+                })
+                .unwrap()
+                .clone();
+            assert_eq!(item.controller, actor);
+            assert!(custody::acquire(&state, &item).unwrap().is_some());
+            let before = state.clone();
+            let mut foreign = item.clone();
+            foreign.controller = actor.opponent();
+            assert!(custody::acquire(&state, &foreign).is_err());
+            assert_eq!(state, before);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for game in [&mut state, &mut restored] {
+                finish(game);
+                validate(game).unwrap();
+                crate::drake_hatcher_v1::custody::validate(game).unwrap();
+                crate::fiendish_panda_v1::validate_state(game).unwrap();
+                assert_eq!(game.players[actor.index()].life, 23);
+                assert_eq!(game.players[actor.opponent().index()].life, 17);
+                assert_eq!(game.objects.get(panda).counters.plus1_plus1, 1);
+                assert_eq!(
+                    game.engine
+                        .event_history
+                        .iter()
+                        .filter(|event| matches!(event,
+                    CommittedEvent::LifeGain { player, amount: 3 } if *player == actor))
+                        .count(),
+                    1
+                );
+                assert!(game
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event, CommittedEvent::DrakeJournalV1 { .. })));
+                assert!(game.engine.halted.is_none());
+            }
+            assert_eq!(state, restored);
+            let sidecar = state
+                .engine
+                .event_history
+                .iter()
+                .position(|event| {
+                    matches!(event, CommittedEvent::ConquerorGainReplayBorrowV49 { .. })
+                })
+                .unwrap();
+            assert_eq!(
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
+                    ))
+                    .count(),
+                1
+            );
+            for case in 0..7 {
+                let mut bad = state.clone();
+                match case {
+                    0 => {
+                        bad.engine.event_history.remove(sidecar);
+                    }
+                    1 => {
+                        bad.engine
+                            .event_history
+                            .push(bad.engine.event_history[sidecar].clone());
+                    }
+                    2 => {
+                        bad.engine.event_history.swap(sidecar, sidecar + 1);
+                    }
+                    3 => {
+                        let CommittedEvent::ConquerorGainReplayBorrowV49 {
+                            input_history_index,
+                            ..
+                        } = &mut bad.engine.event_history[sidecar]
+                        else {
+                            unreachable!()
+                        };
+                        *input_history_index = u64::MAX;
+                    }
+                    4 | 5 => {
+                        // Negative serialized receipt edits. These do not mint
+                        // a positive Runner or bypass a real native operation.
+                        let mut value =
+                            serde_json::to_value(&bad.engine.event_history[sidecar]).unwrap();
+                        let runner = &mut value["ConquerorGainReplayBorrowV49"]["borrow"]["runner"];
+                        if case == 4 {
+                            *runner = serde_json::Value::Null;
+                        } else {
+                            let rows = runner["original_stack"].as_array_mut().unwrap();
+                            let row = rows
+                                .iter_mut()
+                                .find(|row| {
+                                    row["source"] == serde_json::to_value(conqueror).unwrap()
+                                })
+                                .unwrap();
+                            row["controller"] = serde_json::to_value(actor.opponent()).unwrap();
+                        }
+                        bad.engine.event_history[sidecar] = serde_json::from_value(value).unwrap();
+                    }
+                    _ => {
+                        bad.engine
+                            .event_log
+                            .push(bad.engine.event_history[sidecar].clone());
+                    }
+                }
+                let before = bad.clone();
+                assert!(validate(&bad).is_err(), "sidecar corruption {case}");
+                assert_eq!(bad, before);
+                readonly(bad);
+            }
+
+            // Exercise the actual earlier positive paid fixture with no Drake:
+            // its gain retains the original V49 path and has no new sidecar.
+            let (mut plain, _) = paid(actor);
+            assert!(!crate::drake_hatcher_v1::custody::relevant(&plain));
+            event::propose_and_commit(&mut plain, ProposedEvent::life_loss(actor.opponent(), 4));
+            finish(&mut plain);
+            validate(&plain).unwrap();
+            assert_eq!(plain.players[actor.index()].life, 24);
+            assert!(plain.engine.event_history.iter().all(|event| !matches!(
+                event,
+                CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
+            )));
+            let mut orphan = plain.clone();
+            orphan
+                .engine
+                .event_history
+                .push(state.engine.event_history[sidecar].clone());
+            let before = orphan.clone();
+            assert!(validate(&orphan).is_err());
+            assert_eq!(orphan, before);
+        }
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn original_post_event_universe_prevents_coherent_derived_observer_erasure_and_supports_simultaneous_departure(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -394,5 +620,168 @@ pub(crate) mod future_printed {
             }
             assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
         }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn registered_catalog_without_actual_observer_keeps_ordinary_loss_and_legacy_projection_both_seats()
+{
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut automatic = ready(actor);
+        let before_life = automatic.players[actor.opponent().index()].life;
+        // Real ordinary event, with no printed Conqueror observer.
+        crate::event::propose_and_commit(
+            &mut automatic,
+            ProposedEvent::life_loss(actor.opponent(), 3),
+        );
+        assert_eq!(
+            automatic.players[actor.opponent().index()].life,
+            before_life - 3
+        );
+        assert!(!has_history(&automatic));
+        assert!(automatic.engine.event_history.iter().any(|event|
+            matches!(event, CommittedEvent::LifeLoss { player, amount:3, .. } if *player==actor.opponent())));
+        require_legacy_consumer(&automatic).unwrap();
+        let projection = crate::rl::observe_v1(&automatic, actor, 0).unwrap();
+        for restored in [
+            automatic.clone(),
+            serde_json::from_slice(&serde_json::to_vec(&automatic).unwrap()).unwrap(),
+        ] {
+            let before = serde_json::to_vec(&restored).unwrap();
+            validate(&restored).unwrap();
+            assert_eq!(
+                crate::rl::observe_v1(&restored, actor, 0).unwrap(),
+                projection
+            );
+            require_legacy_visible(&restored, Some(actor)).unwrap();
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn visible_partial_conqueror_refuses_legacy_without_unknown_opponent_identity_leak_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut unknown = ready(actor);
+        let source = put(
+            &mut unknown,
+            actor.opponent(),
+            "Bloodthirsty Conqueror",
+            Zone::Hand,
+        );
+        let mut alternative = ready(actor);
+        put(
+            &mut alternative,
+            actor.opponent(),
+            "Lightning Bolt",
+            Zone::Hand,
+        );
+        for branch in [&mut unknown, &mut alternative] {
+            event::propose_and_commit(branch, ProposedEvent::life_loss(actor.opponent(), 1));
+            assert!(!has_history(branch));
+        }
+        assert_eq!(
+            crate::rl::observe_v1(&unknown, actor, 0).unwrap(),
+            crate::rl::observe_v1(&alternative, actor, 0).unwrap()
+        );
+        let before = serde_json::to_vec(&unknown).unwrap();
+        assert!(crate::rl::observe_v1(&unknown, actor.opponent(), 0).is_err());
+        assert_eq!(serde_json::to_vec(&unknown).unwrap(), before);
+        event::propose_and_commit(
+            &mut unknown,
+            ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        let before = serde_json::to_vec(&unknown).unwrap();
+        assert!(require_legacy_consumer(&unknown).is_err());
+        assert_eq!(serde_json::to_vec(&unknown).unwrap(), before);
+        event::propose_and_commit(&mut unknown, ProposedEvent::life_loss(actor, 2));
+        assert!(has_history(&unknown));
+        event::propose_and_commit(
+            &mut unknown,
+            ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
+        for restored in [
+            unknown.clone(),
+            serde_json::from_slice(&serde_json::to_vec(&unknown).unwrap()).unwrap(),
+        ] {
+            let before = serde_json::to_vec(&restored).unwrap();
+            assert!(require_legacy_consumer(&restored).is_err());
+            assert!(crate::rl::observe_v1(&restored, actor, 0).is_err());
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn ordinary_losses_before_paid_entry_and_after_departure_keep_owned_input_completeness_both_seats()
+{
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 1));
+        assert!(!has_history(&state));
+        let source = put(&mut state, actor, "Bloodthirsty Conqueror", Zone::Hand);
+        state.players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()] = 3;
+        state.players[actor.index()].mana_pool[crate::mana::ManaColor::B.pool_index()] = 2;
+        assert!(
+            matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+        );
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        future_printed::finish(&mut state);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 2));
+        validate(&state).unwrap();
+        let mut erased = state.clone();
+        // Preserve the independent real input and original loss. Only the
+        // derived batch is removed, so every owning phase must still refuse.
+        for event in &mut erased.engine.event_history {
+            if matches!(event, CommittedEvent::ConquerorLossBatchV49 { .. }) {
+                *event = CommittedEvent::Tap { object: source };
+            }
+        }
+        let before = serde_json::to_vec(&erased).unwrap();
+        assert!(validate(&erased).is_err());
+        assert_eq!(serde_json::to_vec(&erased).unwrap(), before);
+        future_printed::finish(&mut state);
+        assert_eq!(state.players[actor.index()].life, 22);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
+        let count = state
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| matches!(event, CommittedEvent::ConquerorObserverInputV49 { .. }))
+            .count();
+        event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 3));
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(event, CommittedEvent::ConquerorObserverInputV49 { .. }))
+                .count(),
+            count
+        );
+        validate(&state).unwrap();
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        validate(&restored).unwrap();
+        assert_eq!(restored, state);
+        assert!(require_legacy_consumer(&restored).is_err());
     }
 }

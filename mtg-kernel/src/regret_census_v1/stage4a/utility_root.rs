@@ -42,6 +42,10 @@ use std::io::Write;
 const REQUEST_SCHEMA: &str = "shared-root-utility-v1/request";
 const MAX_TRANSITIONS: u64 = 2048;
 
+mod reused;
+
+pub(super) use reused::{run_acquisition, run_comparison};
+
 #[cfg(feature = "gameplay-decision-trace-v1")]
 mod inspect;
 
@@ -344,6 +348,29 @@ fn branch(
     seeds: &ContinuationSeeds,
     cap: u64,
 ) -> Result<Branch, String> {
+    let (receipt, failure) = branch_retained(root, first, focal, policy, opponent, seeds, cap)?;
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    Ok(receipt)
+}
+
+/// Preserve the last state and consumed work even when policy/application fails.
+/// The legacy branch API still returns the original error; witnessed consumers
+/// retain this partial receipt with an unresolved result before failing the job.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit branch roles, seeds and cap"
+)]
+fn branch_retained(
+    root: &FastActorSessionV1,
+    first: u32,
+    focal: PlayerId,
+    policy: &mut FrozenPlayPolicyV1,
+    opponent: &mut FrozenPlayPolicyV1,
+    seeds: &ContinuationSeeds,
+    cap: u64,
+) -> Result<(Branch, Option<String>), String> {
     validate_cap(cap)?;
     let mut session = root.clone();
     let d = decision(&session).ok_or("utility branch root is terminal")?;
@@ -354,44 +381,58 @@ fn branch(
     let mut meter = Meter::new(cap);
     let mut counters = Counters::default();
     let mut actions_hash = Sha256::new();
-    // Applying a saved action consumes no policy draw. Reset only afterwards.
-    apply(&mut session, &d, first, &mut meter, focal, None, &defs).map_err(bank::err)?;
-    hash_action(&mut actions_hash, &d, first);
-    policy.reset_sampling_v1(seeds.focal);
-    opponent.reset_sampling_v1(seeds.opponent);
-    while let Some(d) = decision(&session) {
-        // Check before inference: no unused draw/call beyond the transition cap.
-        if meter.spent == meter.cap {
-            break;
+    let failure = (|| -> Result<(), String> {
+        // Applying a saved action consumes no policy draw. Reset only afterwards.
+        apply(&mut session, &d, first, &mut meter, focal, None, &defs).map_err(bank::err)?;
+        hash_action(&mut actions_hash, &d, first);
+        policy.reset_sampling_v1(seeds.focal);
+        opponent.reset_sampling_v1(seeds.opponent);
+        while let Some(d) = decision(&session) {
+            // Check before inference: no unused draw/call beyond the transition cap.
+            if meter.spent == meter.cap {
+                break;
+            }
+            let action = if acting(&d) == focal {
+                act(policy, &session, &d, &mut counters)
+            } else {
+                act(opponent, &session, &d, &mut counters)
+            }
+            .map_err(bank::err)?;
+            apply(&mut session, &d, action, &mut meter, focal, None, &defs).map_err(bank::err)?;
+            hash_action(&mut actions_hash, &d, action);
         }
-        let action = if acting(&d) == focal {
-            act(policy, &session, &d, &mut counters)
-        } else {
-            act(opponent, &session, &d, &mut counters)
-        }
-        .map_err(bank::err)?;
-        apply(&mut session, &d, action, &mut meter, focal, None, &defs).map_err(bank::err)?;
-        hash_action(&mut actions_hash, &d, action);
-    }
-    let end = bank::outcome(&session, focal).unwrap_or("truncated");
+        Ok(())
+    })()
+    .err();
+    let end = if failure.is_some() {
+        "fault"
+    } else {
+        bank::outcome(&session, focal).unwrap_or("truncated")
+    };
     let result = match end {
         "win" => Some(1),
         "draw" => Some(0),
         "loss" => Some(-1),
         _ => None,
     };
-    Ok(Branch {
-        first_action: first,
-        end,
-        result,
-        transitions: meter.spent,
-        inference_calls: counters.inference,
-        actions_sha256: super::hex(&actions_hash.finalize()),
-        final_diagnostic_state_hash: format!("{:016x}", session.diagnostic_state_hash()),
-        final_core_environment_hash: format!("{:016x}", session.privileged_core_environment_hash()),
-        final_policy_steps: session.policy_step_count(),
-        final_physical_decisions: session.physical_decision_count(),
-    })
+    Ok((
+        Branch {
+            first_action: first,
+            end,
+            result,
+            transitions: meter.spent,
+            inference_calls: counters.inference,
+            actions_sha256: super::hex(&actions_hash.finalize()),
+            final_diagnostic_state_hash: format!("{:016x}", session.diagnostic_state_hash()),
+            final_core_environment_hash: format!(
+                "{:016x}",
+                session.privileged_core_environment_hash()
+            ),
+            final_policy_steps: session.policy_step_count(),
+            final_physical_decisions: session.physical_decision_count(),
+        },
+        failure,
+    ))
 }
 
 fn score_range(result: Option<i8>) -> (i64, i64) {

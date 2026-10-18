@@ -46,3 +46,15 @@ The distinct executable V49 scope appends after SeasonV48 and binds Season and a
 ## Legacy Episode prework refusal repair
 
 The frozen `RlEpisodeSessionV1::advance_to_decision_or_terminal_profiled` now explicitly refuses Conqueror before its first policy-surface or automatic engine operation. This complements the V49-specific FastActor Step/Advance guard rather than relying on later observation construction. An additional ignored genuine printing group covers both seats, actual fresh original loss/capture journals and actual counter-closed retained history with a departed source. It restores the real serialized GameState, calls the actual profiled path twice, and requires exact unchanged GameState and decision counters while allowing only the session's unsupported terminal response. No old mode/event prefix changes or native results are claimed.
+
+
+Ordinary V49 gain verification now records a conditional history-only replay
+sidecar when an actual local operation also owns Drake Hatcher history. It
+retains the existing opaque Panda replay-borrow input, tied to the adjacent
+original GainInput and full removed row, solely for disposable gain replay.
+The complete produced event segment still has to match. Frozen V49/Panda world
+and journal payloads stay unchanged; non-Drake gains emit no new sidecar and
+retain the original path. The added genuinely paid Conqueror/Panda/Hatcher/Bolt
+both-seat group covers publication, restore, exact gain/counter results and
+read-only receipt corruption. Formatting and static checks do not establish
+Rust compilation, execution, performance or qualification.

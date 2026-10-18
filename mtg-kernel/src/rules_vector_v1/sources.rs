@@ -426,6 +426,7 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
 /// Extracts every rules source of one card definition.
 pub fn card_rules(card_id: u16) -> CardRulesV1 {
     let def: &CardDef = &CARD_DEFS[usize::from(card_id)];
+    assert!(!def.activated_abilities.iter().any(|a| a.cost.iter().any(|c| matches!(c, crate::card_def::CostComponent::RemoveSourceCountersV1 { .. }))), "rules-vector-v1 cannot represent exact typed source-counter costs or saved combat-damage incubation; successor required");
     let CardDef {
         // Identity, not rules.
         name,
@@ -498,10 +499,22 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         chosen_color_creature_boost_v1,
         damage_replacement_v1,
         token_counter_replacement_v48,
+        starting_life_self_bonuses_v1,
+        source_type_hexproof_v1,
+        other_controlled_nontoken_death_v1,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
     } = def;
+
+    assert!(
+        starting_life_self_bonuses_v1.is_empty() && source_type_hexproof_v1.is_none(),
+        "starting-life and source-type hexproof statics require their typed meaning successor"
+    );
+    assert!(
+        other_controlled_nontoken_death_v1.is_none(),
+        "controlled-other-nontoken death reveal requires its precise successor"
+    );
 
     assert!(
         token_counter_replacement_v48.is_none(),

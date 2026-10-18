@@ -266,6 +266,13 @@ pub enum TriggerCondition {
     /// Any OTHER nontoken effective creature death; captured on the prebatch battlefield.
     OtherNontokenCreatureDies,
     OpponentLosesLifeBatchV49,
+    /// Intervening ferocious condition on the source controller's combat.
+    /// A graveyard home zone is supplied by the printed ability definition.
+    BeginningControllerCombatWithCreaturePowerAtLeast(i32),
+    /// Controlled OTHER nontoken creature death, observed before the batch.
+    OtherControlledNontokenCreatureDiesV1,
+    /// Actual opposing casts; spell copies emit no cast event.
+    OpponentCastsSpellV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1991,6 +1998,14 @@ fn knight_errant_of_eos_effect() -> EffectOp {
 const KNIGHT_ERRANT_OF_EOS_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(knight_errant_of_eos_effect)];
 
+const DRAKE_HATCHER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    PROWESS_TRIGGER,
+    TriggeredAbilityDef {
+        condition: TriggerCondition::DealsCombatDamageToPlayer,
+        ..etb_trigger(crate::drake_hatcher_v1::combat_binder)
+    },
+];
+
 const MONASTERY_SWIFTSPEAR_TRIGGERS: [TriggeredAbilityDef; 1] = [PROWESS_TRIGGER];
 
 fn valiant_counter_effect() -> EffectOp {
@@ -2404,6 +2419,35 @@ const FORSAKEN_MINER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControllerCommitsCrime,
     home_zone: Zone::Graveyard,
     ..etb_trigger(forsaken_miner_crime_effect)
+}];
+
+fn flamewake_phoenix_combat_effect() -> EffectOp {
+    // Recheck ferocious once, when resolution starts, before offering payment.
+    // The source-incarnation check belongs after payment: paying is permitted
+    // even if a response has removed the card from its original graveyard.
+    EffectOp::Conditional {
+        cond: EffectCond::ControlsCreaturePowerAtLeast(4),
+        then: Box::new(EffectOp::MayPayManaThen {
+            player: PlayerRef::Controller,
+            colored: vec![crate::mana::ManaColor::R],
+            generic: 0,
+            then: Box::new(EffectOp::Conditional {
+                cond: EffectCond::SourceStillInTriggerZone,
+                then: Box::new(EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                }),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            }),
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+const FLAMEWAKE_PHOENIX_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(4),
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(flamewake_phoenix_combat_effect)
 }];
 
 fn aloe_alchemist_plotted_effect() -> EffectOp {
@@ -3414,6 +3458,27 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 /// static `CARD_DEFS` entry, but its by-name `match` is a long chain of string
 /// compares, and trigger collection calls it for every object in every zone on
 /// every committed event batch.
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn painful_quandary_payment_v1() -> EffectOp {
+    EffectOp::MayDiscardCardOtherwiseV1 {
+        player: PlayerRef::Opponent,
+        unpaid: Box::new(EffectOp::LoseLife {
+            player: PlayerRef::Opponent,
+            amount: 5,
+        }),
+    }
+}
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+const PAINFUL_QUANDARY_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OpponentCastsSpellV1,
+    ..etb_trigger(painful_quandary_payment_v1)
+}];
 fn tersa_discard_draw() -> EffectOp {
     EffectOp::DiscardUpToThenDraw {
         player: PlayerRef::Controller,
@@ -3486,6 +3551,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.other_controlled_nontoken_death_v1.is_some() {
+        return crate::spinner_of_souls_v1::triggers(card);
+    }
     if card.name == "Flourishing Bloom-Kin" {
         return &BLOOM_KIN_TRIGGERS;
     }
@@ -3493,6 +3561,11 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        "Painful Quandary" => &PAINFUL_QUANDARY_TRIGGERS_V1,
         "Tersa Lightshatter" => &TERSA_LIGHTSHATTER_TRIGGERS,
         "Zoetic Glyph" => &ZOETIC_GLYPH_TRIGGERS,
         "Collector's Cage" => &COLLECTORS_CAGE_TRIGGERS,
@@ -3663,10 +3736,12 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         }
         "Aloe Alchemist" => &ALOE_ALCHEMIST_TRIGGERS,
         "Forsaken Miner" => &FORSAKEN_MINER_TRIGGERS,
+        "Flamewake Phoenix" => &FLAMEWAKE_PHOENIX_TRIGGERS,
         "Hopeful Initiate" => &HOPEFUL_INITIATE_TRIGGERS,
         "Chrome Host Seedshark" => &CHROME_HOST_SEEDSHARK_TRIGGERS,
         "Brutal Cathar" => &BRUTAL_CATHAR_TRIGGERS,
         "Knight-Errant of Eos" => &KNIGHT_ERRANT_OF_EOS_TRIGGERS,
+        "Drake Hatcher" => &DRAKE_HATCHER_TRIGGERS,
         "Monastery Swiftspear" | "Heartfire Immolator" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Heartfire Hero" => &HEARTFIRE_HERO_TRIGGERS,
         "Slickshot Show-Off" => &SLICKSHOT_SHOW_OFF_TRIGGERS,
@@ -3937,6 +4012,12 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         return true;
     }
     match (template, effect) {
+        // The actual row validator authenticates this capture's complete
+        // enclosing combat operation and original source incarnation.
+        (
+            EffectOp::IncubationFromCombatDamageV1 { amount: None },
+            EffectOp::DrakeIncubationFromCaptureV1 { .. },
+        ) => true,
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootAttackBoostV1 { .. }) => true,
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootBoostFromCaptureV2 { .. }) => true,
         (
@@ -4865,6 +4946,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::drake_hatcher_v1::custody::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
     match crate::ashroot_dispatch_v2::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5214,6 +5305,11 @@ fn triggers_from_events(
                 {
                     continue;
                 }
+                if (def.effect)() == crate::drake_hatcher_v1::combat_binder() {
+                    // Exact positive final damage and original source were captured
+                    // before this batch's later membership/controller changes.
+                    continue;
+                }
                 // These abilities were captured at the actual life-gain commit,
                 // before later operations can change battlefield membership.
                 if matches!(
@@ -5221,6 +5317,7 @@ fn triggers_from_events(
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
                         | TriggerCondition::OtherNontokenCreatureDies
+                        | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                         | TriggerCondition::OpponentLosesLifeBatchV49
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {
@@ -5241,6 +5338,16 @@ fn triggers_from_events(
                 let ability_active =
                     crate::continuous_characteristics_v1::printed_abilities_active(state, id);
                 if !uses_leave_lki && (obj.zone != def.home_zone || !ability_active) {
+                    continue;
+                }
+                // cease_to_exist keeps an inert arena object's last zone
+                // marker for historical source contracts. A new graveyard
+                // trigger needs actual current owner-zone membership, unlike
+                // a leave trigger already captured from its departing scene.
+                if !uses_leave_lki
+                    && def.home_zone == Zone::Graveyard
+                    && !state.players[obj.owner.index()].graveyard.contains(&id)
+                {
                     continue;
                 }
                 // A `TriggeredAbilityDef` names one printed face's ability text
@@ -5938,6 +6045,12 @@ fn trigger_matches(
                     .contains(&crate::card_def::CardType::Creature)
         }
         (
+            TriggerCondition::OpponentCastsSpellV1,
+            CommittedEvent::SpellCast {
+                controller: caster, ..
+            },
+        ) => *caster == controller.opponent(),
+        (
             TriggerCondition::CastSpell,
             CommittedEvent::SpellCast {
                 controller: caster, ..
@@ -6456,6 +6569,20 @@ fn trigger_matches(
             TriggerCondition::BeginningOfControllerCombat,
             CommittedEvent::BeginningOfCombat { active_player },
         ) => *active_player == controller,
+        (
+            TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(minimum),
+            CommittedEvent::BeginningOfCombat { active_player },
+        ) => {
+            *active_player == controller
+                && state.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .copied()
+                    .any(|object| {
+                        crate::engine::object_has_type(state, object, CardType::Creature)
+                            && crate::engine::effective_power(state, object) >= minimum
+                    })
+        }
         (
             TriggerCondition::BeginningControllerCombatWithOtherCreaturePowerAtLeast(minimum),
             CommittedEvent::BeginningOfCombat { active_player },

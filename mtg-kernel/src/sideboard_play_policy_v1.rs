@@ -68,6 +68,8 @@ use std::path::{Path, PathBuf};
 
 mod origin;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+pub(crate) mod own_registration;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod public_inputs;
 pub mod registry_evolution_v1;
 #[cfg(any(
@@ -1428,6 +1430,12 @@ impl FrozenPlayPolicyV1 {
         Ok(&self.embeddings[start..start + CARD_EMBEDDING_DIM_V1])
     }
 
+    /// Exact draw-state oracle for executor tests; no production API or work.
+    #[cfg(test)]
+    pub(crate) fn sampling_stream_snapshot_for_test_v1(&self) -> Vec<u8> {
+        serde_json::to_vec(&self.seat_rng).expect("per-seat RNG state serializes")
+    }
+
     pub fn reset_sampling_v1(&mut self, seeds: [u64; 2]) {
         self.seat_rng = [SplitMix64::seed(seeds[0]), SplitMix64::seed(seeds[1])];
         #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -1618,6 +1626,97 @@ impl FrozenPlayPolicyV1 {
         #[cfg(feature = "gameplay-decision-trace-v1")]
         self.capture_trace_v1(session, decision, selected, &scores);
         Ok(selected)
+    }
+
+    /// Ordinary-only comparison surface. The existing scorer and deployed
+    /// sampler execute once; copied scores are passive diagnostic output.
+    pub(crate) fn select_ordinary_comparison_v1(
+        &mut self,
+        session: &FastActorSessionV1,
+    ) -> Result<(u32, FrozenPlayDecisionScoresV1), String> {
+        self.validate_ensemble_member_v1()?;
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            return Err("cannot select from a terminal session".into());
+        };
+        let scores = self.score_fast_session_v1(session)?;
+        let selected = self.sample_scores(
+            &scores.logits,
+            decision.acting_player,
+            decision.legal_action_count,
+        )?;
+        Ok((selected, scores))
+    }
+
+    /// This first ensemble supports only the unchanged V4 deployed sampler.
+    /// It does not create a trainable or search-capable policy wrapper.
+    pub(crate) fn validate_ensemble_member_v1(&self) -> Result<(), String> {
+        require(
+            self.fresh_successor.is_some()
+                && self.successor.is_none()
+                && self.collection_sampler.is_none()
+                && !self.fast_search_forward,
+            "ensemble members require ordinary V4 scoring and the deployed wide sampler",
+        )?;
+        fresh_successor_identity_valid_v1(
+            self.identity.feature_contract_digest_v1(),
+            self.identity.feature_encoding_digest_v1(),
+        )?;
+        #[cfg(feature = "gameplay-decision-trace-v1")]
+        require(
+            self.trace.is_none(),
+            "ensemble comparisons refuse legacy trace capture",
+        )?;
+        Ok(())
+    }
+
+    /// Commitment to both live seat streams, read without advancing either.
+    pub(crate) fn ordinary_sampling_commitment_v1(&self) -> String {
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&self.seat_rng).expect("seat RNG serializes"))
+        )
+    }
+
+    /// Draw once from an already validated Q64 mixture. This advances the
+    /// same live stream as ordinary selection, without sampling either member.
+    pub(crate) fn sample_ordinary_ensemble_v1(
+        &mut self,
+        masses: &[u128],
+        seat: PlayerSeatV1,
+        legal_count: u32,
+    ) -> Result<u32, String> {
+        self.validate_ensemble_member_v1()?;
+        require(
+            self.sampling_initialized,
+            "reset both policy seeds before a game",
+        )?;
+        require(
+            masses.len() == legal_count as usize
+                && !masses.is_empty()
+                && masses.len() <= WIDE_CATEGORICAL_MAX_ACTIONS_V1,
+            "ensemble and legal action counts differ",
+        )?;
+        let total = masses
+            .iter()
+            .try_fold(0_u128, |sum, mass| sum.checked_add(*mass));
+        require(
+            total == Some(1_u128 << 64),
+            "ensemble masses must sum to Q64",
+        )?;
+        let index = match seat {
+            PlayerSeatV1::P0 => 0,
+            PlayerSeatV1::P1 => 1,
+        };
+        let seed = self.seat_rng[index].next_u64();
+        let draw = u128::from(crate::fast_sampler::splitmix64_first(seed));
+        let mut cumulative = 0_u128;
+        for (action, mass) in masses.iter().enumerate() {
+            cumulative += mass;
+            if cumulative > draw {
+                return u32::try_from(action).map_err(|e| e.to_string());
+            }
+        }
+        Err("ensemble inverse CDF is not total".into())
     }
 
     /// One actual forward and sampler draw; no legacy trace receipt is armed.

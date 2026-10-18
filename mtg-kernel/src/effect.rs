@@ -22,6 +22,7 @@ mod standard_look;
 use standard_look::ConvokeLookChoice;
 mod standard_copy;
 use standard_copy::CopyTargetChoice;
+mod discard_payment_v1;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
 mod scavenging_ooze_v1;
@@ -1717,6 +1718,29 @@ pub enum EffectOp {
     /// Appended original-source soul count. Uses the current battlefield
     /// incarnation or exact departure LKI, never a later incarnation's count.
     LoseLifeEachOpponentEqualSourceSoulV1,
+    /// Publicly reveal through the first matching card, move that card to
+    /// hand, then randomize only the revealed nonmatches on the bottom.
+    /// Empty and no-match libraries complete without drawing a card.
+    RevealUntilCardTypeToHandRandomBottomV1 {
+        player: PlayerRef,
+        card_type: CardType,
+    },
+    /// Optional exact-one private discard, otherwise run the explicit child.
+    /// Appended so predecessor effect discriminants remain unchanged.
+    MayDiscardCardOtherwiseV1 {
+        player: PlayerRef,
+        unpaid: Box<EffectOp>,
+    },
+    /// Printed/legacy amount description. Execution requires a private capture root.
+    IncubationFromCombatDamageV1 {
+        amount: Option<i32>,
+    },
+    /// Private historical trigger root, issued only by actual combat collection.
+    DrakeIncubationFromCaptureV1 {
+        capture: u64,
+    },
+    /// Printed activation root, executable only with its actual paid input.
+    DrakeCreateTokenFromPaidV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2167,6 +2191,10 @@ pub enum EffectFrame {
         binding: ExileTopChoiceBindingV1,
         chosen: EffectObjectBinding,
     },
+    DiscardPaymentV1 {
+        choice: discard_payment_v1::DiscardPaymentChoiceV1,
+        selected: Vec<EffectObjectBinding>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2519,6 +2547,9 @@ pub enum EffectTargetSelectionPurpose {
     },
     ChooseNewlyExiledCard {
         binding: ExileTopChoiceBindingV1,
+    },
+    DiscardPaymentV1 {
+        choice: discard_payment_v1::DiscardPaymentChoiceV1,
     },
 }
 
@@ -3131,6 +3162,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::DiscardUpToThenDraw { .. }
+        | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
@@ -3257,6 +3289,23 @@ fn begin_resumable_resolution_with_inspiration_owner(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|pending| {
+        requires_ferocious_payment_stage(pending)
+            || requires_printed_optional_trigger_stage(state, pending)
+    }) {
+        let validation = validate_pending_effect_choice(state);
+        #[cfg(test)]
+        if validation.is_err() {
+            eprintln!("native_continuation::resume::required_choice_validation_rejected");
+        }
+        validation?;
+    }
+    validate_generic_resume_driver(state)?;
+    drive_resumable(state)
+}
+
+// These gates retain their public resume order after full choice validation.
+fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
     if state
         .engine
         .pending_effect
@@ -3277,6 +3326,66 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
     if state.engine.pending_effect.is_none() {
         return Err("no effect continuation is pending".to_string());
     }
+    Ok(())
+}
+
+/// Single-use native authority acquired with the actual public row still live.
+/// Private fields and no serialization/Clone prevent restored or reusable proof.
+pub(crate) struct PrintedOptionalResumeOwnerV1 {
+    pending: EffectContinuation,
+    position: usize,
+    remaining_stack: Vec<StackItem>,
+}
+
+pub(crate) fn acquire_printed_optional_resume_owner(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<PrintedOptionalResumeOwnerV1>, String> {
+    let Some(pending) = state.engine.pending_effect.as_ref() else {
+        return Ok(None);
+    };
+    if !requires_ferocious_payment_stage(pending)
+        && !requires_printed_optional_trigger_stage(state, pending)
+    {
+        return Ok(None);
+    }
+    validate_pending_effect_choice(state)?;
+    validate_generic_resume_driver(state)?;
+    if pending.resolving_item != *item || pending.choice.is_some() {
+        return Err("printed optional resume lost its exact ready continuation".into());
+    }
+    let position = crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
+        .ok_or("printed optional resume lost its exact public row")?;
+    let mut remaining_stack = state.stack.clone();
+    if remaining_stack.remove(position) != *item
+        || remaining_stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("printed optional resume changed or duplicated its public row".into());
+    }
+    Ok(Some(PrintedOptionalResumeOwnerV1 {
+        pending: pending.clone(),
+        position,
+        remaining_stack,
+    }))
+}
+
+pub(crate) fn resume_owned_printed_optional(
+    state: &mut GameState,
+    owner: PrintedOptionalResumeOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if state.engine.pending_effect.as_ref() != Some(&owner.pending)
+        || state.stack != owner.remaining_stack
+        || owner.position > state.stack.len()
+    {
+        return Err("printed optional private removed-row ownership changed".into());
+    }
+    // The engine acquires this owner last, then removes only its exact row and
+    // consumes it in the same frame. No action, snapshot or foreign mutation
+    // intervenes. Full public validation and the driver gates ran before pop;
+    // effects still execute with the genuine row removed, including new entry
+    // ownership opened by an accepted Phoenix return.
     drive_resumable(state)
 }
 
@@ -3720,6 +3829,11 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
 /// pure continuation transition and making post-action snapshots stable.
 pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let retain_optional_decline = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(requires_ferocious_payment_stage);
     if value {
         // An accepted shuffle must be authorizable before the pending choice
         // is consumed or any continuation state mutates. The token is
@@ -3978,7 +4092,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                         });
                         return Err("mana-payment choice player mismatch".to_string());
                     }
-                    if value {
+                    if value || retain_optional_decline {
                         let mut canonical_path = path.clone();
                         canonical_path.pop();
                         let expected_remaining_frames = continuation.frames.clone();
@@ -4485,6 +4599,17 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::DiscardPaymentV1 { choice } => {
+            let frame = EffectFrame::DiscardPaymentV1 {
+                choice,
+                selected: objects,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::DiscardDraw { choice } => {
             let frame = EffectFrame::DiscardDraw {
@@ -6140,6 +6265,9 @@ pub(crate) fn effect_op_at_structural_path<'a>(
         EffectOp::Choice { options, .. } => options
             .get(usize::from(head))
             .and_then(|op| effect_op_at_structural_path(op, tail)),
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } if head == 0 => {
+            effect_op_at_structural_path(unpaid, tail)
+        }
         _ => None,
     }
 }
@@ -6354,6 +6482,148 @@ fn validate_linked_exile_chosen_hand_frame(
     Ok(())
 }
 
+/// The old root-payment form and a single true ferocious arm are the only
+/// supported payment origins. Conditional evaluation happens in the actual
+/// interpreter before this choice; validation must not add a later threshold
+/// check while a resolution-time payment is already in progress.
+fn validate_pay_mana_then_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    canonical_path: &[u16],
+    player: PlayerId,
+    colored: &[ManaColor],
+    generic: u8,
+    then: &EffectOp,
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let origin = match (root.as_ref(), canonical_path) {
+        (root @ EffectOp::MayPayManaThen { .. }, []) => root,
+        (
+            EffectOp::Conditional {
+                cond: EffectCond::ControlsCreaturePowerAtLeast(_),
+                then,
+                else_,
+            },
+            [0],
+        ) if **else_ == EffectOp::Sequence(vec![]) => then.as_ref(),
+        _ => return Err("optional-mana lost its definition-owned originating path".into()),
+    };
+    let EffectOp::MayPayManaThen {
+        player: original_player,
+        colored: original_colored,
+        generic: original_generic,
+        then: original_then,
+    } = origin
+    else {
+        return Err("optional-mana lost its originating operation".into());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != player
+        || original_colored != colored
+        || *original_generic != generic
+        || original_then.as_ref() != then
+    {
+        return Err("optional-mana cost or consequence changed".into());
+    }
+    validate_resumable_program(then)
+}
+
+/// Only the printed graveyard ferocious payment needs this additional public
+/// stage invariant. No new event history or mutable-board threshold is used.
+fn requires_ferocious_payment_stage(pending: &EffectContinuation) -> bool {
+    pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility
+        && pending.ctx.ability_source_contract.is_some_and(|source| {
+            crate::card_def::CARD_DEFS.get(usize::from(source.card_def)).is_some()
+                && crate::trigger::triggers_for(source.card_def).iter().any(|trigger| {
+                trigger.home_zone == Zone::Graveyard
+                    && matches!(trigger.condition,
+                        crate::trigger::TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(_))
+            })
+        })
+}
+
+/// Select the printed optional roots without trusting a saved choice, answer,
+/// frame or inline program. Ordinary engine resumption already validates them;
+/// the public direct resume boundary must make the same check before mutation.
+fn requires_printed_optional_trigger_stage(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> bool {
+    if pending.resolving_item.kind != crate::state::StackItemKind::TriggeredAbility {
+        return false;
+    }
+    let definition = pending
+        .resolving_item
+        .v4
+        .ability_source_contract
+        .map(|source| source.card_def)
+        .or_else(|| {
+            state
+                .objects
+                .try_get(pending.resolving_item.source)
+                .map(|source| source.card_def)
+        });
+    definition.is_some_and(|id| {
+        let Some(card) = crate::card_def::CARD_DEFS.get(usize::from(id)) else {
+            // The common validator owns the invalid-definition diagnostic.
+            return true;
+        };
+        card.other_controlled_nontoken_death_v1.is_some()
+            || crate::trigger::triggers_for(id).iter().any(|ability| {
+                matches!(
+                    (ability.effect)(),
+                    EffectOp::MayDiscardCardOtherwiseV1 { .. }
+                )
+            })
+    })
+}
+
+fn validate_ferocious_payment_stage(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    if !requires_ferocious_payment_stage(pending) {
+        return Ok(());
+    }
+    let source = pending
+        .ctx
+        .ability_source_contract
+        .ok_or("ferocious payment source absent")?;
+    if source.zone != Zone::Graveyard || source.controller != source.owner {
+        return Err("ferocious payment lost its original graveyard controller".into());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let EffectOp::Conditional {
+        cond: EffectCond::ControlsCreaturePowerAtLeast(_),
+        then,
+        else_,
+    } = root.as_ref()
+    else {
+        return Err("ferocious payment lost its printed conditional root".into());
+    };
+    if !matches!(then.as_ref(), EffectOp::MayPayManaThen { .. })
+        || **else_ != EffectOp::Sequence(vec![])
+    {
+        return Err("ferocious payment lost its printed optional arm".into());
+    }
+    let choosing = matches!(pending.choice.as_ref(),
+        Some(PendingEffectChoice::ChooseBoolean {
+            path, purpose: EffectBooleanChoicePurpose::PayManaThen { .. }, ..
+        }) if path.as_slice() == [0])
+        && pending.frames.is_empty()
+        && pending.answered_choice_guard.is_none();
+    let answered = pending.choice.is_none()
+        && matches!(pending.frames.as_slice(), [EffectFrame::PayManaThen { canonical_path, .. }]
+            if canonical_path.as_slice() == [0])
+        && matches!(
+            pending.answered_choice_guard.as_ref(),
+            Some(EffectAnsweredChoiceGuard::PayManaThen { .. })
+        );
+    if !choosing && !answered {
+        return Err("ferocious payment lost its live choice or typed answer stage".into());
+    }
+    Ok(())
+}
+
 fn validate_pay_mana_then_frame(
     state: &GameState,
     pending: &EffectContinuation,
@@ -6366,35 +6636,28 @@ fn validate_pay_mana_then_frame(
         then,
         path,
         canonical_path,
-        ..
+        expected_remaining_frames,
     } = frame
     else {
         return Err("optional-mana answer guard changed frame kind".to_string());
     };
     let mut expected_path = canonical_path.clone();
-    expected_path.push(1);
-    if !canonical_path.is_empty() || path != &expected_path {
+    let pay = path.last() == Some(&1);
+    let declined = path.last() == Some(&0) && requires_ferocious_payment_stage(pending);
+    expected_path.push(u16::from(pay));
+    if (!pay && !declined) || path != &expected_path || !expected_remaining_frames.is_empty() {
         return Err("optional-mana answered path changed".to_string());
     }
-    let root = validated_definition_owned_root_effect(state, pending)?;
-    let EffectOp::MayPayManaThen {
-        player: original_player,
-        colored: original_colored,
-        generic: original_generic,
-        then: original_then,
-    } = root.as_ref()
-    else {
-        return Err("optional-mana answer lost its originating operation".to_string());
-    };
-    if pending.ctx.resolve_player(*original_player, state) != *player
-        || original_colored != colored
-        || original_generic != generic
-        || original_then != then
-    {
-        return Err("optional-mana answered cost or consequence changed".to_string());
-    }
-    validate_resumable_program(then)?;
-    if !crate::engine::can_pay_effect_mana(*player, colored, *generic, state) {
+    validate_pay_mana_then_origin(
+        state,
+        pending,
+        canonical_path,
+        *player,
+        colored,
+        *generic,
+        then,
+    )?;
+    if pay && !crate::engine::can_pay_effect_mana(*player, colored, *generic, state) {
         return Err("accepted optional mana cost is no longer payable".to_string());
     }
     Ok(())
@@ -6410,6 +6673,7 @@ fn effect_op_at_path<'a>(mut op: &'a EffectOp, path: &[u16]) -> Option<&'a Effec
                 _ => return None,
             },
             EffectOp::Choice { options, .. } => options.get(usize::from(component))?,
+            EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } if component == 0 => unpaid,
             _ => return None,
         };
     }
@@ -7389,6 +7653,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExilePlay { .. }
                         | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::DiscardDraw { .. }
+                        | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterUnlessPaysLife { .. }
@@ -7408,6 +7673,12 @@ fn validate_answered_choice_guard(
             }
         }
         Some(EffectAnsweredChoiceGuard::StandardSelection { frame }) => {
+            if let EffectFrame::DiscardPaymentV1 { choice, selected } = frame.as_ref() {
+                let mut before_answer = pending.clone();
+                before_answer.frames.pop();
+                discard_payment_v1::validate_choice(state, &before_answer, choice)?;
+                discard_payment_v1::validate_selected(choice, selected)?;
+            }
             if pending.choice.is_some()
                 || pending.frames.last() != Some(&**frame)
                 || !matches!(
@@ -7419,6 +7690,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExilePlay { .. }
                         | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::DiscardDraw { .. }
+                        | EffectFrame::DiscardPaymentV1 { .. }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -8112,6 +8384,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     if crate::linked_aura_operation_v1::has_pending(state) {
         return crate::linked_aura_operation_v1::validate(state);
     }
+    crate::drake_hatcher_v1::custody::validate(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
     crate::faebloom_trick_v43::validate_state(state)?;
     crate::raid_entry_v1::validate_state(state)?;
@@ -8170,6 +8443,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     .and_then(|i| state.stack.get(i))
         != Some(&pending.resolving_item)
     {
+        #[cfg(test)]
+        eprintln!("native_continuation::validate::resolving_stack_row_rejected");
         return Err(
             "effect continuation resolving item no longer exactly matches the public stack top"
                 .to_string(),
@@ -8198,8 +8473,11 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         }
     }
     private_keep_one_v1::validate_required_stage(state, pending)?;
+    validate_ferocious_payment_stage(state, pending)?;
+    discard_payment_v1::validate_required_stage(state, pending)?;
     exile_top_choose_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
+    crate::spinner_of_souls_v1::validate_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
@@ -8422,6 +8700,38 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
                     crystal_prevention_v1::validate_discard_choice(state, pending)?
+                }
+                EffectTargetSelectionPurpose::DiscardPaymentV1 { choice } => {
+                    discard_payment_v1::validate_choice(state, pending, choice)?;
+                    if *chooser != choice.player
+                        || *path != choice.path
+                        || *ordered
+                        || *min_targets != 0
+                        || *max_targets != 1
+                        // Selecting one auto-completes this exact-zero-or-one
+                        // prompt. A live prompt has no selected prefix.
+                        || !selected.is_empty()
+                        || legal.len() != choice.hand.len()
+                    {
+                        return Err("discard payment prompt shape changed".into());
+                    }
+                    let all = legal
+                        .iter()
+                        .map(|candidate| {
+                            let binding = candidate
+                                .expected_object
+                                .ok_or("discard payment candidate lost its exact binding")?;
+                            if candidate.target != Target::Object(binding.object) {
+                                return Err("discard payment candidate target changed");
+                            }
+                            Ok(binding)
+                        })
+                        .collect::<Result<Vec<_>, &str>>()?;
+                    validate_exact_binding_permutation(
+                        &choice.hand,
+                        &all,
+                        "discard payment candidates",
+                    )?;
                 }
                 EffectTargetSelectionPurpose::DiscardDraw { choice } => {
                     standard_discard::validate(state, pending, choice)?;
@@ -9665,7 +9975,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 if player != payer {
                     return Err("mana-payment choice player mismatch".to_string());
                 }
-                validate_resumable_program(then)?;
+                // Both supported origins have no trailing instruction. Keep
+                // the complete originating root, path and consequence bound
+                // across a live-choice restore as well as an accepted answer.
+                if !pending.frames.is_empty() {
+                    return Err("optional-mana choice has unrelated remaining frames".into());
+                }
+                validate_pay_mana_then_origin(
+                    state, pending, path, *payer, colored, *generic, then,
+                )?;
                 if !crate::engine::can_pay_effect_mana(*payer, colored, *generic, state) {
                     return Err("pending optional mana cost is not payable".to_string());
                 }
@@ -10111,6 +10429,7 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
                 validate_resumable_program(option)?;
             }
         }
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } => validate_resumable_program(unpaid)?,
         EffectOp::MayPayManaThen { then, .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. }
         | EffectOp::LookAtTopMayRevealThen { then, .. } => validate_resumable_program(then)?,
@@ -10214,6 +10533,7 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 | EffectFrame::ExilePlay { .. }
                 | EffectFrame::ExileBatchSelect { .. }
                 | EffectFrame::DiscardDraw { .. }
+                | EffectFrame::DiscardPaymentV1 { .. }
         ) && continuation.answered_choice_guard.take()
             != Some(EffectAnsweredChoiceGuard::StandardSelection {
                 frame: Box::new(frame.clone()),
@@ -10223,6 +10543,9 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::DiscardPaymentV1 { choice, selected } => {
+                    discard_payment_v1::finish(state, &mut continuation, &choice, &selected)?;
+                }
                 EffectFrame::DiscardDraw { choice, selected } => {
                     standard_discard::finish(state, &continuation, &choice, &selected)?
                 }
@@ -10714,6 +11037,9 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     }
                     validate_pay_mana_then_frame(state, &continuation, &answered_frame)?;
                     continuation.answered_choice_guard = None;
+                    if path.last() == Some(&0) {
+                        continue;
+                    }
                     if !crate::engine::pay_effect_mana(player, &colored, generic, state) {
                         return Err("accepted optional mana payment became unpayable".to_string());
                     }
@@ -12267,6 +12593,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 let answer = resolution_answer.take().ok_or("free land play has no typed answer")?;
                 crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true, answer)?;
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::MayDiscardCardOtherwiseV1 { player, unpaid } => {
+                if discard_payment_v1::stage(state, &mut continuation, player, unpaid, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::DiscardUpToThenDraw { player, maximum } => {
                 if standard_discard::stage(state, &mut continuation, player, maximum, path)? {
@@ -16166,6 +16498,58 @@ fn bind_library_through_first_type(
     prefix
 }
 
+fn reveal_until_type_to_hand_random_bottom_v1(
+    state: &mut GameState,
+    player: PlayerId,
+    card_type: CardType,
+) -> Result<(), String> {
+    let mut prefix = bind_library_through_first_type(state, player, card_type);
+    if prefix.is_empty() {
+        return Ok(());
+    }
+    // The accepted operation has no intervening choice. Stage knowledge,
+    // the hand move and the checked random transaction together so exhausted
+    // randomness cannot leave a partial reveal or a partly moved library.
+    let mut projected = state.clone();
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        projected.reveal_library_top(observer, player, prefix.len());
+    }
+    if prefix.last().is_some_and(|binding| {
+        crate::card_def::CARD_DEFS[projected.objects.get(binding.object).card_def as usize]
+            .has_type(card_type)
+    }) {
+        let selected = prefix.pop().expect("nonempty matching prefix");
+        commit_zone_change_batch(&mut projected, &[selected], Zone::Hand, true)?;
+        if projected.engine.halted.is_some() {
+            return Err("reveal-to-hand move halted".into());
+        }
+        if projected.objects.get(selected.object).zone == Zone::Hand {
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                projected.reveal_hand_card(observer, player, selected.object)?;
+            }
+        }
+    }
+    if !prefix.is_empty() {
+        let expected_prefix = prefix
+            .iter()
+            .map(|binding| ObjectLinkV4 {
+                object: binding.object,
+                zone_change_count: binding.expected_zone_change_count,
+            })
+            .collect::<Vec<_>>();
+        let bottom = prefix
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>();
+        projected.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+        projected
+            .randomize_library_bottom_v1(player, prefix.len())
+            .map_err(|error| error.to_string())?;
+    }
+    *state = projected;
+    Ok(())
+}
+
 fn validate_bound_hand_exact(
     state: &GameState,
     player: PlayerId,
@@ -16525,6 +16909,15 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 if state.engine.halted.is_some() {
                     break;
                 }
+            }
+        }
+        EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { player, card_type } => {
+            let player = ctx.resolve_player(*player, state);
+            if reveal_until_type_to_hand_random_bottom_v1(state, player, *card_type).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
             }
         }
         EffectOp::Conditional { cond, then, else_ } => {
@@ -17136,6 +17529,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::DiscardUpToThenDraw { .. }
+        | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -17658,6 +18052,15 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     ctx.source,
                 ));
             }
+        }
+        EffectOp::IncubationFromCombatDamageV1 { .. }
+        | EffectOp::DrakeIncubationFromCaptureV1 { .. }
+        | EffectOp::DrakeCreateTokenFromPaidV1 => {
+            // Public inline programs cannot manufacture damage or payment authority.
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::AddSoulCounterToAbilitySourceV1 => {
             if event::add_soul_counter_to_ability_source_v1(state, ctx).is_err() {
@@ -20779,6 +21182,7 @@ mod tests {
                 parent_controller: controller,
                 parent_stack_zone_change_count: 0,
                 parent_was_copy: false,
+                source_types_v1: Default::default(),
             });
             let virtual_copy = state.objects.push(virtual_copy);
             state.players[controller.index()]
@@ -20922,6 +21326,7 @@ mod tests {
                     parent_controller: owner,
                     parent_stack_zone_change_count: 0,
                     parent_was_copy: false,
+                    source_types_v1: Default::default(),
                 });
                 let copy = state.objects.push(copy);
                 state.players[owner.index()].graveyard.push(copy);
@@ -21801,6 +22206,7 @@ mod tests {
             parent_controller: PlayerId::P0,
             parent_stack_zone_change_count: 0,
             parent_was_copy: false,
+            source_types_v1: Default::default(),
         });
         let copy = state.objects.push(copy);
         state.players[0].graveyard.push(copy);

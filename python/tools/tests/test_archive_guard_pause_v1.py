@@ -151,13 +151,19 @@ class PauseChecks(unittest.TestCase):
                      "actual Python-child test requires Windows host_slots")
 class WindowsSuspensionTest(unittest.TestCase):
     def test_python_child_waits_through_spawn_handoff_and_running_pause(self):
-        parent = Path("D:/e-scratch/scorer-only-acquisition-20261015/engineering-validation")
+        self.exercise_handoff(accounted=False)
+
+    def test_accounted_child_waits_through_spawn_handoff_and_running_pause(self):
+        self.exercise_handoff(accounted=True)
+
+    def exercise_handoff(self, accounted):
         cores = dispatch.slots.parse_cores(os.environ[dispatch.slots.CORES_ENV])
-        root = Path(tempfile.mkdtemp(prefix="archive-pause-test-", dir=parent))
+        root = Path(tempfile.mkdtemp(prefix="archive-pause-test-")).resolve()
         plan = dict(cpu_affinity=cores, run_limits=dict(cpu_seconds=15, wall_seconds=30),
             storage=dict(accounting_roots=[str(root)], projected_additional_bytes=1024**2,
                 max_physical_bytes=4 * 1024**2, reserve_bytes=60 * 1024**3), stop_files=[str(root / "STOP")])
         guard = dispatch.Guard(plan, root / "guard", False, pause_on_reservation=True)
+        accounting = dispatch.LaunchAccounting(cores) if accounted else None
         heartbeat = root / "heartbeat.txt"
         command = [sys.executable, "-B", "-c",
             "import time,sys; f=open(sys.argv[1],'w'); "
@@ -175,10 +181,12 @@ class WindowsSuspensionTest(unittest.TestCase):
             with mock.patch.object(dispatch.slots, "claim_conflicts", side_effect=lambda *_: conflict.is_set()), \
                  mock.patch.object(guard.tree, "adopt", side_effect=handoff_after_adoption):
                 with (root / "child.log").open("x") as log:
-                    child = guard.spawn(command, log, subprocess.STDOUT)
+                    child = guard.spawn(command, log, subprocess.STDOUT, accounting=accounting)
                 time.sleep(.25)
                 self.assertFalse(heartbeat.exists(), "child executed during injected spawn handoff")
                 self.assertIsNone(child.poll())
+                if accounted:
+                    self.assertEqual(accounting.sample()["active_processes"], 1)
                 conflict.clear()
                 guard.check()
             deadline = time.monotonic() + 5
@@ -200,6 +208,10 @@ class WindowsSuspensionTest(unittest.TestCase):
             record.update(complete=True, spawn_handoff_executed_no_child_code=True,
                 paused_heartbeat_bytes=before, resumed_heartbeat_bytes=heartbeat.stat().st_size)
         finally:
+            if accounting is not None:
+                record["launch"] = accounting.terminate_and_drain()
+                self.assertFalse(record["launch"]["natural_drain"])
+                accounting.close()
             sample = guard.terminate_and_drain()
             if child is not None:
                 child.wait(timeout=3)

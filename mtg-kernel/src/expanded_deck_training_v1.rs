@@ -5,6 +5,8 @@
 pub mod archive_distillation_v1;
 pub mod e_supported_teacher_v1;
 pub mod exploration_probe_v1;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+pub mod own_registration;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
 
 use crate::card_def::KERNEL_CARDDB_HASH;
@@ -817,11 +819,14 @@ impl ExpandedDeckListV1 {
 }
 
 /// Opt-in opponent kinds of the public-feature collector beyond ordinary V4
-/// and the D3 wrapper, in the evaluator's `ModelSource` JSON shape so a
-/// launcher can copy an evaluation source (opponent kinds interface v1).
+/// and the D3 wrapper. Pinned kinds use the evaluator's `ModelSource` JSON
+/// shape; Current is a training-only declaration (opponent kinds interface v1).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExpandedOpponentKindV1 {
+    /// Frozen update-start public policy with private actor and sampler state.
+    /// This training-only tag is not an evaluator model source.
+    Current {},
     /// A recent public-input training checkpoint.
     PublicCheckpoint {
         config: PinnedFileV1,
@@ -949,13 +954,13 @@ impl ExpandedEpisodeV1 {
 
     /// Validation for the public-feature collector only, which admits the D3
     /// search pin and the opt-in opponent kinds. Conflicting opponent fields
-    /// fail closed before collection. That collector builds its own games,
-    /// so it refuses runtime rules and reset starts.
+    /// fail closed before collection. The shared episode-session builder
+    /// applies declared runtime rules; reset starts remain unsupported here.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn configurations_for_public_collector_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         ensure(
-            self.runtime_rules.is_none() && self.reset.is_none(),
-            "runtime rules and reset starts are admitted only by the expanded collector",
+            self.reset.is_none(),
+            "reset starts are admitted only by the expanded collector",
         )?;
         self.configurations_checked_v1()
     }
@@ -1835,8 +1840,8 @@ impl From<CollectEpisodeErrorV1> for String {
     }
 }
 
-/// The collection session for `episode`. The line (b) root replay builds its
-/// game through this same call.
+/// The collection session for `episode`. Expanded and public collectors,
+/// opponent-menu replay and line (b) root replay share this runtime profile.
 fn episode_session_v1(
     episode: &ExpandedEpisodeV1,
     configs: &[DeckConfigurationV1; 2],
@@ -2917,6 +2922,13 @@ pub enum ExpandedTrainingCommandV1 {
         banks: Vec<archive_distillation_v1::ArchiveDistillationProbeBankV1>,
         anchor: archive_distillation_v1::ArchiveDistillationAnchorV1,
         offers: Vec<PinnedFileV1>,
+        /// SD1's search-evidence keep-set files (training and held-out
+        /// games), both keyed to the training bank. Some adds each
+        /// candidate's evidence fit and its held-out anchor readings over
+        /// all decks, the non-Spy decks and each deck; omission keeps every
+        /// prior output byte.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        evidence: Option<archive_distillation_v1::ArchiveDistillationProbeEvidenceV1>,
         output_directory: PathBuf,
     },
     /// Spy line retention trace (collab LANES/spy-line-retention-20261015):
@@ -3025,6 +3037,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             banks,
             anchor,
             offers,
+            evidence,
             output_directory,
         } => archive_distillation_v1::probe_v1(
             parent,
@@ -3033,6 +3046,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             banks,
             anchor,
             offers,
+            evidence,
             output_directory,
         ),
         ExpandedTrainingCommandV1::LineRetentionTrace {

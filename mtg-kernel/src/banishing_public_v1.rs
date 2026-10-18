@@ -125,6 +125,8 @@ pub fn producer_sha256_v1() -> String {
         include_str!("standard_cards_v1.rs"),
         include_str!("standard_statics_v1.rs"),
         include_str!("sower_restriction_capture_v1.rs"),
+        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -414,16 +416,37 @@ pub(crate) fn parts_for_common_scope(
     substep: (u32, u32),
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<BanishingObservationV1, RlContractError> {
+    parts_for_common_scope_with_common(
+        (scope, state),
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        None,
+    )
+}
+pub(crate) fn parts_for_common_scope_with_common(
+    request: (crate::rl::CommonProjectionScopeV42, &GameState),
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+    common: Option<&crate::rl::BorrowedCommonObservationV42<'_>>,
+) -> Result<BanishingObservationV1, RlContractError> {
+    let (scope, state) = request;
     let (substep_index, substep_count) = substep;
 
     let (triggers, links, attachment_choice, confirmed_attachments) = facts(state)?;
-    let base = crate::rl::common_family_observation_storage_scoped(
+    let base = crate::rl::common_family_observation_storage_from_borrowed(
         (scope, state),
         surface,
         actor,
         step_index,
         physical_decision_id,
         (substep_index, substep_count),
+        common,
     )?;
     let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
     let mut base = storage.base;

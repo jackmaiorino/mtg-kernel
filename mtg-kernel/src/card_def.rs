@@ -344,6 +344,10 @@ pub enum Subtype {
     /// Appended for the unregistered Fiendish Panda target grammar. Existing
     /// creature-choice projections stay frozen until printed registration.
     Bear,
+    /// Appended for the Partial Flamewake Phoenix source candidate.
+    Phoenix,
+    /// Appended for the genuine Drake Hatcher dependency; stable ids persist.
+    Drake,
 }
 
 impl Subtype {
@@ -634,6 +638,16 @@ impl Subtype {
             not(feature = "standard-magezero-fixtures")
         ))]
         Subtype::Avatar,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Drake,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Phoenix,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -831,6 +845,8 @@ impl Subtype {
                 | Subtype::Ooze
                 | Subtype::Devil
                 | Subtype::Bear
+                | Subtype::Phoenix
+                | Subtype::Drake
         )
     }
 }
@@ -1411,6 +1427,11 @@ pub enum CostComponent {
     /// The mana branch contains exactly one Mana component; the other branch
     /// sacrifices one currently controlled creature, without targeting it.
     SacrificeCreatureOrPayMana(&'static [CostComponent]),
+    /// Remove an exact typed quantity from the ability source before stacking.
+    RemoveSourceCountersV1 {
+        kind: crate::drake_hatcher_v1::SourceCounterKindV1,
+        count: u16,
+    },
 }
 
 impl CostComponent {
@@ -2072,6 +2093,24 @@ pub enum TokenCounterReplacementDefV48 {
     DoubleEffectTokensAndControlledPermanentCounters,
 }
 
+/// One additive, battlefield-only self bonus. The threshold reads the live
+/// controller's life against the supported game's `state::STARTING_LIFE`.
+/// Multiple satisfied entries all apply; later entries do not replace earlier
+/// bonuses. Losing printed abilities suppresses the entire descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StartingLifeSelfBonusDefV1 {
+    pub minimum_above_start: u16,
+    pub power: i16,
+    pub toughness: i16,
+    pub keywords: Keywords,
+}
+
+/// Source-dependent hexproof restricts opponents' sources, not all targeting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SourceTypeHexproofDefV1 {
+    Instants,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2295,6 +2334,17 @@ pub struct CardDef {
     pub chosen_color_creature_boost_v1: Option<ChosenColorCreatureBoostDefV1>,
     pub damage_replacement_v1: Option<DamageReplacementDefV1>,
     pub token_counter_replacement_v48: Option<TokenCounterReplacementDefV48>,
+    /// Empty adds no catalog identity token and preserves all prior recipes.
+    pub starting_life_self_bonuses_v1: &'static [StartingLifeSelfBonusDefV1],
+    pub source_type_hexproof_v1: Option<SourceTypeHexproofDefV1>,
+    /// Definition-owned controlled, other, nontoken death recipe. Absent
+    /// descriptors preserve predecessor trigger and catalog identities.
+    pub other_controlled_nontoken_death_v1: Option<OtherControlledNontokenDeathDefV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OtherControlledNontokenDeathDefV1 {
+    MayRevealCreatureToHandRandomBottom,
 }
 
 impl CardDef {
@@ -2660,6 +2710,8 @@ mod tests {
                 Subtype::Scout.stable_id(),
                 Subtype::Devil.stable_id(),
                 Subtype::Avatar.stable_id(),
+                Subtype::Drake.stable_id(),
+                Subtype::Phoenix.stable_id(),
             ]);
         }
         assert_eq!(
@@ -2669,6 +2721,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected
         );
+        #[cfg(feature = "limited-fdn-fixtures")]
+        {
+            let changeling = crate::state::ObjectStateV4::from_card_def(
+                card_id_by_name("Masked Vandal").expect("genuine changeling printing"),
+            );
+            assert!(changeling
+                .effective_subtype_ids
+                .contains(&Subtype::Phoenix.stable_id()));
+            assert!(changeling
+                .effective_subtype_ids
+                .contains(&Subtype::Drake.stable_id()));
+        }
     }
 
     #[test]
@@ -2696,13 +2760,14 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 443 (Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 451 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
+        // The seven prospective Full candidates occupy ids 444-448 and 450-451.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                444
+                452
             } else {
                 192
             }
@@ -2714,6 +2779,8 @@ mod tests {
         {
             let fake = card_id_by_name("Fake Your Own Death").unwrap();
             assert_eq!(fake, 442);
+            assert_eq!(card_id_by_name("Elenda, Saint of Dusk"), Some(444));
+            assert_eq!(card_id_by_name("Flamewake Phoenix"), Some(445));
             assert_eq!(
                 CARD_DEFS[usize::from(fake)].capability,
                 CardCapability::Full
@@ -2732,6 +2799,15 @@ mod tests {
             assert_eq!(card_id_by_name("Ajani Cat Token"), Some(437));
             assert_eq!(card_id_by_name("Ajani, Caller of the Pride"), Some(215));
             assert_eq!(CARD_DEFS[215].capability, CardCapability::Full);
+            assert_eq!(card_id_by_name("Fake Your Own Death"), Some(442));
+            assert_eq!(card_id_by_name("Ravenous Amulet"), Some(443));
+            assert_eq!(card_id_by_name("Spinner of Souls"), Some(446));
+            assert_eq!(card_id_by_name("Painful Quandary"), Some(447));
+            assert_eq!(card_id_by_name("Drake Hatcher"), Some(448));
+            assert_eq!(card_id_by_name("Drake Token"), Some(449));
+            assert_eq!(card_id_by_name("Bloodthirsty Conqueror"), Some(450));
+            assert_eq!(card_id_by_name("Doubling Season"), Some(451));
+            assert_eq!(CARD_DEFS[449].capability, CardCapability::Full);
         }
     }
 
@@ -2896,8 +2972,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v87_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x68f2_13db_0a5e_f38c;
+    fn card_db_hash_v88_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x0d46_66d3_7951_a4fc;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -3141,15 +3217,33 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn capability_is_the_fail_closed_source_for_programs_and_deck_preflight() {
+        let expected_partial: &[(u16, &str)] = &[];
+        let partial = CARD_DEFS
+            .iter()
+            .enumerate()
+            .filter(|(_, def)| def.capability == CardCapability::Partial)
+            .map(|(id, def)| (id as u16, def.name))
+            .collect::<Vec<_>>();
+        assert_eq!(partial.as_slice(), expected_partial);
         let full = CARD_DEFS
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len(),
-            "every registered definition is engine Full"
+            CARD_DEFS.len() - expected_partial.len(),
+            "every other definition remains Full"
         );
+        for &(id, name) in expected_partial {
+            assert_eq!(card_id_by_name(name), Some(id));
+            assert!(CARD_DEFS[usize::from(id)].is_executable());
+            assert!(!CARD_DEFS[usize::from(id)].has_full_support());
+            assert!(matches!(preflight_fully_supported_deck(&[
+                card_id_by_name("Forest").unwrap(), id]),
+                Err(DeckPreflightError::NotFullySupported {
+                    index: 1, card_def, name: actual, capability: CardCapability::Partial
+                }) if card_def == id && actual == name));
+        }
         #[cfg(feature = "limited-fdn-fixtures")]
         {
             let non_full: Vec<_> = CARD_DEFS
@@ -3159,6 +3253,10 @@ mod tests {
                 .map(|(id, def)| (id, def.name, def.capability))
                 .collect();
             assert!(non_full.is_empty());
+            for id in [444, 445, 446, 447, 448, 450, 451] {
+                assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Full);
+                assert!(preflight_fully_supported_deck(&[id]).is_ok());
+            }
             for (id, name) in [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")] {
                 assert_eq!(card_id_by_name(name), Some(id));
                 assert!(preflight_fully_supported_deck(&[id]).is_ok());

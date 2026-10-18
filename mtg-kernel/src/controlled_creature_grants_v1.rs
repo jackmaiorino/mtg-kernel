@@ -22,6 +22,7 @@ pub(crate) fn enabled() -> bool {
         CARD_DEFS
             .iter()
             .any(|d| d.is_executable() && d.controlled_creature_grant.is_some())
+            || crate::source_type_hexproof_v1::enabled()
     })
 }
 pub(crate) fn active(state: &GameState, source: ObjectId) -> bool {
@@ -193,6 +194,16 @@ pub struct DepartureColorV1 {
     pub source: crate::state::AbilitySourceContractV4,
     pub color_mask: u8,
     pub private_snapshot_json: String,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::source_type_hexproof_v1::SourceTypeProjectionV1::is_empty"
+    )]
+    pub source_types_v1: crate::source_type_hexproof_v1::SourceTypeProjectionV1,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::source_type_hexproof_v1::SourceTypeInputProjectionV1::is_empty"
+    )]
+    pub source_type_input_v1: crate::source_type_hexproof_v1::SourceTypeInputProjectionV1,
 }
 pub(crate) fn capture_departure_color(
     state: &GameState,
@@ -205,13 +216,30 @@ pub(crate) fn capture_departure_color(
         return None;
     };
     let live = state.objects.try_get(change.object)?;
-    if live.zone != Zone::Battlefield || change.to_zone == Zone::Battlefield {
+    let typed_stack = crate::source_type_hexproof_v1::enabled()
+        && live.zone == Zone::Stack
+        && change.to_zone != Zone::Stack;
+    if !typed_stack && (live.zone != Zone::Battlefield || change.to_zone == Zone::Battlefield) {
         return None;
     }
     Some(DepartureColorV1 {
         source: crate::state::AbilitySourceContractV4::capture(state, change.object),
         color_mask: crate::engine::object_color_mask(state, change.object),
         private_snapshot_json: serde_json::to_string(live).expect("GameObject serialization"),
+        source_types_v1: crate::source_type_hexproof_v1::SourceTypeProjectionV1(
+            crate::source_type_hexproof_v1::enabled().then(|| {
+                crate::source_type_hexproof_v1::current_types(state, change.object)
+                    .expect("actual departure retains selected source types")
+            }),
+        ),
+        source_type_input_v1: crate::source_type_hexproof_v1::SourceTypeInputProjectionV1(
+            crate::source_type_hexproof_v1::enabled().then(|| {
+                Box::new(
+                    crate::source_type_hexproof_v1::capture_type_input(state, change.object)
+                        .expect("actual prebatch type input"),
+                )
+            }),
+        ),
     })
 }
 pub(crate) fn log_departure_color(state: &mut GameState, snapshot: DepartureColorV1) {
@@ -247,14 +275,32 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
             let index =
                 usize::try_from(*departure_history_index).map_err(|_| "color departure index")?;
             if index != at + 1
-                || snapshot.source.zone != Zone::Battlefield
+                || !(snapshot.source.zone == Zone::Battlefield
+                    || (crate::source_type_hexproof_v1::enabled()
+                        && snapshot.source.zone == Zone::Stack))
                 || snapshot.color_mask & !0x1f != 0
                 || !matches!(state.engine.event_history.get(index),
-                    Some(CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before })
-                    if *object == snapshot.source.source && *to != Zone::Battlefield
+                    Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
+                    if *object == snapshot.source.source && *from == snapshot.source.zone && to != from
                         && *controller_before == snapshot.source.controller)
             {
                 return Err("color snapshot lacks exact committed battlefield departure".into());
+            }
+            if crate::source_type_hexproof_v1::enabled() != snapshot.source_types_v1.0.is_some()
+                || crate::source_type_hexproof_v1::enabled()
+                    != snapshot.source_type_input_v1.0.is_some()
+                || snapshot
+                    .source_types_v1
+                    .0
+                    .is_some_and(|types| !types.valid())
+            {
+                return Err("source-type departure projection missing or foreign".into());
+            }
+            if crate::source_type_hexproof_v1::enabled() {
+                crate::source_type_hexproof_v1::validate_snapshot_types(
+                    snapshot,
+                    state.objects.len(),
+                )?;
             }
             let captured: crate::state::GameObject =
                 serde_json::from_str(&snapshot.private_snapshot_json)
@@ -289,11 +335,11 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
         }
         let missing_snapshot = match event {
             CommittedEvent::ZoneChange {
-                object,
-                from: Zone::Battlefield,
-                to,
-                ..
-            } if *to != Zone::Battlefield => {
+                object, from, to, ..
+            } if (*from == Zone::Battlefield
+                || (crate::source_type_hexproof_v1::enabled() && *from == Zone::Stack))
+                && to != from =>
+            {
                 !matches!(at.checked_sub(1).and_then(|p| state.engine.event_history.get(p)),
                         Some(CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, departure_history_index })
                             if snapshot.source.source == *object

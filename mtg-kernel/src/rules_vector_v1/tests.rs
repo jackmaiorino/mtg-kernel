@@ -62,25 +62,43 @@ fn supported_v1_card_ids() -> Vec<u16> {
         .iter()
         .enumerate()
         .filter(|(_, def)| {
-            def.target_spec == TargetSpec::KickerControlledCreatures
+            def.activated_abilities.iter().any(|a| {
+                a.cost.iter().any(|c| {
+                    matches!(
+                        c,
+                        crate::card_def::CostComponent::RemoveSourceCountersV1 { .. }
+                    )
+                })
+            }) || def.target_spec == TargetSpec::KickerControlledCreatures
                 || def.kicked_target_spec == Some(TargetSpec::KickerControlledCreatures)
                 || def.damage_replacement_v1.is_some()
                 || def.game_outcome_protection_v1.is_some()
                 || def.as_enters_color_choice_v1.is_some()
                 || def.chosen_color_creature_boost_v1.is_some()
+                || !def.starting_life_self_bonuses_v1.is_empty()
+                || def.source_type_hexproof_v1.is_some()
+                || def.other_controlled_nontoken_death_v1.is_some()
+                || def.token_counter_replacement_v48.is_some()
         })
         .map(|(id, _)| id as u16)
         .collect();
     if !excluded.is_empty() {
-        assert_eq!(
-            excluded,
-            vec![
-                card_id("Divine Resilience"),
-                card_id("Heraldic Banner"),
-                card_id("Herald of Eternal Dawn"),
-                card_id("Twinflame Tyrant"),
-            ]
-        );
+        let mut expected = vec![
+            card_id("Divine Resilience"),
+            card_id("Heraldic Banner"),
+            card_id("Herald of Eternal Dawn"),
+            card_id("Twinflame Tyrant"),
+        ];
+        if cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) {
+            expected.push(card_id("Elenda, Saint of Dusk"));
+            expected.push(card_id("Spinner of Souls"));
+            expected.push(card_id("Drake Hatcher"));
+            expected.push(card_id("Doubling Season"));
+        }
+        assert_eq!(excluded, expected);
         assert!(matches!(
             (CARD_DEFS[usize::from(excluded[0])].spell_effect)(),
             Some(EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. })
@@ -175,6 +193,53 @@ fn registered_twinflame_still_refuses_frozen_v1_publication() {
 )]
 fn registered_banner_still_refuses_frozen_v1_publication() {
     card_rules(card_id("Heraldic Banner"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(
+    expected = "starting-life and source-type hexproof statics require their typed meaning successor"
+)]
+fn registered_elenda_still_refuses_frozen_v1_extraction() {
+    card_rules(card_id("Elenda, Saint of Dusk"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(expected = "controlled-other-nontoken death reveal requires its precise successor")]
+fn registered_spinner_still_refuses_frozen_v1_extraction() {
+    card_rules(card_id("Spinner of Souls"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn elenda_and_spinner_are_excluded_only_from_test_audit_and_public_table_still_refuses() {
+    let elenda = card_id("Elenda, Saint of Dusk");
+    let spinner = card_id("Spinner of Souls");
+    assert!(!CARD_DEFS[usize::from(elenda)]
+        .starting_life_self_bonuses_v1
+        .is_empty());
+    assert!(CARD_DEFS[usize::from(elenda)]
+        .source_type_hexproof_v1
+        .is_some());
+    assert!(CARD_DEFS[usize::from(spinner)]
+        .other_controlled_nontoken_death_v1
+        .is_some());
+    let supported = supported_v1_card_ids();
+    assert!(!supported.contains(&elenda));
+    assert!(!supported.contains(&spinner));
+    // The production table still visits all definitions and refuses at its
+    // first unsupported predecessor. The test-only subset cannot publish it.
+    assert!(std::panic::catch_unwind(build_table).is_err());
 }
 
 // 1. Determinism.
@@ -820,6 +885,11 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Drake Hatcher",
+    // Both native programs are walked through triggers_for. Their exact
+    // opponent-cast and ferocious predicates remain opaque in frozen v1.
+    "Painful Quandary",
+    "Flamewake Phoenix",
     "Fishing Pole",
     "Kellan, Planar Trailblazer",
     "Bloodthirsty Conqueror",
@@ -1059,6 +1129,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "engine.rs",
+        "Treasure Token",
+        "resolution-time optional-payment source selection in effect_mana_plan; the printed tap-and-sacrifice cost and fixed-one mana output are read via sources::mana_ability_facts",
+    ),
     (
         "engine.rs",
         "Arahbo, the First Fang",
@@ -1350,6 +1425,10 @@ const RULES_MODULES: &[(&str, &str)] = &[
         include_str!("../combat_damage_v1.rs"),
     ),
     ("legend_rule_v1.rs", include_str!("../legend_rule_v1.rs")),
+    (
+        "event_history_v1.rs",
+        include_str!("../event_history_v1.rs"),
+    ),
 ];
 
 /// Lines of non-test code: drops comment lines and the item following each
@@ -1446,4 +1525,14 @@ fn full_ajani_keeps_each_native_program_opaque_in_frozen_v1() {
             Err(crate::rules_meaning_ajani_v42::ErrorV42::UnsupportedRepresentation)
         );
     }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(expected = "effect token and counter replacement requires its precise successor")]
+fn registered_partial_season_still_refuses_frozen_v1_extraction() {
+    card_rules(card_id("Doubling Season"));
 }

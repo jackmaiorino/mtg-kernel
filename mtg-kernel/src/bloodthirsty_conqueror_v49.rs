@@ -1,6 +1,6 @@
 //! Original loss operations for the prepared Bloodthirsty Conqueror successor.
 //! Private input worlds are never actor observations or trigger-log events.
-use crate::card_def::{CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
+use crate::card_def::{CardCapability, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
 use crate::event::CommittedEvent;
 use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
@@ -36,6 +36,9 @@ pub struct ObserverInputV49 {
 pub(crate) struct RecorderV49 {
     start: usize,
     original_world: Vec<u8>,
+    // Explicit amount-only primitives retain their original journal contract.
+    // Automatic engine recording needs an actual post-event observer.
+    retain_empty_observers: bool,
 }
 pub fn recipe() -> EffectOp {
     EffectOp::ConquerorGainFromCaptureV49 {
@@ -60,7 +63,7 @@ pub(crate) fn owns_definition(id: u16) -> bool {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     )) && CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
-        d.has_full_support()
+        matches!(d.capability, CardCapability::Partial | CardCapability::Full)
             && d.name == "Bloodthirsty Conqueror"
             && d.object_name == d.name
             && d.cost == PRINTED_COST
@@ -132,6 +135,10 @@ pub(crate) fn owns_definition(id: u16) -> bool {
             && d.combat_static_rules == crate::card_def::CombatStaticRulesDef::NONE
             && d.as_enters_color_choice_v1.is_none()
             && d.chosen_color_creature_boost_v1.is_none()
+            && d.token_counter_replacement_v48.is_none()
+            && d.starting_life_self_bonuses_v1.is_empty()
+            && d.source_type_hexproof_v1.is_none()
+            && d.other_controlled_nontoken_death_v1.is_none()
             && {
                 let roots = crate::trigger::triggers_for(id);
                 roots.len() == 1
@@ -201,14 +208,26 @@ impl RecorderV49 {
         Ok(Self {
             start: state.engine.event_history.len(),
             original_world: serde_json::to_vec(&original).map_err(|e| e.to_string())?,
+            retain_empty_observers: true,
         })
     }
     pub(crate) fn capture(state: &GameState) -> Option<Self> {
-        if !enabled() {
+        if !enabled()
+            || !state
+                .objects
+                .iter()
+                .any(|(_, object)| owns_definition(object.card_def))
+        {
             return None;
         }
+        // Include every zone: a genuine return/entry in this same batch can
+        // establish an ordinary post-event observer. A card copy likewise
+        // has an actual original source in the preceding world.
         // GameState consists solely of serializable typed engine state.
-        Some(Self::original(state).expect("Conqueror original typed state serializes"))
+        let mut original =
+            Self::original(state).expect("Conqueror original typed state serializes");
+        original.retain_empty_observers = false;
+        Some(original)
     }
     pub(crate) fn finish(self, state: &mut GameState) {
         let end = state.engine.event_history.len();
@@ -217,6 +236,9 @@ impl RecorderV49 {
             return;
         }
         let observers = observers(state);
+        if observers.is_empty() && !self.retain_empty_observers {
+            return;
+        }
         let mut observer_state = state.clone();
         observer_state.engine.event_history.clear();
         let observer_world = serde_json::to_vec(&observer_state)
@@ -406,18 +428,26 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         })
         .collect::<Vec<_>>();
-    if enabled() || !batches.is_empty() {
-        for loss in losses(state, 0, state.engine.event_history.len())? {
-            if batches
-                .iter()
-                .filter(|batch| batch.losses.contains(&loss))
-                .count()
-                != 1
-            {
-                return Err(
-                    "Conqueror actual positive loss lost its unique operation boundary".into(),
-                );
-            }
+    if batches
+        .windows(2)
+        .any(|pair| pair[0].history_end > pair[1].history_start)
+    {
+        return Err("Conqueror original operation intervals overlap".into());
+    }
+    // Original inputs above dictate every owned operation's complete actual
+    // loss roster. Ordinary losses without a post-event observer need no
+    // Conqueror records, including losses before entry or after departure.
+    // Two different owned operations may never claim the same actual loss.
+    for loss in losses(state, 0, state.engine.event_history.len())? {
+        if batches
+            .iter()
+            .filter(|batch| batch.losses.contains(&loss))
+            .count()
+            > 1
+        {
+            return Err(
+                "Conqueror actual positive loss has overlapping operation boundaries".into(),
+            );
         }
     }
     for (index, event) in state
@@ -603,31 +633,61 @@ pub(crate) fn has_history(state: &GameState) -> bool {
         })
 }
 pub(crate) fn require_legacy_consumer(state: &GameState) -> Result<(), String> {
-    // The new catalog has an occurrence mechanic absent from every frozen
-    // consumer contract. V49 will opt in through a distinct typed producer.
-    if enabled()
-        || state.objects.iter().any(|(_, object)| {
-            object.zone == Zone::Battlefield
-                && object.v4.face_down_v1.is_none()
-                && owns_definition(object.card_def)
-        })
-        || state
-            .engine
-            .event_history
-            .scan_for_v1(&[
-                EventKindV1::ConquerorCapturedV49,
-                EventKindV1::ConquerorJournalV49,
-            ])
-            .iter()
-            .any(|event| {
-                matches!(
-                    event,
-                    CommittedEvent::ConquerorCapturedV49 { .. }
-                        | CommittedEvent::ConquerorJournalV49 { .. }
-                )
-            })
+    if state.objects.iter().any(|(_, object)| {
+        object.zone == Zone::Battlefield
+            && object.v4.face_down_v1.is_none()
+            && owns_definition(object.card_def)
+    }) || has_history(state)
     {
         return Err("Bloodthirsty Conqueror requires its original loss-batch V49 consumer".into());
+    }
+    Ok(())
+}
+
+/// Refusal follows this actor's actual knowledge, never an unknown hand or
+/// face-down printing. Stable pre-advance checks use the retained/live check.
+pub(crate) fn require_legacy_visible(
+    state: &GameState,
+    actor: Option<PlayerId>,
+) -> Result<(), String> {
+    require_legacy_consumer(state)?;
+    let Some(actor) = actor else {
+        return Ok(());
+    };
+    let selected = state.objects.iter().any(|(id, object)| {
+        let visible = match object.zone {
+            Zone::Hand => {
+                object.owner == actor
+                    || state
+                        .known_hand_cards(actor, object.owner)
+                        .iter()
+                        .any(|known| {
+                            known.object == id
+                                && known.zone_change_count == object.zone_change_count
+                        })
+            }
+            Zone::Library => state
+                .known_library_cards(actor, object.owner)
+                .iter()
+                .any(|known| {
+                    known.object == id
+                        && known.zone_change_count == object.zone_change_count
+                        && state.players[object.owner.index()]
+                            .library
+                            .get(known.position as usize)
+                            == Some(&id)
+                }),
+            Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Command | Zone::Stack => {
+                object
+                    .v4
+                    .face_down_v1
+                    .is_none_or(|face| face.lookers & (1 << actor.index()) != 0)
+            }
+        };
+        visible && owns_definition(object.card_def)
+    });
+    if selected {
+        return Err("visible Bloodthirsty Conqueror requires its V49 consumer".into());
     }
     Ok(())
 }

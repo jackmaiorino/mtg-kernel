@@ -347,6 +347,40 @@ pub fn battlefield(state: &GameState) -> Result<BattlefieldV51, RlContractError>
     Ok(BattlefieldV51 { facts, cards })
 }
 
+pub(crate) fn battlefield_prepared_v57(
+    state: &GameState,
+) -> Result<BattlefieldV51, RlContractError> {
+    let facts = capture(state)?;
+    let mut cards: [Vec<CardV51>; 2] = [Vec::new(), Vec::new()];
+    let mut seen = Vec::new();
+    for (seat, player) in state.players.iter().enumerate() {
+        for id in &player.battlefield {
+            let live = state
+                .objects
+                .try_get(*id)
+                .ok_or_else(|| RlContractError("Amulet public battlefield object absent".into()))?;
+            if seen.contains(id)
+                || live.zone != Zone::Battlefield
+                || live.controller.index() != seat
+                || live.counters.plus1_plus1 < 0
+                || live.counters.soul < 0
+            {
+                return Err(RlContractError(
+                    "Amulet public battlefield roster/count invalid".into(),
+                ));
+            }
+            seen.push(*id);
+            cards[seat].push(CardV51 {
+                card: crate::rl::public_card_prepared_compat_v57(state, *id)?,
+                marked_damage: live.damage,
+                plus_one_counters: live.counters.plus1_plus1,
+                soul: live.counters.soul,
+            });
+        }
+    }
+    Ok(BattlefieldV51 { facts, cards })
+}
+
 pub fn validate_battlefield(
     state: &GameState,
     value: &BattlefieldV51,

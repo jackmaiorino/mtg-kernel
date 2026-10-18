@@ -12,6 +12,7 @@ use crate::sideboard_play_policy_v1::public_inputs::PublicInputPlayPolicyV1;
 
 pub(crate) mod opponent_kind;
 pub mod replay_audit;
+pub mod reuse_qualification;
 pub(crate) mod search_opponent;
 #[cfg(test)]
 mod tests;
@@ -253,6 +254,23 @@ pub(super) struct Trajectory {
 
 impl Trajectory {
     fn validate_records(&self) -> Result<(), String> {
+        if matches!(
+            self.episode.opponent_kind,
+            Some(ExpandedOpponentKindV1::Current {})
+        ) {
+            ensure(
+                self.schema == opponent_kind::CURRENT_TRAJECTORY_SCHEMA,
+                "current opponent trajectory schema differs",
+            )?;
+            self.opponent_record
+                .as_ref()
+                .ok_or("missing current opponent record")?
+                .validate_current_identity(
+                    &self.config_sha256,
+                    &self.optimizer_state_sha256,
+                    self.inputs_enabled,
+                )?;
+        }
         let sampler = self.learner_sampler.as_deref();
         match (&self.search, &self.opponent_record) {
             (None, None) => validate_episode_records_with_learner_sampler_v1(
@@ -395,6 +413,9 @@ fn collect(
     audit_every: Option<u32>,
 ) -> Result<Trajectory, String> {
     let seat = match &episode.opponent_kind {
+        Some(ExpandedOpponentKindV1::Current {}) => {
+            opponent_kind::OpponentSeatV1::current(policy, config_hash, state_hash, enabled)?
+        }
         Some(kind) => opponent_kind::load_seat(kind, episode)?,
         None => {
             let (net, identity) = load_expanded_inference_v1(
@@ -446,6 +467,12 @@ fn collect_with_opponent(
     let configs = episode.configurations_for_public_collector_v1()?;
     ensure(
         match &opponent {
+            Seat::Current { .. } => {
+                matches!(
+                    episode.opponent_kind,
+                    Some(ExpandedOpponentKindV1::Current {})
+                )
+            }
             Seat::Net { search, .. } => {
                 episode.opponent_kind.is_none()
                     && search.is_some() == episode.opponent_search.is_some()
@@ -461,8 +488,7 @@ fn collect_with_opponent(
         },
         "opponent dispatch differs from its episode",
     )?;
-    let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
-        1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player)).map_err(err)?;
+    let mut session = episode_session_v1(episode, &configs)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_for_game_v1(seeds).map_err(err)?;
     match &mut opponent {
@@ -472,7 +498,9 @@ fn collect_with_opponent(
                 search.reset_for_game(seeds, &episode.id)?;
             }
         }
-        Seat::PublicCheckpoint { policy, .. } => policy.reset_for_game_v1(seeds).map_err(err)?,
+        Seat::PublicCheckpoint { policy, .. } | Seat::Current { policy, .. } => {
+            policy.reset_for_game_v1(seeds).map_err(err)?
+        }
         Seat::Legacy { policy, .. } => policy.reset_for_game_v1(seeds).map_err(err)?,
     }
     let mut decisions = Vec::new();
@@ -483,6 +511,16 @@ fn collect_with_opponent(
                 let hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
                 let schema = opponent.outer_schema();
                 let (identity, search, opponent_record) = match opponent {
+                    Seat::Current { identity, rows, .. } => (
+                        None,
+                        None,
+                        Some(opponent_kind::OpponentRecordV1::new(
+                            "current",
+                            1 - episode.learner_seat,
+                            identity,
+                            rows,
+                        )),
+                    ),
                     Seat::Net {
                         identity, search, ..
                     } => (
@@ -570,7 +608,8 @@ fn collect_with_opponent(
                             auxiliary.push(None);
                             (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                         }
-                        Seat::PublicCheckpoint { policy, rows, .. } => {
+                        Seat::PublicCheckpoint { policy, rows, .. }
+                        | Seat::Current { policy, rows, .. } => {
                             let input = PairedBo1PolicyInputV1::new(&session, d);
                             let (selected, scores) =
                                 policy.select_with_scores(&input).map_err(err)?;
@@ -774,7 +813,7 @@ fn collect_parallel(
 /// the results in item order. Every thread joins before this returns, and the
 /// first failure by item index wins, so the outcome never depends on timing.
 /// One worker, or one item, runs inline on the calling thread.
-fn ordered_parallel_map<'a, T: Sync, R: Send>(
+pub(super) fn ordered_parallel_map<'a, T: Sync, R: Send>(
     items: &'a [T],
     workers: usize,
     task: impl Fn(usize, &'a T) -> Result<R, String> + Sync,
@@ -847,7 +886,9 @@ pub fn run(command: Command) -> Result<Value, String> {
         "public collector count outside bounds",
     )?;
     ensure(
-        !config.updates.is_empty() && config.updates.len() <= 256,
+        // Three complete nine-deck cycles take 486 updates. Keep a finite
+        // 512-update ceiling without changing config serialization or resume.
+        !config.updates.is_empty() && config.updates.len() <= 512,
         "public update count outside bounds",
     )?;
     ensure(

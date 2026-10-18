@@ -78,6 +78,11 @@ path = "src/bin/kernel_limited_common_env_v3.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
+name = "kernel_limited_elenda_env_v4"
+path = "src/bin/kernel_limited_elenda_env_v4.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "mtg-kernel-native"
 path = "src/bin/mtg-kernel-native.rs"
 required-features = ["native-training-store-v2-production"]
@@ -178,3 +183,7 @@ required-features = ["limited-fdn-fixtures"]
 [[test]]
 name = "standard_integration"
 required-features = ["standard-magezero-fixtures"]
+
+[[bin]]
+name = "kernel_limited_prepared_env_v5"
+path = "src/bin/kernel_limited_prepared_env_v5.rs"

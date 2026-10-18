@@ -81,6 +81,34 @@ struct CardJson {
     /// since tokens are never cast, only created by another card's effect).
     #[serde(default)]
     is_token: bool,
+    #[serde(default)]
+    other_controlled_nontoken_death_v1: Option<OtherControlledNontokenDeathJsonV1>,
+    #[serde(default)]
+    intrinsic_keywords_v1: Vec<IntrinsicKeywordJsonV1>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OtherControlledNontokenDeathJsonV1 {
+    MayRevealCreatureToHandRandomBottom,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum IntrinsicKeywordJsonV1 {
+    Reach,
+}
+
+fn other_controlled_nontoken_death_v1(card: &CardJson) -> &'static str {
+    if card.engine_capability == EngineCapabilityJson::NoEffect {
+        return "None";
+    }
+    match card.other_controlled_nontoken_death_v1 {
+        Some(OtherControlledNontokenDeathJsonV1::MayRevealCreatureToHandRandomBottom) => {
+            "Some(OtherControlledNontokenDeathDefV1::MayRevealCreatureToHandRandomBottom)"
+        }
+        None => "None",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -3077,6 +3105,7 @@ enum AbilityCostRecipe {
     /// (`CostComponent::RemoveNetCounterFromSelf`).
     RemoveNetCounterFromSelf,
     RemoveChargeCounterFromSelf,
+    RemoveSourceIncubationCounters(u16),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4138,6 +4167,11 @@ fn effect_recipe_for(card: &CardJson) -> String {
 /// `EffectOp::PumpControlled`'s `grant_haste` instead.
 fn keywords_for(card: &CardJson) -> String {
     let mut keywords = Vec::new();
+    for keyword in &card.intrinsic_keywords_v1 {
+        match keyword {
+            IntrinsicKeywordJsonV1::Reach => keywords.push("Keywords::REACH"),
+        }
+    }
     if card
         .mechanics
         .iter()
@@ -4149,6 +4183,10 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
+        "Flamewake Phoenix" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::HASTE");
+        }
         "Herald of Eternal Dawn"
             if cfg!(all(
                 feature = "limited-fdn-fixtures",
@@ -4173,7 +4211,8 @@ fn keywords_for(card: &CardJson) -> String {
         }
         "Preacher of the Schism" | "Gutless Plunderer" => keywords.push("Keywords::DEATHTOUCH"),
         "Vampire Token" => keywords.push("Keywords::LIFELINK"),
-        "Knight Vigilance Token" => keywords.push("Keywords::VIGILANCE"),
+        "Knight Vigilance Token" | "Drake Hatcher" => keywords.push("Keywords::VIGILANCE"),
+        "Drake Token" => keywords.push("Keywords::FLYING"),
         "Mosswood Dreadknight" => keywords.push("Keywords::TRAMPLE"),
         "Tishana's Tidebinder" => keywords.push("Keywords::FLASH"),
         "Brightglass Gearhulk" => {
@@ -4246,7 +4285,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sacred Cat Embalmed Token"
         | "Guarded Heir"
         | "Felidar Savior"
-        | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
+        | "Sun-Blessed Healer"
+        | "Elenda, Saint of Dusk" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Brazen Scourge" | "Fanatical Firebrand" | "Ruby, Daring Tracker" => {
             keywords.push("Keywords::HASTE")
@@ -4477,6 +4517,28 @@ fn damage_replacement_v1(name: &str) -> &'static str {
 fn chosen_color_creature_boost_v1(name: &str) -> &'static str {
     if as_enters_color_choice_v1(name) != "None" {
         "Some(ChosenColorCreatureBoostDefV1 { power: 1, toughness: 0 })"
+    } else {
+        "None"
+    }
+}
+
+/// Source preparation only: Elenda remains absent from the registry until its
+/// separate instant-source targeting contract has a complete executable recipe.
+fn starting_life_self_bonuses_v1(name: &str) -> &'static str {
+    if cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) && name == "Elenda, Saint of Dusk"
+    {
+        "&[StartingLifeSelfBonusDefV1 { minimum_above_start: 1, power: 1, toughness: 1, keywords: Keywords::MENACE }, StartingLifeSelfBonusDefV1 { minimum_above_start: 10, power: 5, toughness: 5, keywords: Keywords::NONE }]"
+    } else {
+        "&[]"
+    }
+}
+
+fn source_type_hexproof_v1(name: &str) -> &'static str {
+    if starting_life_self_bonuses_v1(name) != "&[]" {
+        "Some(SourceTypeHexproofDefV1::Instants)"
     } else {
         "None"
     }
@@ -5731,6 +5793,12 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Drake Hatcher" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::RemoveSourceIncubationCounters(3)],
+            effect: AbilityEffectRecipe::Program { name: "drake_hatcher_create_drake_v1", effect: "crate::drake_hatcher_v1::create_drake()" },
+            activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "None",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Ravenous Amulet" => &[
             ActivatedAbilityRecipe {
                 cost: &[
@@ -6136,6 +6204,7 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::Loyalty(delta) => format!("CostComponent::Loyalty({delta})"),
         AbilityCostRecipe::RemoveChargeCounterFromSelf => "CostComponent::RemoveChargeCounterFromSelf".into(),
+        AbilityCostRecipe::RemoveSourceIncubationCounters(count) => format!("CostComponent::RemoveSourceCountersV1 {{ kind: crate::drake_hatcher_v1::SourceCounterKindV1::Incubation, count: {count} }}"),
         AbilityCostRecipe::LoyaltyX => "CostComponent::LoyaltyX".into(),
         AbilityCostRecipe::Crew(power) => format!("CostComponent::Crew({power})"),
         AbilityCostRecipe::PayLife(amount) => format!("CostComponent::PayLife({amount})"),
@@ -6188,6 +6257,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::Loyalty(delta) => format!("loyalty:{delta}"),
         AbilityCostRecipe::RemoveChargeCounterFromSelf => "remove_charge:1".into(),
+        AbilityCostRecipe::RemoveSourceIncubationCounters(count) => {
+            format!("remove_source:incubation:{count}")
+        }
         AbilityCostRecipe::LoyaltyX => "loyalty:x".into(),
         AbilityCostRecipe::Crew(power) => format!("crew:{power}"),
         AbilityCostRecipe::PayLife(amount) => format!("pay_life:{amount}"),
@@ -7036,6 +7108,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Frenzied Goblin" => "source_declared_attacker:target_creature_at_placement:may_pay_R_at_resolution:if_paid_exact_target_cannot_block_until_cleanup:captured_controller:full_target_recheck",
         "Vampire Gourmand" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_draw_controller:1_and_exact_source_cannot_be_blocked_until_cleanup",
         "Bloodthirsty Conqueror" => "actual_opponent_positive_life_loss_operation:sum_by_player:post_event_active_source_before_SBA:mandatory_saved_amount_gain_original_controller:exact_occurrence_publication_removal_gain_completion",
+        "Drake Hatcher" => "cast_noncreature:source_gets_+1/+1_until_end_of_turn;source_combat_damage_to_player:save_actual_final_damage_amount:put_that_many_incubation_on_same_source_incarnation",
         "High-Society Hunter" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_counter_exact_original_source:+1/+1;prebatch_each_other_nontoken_creature_dies:any_controller:draw_captured_source_controller:1:including_simultaneous_source_death",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
@@ -7290,6 +7363,7 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
 
 fn combat_static_rules_for(name: &str) -> &'static str {
     match name {
+        "Flamewake Phoenix" => "CombatStaticRulesDef { must_attack_each_combat: true, cant_be_blocked_by_subtype: None }",
         "Juggernaut" => "CombatStaticRulesDef { must_attack_each_combat: true, cant_be_blocked_by_subtype: Some(Subtype::Wall) }",
         _ => "CombatStaticRulesDef::NONE",
     }
@@ -10360,6 +10434,32 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        starting_life_self_bonuses_v1: {},",
+            if executable {
+                starting_life_self_bonuses_v1(&c.name)
+            } else {
+                "&[]"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        source_type_hexproof_v1: {},",
+            if executable {
+                source_type_hexproof_v1(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        other_controlled_nontoken_death_v1: {},",
+            other_controlled_nontoken_death_v1(c)
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10572,6 +10672,23 @@ fn codegen(cards: &[CardJson]) -> String {
         );
         canon.push('|');
         // Absent new descriptors add no semantic token to any predecessor.
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && source_type_hexproof_v1(&c.name) != "None"
+        {
+            canon.push_str("source_type_hexproof_v1=Instants|");
+        }
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && starting_life_self_bonuses_v1(&c.name) != "&[]"
+        {
+            canon.push_str("starting_life_self_bonuses_v1=");
+            canon.push_str(starting_life_self_bonuses_v1(&c.name));
+            canon.push('|');
+        }
+        if other_controlled_nontoken_death_v1(c) != "None" {
+            canon.push_str(
+                "other_controlled_nontoken_death_v1=MayRevealCreatureToHandRandomBottom|",
+            );
+        }
         if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Doubling Season" {
             canon.push_str(
                 "token_counter_replacement_v48=DoubleEffectTokensAndControlledPermanentCounters|",
@@ -10875,6 +10992,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Elk" => "Subtype::Elk",
         "Demon" => "Subtype::Demon",
         "Bear" => "Subtype::Bear",
+        "Phoenix" => "Subtype::Phoenix",
         "Scout" => "Subtype::Scout",
         "Bat" => "Subtype::Bat",
         "Mercenary" => "Subtype::Mercenary",
@@ -10882,6 +11000,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Wolf" => "Subtype::Wolf",
         "Kraken" => "Subtype::Kraken",
         "Djinn" => "Subtype::Djinn",
+        "Drake" => "Subtype::Drake",
         "Mouse" => "Subtype::Mouse",
         "Werewolf" => "Subtype::Werewolf",
         "Rabbit" => "Subtype::Rabbit",

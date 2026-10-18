@@ -457,3 +457,209 @@ fn actual_witness_on_source_and_recipient_does_not_remove_resolved_rule() {
         }
     }
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn genuine_paid_sower_and_frenzied_restrictions_partition_restore_and_refuse_forgeries_both_seats()
+{
+    use crate::akroma_family_public_v40::FamilyFactsV40;
+    use crate::engine::{self, Action, Decision, UntilEndOfTurnEffect};
+    use crate::event::CommittedEvent;
+    use crate::rl_session::{ElendaSessionV52, FastActorSessionV1};
+    use crate::state::Target;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        // Existing real attack/target/payment fixture. Printed permanents and
+        // its initial floating red are support; no paid Goblin cast is claimed.
+        let (mut state, _, recipient) = crate::frenzied_public_v1::tests::actual_payment(actor);
+        engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+        for _ in 0..16 {
+            let decision = engine::advance_until_decision(&mut state);
+            if state.engine.pending_effect.is_none()
+                && state.stack.is_empty()
+                && matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+            {
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert_eq!(
+            crate::effect::frenzied_goblin_resolution_v1::active(&state)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        let sower = put(&mut state, actor, "Sower of Chaos", Zone::Battlefield);
+        // Existing genuine printing as support; its activation is paid with
+        // actual native land abilities, independently of the earlier Goblin.
+        let mountain = state.players[actor.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|id| {
+                crate::card_def::CARD_DEFS[usize::from(state.objects.get(*id).card_def)].name
+                    == "Mountain"
+            })
+            .unwrap();
+        let forests = [
+            put(&mut state, actor, "Forest", Zone::Battlefield),
+            put(&mut state, actor, "Forest", Zone::Battlefield),
+        ];
+        for land in [mountain, forests[0], forests[1]] {
+            engine::step(&mut state, Action::ActivateManaAbility(land)).unwrap();
+            assert!(state.objects.get(land).tapped);
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+        }
+        engine::step(&mut state, Action::ActivateAbility(sower, 0)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
+        // Target selection precedes native activation finalization and payment.
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(state.engine.pending_activation.is_none());
+        let [paid] = state.stack.as_slice() else {
+            panic!("one genuinely paid Sower activation must be on the stack")
+        };
+        assert_eq!(paid.source, sower);
+        assert_eq!(paid.controller, actor);
+        assert_eq!(paid.kind, crate::state::StackItemKind::ActivatedAbility);
+        assert_eq!(paid.targets.as_slice(), &[Target::Object(recipient)]);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        for _ in 0..16 {
+            let decision = engine::advance_until_decision(&mut state);
+            if state.stack.is_empty() && state.engine.pending_effect.is_none() {
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        let complete = crate::sower_restriction_capture_v1::complete_family(&state).unwrap();
+        assert_eq!((complete.sower.len(), complete.frenzied.len()), (1, 1));
+        assert_eq!(complete.sower[0].recipient.arena_id, recipient.0);
+        assert_eq!(complete.frenzied[0].recipient.arena_id, recipient.0);
+        let sower_timestamp = complete.sower[0].timestamp;
+        let frenzied_timestamp = complete.frenzied[0].timestamp;
+        let sower_stack = complete.sower[0].item.v4.stack_item_id;
+        assert_ne!(sower_timestamp, frenzied_timestamp);
+        assert!(crate::sower_of_chaos_v1::cant_block(&state, recipient));
+        let original = serde_json::to_vec(&state).unwrap();
+        assert!(crate::sower_restriction_capture_v1::active(&state).is_err());
+        assert!(crate::frenzied_public_v1::validate_projection_authority(&state).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), original);
+        let restored: GameState = serde_json::from_slice(&original).unwrap();
+        let mut prior = None;
+        for native in [state.clone(), restored] {
+            let mut session = ElendaSessionV52::from_session(
+                FastActorSessionV1::from_elenda_v52_fixture_state(native),
+            )
+            .unwrap();
+            let decision = session.decision_v52().unwrap();
+            let public = decision.observation();
+            let sower_rows = public
+                .common
+                .families
+                .iter()
+                .find_map(|f| {
+                    if let FamilyFactsV40::Sower(v) = f {
+                        Some(&v.restrictions)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let frenzied_rows = public
+                .common
+                .families
+                .iter()
+                .find_map(|f| {
+                    if let FamilyFactsV40::Frenzied(v) = f {
+                        Some(&v.restrictions)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            assert_eq!((sower_rows.len(), frenzied_rows.len()), (1, 1));
+            assert_eq!(sower_rows[0].timestamp, sower_timestamp);
+            assert_eq!(frenzied_rows[0].timestamp, frenzied_timestamp);
+            assert!(sower_rows[0].effective && frenzied_rows[0].effective);
+            let before = serde_json::to_vec(session.fixture_state_v52()).unwrap();
+            let counts = session.fixture_counts_v52();
+            let saved = session.snapshot_v52();
+            session.restore_v52(&saved).unwrap();
+            let replayed = session.decision_v52().unwrap();
+            assert_eq!(replayed.observation(), public);
+            assert_eq!(replayed.actions(), decision.actions());
+            assert_eq!(
+                serde_json::to_vec(session.fixture_state_v52()).unwrap(),
+                before
+            );
+            assert_eq!(session.fixture_counts_v52(), counts);
+            if let Some(previous) = &prior {
+                assert_eq!(public, previous);
+            }
+            prior = Some(public.clone());
+        }
+        for case in 0..6 {
+            let mut corrupt = state.clone();
+            match case {
+                0 => corrupt.engine.until_end_of_turn.retain(|effect| !matches!(effect,
+                    UntilEndOfTurnEffect::ResolvedObjectCantBlock { timestamp, .. } if *timestamp == sower_timestamp)),
+                1 => {
+                    let marker = corrupt.engine.until_end_of_turn.iter().find(|effect| matches!(effect,
+                        UntilEndOfTurnEffect::ResolvedObjectCantBlock { timestamp, .. } if *timestamp == frenzied_timestamp)).unwrap().clone();
+                    corrupt.engine.until_end_of_turn.push(marker);
+                }
+                2 => corrupt.engine.until_end_of_turn.push(UntilEndOfTurnEffect::ResolvedObjectCantBlock {
+                    object_id: recipient,
+                    object_zone_change_count: corrupt.objects.get(recipient).zone_change_count,
+                    timestamp: corrupt.engine.next_effect_timestamp,
+                    duration: engine::EffectDuration::EndOfTurn,
+                }),
+                3 => corrupt.engine.event_history.retain(|event| !matches!(event,
+                    CommittedEvent::Targeted { targeting_stack_item, .. } if *targeting_stack_item == sower_stack)),
+                4 => {
+                    let receipt = corrupt.engine.event_history.iter().find(|event| matches!(event,
+                        CommittedEvent::SowerRestrictionInstalledV1 { .. })).unwrap().clone();
+                    corrupt.engine.event_history.push(receipt);
+                }
+                _ => {
+                    // Both independent original targets remain genuine. Rewrite
+                    // only Sower's journal timestamp to alias the Goblin owner.
+                    corrupt.engine.until_end_of_turn.retain(|effect| !matches!(effect,
+                        UntilEndOfTurnEffect::ResolvedObjectCantBlock { timestamp, .. } if *timestamp == sower_timestamp));
+                    for event in &mut corrupt.engine.event_history {
+                        match event {
+                            CommittedEvent::SowerRestrictionResolutionV1 { timestamp, .. } => *timestamp = frenzied_timestamp,
+                            CommittedEvent::SowerRestrictionInstalledV1 { capture } => capture.timestamp = frenzied_timestamp,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let before = serde_json::to_vec(&corrupt).unwrap();
+            assert!(
+                crate::sower_restriction_capture_v1::complete_family(&corrupt).is_err(),
+                "forged case {case}"
+            );
+            assert_eq!(serde_json::to_vec(&corrupt).unwrap(), before);
+        }
+    }
+}

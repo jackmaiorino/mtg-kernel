@@ -398,3 +398,33 @@ prior execution. The real future paid Bolt/An Offer response fixture verifies
 four Treasures for the original countered-spell controller from one complete
 two-request input/roster, no Bolt damage, both source graveyards and three
 identical serialized executions.
+
+## Native189 copied-permanent source repair
+
+The actual d72 Native189 paid-copy cases 04 and 06 still halted at the
+post-Advance assertion, with copied sources 5 and 6. The copy publication and
+pre-Advance stack checks passed; no pre-pop or atomic-effect refusal label was
+emitted. Source tracing found the independent conflict in Arahbo trigger
+collection: `capture_at` calls `validate_historical_ability_source_contract`,
+which rejected every retained `spell_copy_origin`, including a permanent spell
+copy that had correctly become a token at entry.
+
+The historical validator now requires that converted token's unique existing
+Garruk entry snapshot and actual earlier Stack-to-battlefield occurrence. It
+binds source, original blueprint, owner, complete immutable ancestry, first
+battlefield incarnation and entry controller; duplicate or reordered entry
+evidence and a surviving Spell row refuse. Ordinary physical and ordinary
+effect-created token sources retain their prior checks. No ancestry is cleared,
+field/event/schema is added, or predecessor consumer guard is relaxed. The
+captured ability controller keeps its existing printed-family custody, including
+later legal control changes and departure LKI.
+
+Both original paid-copy test bodies and the original Self-Reflection case are
+unchanged. Their shared paid-copy helper retains every original assertion and
+adds read-only negatives for unentered/ceased Stack copies, token flags, ancestry,
+entry owner/controller/generation and missing/duplicate/changed entry evidence.
+Explicit native control and departure/cease primitives test historical source
+validation; they are not claimed as paid control/removal spells. All additional
+validation reads existing history without caching a state or proof. Its runtime
+cost and the repaired Rust fixtures remain unmeasured and unrun locally. Pinned
+formatting and static/diff checks establish no runtime or Full qualification.

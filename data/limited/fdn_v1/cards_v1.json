@@ -7442,15 +7442,21 @@
       "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
-      "colors": ["B"],
-      "types": ["Instant"],
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
       "subtypes": [],
       "supertypes": [],
       "power": null,
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": ["FDN_reference_fake_your_own_death_partial.dck"],
+      "decks": [
+        "FDN_reference_fake_your_own_death_partial.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -7488,6 +7494,269 @@
         "original_source_counter_lki"
       ],
       "java_file": "Mage.Sets/src/mage/cards/r/RavenousAmulet.java",
+      "is_token": false
+    },
+    {
+      "name": "Elenda, Saint of Dusk",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}{B}",
+      "mana_value": 4,
+      "colors": [
+        "W",
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Knight"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_elenda_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "lifelink",
+        "hexproof_from_instants",
+        "current_controller_starting_life_threshold_self_bonuses",
+        "conditional_menace"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElendaSaintOfDusk.java",
+      "is_token": false
+    },
+    {
+      "name": "Flamewake Phoenix",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phoenix"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_flamewake_phoenix_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "haste",
+        "must_attack_each_combat",
+        "graveyard_controller_beginning_combat",
+        "intervening_ferocious",
+        "optional_red_payment",
+        "return_exact_graveyard_incarnation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FlamewakePhoenix.java",
+      "is_token": false
+    },
+    {
+      "name": "Spinner of Souls",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spider",
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_spinner_of_souls_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "reach",
+        "controlled_other_nontoken_creature_dies",
+        "optional_public_reveal_until_creature",
+        "random_bottom_rest"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SpinnerOfSouls.java",
+      "is_token": false,
+      "other_controlled_nontoken_death_v1": "may_reveal_creature_to_hand_random_bottom",
+      "intrinsic_keywords_v1": ["reach"]
+    },
+    {
+      "name": "Painful Quandary",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_painful_quandary_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "opponent_cast_trigger",
+        "optional_opponent_discard_payment",
+        "unpaid_life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PainfulQuandary.java",
+      "is_token": false
+    },
+    {
+      "name": "Drake Hatcher",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_drake_hatcher_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "vigilance",
+        "prowess",
+        "combat_damage_incubation_counters",
+        "remove_source_counters_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DrakeHatcher.java",
+      "is_token": false
+    },
+    {
+      "name": "Drake Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Drake"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/DrakeToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Bloodthirsty Conqueror",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Knight"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_bloodthirsty_conqueror_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "deathtouch",
+        "opponent_positive_life_loss_batch_gain"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BloodthirstyConqueror.java",
+      "is_token": false
+    },
+    {
+      "name": "Doubling Season",
+      "engine_capability": "full",
+      "mana_cost": "{4}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_doubling_season_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "double_effect_tokens",
+        "double_controlled_permanent_effect_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DoublingSeason.java",
       "is_token": false
     }
   ]

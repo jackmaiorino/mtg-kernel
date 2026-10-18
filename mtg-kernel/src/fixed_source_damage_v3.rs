@@ -512,6 +512,13 @@ pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) 
         Target::StackItem(_) => false,
         Target::Object(id) => {
             !crate::source_power_activation_v1::protected(state, facts, id)
+                && !crate::source_type_hexproof_v1::protects_from_source(
+                    state,
+                    id,
+                    facts.source.controller,
+                    facts.source,
+                )
+                .unwrap_or(true)
                 && !crate::standard_legends_v1::hexproof_from_historical_color(
                     state,
                     id,
