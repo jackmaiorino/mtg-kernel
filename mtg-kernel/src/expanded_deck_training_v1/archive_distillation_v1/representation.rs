@@ -17,9 +17,12 @@
 //!   true inputs.
 //!
 //! A rules checkpoint holds the effective card table (so every loader and
-//! scorer reads it unchanged) and pins a sidecar with the pathway's weight,
-//! moments and the network's own card rows; its loader rebuilds the rows
-//! and requires the effective table bit for bit.
+//! scorer reads it unchanged) and carries, in its provenance, the pathway's
+//! weight, moments and the network's own card rows; its loader rebuilds the
+//! rows and requires the effective table bit for bit. Ordinary training
+//! continued from a rules checkpoint optimizes the folded table as an
+//! ordinary embedding: the policy is the same, but it is not a resumed rules
+//! pathway (W and its moments are not carried into ordinary training).
 
 use super::*;
 use crate::native_flat_tensorizer_v2::{
@@ -27,6 +30,7 @@ use crate::native_flat_tensorizer_v2::{
     NATIVE_FLAT_STATE_FEATURE_DIM_V2,
 };
 use crate::native_policy_train_step_v1::{RulesPathwayStateBitsV1, RulesPathwayV1};
+use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use crate::native_policy_value_net_v1::CARD_EMBEDDING_DIM_V1;
 use crate::rules_vector_v1::vectorize::dense_vector;
 use sha2::Sha512;
@@ -222,22 +226,25 @@ pub(super) fn fresh_state_codes_v1(
     Ok(copy)
 }
 
-/// A rules checkpoint's sidecar.
+/// A rules checkpoint's pathway record, carried in its provenance.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ArchiveDistillationRulesPathwayV1 {
-    pub(crate) schema: String,
-    pub(crate) arm: ArchiveDistillationRepresentationArmV1,
-    pub(crate) rules_table_sha256: String,
-    pub(crate) rows_sha256: String,
-    pub(crate) cards: u64,
-    pub(crate) width: u64,
+pub struct ArchiveDistillationRulesPathwayV1 {
+    pub schema: String,
+    pub arm: ArchiveDistillationRepresentationArmV1,
+    pub rules_table_sha256: String,
+    pub rows_sha256: String,
+    pub cards: u64,
+    pub width: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) permutation_salt: Option<u64>,
-    pub(crate) steps: u64,
+    pub permutation_salt: Option<u64>,
+    pub steps: u64,
     /// The network's own card rows, tokens 1 to `cards`, as binary32 bits.
-    pub(crate) base_card_rows: Vec<u32>,
-    pub(crate) state: RulesPathwayStateBitsV1,
+    pub base_card_rows: Vec<u32>,
+    /// W, row-major `[16][width]`, and its Adam moments, as binary32 bits.
+    pub weight: Vec<u32>,
+    pub first_moments: Vec<u32>,
+    pub second_moments: Vec<u32>,
 }
 
 pub(super) fn sidecar_v1(
@@ -248,6 +255,7 @@ pub(super) fn sidecar_v1(
     pathway: &RulesPathwayV1,
 ) -> ArchiveDistillationRulesPathwayV1 {
     let table = &base[0].values;
+    let state = pathway.state_bits_v1();
     ArchiveDistillationRulesPathwayV1 {
         schema: RULES_PATHWAY_SCHEMA_V1.into(),
         arm,
@@ -260,8 +268,42 @@ pub(super) fn sidecar_v1(
         base_card_rows: bits(
             &table[CARD_EMBEDDING_DIM_V1..(rows.cards + 1) * CARD_EMBEDDING_DIM_V1],
         ),
-        state: pathway.state_bits_v1(),
+        weight: state.weight,
+        first_moments: state.first_moments,
+        second_moments: state.second_moments,
     }
+}
+
+/// Per card token 1 to `cards`: the pathway's added embedding ‖W x_c‖ and
+/// the network's own row's move from the parent ‖e_c − e_c(parent)‖,
+/// summarized over the cards (mean, median, max).
+pub(super) fn displacement_v1(
+    pathway: &RulesPathwayV1,
+    base: &[NativeNamedParameterV1],
+    parent: &[NativeNamedParameterV1],
+) -> Value {
+    let norm = |v: &[f32]| v.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>().sqrt();
+    let (table, parent_table) = (&base[0].values, &parent[0].values);
+    let mut added = Vec::new();
+    let mut moved = Vec::new();
+    for token in 1..=pathway.cards_v1() {
+        let range = token * CARD_EMBEDDING_DIM_V1..(token + 1) * CARD_EMBEDDING_DIM_V1;
+        added.push(norm(&pathway.delta_v1(token)));
+        let diff: Vec<f32> = table[range.clone()]
+            .iter()
+            .zip(&parent_table[range])
+            .map(|(a, b)| a - b)
+            .collect();
+        moved.push(norm(&diff));
+    }
+    let summary = |v: &[f64]| {
+        let mut s = v.to_vec();
+        s.sort_by(f64::total_cmp);
+        json!({"mean":s.iter().sum::<f64>() / s.len() as f64,"median":s[s.len() / 2],
+            "max":s[s.len() - 1]})
+    };
+    json!({"cards":added.len(),"pathway_added_norm":summary(&added),
+        "own_row_moved_norm":summary(&moved)})
 }
 
 /// A rules checkpoint's loader check: the sidecar matches the cell, its
@@ -269,11 +311,11 @@ pub(super) fn sidecar_v1(
 /// the pathway give the checkpoint's card table bit for bit.
 pub(super) fn validate_rules_checkpoint_v1(
     representation: &ArchiveDistillationRepresentationV1,
-    sidecar_pin: &PinnedFileV1,
+    sidecar: &ArchiveDistillationRulesPathwayV1,
     steps: u64,
     card_table_bits: &[u32],
 ) -> Result<(), String> {
-    let sidecar: ArchiveDistillationRulesPathwayV1 = read_pinned(sidecar_pin)?;
+    validate_representation_v1(representation)?;
     let rows = rules_rows_v1(representation)?;
     let size = CARD_EMBEDDING_DIM_V1 * rows.width;
     ensure(
@@ -286,14 +328,18 @@ pub(super) fn validate_rules_checkpoint_v1(
             && sidecar.permutation_salt == rows.salt
             && sidecar.steps == steps
             && sidecar.base_card_rows.len() == rows.cards * CARD_EMBEDDING_DIM_V1
-            && sidecar.state.weight.len() == size
-            && sidecar.state.first_moments.len() == size
-            && sidecar.state.second_moments.len() == size,
+            && sidecar.weight.len() == size
+            && sidecar.first_moments.len() == size
+            && sidecar.second_moments.len() == size,
         "a rules checkpoint's sidecar differs from its cell",
     )?;
     let mut pathway = RulesPathwayV1::new_v1(rows.rows, rows.cards, rows.width).map_err(err)?;
     pathway
-        .restore_v1(&sidecar.state)
+        .restore_v1(&RulesPathwayStateBitsV1 {
+            weight: sidecar.weight.clone(),
+            first_moments: sidecar.first_moments.clone(),
+            second_moments: sidecar.second_moments.clone(),
+        })
         .map_err(|e| format!("rules sidecar state: {e:?}"))?;
     ensure(
         card_table_bits.len() > (rows.cards + 1) * CARD_EMBEDDING_DIM_V1,

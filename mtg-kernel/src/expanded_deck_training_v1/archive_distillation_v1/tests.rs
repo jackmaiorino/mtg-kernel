@@ -315,6 +315,61 @@ fn scorer_only_checkpoint_records_scope_and_refuses_frozen_parameter_changes() {
 }
 
 #[test]
+fn rules_checkpoints_must_carry_their_valid_pathway_record() {
+    use ArchiveDistillationRepresentationArmV1::{FreshStateCodes, WrongRules};
+    let root = temp_root("rules-record");
+    let (_, model, parent, file) = parent_fixture(&root);
+    let base = restore_parameters(&parent.parameters, &model.parameter_snapshot_v1()).unwrap();
+    let table_sha = crate::rules_vector_v1::build_table().output_sha256();
+    let wrong = ArchiveDistillationRepresentationV1 {
+        arm: WrongRules,
+        rules_table_sha256: Some(table_sha.clone()),
+    };
+    let rows = rules_rows_v1(&wrong).unwrap();
+    let mut pathway = RulesPathwayV1::new_v1(rows.rows.clone(), rows.cards, rows.width).unwrap();
+    let mut state = pathway.state_bits_v1();
+    for (i, w) in state.weight.iter_mut().enumerate() {
+        *w = (((i % 13) as f32 - 6.0) * 1e-3).to_bits();
+    }
+    pathway.restore_v1(&state).unwrap();
+    let effective = pathway.effective_parameters_v1(&base).unwrap();
+    let mut record = provenance(&parent, &file);
+    record.cell = Some(ArchiveDistillationCellV1 {
+        cell: "A2".into(),
+        anchor_coefficient_bits: ANCHOR_COEFFICIENT.to_bits(),
+        min_edge_backups: None,
+        count_control: None,
+        checkpoint_steps: Vec::new(),
+        keep_sets: None,
+        representation: Some(wrong.clone()),
+    });
+    record.rules_pathway = Some(sidecar_v1(wrong.arm, &rows, record.steps, &base, &pathway));
+    validate_phase1_checkpoint_v1(&checkpoint_v1(&parent, &effective, record.clone()).unwrap())
+        .unwrap();
+    // No record; a fresh-code cell naming a table; a table that is not the
+    // rows plus the pathway; a scorer-only scope: each is refused.
+    let mut missing = record.clone();
+    missing.rules_pathway = None;
+    let mut fresh_named = missing.clone();
+    fresh_named.cell.as_mut().unwrap().representation = Some(ArchiveDistillationRepresentationV1 {
+        arm: FreshStateCodes,
+        rules_table_sha256: Some(table_sha),
+    });
+    let mut scorer_only = record.clone();
+    scorer_only.update_scope = ArchiveDistillationUpdateScopeV1::ScorerOnly;
+    for (name, record, parameters) in [
+        ("missing", missing, &effective),
+        ("fresh named", fresh_named, &effective),
+        ("unfolded", record.clone(), &base),
+        ("scorer only", scorer_only, &effective),
+    ] {
+        let saved = checkpoint_v1(&parent, parameters, record).unwrap();
+        assert!(validate_phase1_checkpoint_v1(&saved).is_err(), "{name}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn archive_distillation_commands_keep_their_wire_shape() {
     let source = json!({"play_import":{"path":"import.json","sha256":"a".repeat(64)},
         "feature_transfer":{"expected_feature_contract_digest":"b",
@@ -2264,7 +2319,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
     record_provenance.steps = 7;
     let output = world.root.join("written");
     fs::create_dir_all(&output).unwrap();
-    let (checkpoint_pin, source_pin, state_sha256) = write_checkpoint_v1(
+    let (checkpoint_pin, source_pin, state_sha256, _) = write_checkpoint_v1(
         &output,
         &world.parent,
         &parent_checkpoint,

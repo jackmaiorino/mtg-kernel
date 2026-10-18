@@ -94,6 +94,23 @@ fn input_config_v1(
     }
 }
 
+/// Logits and value of phase 1's CPU training forward (the tape its reverse
+/// pass reads) at `parameters`.
+pub(crate) fn training_forward_v1(
+    model: &NativePolicyValueNetV1,
+    generation: FreshLineageGenerationV1,
+    parameters: &[NativeNamedParameterV1],
+    encoded: NativeEncodedDecisionViewV1<'_>,
+) -> Result<(Vec<f32>, f32), NativePolicyTrainErrorV1> {
+    let tape = forward_with_tape(
+        parameters,
+        input_config_v1(model, generation),
+        encoded,
+        TrainingMathV1::PlatformLibm,
+    )?;
+    Ok((tape.logits_v1().to_vec(), tape.value_v1()))
+}
+
 /// Each row's own forward tape at the start-of-step parameters, its logit
 /// gradient `(c / D) * dKL/dz` rounded once to binary32, and the reverse pass
 /// into a separate gradient buffer, in row order.

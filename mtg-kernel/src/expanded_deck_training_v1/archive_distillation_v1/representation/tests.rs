@@ -8,16 +8,6 @@ fn rules(arm: ArchiveDistillationRepresentationArmV1) -> ArchiveDistillationRepr
     }
 }
 
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "rc1-representation-{name}-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
 #[test]
 fn the_cell_names_a_table_exactly_for_the_rules_arms() {
     use ArchiveDistillationRepresentationArmV1::*;
@@ -157,25 +147,26 @@ fn a_rules_checkpoint_table_must_be_its_rows_plus_the_pathway() {
     pathway.restore_v1(&state).unwrap();
     let effective = pathway.effective_parameters_v1(&base).unwrap();
     let table = bits(&effective[0].values);
-    let dir = scratch("sidecar");
-    let pin = publish_json(
-        &dir,
-        "rules-pathway-step-8.json",
-        &sidecar_v1(representation.arm, &rows, 8, &base, &pathway),
-    )
-    .unwrap();
-    validate_rules_checkpoint_v1(&representation, &pin, 8, &table).unwrap();
-    // Another step, another arm, or one changed bit is refused.
-    assert!(validate_rules_checkpoint_v1(&representation, &pin, 16, &table).is_err());
+    let sidecar = sidecar_v1(representation.arm, &rows, 8, &base, &pathway);
+    validate_rules_checkpoint_v1(&representation, &sidecar, 8, &table).unwrap();
+    // Another step, another arm, one changed bit, or a changed weight is refused.
+    assert!(validate_rules_checkpoint_v1(&representation, &sidecar, 16, &table).is_err());
     assert!(validate_rules_checkpoint_v1(
         &rules(ArchiveDistillationRepresentationArmV1::Rules),
-        &pin,
+        &sidecar,
         8,
         &table
     )
     .is_err());
     let mut tampered = table.clone();
     tampered[CARD_EMBEDDING_DIM_V1 + 3] ^= 1;
-    assert!(validate_rules_checkpoint_v1(&representation, &pin, 8, &tampered).is_err());
-    let _ = fs::remove_dir_all(&dir);
+    assert!(validate_rules_checkpoint_v1(&representation, &sidecar, 8, &tampered).is_err());
+    let mut moved = sidecar.clone();
+    moved.weight[0] ^= 1;
+    assert!(validate_rules_checkpoint_v1(&representation, &moved, 8, &table).is_err());
+    // The displacement summary reads every card.
+    let d = displacement_v1(&pathway, &base, &base);
+    assert_eq!(d["cards"], rows.cards);
+    assert_eq!(d["own_row_moved_norm"]["max"], 0.0);
+    assert!(d["pathway_added_norm"]["max"].as_f64().unwrap() > 0.0);
 }

@@ -58,6 +58,7 @@ use crate::native_policy_train_step_v1::{
     one_hot_target_v1, ArchiveDistillationUpdateScopeV1, ExternalAuxiliaryInputV1,
     ExternalAuxiliaryRowV1, RulesPathwayV1,
 };
+use crate::native_policy_train_step_v1::training_forward_v1;
 use crate::regret_census_v1::stage4a::{decision_replay_key, spy_menu_flags_v1};
 use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 use std::collections::{BTreeMap, HashMap};
@@ -65,9 +66,10 @@ use std::collections::{BTreeMap, HashMap};
 mod representation;
 pub use representation::{
     ArchiveDistillationRepresentationArmV1, ArchiveDistillationRepresentationV1,
+    ArchiveDistillationRulesPathwayV1,
 };
 use representation::{
-    fresh_state_codes_v1, require_covered_v1, rules_rows_v1, sidecar_v1,
+    displacement_v1, fresh_state_codes_v1, require_covered_v1, rules_rows_v1, sidecar_v1,
     validate_representation_v1, validate_rules_checkpoint_v1,
 };
 
@@ -680,10 +682,10 @@ pub struct ArchiveDistillationProvenanceV1 {
         skip_serializing_if = "ArchiveDistillationUpdateScopeV1::is_full_network_v1"
     )]
     pub update_scope: ArchiveDistillationUpdateScopeV1,
-    /// A rules arm's sidecar: the pathway's weight and moments and the
+    /// A rules arm's pathway record: its weight and moments and the
     /// network's own card rows at `steps`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rules_pathway: Option<PinnedFileV1>,
+    pub rules_pathway: Option<ArchiveDistillationRulesPathwayV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -781,6 +783,9 @@ pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Res
         .cell
         .as_ref()
         .and_then(|cell| cell.representation.as_ref());
+    if let Some(representation) = representation {
+        validate_representation_v1(representation)?;
+    }
     let pathway_arm = representation.is_some_and(|r| r.arm.has_pathway());
     ensure(
         pathway_arm == provenance.rules_pathway.is_some()
@@ -1755,7 +1760,7 @@ fn write_checkpoint_v1(
     parent_checkpoint: &ExpandedCheckpointV1,
     parameters: &[NativeNamedParameterV1],
     provenance: ArchiveDistillationProvenanceV1,
-) -> Result<(PinnedFileV1, PinnedFileV1, String), String> {
+) -> Result<(PinnedFileV1, PinnedFileV1, String, NativePolicyValueNetV1), String> {
     let steps = provenance.steps;
     let checkpoint = checkpoint_v1(parent_checkpoint, parameters, provenance)?;
     let checkpoint_pin = publish_json(
@@ -1779,7 +1784,12 @@ fn write_checkpoint_v1(
         &format!("source-step-{steps}.json"),
         &source,
     )?;
-    Ok((checkpoint_pin, source_pin, checkpoint.state_sha256))
+    Ok((
+        checkpoint_pin,
+        source_pin,
+        checkpoint.state_sha256,
+        loaded.model_v1().clone(),
+    ))
 }
 
 /// `ArchiveDistillationPhase1`.
@@ -1846,13 +1856,13 @@ pub(super) fn phase1_v1(
         &inputs.state_sha256,
         &mut ids,
     )?;
-    let held_out_rows = load_anchor_split_v1(
+    let held_out = load_anchor_split_v1(
         &anchor.held_out,
         &inputs.policy,
         &inputs.state_sha256,
         &mut ids,
-    )?
-    .len();
+    )?;
+    let held_out_rows = held_out.len();
     let parent_model = inputs.state.model_v1();
     let verified = verify_parent_outputs_v1(
         parent_model,
@@ -1930,7 +1940,8 @@ pub(super) fn phase1_v1(
             rules.cards,
             rows.iter()
                 .map(|(_, tensor)| tensor)
-                .chain(anchor_train.iter().map(|row| &row.tensor)),
+                .chain(anchor_train.iter().map(|row| &row.tensor))
+                .chain(held_out.iter().map(|row| &row.tensor)),
         )?;
     }
     if fresh_codes {
@@ -2085,14 +2096,10 @@ pub(super) fn phase1_v1(
                     let effective = pathway
                         .effective_parameters_v1(&base)
                         .map_err(|e| format!("rules pathway: {e:?}"))?;
-                    let pin = publish_json(
-                        &output_directory,
-                        &format!("rules-pathway-step-{number}.json"),
-                        &sidecar_v1(representation.arm, rules, number, &base, pathway),
-                    )?;
-                    (effective, Some(pin))
+                    let record = sidecar_v1(representation.arm, rules, number, &base, pathway);
+                    (effective, Some(record))
                 }
-                _ => (base, None),
+                _ => (base.clone(), None),
             };
             let provenance = ArchiveDistillationProvenanceV1 {
                 method: METHOD.into(),
@@ -2113,17 +2120,38 @@ pub(super) fn phase1_v1(
                 update_scope,
                 rules_pathway,
             };
-            let (checkpoint_pin, source_pin, state_sha256) = write_checkpoint_v1(
+            let (checkpoint_pin, source_pin, state_sha256, loaded) = write_checkpoint_v1(
                 &output_directory,
                 &parent,
                 &parent_checkpoint,
                 &parameters,
                 provenance,
             )?;
-            checkpoints.push(json!({"step":number,
+            let mut entry = json!({"step":number,
                 "epochs":number as f64 / plan.epoch_steps as f64,"checkpoint":checkpoint_pin,
                 "source":source_pin,"state_sha256":state_sha256,
-                "phase1_state_sha256":phase1_state}));
+                "phase1_state_sha256":phase1_state});
+            if let Some(pathway) = &pathway {
+                // The training forward at the effective parameters and the
+                // reloaded checkpoint's model forward (the probe's) agree
+                // bit for bit on every bank row.
+                for (_, tensor) in &rows {
+                    let view = view_v1(tensor, generation);
+                    let (logits, value) =
+                        training_forward_v1(parent_model, generation, &parameters, view)
+                            .map_err(|e| format!("training forward: {e:?}"))?;
+                    let (loaded_logits, loaded_value) = forward_v1(&loaded, tensor, generation)?;
+                    ensure(
+                        bits(&logits) == bits(&loaded_logits)
+                            && value.to_bits() == loaded_value.to_bits(),
+                        "a rules checkpoint's model forward differs from the training forward",
+                    )?;
+                }
+                entry["forward_agreement_rows"] = json!(rows.len());
+                entry["rules_displacement"] =
+                    displacement_v1(pathway, &base, &parent_model.parameter_snapshot_v1());
+            }
+            checkpoints.push(entry);
         }
     }
     let telemetry_pin = publish_json(&output_directory, "telemetry.json", &telemetry)?;

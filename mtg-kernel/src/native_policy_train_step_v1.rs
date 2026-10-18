@@ -83,6 +83,7 @@ pub use archive_distillation_v1::ArchiveDistillationUpdateScopeV1;
 pub(crate) use archive_distillation_v1::rules_pathway_v1::{
     RulesPathwayStateBitsV1, RulesPathwayV1,
 };
+pub(crate) use archive_distillation_v1::training_forward_v1;
 pub(crate) use archive_distillation_v1::{
     one_hot_target_v1, ExternalAuxiliaryInputV1, ExternalAuxiliaryRowV1,
 };
