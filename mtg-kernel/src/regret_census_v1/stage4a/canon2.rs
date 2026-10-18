@@ -582,16 +582,23 @@ pub(crate) struct Step {
 pub(crate) const KEY_MEMO_BYTES: usize = 256 << 20;
 
 /// The memo's size limit: `KEY_MEMO_BYTES` unless `S4A_KEY_MEMO_MIB` names
-/// another whole number of MiB (1 to 65536). The limit only decides which
-/// steps are stored, never a key, tree, selection or statistic.
+/// another whole number of MiB (1 to 65536, and representable in bytes). The
+/// limit only decides which steps are stored, never a key, tree, selection
+/// or statistic of a transition- or work-limited search. A CPU-second budget
+/// (the allocation experiment) is timing-dependent: like `S4A_KEY_MEMO`
+/// itself or host load, the limit can change how many simulations fit.
 fn key_memo_max_bytes() -> usize {
     static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *BYTES.get_or_init(|| match std::env::var("S4A_KEY_MEMO_MIB") {
         Err(_) => KEY_MEMO_BYTES,
-        Ok(v) => match v.parse::<usize>() {
-            Ok(mib) if (1..=65536).contains(&mib) => mib << 20,
-            _ => panic!("S4A_KEY_MEMO_MIB must be a whole number from 1 to 65536, got {v:?}"),
-        },
+        Ok(v) => v
+            .parse::<usize>()
+            .ok()
+            .filter(|mib| (1..=65536).contains(mib))
+            .and_then(|mib| mib.checked_mul(1 << 20))
+            .unwrap_or_else(|| {
+                panic!("S4A_KEY_MEMO_MIB must be 1 to 65536 MiB and fit in memory, got {v:?}")
+            }),
     })
 }
 
