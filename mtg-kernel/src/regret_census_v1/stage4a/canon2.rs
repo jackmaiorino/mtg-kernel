@@ -690,6 +690,10 @@ pub(crate) struct KeyMemo {
     /// equal raw frames prepare equally, so a raw hit names the entry the
     /// prepared lookup would find, without building or preparing the view.
     raw_index: HashMap<(u32, [u8; 32]), u32>,
+    /// Estimated bytes of `raw_index`, against its own budget (a sixteenth
+    /// of `max_bytes`), so step storage and every recorded memo counter stay
+    /// exactly as without it.
+    raw_bytes: usize,
     entries: Vec<MemoEntry>,
     nodes: u32,
     /// Estimated heap bytes of the stored steps, and their limit.
@@ -710,13 +714,13 @@ const RAW_INDEX_ENTRY_BYTES: usize = 96;
 
 impl KeyMemo {
     /// Records that raw frame `raw` at `node` resolves to entry `e`, within
-    /// the memo's size limit.
+    /// the raw index's own budget.
     fn remember_raw(&mut self, node: u32, raw: Option<[u8; 32]>, e: u32) {
         let Some(raw) = raw else { return };
-        if self.bytes + RAW_INDEX_ENTRY_BYTES <= self.max_bytes
+        if self.raw_bytes + RAW_INDEX_ENTRY_BYTES <= self.max_bytes / 16
             && self.raw_index.insert((node, raw), e).is_none()
         {
-            self.bytes += RAW_INDEX_ENTRY_BYTES;
+            self.raw_bytes += RAW_INDEX_ENTRY_BYTES;
         }
     }
 
@@ -751,10 +755,13 @@ impl KeyMemo {
 }
 
 /// SHA-256 over the raw actor-visible observation and menu as their JSON
-/// text, written straight from the engine's types. Equal text gives equal
-/// `serde_json::to_value` results (both come from the same `Serialize`
-/// calls, and the text encodes them unambiguously), so frames with equal raw
-/// digests prepare to equal views and menus.
+/// text, written straight from their types. For the fixed engine types
+/// (`ObservationV6` and `ActionSemanticV1`, and `Value` in tests), equal text
+/// gives equal `serde_json::to_value` results: both come from the same
+/// `Serialize` calls, and the text encodes them unambiguously for those
+/// types. (It would not for arbitrary types: an `f32` and an `f64` can print
+/// alike yet widen to different values; never mix types at one memo.) So
+/// frames with equal raw digests prepare to equal views and menus.
 fn raw_frame_digest<O: serde::Serialize, M: serde::Serialize>(
     obs: &O,
     menu: &[M],
