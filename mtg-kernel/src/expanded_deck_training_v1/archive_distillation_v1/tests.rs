@@ -456,7 +456,10 @@ fn archive_distillation_commands_keep_their_wire_shape() {
     let command: ExpandedTrainingCommandV1 = serde_json::from_value(logged.clone()).unwrap();
     assert!(matches!(
         command,
-        ExpandedTrainingCommandV1::ArchiveDistillationProbe { evidence_logits: true, .. }
+        ExpandedTrainingCommandV1::ArchiveDistillationProbe {
+            evidence_logits: true,
+            ..
+        }
     ));
     assert_eq!(serde_json::to_value(&command).unwrap(), logged);
     let mut partial = probe.clone();
