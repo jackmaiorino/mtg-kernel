@@ -45,33 +45,38 @@ pub(crate) type FaebloomPublicPartsV43 = (
     Vec<crate::akroma_family_public_v40::FamilyProjectionV40>,
 );
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for s in [
-        SCHEMA,
-        include_str!("faebloom_observation_v43.rs"),
-        include_str!("rl.rs"),
-        include_str!("akroma_family_public_v40.rs"),
-        include_str!("planeswalker_v1.rs"),
-        include_str!("rl_session/faebloom_v43.rs"),
-        include_str!("human_bo3_v1/faebloom_v43.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-        include_str!("rl_session/flat_action_v4.rs"),
-        include_str!("policy_surface_v5.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-    ] {
-        h.update([0]);
-        h.update(s.as_bytes());
-    }
-    for s in [
-        crate::ajani_public_v42::producer_sha256(),
-        crate::faebloom_public_v43::producer_sha256(),
-        crate::akroma_public_v1::producer_sha256_v1(),
-    ] {
-        h.update([1]);
-        h.update(s.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut h = Sha256::new();
+            for s in [
+                SCHEMA,
+                include_str!("faebloom_observation_v43.rs"),
+                include_str!("rl.rs"),
+                include_str!("akroma_family_public_v40.rs"),
+                include_str!("planeswalker_v1.rs"),
+                include_str!("rl_session/faebloom_v43.rs"),
+                include_str!("human_bo3_v1/faebloom_v43.rs"),
+                include_str!("rl_session/flat_action_v3.rs"),
+                include_str!("rl_session/flat_action_v4.rs"),
+                include_str!("policy_surface_v5.rs"),
+                include_str!("human_bo3_v1/visible.rs"),
+                include_str!("human_bo3_v1/labels.rs"),
+            ] {
+                h.update([0]);
+                h.update(s.as_bytes());
+            }
+            for s in [
+                crate::ajani_public_v42::producer_sha256(),
+                crate::faebloom_public_v43::producer_sha256(),
+                crate::akroma_public_v1::producer_sha256_v1(),
+            ] {
+                h.update([1]);
+                h.update(s.as_bytes());
+            }
+            h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+        })
+        .clone()
 }
 pub fn commitment(value: &FaebloomObservationV43) -> Result<String, RlContractError> {
     let mut v = value.clone();

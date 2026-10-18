@@ -141,26 +141,31 @@ pub struct LimitedCommonReplyV2 {
 
 /// Content identity is provenance only. Executable authority never crosses JSON.
 pub fn producer_sha256_v2() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        PROTOCOL,
-        include_str!("limited_common_session_v2.rs"),
-        include_str!("rl_session/limited_common_v1.rs"),
-        include_str!("human_bo3_v1/limited_common_v2.rs"),
-        include_str!("human_bo3_v1/limited_common_v1.rs"),
-        include_str!("rl_session/fake_v50.rs"),
-        include_str!("human_bo3_v1/fake_v50.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("london_mulligan_v1.rs"),
-        include_str!("combat_damage_v1.rs"),
-        include_str!("policy_surface_v5.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.update(crate::fake_observation_v50::producer_sha256().as_bytes());
-    format!("{:x}", hash.finalize())
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut hash = Sha256::new();
+            for source in [
+                PROTOCOL,
+                include_str!("limited_common_session_v2.rs"),
+                include_str!("rl_session/limited_common_v1.rs"),
+                include_str!("human_bo3_v1/limited_common_v2.rs"),
+                include_str!("human_bo3_v1/limited_common_v1.rs"),
+                include_str!("rl_session/fake_v50.rs"),
+                include_str!("human_bo3_v1/fake_v50.rs"),
+                include_str!("human_bo3_v1/labels.rs"),
+                include_str!("human_bo3_v1/visible.rs"),
+                include_str!("london_mulligan_v1.rs"),
+                include_str!("combat_damage_v1.rs"),
+                include_str!("policy_surface_v5.rs"),
+            ] {
+                hash.update([0]);
+                hash.update(source.as_bytes());
+            }
+            hash.update(crate::fake_observation_v50::producer_sha256().as_bytes());
+            format!("{:x}", hash.finalize())
+        })
+        .clone()
 }
 
 // None of the following authority/continuation structures have Debug or serde.

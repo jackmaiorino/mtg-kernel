@@ -142,31 +142,36 @@ pub struct LimitedElendaReplyV4 {
 
 /// Content identity is provenance only. Executable authority never crosses JSON.
 pub fn producer_sha256_v4() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        PROTOCOL,
-        include_str!("limited_elenda_session_v4.rs"),
-        include_str!("rl_session/limited_common_v1.rs"),
-        include_str!("human_bo3_v1/limited_elenda_v4.rs"),
-        include_str!("human_bo3_v1/limited_common_v1.rs"),
-        include_str!("rl_session/ravenous_v51.rs"),
-        include_str!("rl_session/elenda_v52.rs"),
-        include_str!("human_bo3_v1/elenda_v52.rs"),
-        include_str!("human_bo3_v1/ravenous_v51.rs"),
-        include_str!("human_bo3_v1/ravenous_v51/exact_state.rs"),
-        include_str!("human_bo3_v1/ravenous_v51/ravenous_facts.rs"),
-        include_str!("bin/kernel_limited_elenda_env_v4.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("london_mulligan_v1.rs"),
-        include_str!("combat_damage_v1.rs"),
-        include_str!("policy_surface_v5.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.update(crate::elenda_observation_v52::producer_sha256().as_bytes());
-    format!("{:x}", hash.finalize())
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut hash = Sha256::new();
+            for source in [
+                PROTOCOL,
+                include_str!("limited_elenda_session_v4.rs"),
+                include_str!("rl_session/limited_common_v1.rs"),
+                include_str!("human_bo3_v1/limited_elenda_v4.rs"),
+                include_str!("human_bo3_v1/limited_common_v1.rs"),
+                include_str!("rl_session/ravenous_v51.rs"),
+                include_str!("rl_session/elenda_v52.rs"),
+                include_str!("human_bo3_v1/elenda_v52.rs"),
+                include_str!("human_bo3_v1/ravenous_v51.rs"),
+                include_str!("human_bo3_v1/ravenous_v51/exact_state.rs"),
+                include_str!("human_bo3_v1/ravenous_v51/ravenous_facts.rs"),
+                include_str!("bin/kernel_limited_elenda_env_v4.rs"),
+                include_str!("human_bo3_v1/labels.rs"),
+                include_str!("human_bo3_v1/visible.rs"),
+                include_str!("london_mulligan_v1.rs"),
+                include_str!("combat_damage_v1.rs"),
+                include_str!("policy_surface_v5.rs"),
+            ] {
+                hash.update([0]);
+                hash.update(source.as_bytes());
+            }
+            hash.update(crate::elenda_observation_v52::producer_sha256().as_bytes());
+            format!("{:x}", hash.finalize())
+        })
+        .clone()
 }
 
 // None of the following authority/continuation structures have Debug or serde.

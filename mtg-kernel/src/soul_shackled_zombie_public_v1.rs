@@ -37,19 +37,24 @@ pub struct ZombiePublicObservationV1 {
     pub projection_sha256: String,
 }
 pub fn source_sha256() -> String {
-    let mut h = Sha256::new();
-    h.update(meaning::source_sha256().as_bytes());
-    for s in [
-        include_str!("soul_shackled_zombie_public_v1.rs"),
-        include_str!("rl_session/soul_shackled_zombie_v13.rs"),
-        include_str!("human_bo3_v1/soul_shackled_zombie_v13.rs"),
-        include_str!("policy_observation_v9.rs"),
-        include_str!("rl_session/human_v8.rs"),
-    ] {
-        h.update([0]);
-        h.update(s.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut h = Sha256::new();
+            h.update(meaning::source_sha256().as_bytes());
+            for s in [
+                include_str!("soul_shackled_zombie_public_v1.rs"),
+                include_str!("rl_session/soul_shackled_zombie_v13.rs"),
+                include_str!("human_bo3_v1/soul_shackled_zombie_v13.rs"),
+                include_str!("policy_observation_v9.rs"),
+                include_str!("rl_session/human_v8.rs"),
+            ] {
+                h.update([0]);
+                h.update(s.as_bytes());
+            }
+            h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+        })
+        .clone()
 }
 fn digest(r: &ZombiePublicObservationV1) -> Result<String, RlContractError> {
     Ok(Sha256::digest(serde_json::to_vec(&(

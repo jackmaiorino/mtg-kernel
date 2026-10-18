@@ -39,53 +39,58 @@ pub enum MeaningErrorV1 {
     IdentityMismatch,
 }
 pub fn source_sha256() -> String {
-    let mut hash = Sha256::new();
-    for (path, source) in [
-        (
-            "rules_meaning_heartfire_v1.rs",
-            include_str!("rules_meaning_heartfire_v1.rs"),
-        ),
-        (
-            "source_power_activation_v1.rs",
-            include_str!("source_power_activation_v1.rs"),
-        ),
-        (
-            "creature_stats_lki_v1.rs",
-            include_str!("creature_stats_lki_v1.rs"),
-        ),
-        ("effect.rs", include_str!("effect.rs")),
-        ("event.rs", include_str!("event.rs")),
-        ("engine.rs", include_str!("engine.rs")),
-        ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
-        (
-            "standard_statics_v1.rs",
-            include_str!("standard_statics_v1.rs"),
-        ),
-        (
-            "standard_legends_v1.rs",
-            include_str!("standard_legends_v1.rs"),
-        ),
-        ("build.rs", include_str!("../build.rs")),
-        ("card_def.rs", include_str!("card_def.rs")),
-        (
-            "bloodthirsty_conqueror_v49/custody.rs",
-            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        ),
-        (
-            "linked_aura_operation_v1.rs",
-            include_str!("linked_aura_operation_v1.rs"),
-        ),
-        ("event_history_v1.rs", include_str!("event_history_v1.rs")),
-    ] {
-        hash.update(path.as_bytes());
-        hash.update([0]);
-        hash.update(source.as_bytes());
-        hash.update([0]);
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut hash = Sha256::new();
+            for (path, source) in [
+                (
+                    "rules_meaning_heartfire_v1.rs",
+                    include_str!("rules_meaning_heartfire_v1.rs"),
+                ),
+                (
+                    "source_power_activation_v1.rs",
+                    include_str!("source_power_activation_v1.rs"),
+                ),
+                (
+                    "creature_stats_lki_v1.rs",
+                    include_str!("creature_stats_lki_v1.rs"),
+                ),
+                ("effect.rs", include_str!("effect.rs")),
+                ("event.rs", include_str!("event.rs")),
+                ("engine.rs", include_str!("engine.rs")),
+                ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
+                (
+                    "standard_statics_v1.rs",
+                    include_str!("standard_statics_v1.rs"),
+                ),
+                (
+                    "standard_legends_v1.rs",
+                    include_str!("standard_legends_v1.rs"),
+                ),
+                ("build.rs", include_str!("../build.rs")),
+                ("card_def.rs", include_str!("card_def.rs")),
+                (
+                    "bloodthirsty_conqueror_v49/custody.rs",
+                    include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+                ),
+                (
+                    "linked_aura_operation_v1.rs",
+                    include_str!("linked_aura_operation_v1.rs"),
+                ),
+                ("event_history_v1.rs", include_str!("event_history_v1.rs")),
+            ] {
+                hash.update(path.as_bytes());
+                hash.update([0]);
+                hash.update(source.as_bytes());
+                hash.update([0]);
+            }
+            hash.finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 pub fn root_meaning(
     card_id: u16,

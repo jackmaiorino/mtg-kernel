@@ -101,36 +101,41 @@ fn digest(bytes: &[u8]) -> String {
 /// Actual source digest, not a fabricated generated catalog identity. Include
 /// the resolver, engine recipient rules, definitions/programs and facet types.
 pub fn producer_sha256_v2() -> String {
-    let sources = [
-        ("rules_meaning_v2.rs", include_str!("rules_meaning_v2.rs")),
-        ("engine.rs", include_str!("engine.rs")),
-        ("card_def.rs", include_str!("card_def.rs")),
-        ("trigger.rs", include_str!("trigger.rs")),
-        ("effect.rs", include_str!("effect.rs")),
-        ("build.rs", include_str!("../build.rs")),
-        ("facets.rs", include_str!("rules_vector_v1/facets.rs")),
-        (
-            "bloodthirsty_conqueror_v49/custody.rs",
-            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        ),
-        (
-            "linked_aura_operation_v1.rs",
-            include_str!("linked_aura_operation_v1.rs"),
-        ),
-        ("event_history_v1.rs", include_str!("event_history_v1.rs")),
-    ];
-    let mut hash = Sha256::new();
-    hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());
-    for (path, source) in sources {
-        hash.update([0]);
-        hash.update(path.as_bytes());
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let sources = [
+                ("rules_meaning_v2.rs", include_str!("rules_meaning_v2.rs")),
+                ("engine.rs", include_str!("engine.rs")),
+                ("card_def.rs", include_str!("card_def.rs")),
+                ("trigger.rs", include_str!("trigger.rs")),
+                ("effect.rs", include_str!("effect.rs")),
+                ("build.rs", include_str!("../build.rs")),
+                ("facets.rs", include_str!("rules_vector_v1/facets.rs")),
+                (
+                    "bloodthirsty_conqueror_v49/custody.rs",
+                    include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+                ),
+                (
+                    "linked_aura_operation_v1.rs",
+                    include_str!("linked_aura_operation_v1.rs"),
+                ),
+                ("event_history_v1.rs", include_str!("event_history_v1.rs")),
+            ];
+            let mut hash = Sha256::new();
+            hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());
+            for (path, source) in sources {
+                hash.update([0]);
+                hash.update(path.as_bytes());
+                hash.update([0]);
+                hash.update(source.as_bytes());
+            }
+            hash.finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 
 pub fn live_selector_v2() -> Result<MeaningSelectorV2, MeaningErrorV2> {
