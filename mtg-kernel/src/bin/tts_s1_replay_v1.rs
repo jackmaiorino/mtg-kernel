@@ -40,6 +40,8 @@
 //!
 //! Every input is an explicit flag; no environment variable is read.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::kernel_native_search_opponent_v1::KernelNativeSearchTierV1;
 use mtg_kernel::native_checkpoint_shadow_stdio_v1::ShadowCheckpointAuthorityV1;
 use mtg_kernel::native_tts_s1_replay_v1::{

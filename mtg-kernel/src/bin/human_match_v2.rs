@@ -1,4 +1,6 @@
 //! Explicit complete-agent human interface; V1 remains a separate entry point.
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::human_match_v2::{
     prepare_recorded_human_replay_v2, serve_human_match_v2, MAX_RECORDED_REPLAY_INPUT_BYTES_V2,
 };

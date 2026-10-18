@@ -4,6 +4,8 @@
 //! syntax/lexical parser and the required non-Windows refusal without opening
 //! a path or constructing any Store authority.
 
+mtg_kernel::fast_global_allocator!();
+
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;

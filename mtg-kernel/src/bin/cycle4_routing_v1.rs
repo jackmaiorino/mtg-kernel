@@ -28,6 +28,8 @@
 //! statistic that does not follow from the panel's own root table, a CP7
 //! artifact already present, or a refused overwrite.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::durable_move_publication_v2::publish_immutable_file_by_move_v2;
 use mtg_kernel::durable_publication_v1::{
     capture_existing_publication_parent_v1, DurableFileExpectationV1,

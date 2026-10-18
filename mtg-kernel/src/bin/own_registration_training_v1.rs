@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn main() {
     // Large native model frames need the same stack on Windows as collection.

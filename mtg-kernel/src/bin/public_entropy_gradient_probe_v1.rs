@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn main() {
     match mtg_kernel::run_public_entropy_gradient_probe_v1() {

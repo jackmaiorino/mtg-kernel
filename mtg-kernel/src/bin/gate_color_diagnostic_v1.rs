@@ -1,4 +1,6 @@
 //! Separate diagnostic identity; never produces training trajectories.
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::learned_bo3_v1::gate_color_diagnostic::{run, Request};
 use std::{fs, io::Write};
 

@@ -2,6 +2,8 @@
 //! lives in `mtg_kernel::phase1_registry_transfer_v1`; this file is only I/O
 //! plumbing, mirroring `expanded_deck_training_v1.rs`'s CLI shape.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::phase1_registry_transfer_v1::{
     run_registry_transfer_cli_v1, RegistryTransferCliRequestV1,
 };
