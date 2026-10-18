@@ -34,6 +34,8 @@
 //! only 0/2/3 for the launcher-level bins, so I/O failure is folded into 3
 //! alongside content rejection rather than adding a fourth code.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::durable_move_publication_v2::{
     publish_immutable_file_by_move_v2, replace_file_by_move_v2,
 };

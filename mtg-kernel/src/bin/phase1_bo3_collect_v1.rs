@@ -1,5 +1,7 @@
 //! Explicit one-match collector. This command never updates weights or starts
 //! a training campaign. Current-executable package verification is mandatory.
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };

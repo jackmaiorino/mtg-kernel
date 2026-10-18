@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::xmage_observed_inference_v1::run_observed_inference_config_path_v1;
 use std::path::PathBuf;
 

@@ -1,4 +1,6 @@
 //! Separate executable opt-in. The frozen kernel_limited_env stays unchanged.
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::limited_elenda_session_v4::LimitedElendaJsonlServerV4;
 use mtg_kernel::limited_session_v1::MAX_LIMITED_LINE_BYTES_V1;
 use std::io::{self, BufRead, Read, Write};

@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() != 1 {

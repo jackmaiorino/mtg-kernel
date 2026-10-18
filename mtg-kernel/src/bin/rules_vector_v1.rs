@@ -1,6 +1,8 @@
 //! Writes the rules vector v1 table, manifest and audit report for the
 //! current build into an output directory (new files only).
 
+mtg_kernel::fast_global_allocator!();
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::args()
         .nth(1)
