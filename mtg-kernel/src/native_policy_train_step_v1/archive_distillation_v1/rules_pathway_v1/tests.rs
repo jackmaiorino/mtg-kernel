@@ -74,7 +74,7 @@ fn loss_and_gradient(
     config: NativePolicyValueModelConfigV1,
     input: &ExternalAuxiliaryInputV1<'_>,
 ) -> (f64, Vec<Vec<f32>>) {
-    let terms = external_auxiliary_terms_v1(input, parameters, config).unwrap();
+    let terms = external_auxiliary_terms_v1(input, parameters, None, config).unwrap();
     let mut gradients: Vec<Vec<f32>> = parameters
         .iter()
         .map(|p| vec![0.0; p.values.len()])

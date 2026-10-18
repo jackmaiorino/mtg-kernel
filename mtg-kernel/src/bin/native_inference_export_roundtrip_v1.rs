@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::native_checkpoint_export_v1::roundtrip_check_v1;
 use std::ffi::OsString;
 use std::path::PathBuf;

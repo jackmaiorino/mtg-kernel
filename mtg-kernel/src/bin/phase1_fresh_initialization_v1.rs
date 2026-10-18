@@ -1,4 +1,6 @@
 //! Inspect a pinned fresh model and exact Adam0 bootstrap. No game or update.
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::expanded_deck_training_v1::inspect_fresh_initialization_json_v1;
 use std::{io::Read, path::PathBuf};
 

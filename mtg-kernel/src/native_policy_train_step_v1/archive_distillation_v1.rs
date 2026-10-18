@@ -113,10 +113,13 @@ pub(crate) fn training_forward_v1(
 
 /// Each row's own forward tape at the start-of-step parameters, its logit
 /// gradient `(c / D) * dKL/dz` rounded once to binary32, and the reverse pass
-/// into a separate gradient buffer, in row order.
+/// into a separate gradient buffer, in row order. With `input_major` (the
+/// parameters' input-major weights) the hidden-width layers run on the
+/// vectorized kernel; the tapes, and so every result bit, are the same.
 pub(super) fn external_auxiliary_terms_v1(
     input: &ExternalAuxiliaryInputV1<'_>,
     parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
     config: NativePolicyValueModelConfigV1,
 ) -> Result<LineBAuxiliaryTermsV1, NativePolicyTrainErrorV1> {
     if input.rows.is_empty() || input.denominator < input.rows.len() {
@@ -135,8 +138,9 @@ pub(super) fn external_auxiliary_terms_v1(
     let mut divergences = Vec::with_capacity(input.rows.len());
     let mut loss = 0.0_f64;
     for row in &input.rows {
-        let tape = forward_with_tape(
+        let tape = forward_with_tape_input_major_v1(
             parameters,
+            input_major,
             config,
             row.encoded,
             TrainingMathV1::PlatformLibm,
@@ -244,13 +248,17 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             self.scorer_bias_anchor_bits,
         )?;
-        let effective = match &pathway {
-            Some(pathway) => pathway.effective_parameters_v1(&parameters)?,
-            None => parameters.clone(),
+        // A rules pathway's rows read the effective card table; without one,
+        // the parameters themselves (no copy).
+        let effective: std::borrow::Cow<'_, [NativeNamedParameterV1]> = match &pathway {
+            Some(pathway) => std::borrow::Cow::Owned(pathway.effective_parameters_v1(&parameters)?),
+            None => std::borrow::Cow::Borrowed(&parameters),
         };
+        // Made once per step, for every term's rows.
+        let input_major = InputMajorWeightsV1::of_v1(&effective);
         let built = terms
             .iter()
-            .map(|input| external_auxiliary_terms_v1(input, &effective, config))
+            .map(|input| external_auxiliary_terms_v1(input, &effective, Some(&input_major), config))
             .collect::<Result<Vec<_>, _>>()?;
         let mut gradients: Vec<Vec<f32>> = parameters
             .iter()

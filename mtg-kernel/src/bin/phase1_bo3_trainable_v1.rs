@@ -1,5 +1,7 @@
 //! Explicit BO3 capture, read-only preparation, one CPU update, or finite run.
 //! Update and finite-run durability/recovery belong to their library APIs.
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };

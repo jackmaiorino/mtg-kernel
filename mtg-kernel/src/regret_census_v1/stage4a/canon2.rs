@@ -275,17 +275,37 @@ fn matters(c: &Class, total: &HashMap<u64, usize>, menu: &[Value]) -> bool {
             return true;
         }
     }
-    let base = menu_multiset(menu);
+    // Exchanging x and y changes no menu entry that names neither: every
+    // handle `swap_handles` rewrites is one `handles` collects (`handles`
+    // also collects ids inside objects nested in `attachments`, which
+    // `swap_handles` leaves alone, so `touched` may include unchanged
+    // entries). Entries outside `touched` are the same before and after, so
+    // the whole menu's multiset changes exactly when `touched`'s does.
+    let x = c.members[0];
+    let named: Vec<(&Value, Vec<u64>)> = menu
+        .iter()
+        .map(|m| {
+            let mut hs = Vec::new();
+            handles(m, &mut hs);
+            (m, hs)
+        })
+        .collect();
     c.members[1..].iter().any(|&y| {
-        let swapped: Vec<Value> = menu
+        let touched: Vec<&Value> = named
+            .iter()
+            .filter(|(_, hs)| hs.contains(&x) || hs.contains(&y))
+            .map(|(m, _)| *m)
+            .collect();
+        let swapped: Vec<Value> = touched
             .iter()
             .map(|m| {
-                let mut m = m.clone();
-                swap_handles(&mut m, c.members[0], y);
+                let mut m = (*m).clone();
+                swap_handles(&mut m, x, y);
                 m
             })
             .collect();
-        menu_multiset(&swapped) != base
+        let before: Vec<Value> = touched.into_iter().cloned().collect();
+        menu_multiset(&swapped) != menu_multiset(&before)
     })
 }
 
@@ -296,6 +316,67 @@ pub(crate) struct Frame {
     pub(crate) obs: Arc<Value>,
     pub(crate) menu: Arc<Vec<Value>>,
     pub(crate) taken: Value,
+    /// `qualifies` results for this view and menu, shared with the step.
+    cache: Arc<FrameCache>,
+}
+
+/// `shown`'s result: (masked entry, zone, incarnation), if shown.
+type Shown = Option<(String, Value, Value)>;
+
+/// Small results `qualifies` reads from an earlier frame, each a pure
+/// function of that frame's view and menu (which never change), shared by
+/// every clone of the step and frame: later frames of the path, and later
+/// simulations through a memoized step, reuse them. Each map keeps at most
+/// `FRAME_CACHE_ENTRIES` entries and computes anything past that afresh, and
+/// no copy of the view is kept, so it changes cost, never a result, and its
+/// memory stays small next to the frame itself.
+#[derive(Debug, Default)]
+pub(crate) struct FrameCache {
+    shown: std::sync::Mutex<HashMap<u64, Shown>>,
+    exchange: std::sync::Mutex<HashMap<(u64, u64), bool>>,
+}
+
+/// Entries per `FrameCache` map.
+const FRAME_CACHE_ENTRIES: usize = 64;
+
+impl FrameCache {
+    /// `shown(obs, id)`.
+    fn shown(&self, obs: &Value, id: u64) -> Shown {
+        if let Some(known) = self.shown.lock().expect("frame cache").get(&id) {
+            return known.clone();
+        }
+        let value = shown(obs, id);
+        let mut cache = self.shown.lock().expect("frame cache");
+        if cache.len() < FRAME_CACHE_ENTRIES {
+            cache.insert(id, value.clone());
+        }
+        value
+    }
+
+    /// Whether exchanging `x` and `y` leaves the view's unordered-list
+    /// multisets and the menu's multiset unchanged.
+    fn exchange_symmetric(&self, obs: &Value, menu: &[Value], x: u64, y: u64) -> bool {
+        if let Some(&known) = self.exchange.lock().expect("frame cache").get(&(x, y)) {
+            return known;
+        }
+        let mut o = obs.clone();
+        swap_handles(&mut o, x, y);
+        let swapped: Vec<Value> = menu
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                swap_handles(&mut m, x, y);
+                m
+            })
+            .collect();
+        let symmetric =
+            as_multisets(&o) == as_multisets(obs) && menu_multiset(&swapped) == menu_multiset(menu);
+        let mut cache = self.exchange.lock().expect("frame cache");
+        if cache.len() < FRAME_CACHE_ENTRIES {
+            cache.insert((x, y), symmetric);
+        }
+        symmetric
+    }
 }
 
 /// (masked entry, zone, incarnation) of the entry a handle names, if shown in
@@ -357,7 +438,7 @@ fn qualifies(c: &Class, now: &Value, prefix: &[Frame]) -> Result<(), Fallback> {
     for f in prefix {
         let mut masks = Vec::new();
         for (id, cur) in c.members.iter().zip(&current) {
-            let (m, z, n) = shown(&f.obs, *id).ok_or(Fallback::MemberAbsent)?;
+            let (m, z, n) = f.cache.shown(&f.obs, *id).ok_or(Fallback::MemberAbsent)?;
             if (z, n) != *cur {
                 return Err(Fallback::ContinuityBroken);
             }
@@ -371,21 +452,8 @@ fn qualifies(c: &Class, now: &Value, prefix: &[Frame]) -> Result<(), Fallback> {
         if hs.iter().any(|h| c.members.contains(h)) {
             return Err(Fallback::ActionNamedMember);
         }
-        let base_obs = as_multisets(&f.obs);
-        let base_menu = menu_multiset(&f.menu);
         for &y in &c.members[1..] {
-            let mut o = (*f.obs).clone();
-            swap_handles(&mut o, c.members[0], y);
-            let menu: Vec<Value> = f
-                .menu
-                .iter()
-                .map(|m| {
-                    let mut m = m.clone();
-                    swap_handles(&mut m, c.members[0], y);
-                    m
-                })
-                .collect();
-            if as_multisets(&o) != base_obs || menu_multiset(&menu) != base_menu {
+            if !f.cache.exchange_symmetric(&f.obs, &f.menu, c.members[0], y) {
                 return Err(Fallback::PrefixAsymmetric);
             }
         }
@@ -574,12 +642,35 @@ pub(crate) struct Step {
     orbits: Option<Vec<usize>>,
     /// The `KeyMemo` entry this step came from or was stored as, if any.
     memo_entry: Option<u32>,
+    /// Shared with the `Frame` this step becomes (`FrameCache`).
+    cache: Arc<FrameCache>,
 }
 
 /// Estimated heap bytes one `KeyMemo` may hold. Late-game views take up to
 /// about a megabyte per stored frame, so the memo stops storing new frames
 /// (and keeps serving the ones it has, the hot top of the tree) at this size.
 pub(crate) const KEY_MEMO_BYTES: usize = 256 << 20;
+
+/// The memo's size limit: `KEY_MEMO_BYTES` unless `S4A_KEY_MEMO_MIB` names
+/// another whole number of MiB (1 to 65536, and representable in bytes). The
+/// limit only decides which steps are stored, never a key, tree, selection
+/// or statistic of a transition- or work-limited search. A CPU-second budget
+/// (the allocation experiment) is timing-dependent: like `S4A_KEY_MEMO`
+/// itself or host load, the limit can change how many simulations fit.
+fn key_memo_max_bytes() -> usize {
+    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| match std::env::var("S4A_KEY_MEMO_MIB") {
+        Err(_) => KEY_MEMO_BYTES,
+        Ok(v) => v
+            .parse::<usize>()
+            .ok()
+            .filter(|mib| (1..=65536).contains(mib))
+            .and_then(|mib| mib.checked_mul(1 << 20))
+            .unwrap_or_else(|| {
+                panic!("S4A_KEY_MEMO_MIB must be 1 to 65536 MiB and fit in memory, got {v:?}")
+            }),
+    })
+}
 
 /// Exact per-search memo of key steps (`S4A_KEY_MEMO=1`).
 ///
@@ -595,6 +686,14 @@ pub(crate) const KEY_MEMO_BYTES: usize = 256 << 20;
 #[derive(Default)]
 pub(crate) struct KeyMemo {
     index: HashMap<(u32, [u8; 32]), u32>,
+    /// First-level index by the raw frame's digest (`raw_frame_digest`):
+    /// equal raw frames prepare equally, so a raw hit names the entry the
+    /// prepared lookup would find, without building or preparing the view.
+    raw_index: HashMap<(u32, [u8; 32]), u32>,
+    /// Estimated bytes of `raw_index`, against its own budget (a sixteenth
+    /// of `max_bytes`), so step storage and every recorded memo counter stay
+    /// exactly as without it.
+    raw_bytes: usize,
     entries: Vec<MemoEntry>,
     nodes: u32,
     /// Estimated heap bytes of the stored steps, and their limit.
@@ -610,9 +709,23 @@ struct MemoEntry {
     children: HashMap<u32, u32>,
 }
 
+/// Estimated bytes of one `raw_index` entry.
+const RAW_INDEX_ENTRY_BYTES: usize = 96;
+
 impl KeyMemo {
+    /// Records that raw frame `raw` at `node` resolves to entry `e`, within
+    /// the raw index's own budget.
+    fn remember_raw(&mut self, node: u32, raw: Option<[u8; 32]>, e: u32) {
+        let Some(raw) = raw else { return };
+        if self.raw_bytes + RAW_INDEX_ENTRY_BYTES <= self.max_bytes / 16
+            && self.raw_index.insert((node, raw), e).is_none()
+        {
+            self.raw_bytes += RAW_INDEX_ENTRY_BYTES;
+        }
+    }
+
     pub(crate) fn new() -> Self {
-        Self::with_max_bytes(KEY_MEMO_BYTES)
+        Self::with_max_bytes(key_memo_max_bytes())
     }
 
     fn with_max_bytes(max_bytes: usize) -> Self {
@@ -639,6 +752,40 @@ impl KeyMemo {
         }
         id
     }
+}
+
+/// SHA-256 over the raw actor-visible observation and menu as their JSON
+/// text, written straight from their types. For the fixed engine types
+/// (`ObservationV6` and `ActionSemanticV1`, and `Value` in tests), equal text
+/// gives equal `serde_json::to_value` results: both come from the same
+/// `Serialize` calls, and the text encodes them unambiguously for those
+/// types. (It would not for arbitrary types: an `f32` and an `f64` can print
+/// alike yet widen to different values; never mix types at one memo.) So
+/// frames with equal raw digests prepare to equal views and menus.
+fn raw_frame_digest<O: serde::Serialize, M: serde::Serialize>(
+    obs: &O,
+    menu: &[M],
+) -> Result<[u8; 32], PlayErr> {
+    struct Hashing<'a>(&'a mut Sha256);
+    impl std::io::Write for Hashing<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let fault = |e: serde_json::Error| PlayErr::Fault(e.to_string());
+    let mut h = Sha256::new();
+    h.update(b"key-memo-raw-v1");
+    serde_json::to_writer(Hashing(&mut h), obs).map_err(fault)?;
+    h.update((menu.len() as u64).to_le_bytes());
+    for m in menu {
+        h.update(b"\n");
+        serde_json::to_writer(Hashing(&mut h), m).map_err(fault)?;
+    }
+    Ok(h.finalize().into())
 }
 
 /// SHA-256 over a prepared observation and its menu: a tagged,
@@ -820,11 +967,58 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         if memo.is_none() || self.memo_node.is_none() || self.interchange {
             return self.step(s, d);
         }
-        let (raw_obs, raw_menu) = raw_decision(s, d)?;
-        self.key_raw_memo(raw_obs, raw_menu, memo)
+        let (obs, sem) = s
+            .actor_visible_decision_v4(d)
+            .map_err(|e| PlayErr::Fault(format!("actor-visible decision: {e:?}")))?;
+        self.key_typed_memo(&obs, &sem, memo)
     }
 
-    /// `key_raw` through `memo` (see `step_memo`).
+    /// `key_raw_memo` on an observation and menu not yet turned into JSON
+    /// values: the raw digest is looked up first, and the values are built
+    /// and prepared only when it misses.
+    fn key_typed_memo<O: serde::Serialize, M: serde::Serialize>(
+        &mut self,
+        obs: &O,
+        sem: &[M],
+        memo: Option<&mut KeyMemo>,
+    ) -> Result<Step, PlayErr> {
+        let fault = |e: serde_json::Error| PlayErr::Fault(e.to_string());
+        let (Some(memo), Some(node), false) = (memo, self.memo_node, self.interchange) else {
+            let raw_obs = serde_json::to_value(obs).map_err(fault)?;
+            let raw_menu = sem
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<_, _>>();
+            return self.key_raw(raw_obs, raw_menu.map_err(fault)?);
+        };
+        let t0 = Instant::now();
+        let raw = raw_frame_digest(obs, sem)?;
+        if let Some(&e) = memo.raw_index.get(&(node, raw)) {
+            return Ok(self.memo_hit(memo, e, t0));
+        }
+        let raw_obs = serde_json::to_value(obs).map_err(fault)?;
+        let raw_menu = sem
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<Result<_, _>>();
+        self.key_raw_memo_at(raw_obs, raw_menu.map_err(fault)?, memo, node, Some(raw), t0)
+    }
+
+    /// A memo hit on entry `e`: replays its statistics increments and
+    /// returns its step.
+    fn memo_hit(&mut self, memo: &mut KeyMemo, e: u32, t0: Instant) -> Step {
+        memo.hits += 1;
+        let entry = &memo.entries[e as usize];
+        self.stats.borrow_mut().merge(&entry.delta);
+        let mut st = entry.step.clone();
+        st.memo_entry = Some(e);
+        self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
+        st
+    }
+
+    /// `key_raw` through `memo` (see `step_memo`), on frames already turned
+    /// into JSON values (tests).
+    #[cfg(test)]
     pub(crate) fn key_raw_memo(
         &mut self,
         raw_obs: Value,
@@ -834,17 +1028,25 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         let (Some(memo), Some(node), false) = (memo, self.memo_node, self.interchange) else {
             return self.key_raw(raw_obs, raw_menu);
         };
-        let t0 = Instant::now();
+        self.key_raw_memo_at(raw_obs, raw_menu, memo, node, None, Instant::now())
+    }
+
+    /// `key_raw_memo` at memo node `node`; `raw`, when given, is the frame's
+    /// `raw_frame_digest`, recorded for the entry this frame resolves to.
+    fn key_raw_memo_at(
+        &mut self,
+        raw_obs: Value,
+        raw_menu: Vec<Value>,
+        memo: &mut KeyMemo,
+        node: u32,
+        raw: Option<[u8; 32]>,
+        t0: Instant,
+    ) -> Result<Step, PlayErr> {
         let (obs, menu) = prepare(raw_obs, raw_menu);
         let digest = prepared_digest(&obs, &menu);
         if let Some(&e) = memo.index.get(&(node, digest)) {
-            memo.hits += 1;
-            let entry = &memo.entries[e as usize];
-            self.stats.borrow_mut().merge(&entry.delta);
-            let mut st = entry.step.clone();
-            st.memo_entry = Some(e);
-            self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
-            return Ok(st);
+            memo.remember_raw(node, raw, e);
+            return Ok(self.memo_hit(memo, e, t0));
         }
         memo.misses += 1;
         let before = self.stats.borrow().clone();
@@ -859,6 +1061,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 children: HashMap::new(),
             });
             memo.index.insert((node, digest), e);
+            memo.remember_raw(node, raw, e);
             st.memo_entry = Some(e);
         }
         Ok(st)
@@ -940,6 +1143,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 resolved: Vec::new(),
                 orbits,
                 memo_entry: None,
+                cache: Arc::default(),
             }
         } else {
             let (view, tried, mattering) = repaired_view(
@@ -965,6 +1169,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         resolved: members,
                         orbits,
                         memo_entry: None,
+                        cache: Arc::default(),
                     }
                 }
                 Err(f) => {
@@ -984,6 +1189,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         resolved: Vec::new(),
                         orbits,
                         memo_entry: None,
+                        cache: Arc::default(),
                     }
                 }
             }
@@ -1079,6 +1285,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 obs: st.obs,
                 menu: st.menu,
                 taken,
+                cache: st.cache,
             });
         }
     }
@@ -1122,6 +1329,93 @@ mod tests {
     use super::super::tree::{canon_values, live_index};
     use super::*;
     use serde_json::json;
+
+    /// `matters`' menu test as it was: the whole menu's multiset.
+    fn menu_changes_by_whole_menu(menu: &[Value], x: u64, y: u64) -> bool {
+        let swapped: Vec<Value> = menu
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                swap_handles(&mut m, x, y);
+                m
+            })
+            .collect();
+        menu_multiset(&swapped) != menu_multiset(menu)
+    }
+
+    #[test]
+    fn matters_reads_only_entries_naming_the_pair() {
+        let menus = [
+            vec![
+                json!({"cast":{"arena_id":1}}),
+                json!({"cast":{"arena_id":2}}),
+            ],
+            vec![
+                json!({"cast":{"arena_id":1},"t":"a"}),
+                json!({"cast":{"arena_id":2},"t":"b"}),
+            ],
+            vec![
+                json!({"pass":true}),
+                json!({"attack":{"arena_id":1,"attachments":[2]}}),
+            ],
+            vec![
+                json!({"target":[{"arena_id":3},{"arena_id":1}]}),
+                json!({"target":[{"arena_id":3},{"arena_id":2}]}),
+                json!({"pass":true}),
+            ],
+            vec![json!({"pass":true})],
+        ];
+        for menu in &menus {
+            for (x, y) in [(1u64, 2u64), (2, 1), (1, 3), (3, 4)] {
+                let c = Class {
+                    members: vec![x, y],
+                    foreign: false,
+                    inside: vec![1, 1],
+                };
+                // No other occurrences, so only the menu test decides.
+                let total: HashMap<u64, usize> = [(x, 1), (y, 1)].into_iter().collect();
+                assert_eq!(
+                    matters(&c, &total, menu),
+                    menu_changes_by_whole_menu(menu, x, y),
+                    "{menu:?} {x} {y}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cached_exchange_check_matches_direct_and_repeats() {
+        let obs = json!({"battlefield":[[{"arena_id":1,"name":"Elf"},{"arena_id":2,"name":"Elf"}],
+            [{"arena_id":3,"name":"Bear","attachments":[1]}]]});
+        let menu = vec![
+            json!({"attack":{"arena_id":1}}),
+            json!({"attack":{"arena_id":2}}),
+        ];
+        let cache = FrameCache::default();
+        for (x, y) in [(1u64, 2u64), (1, 3), (2, 3), (1, 2)] {
+            let mut o = obs.clone();
+            swap_handles(&mut o, x, y);
+            let swapped: Vec<Value> = menu
+                .iter()
+                .map(|m| {
+                    let mut m = m.clone();
+                    swap_handles(&mut m, x, y);
+                    m
+                })
+                .collect();
+            let direct = as_multisets(&o) == as_multisets(&obs)
+                && menu_multiset(&swapped) == menu_multiset(&menu);
+            assert_eq!(
+                cache.exchange_symmetric(&obs, &menu, x, y),
+                direct,
+                "{x} {y}"
+            );
+        }
+        for id in [1u64, 2, 3, 9] {
+            assert_eq!(cache.shown(&obs, id), shown(&obs, id));
+            assert_eq!(cache.shown(&obs, id), shown(&obs, id));
+        }
+    }
 
     /// A creature entry: handle, card, incarnation, damage, tapped, attachments.
     fn cr(id: u64, card: u64, zcc: u64, damage: u64, tapped: bool, att: Vec<u64>) -> Value {
@@ -1524,7 +1818,10 @@ mod tests {
             vec![(f2(), menu(&[11, 12]), 2), (f1(11), menu(&[]), 0)],
             vec![(f2(), menu(&[11, 12]), 1), (f1(11), menu(&[]), 0)],
         ];
-        for mode in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow] {
+        for (mode, typed) in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow]
+            .into_iter()
+            .flat_map(|m| [(m, false), (m, true)])
+        {
             let run = |memo: Option<&mut KeyMemo>| {
                 let mut memo = memo;
                 let mut stats = KeyStats::default();
@@ -1535,9 +1832,12 @@ mod tests {
                         k.start_memo();
                     }
                     for (o, m, live) in path {
-                        let st = k
-                            .key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
-                            .unwrap();
+                        let st = if typed {
+                            k.key_typed_memo(o, m, memo.as_deref_mut()).unwrap()
+                        } else {
+                            k.key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
+                                .unwrap()
+                        };
                         let (key, pk, pe, cn) = k.storage(&st);
                         out.push((
                             st.legacy_key,
@@ -1560,6 +1860,8 @@ mod tests {
             let memoized = run(Some(&mut memo));
             assert_eq!(plain, memoized, "{mode:?}");
             assert_eq!((memo.hits, memo.misses), (7, 7), "{mode:?}");
+            // The typed path answers repeated raw frames from the raw index.
+            assert_eq!(memo.raw_index.is_empty(), !typed, "{mode:?}");
             assert_eq!(memo.json()["nodes"], 10, "{mode:?}");
             // A full memo stops storing frames and stays exact.
             let mut small = KeyMemo::with_max_bytes(memo.bytes / 3);

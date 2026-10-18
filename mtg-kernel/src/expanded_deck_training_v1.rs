@@ -819,11 +819,14 @@ impl ExpandedDeckListV1 {
 }
 
 /// Opt-in opponent kinds of the public-feature collector beyond ordinary V4
-/// and the D3 wrapper, in the evaluator's `ModelSource` JSON shape so a
-/// launcher can copy an evaluation source (opponent kinds interface v1).
+/// and the D3 wrapper. Pinned kinds use the evaluator's `ModelSource` JSON
+/// shape; Current is a training-only declaration (opponent kinds interface v1).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExpandedOpponentKindV1 {
+    /// Frozen update-start public policy with private actor and sampler state.
+    /// This training-only tag is not an evaluator model source.
+    Current {},
     /// A recent public-input training checkpoint.
     PublicCheckpoint {
         config: PinnedFileV1,

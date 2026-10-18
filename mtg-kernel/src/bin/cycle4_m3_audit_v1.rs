@@ -35,6 +35,8 @@
 //! governing contract names only 0/2/3 for launcher-level bins, so I/O
 //! failure folds into 3 alongside content rejection.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::durable_move_publication_v2::publish_immutable_file_by_move_v2;
 use mtg_kernel::durable_publication_v1::{
     capture_existing_publication_parent_v1, DurableFileExpectationV1,

@@ -161,6 +161,7 @@ fn default_and_explicit_full_scope_match_historical_adam_bits() {
         external_auxiliary_terms_v1(
             &input,
             &parameters,
+            None,
             reference.model.feature_transfer_config_v3(),
         )
         .unwrap(),
@@ -346,8 +347,13 @@ fn off_batch_rows_reproduce_in_batch_line_b_roots_bit_for_bit() {
     );
     let pair = [first, second];
     let off_batch = combined(
-        external_auxiliary_terms_v1(&external(&tensors, &pair, 0.7, 3), &parameters, config)
-            .unwrap(),
+        external_auxiliary_terms_v1(
+            &external(&tensors, &pair, 0.7, 3),
+            &parameters,
+            None,
+            config,
+        )
+        .unwrap(),
         &parameters,
     );
     assert_eq!(off_batch.0, reference.0);
@@ -355,6 +361,43 @@ fn off_batch_rows_reproduce_in_batch_line_b_roots_bit_for_bit() {
     assert_eq!(off_batch.2, reference.2);
     assert!(off_batch.1.auxiliary_loss > 0.0);
     assert!(off_batch.1.auxiliary_head_l2 > 0.0);
+}
+
+/// The step's input-major forward builds every term bit for bit as the
+/// ordered forward does (gradients, telemetry and gauge record), on weights
+/// unlike the fixture's: every value moved by its own small offset.
+#[test]
+fn input_major_terms_reproduce_ordered_terms_bit_for_bit() {
+    let model = model();
+    let config = model.feature_transfer_config_v3();
+    let mut parameters = model.parameter_snapshot_v1();
+    let mut seed = 0x2545_f491_u32;
+    for parameter in &mut parameters {
+        for value in &mut parameter.values {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *value += ((seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.25;
+        }
+    }
+    let input_major = InputMajorWeightsV1::of_v1(&parameters);
+    let tensors = tensors();
+    let targets = targets(&model, &tensors);
+    for input in [
+        external(&tensors, &targets, 1.0, 2),
+        external(&tensors, &targets, 0.7, 3),
+    ] {
+        let ordered = combined(
+            external_auxiliary_terms_v1(&input, &parameters, None, config).unwrap(),
+            &parameters,
+        );
+        let vectorized = combined(
+            external_auxiliary_terms_v1(&input, &parameters, Some(&input_major), config).unwrap(),
+            &parameters,
+        );
+        assert_eq!(vectorized.0, ordered.0);
+        assert_eq!(vectorized.1, ordered.1);
+        assert_eq!(vectorized.2, ordered.2);
+        assert!(ordered.1.auxiliary_loss > 0.0);
+    }
 }
 
 /// The anchor at the parent: every row's divergence and gradient are exactly
@@ -400,7 +443,7 @@ fn archive_term_gradients_match_central_differences_and_skip_the_value_head() {
     let targets = targets(&model, &tensors);
     let input = external(&tensors, &targets, 1.0, 2);
     let (gradients, result, _) = combined(
-        external_auxiliary_terms_v1(&input, &parameters, config).unwrap(),
+        external_auxiliary_terms_v1(&input, &parameters, None, config).unwrap(),
         &parameters,
     );
     let oracle = |model: &NativePolicyValueNetV1| {

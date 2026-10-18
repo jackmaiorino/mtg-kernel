@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::phase_profile::{
     RlPhaseProfileV1, RlPhaseV1, RlProfileTimerV1, RL_PHASE_PROFILE_PREFIX_V1,
 };

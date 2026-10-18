@@ -21,6 +21,29 @@
 //! - Strict single-session JSONL reset/step boundary; parallelism and batching
 //!   are orchestrated outside the Rust process.
 
+/// The global allocator binaries in this crate install with
+/// [`fast_global_allocator!`]. It changes cost, not results: no result depends
+/// on where an allocation lands. Work bounded by time rather than by a fixed
+/// amount of work (a CPU-second search budget, as in the allocation
+/// experiment) is timing-dependent, as it is under host load, so a faster
+/// allocator can fit more into it. Provenance hashes over source files change
+/// with this commit as with any other.
+pub use mimalloc::MiMalloc as FastAllocatorV1;
+
+/// Installs [`FastAllocatorV1`] as the binary's global allocator. Call it
+/// once at the top level of each binary's main file. Not installed in: the
+/// limited env servers v3, v4 and v5, whose own source is part of the
+/// `producer_sha256` they report; `viewer_capture_v1`, whose output depends on
+/// how much fits in a wall-clock limit; and examples and tests that count
+/// allocations with their own allocator.
+#[macro_export]
+macro_rules! fast_global_allocator {
+    () => {
+        #[global_allocator]
+        static GLOBAL_ALLOCATOR: $crate::FastAllocatorV1 = $crate::FastAllocatorV1;
+    };
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",

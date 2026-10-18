@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::human_match_v1::serve_human_match_v1;
 
 fn main() {

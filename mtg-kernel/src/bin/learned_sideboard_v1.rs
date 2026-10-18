@@ -1,5 +1,7 @@
 //! JSON-config entry point for frozen-play, visible-input sideboarding research.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::expanded_deck_training_v1::{
     load_expanded_inference_v1, ExpandedDeckListV1, ExpandedModelSourceV1,
 };
