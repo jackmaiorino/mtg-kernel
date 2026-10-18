@@ -17,6 +17,7 @@ fn cell(label: &str) -> ArchiveDistillationOptionsV1 {
         count_control: None,
         checkpoint_steps: None,
         keep_sets: None,
+        representation: None,
     }
 }
 
@@ -110,6 +111,7 @@ fn provenance(
         runtime_commit: "test".into(),
         cell: None,
         update_scope: ArchiveDistillationUpdateScopeV1::FullNetwork,
+        rules_pathway: None,
     }
 }
 
@@ -691,6 +693,7 @@ fn cell_options_resolve_to_one_recorded_recipe_and_refuse_anything_else() {
             count_control: None,
             checkpoint_steps: vec![8, 16, 32, 189],
             keep_sets: None,
+            representation: None,
         })
     );
     // A label alone keeps every frozen value and the epoch schedule.
@@ -1335,6 +1338,7 @@ fn a_cell_checkpoint_loads_only_at_its_recorded_step_size_on_arm_u() {
         count_control: None,
         checkpoint_steps: vec![8, 16, 32],
         keep_sets: Some(pin("keep.json", 'e')),
+        representation: None,
     });
     let saved = checkpoint_v1(&parent, &parameters, record.clone()).unwrap();
     assert_eq!(saved.learning_rate_bits, 2.5e-5_f32.to_bits());
@@ -1499,11 +1503,32 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
             &rows,
             &exact,
             &frozen_recipe(),
-            ArchiveDistillationUpdateScopeV1::FullNetwork
+            ArchiveDistillationUpdateScopeV1::FullNetwork,
+            None
         ),
         Ok(3)
     );
     assert_eq!(fresh.adam_step_v1(), 0, "the pre-flight steps a copy");
+    // RC1's zero rules pathway: exact anchors leave it and the parent unchanged.
+    let cards = rows
+        .iter()
+        .flat_map(|row| row.tensor.object_card_ids.iter().copied())
+        .max()
+        .unwrap()
+        .max(1) as usize;
+    let pathway = RulesPathwayV1::new_v1(vec![0.5; cards * 3], cards, 3).unwrap();
+    assert_eq!(
+        anchor_identity_preflight_v1(
+            &fresh,
+            generation,
+            &rows,
+            &exact,
+            &frozen_recipe(),
+            ArchiveDistillationUpdateScopeV1::FullNetwork,
+            Some(&pathway)
+        ),
+        Ok(3)
+    );
     let deployed: Vec<LineBSoftmaxV1> = rows
         .iter()
         .map(|row| softmax_target(deployed_v1(&recorded_logits(&row.logits)).unwrap()))
@@ -1524,6 +1549,7 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
             targets,
             &frozen_recipe(),
             ArchiveDistillationUpdateScopeV1::FullNetwork,
+            None,
         )
         .unwrap_err();
         assert!(error.contains("not exact"), "{name}: {error}");
@@ -1544,6 +1570,7 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
         &exact,
         &frozen_recipe(),
         ArchiveDistillationUpdateScopeV1::FullNetwork,
+        None,
     )
     .unwrap_err();
     assert!(error.contains("fresh phase-1 optimizer"), "{error}");

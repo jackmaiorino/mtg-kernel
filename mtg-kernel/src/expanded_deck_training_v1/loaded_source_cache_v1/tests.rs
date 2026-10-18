@@ -304,6 +304,7 @@ fn checkpoints_that_name_another_file_are_not_cached() {
         runtime_commit: "test".into(),
         cell: None,
         update_scope: Default::default(),
+        rules_pathway: None,
     });
     remember_v1(&resumed, &descriptor_bytes, &policy, &state, Some(&phase1));
     let before = matches();
