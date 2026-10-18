@@ -9,47 +9,57 @@
 //! the pinned bank (which the storing run proved equal to its extraction),
 //! and requires every tensor's `TensorBitsV1` SHA-256 to equal the row's
 //! recorded `tensor_sha256` before anything trains on it. A missing,
-//! unreadable or mismatched entry falls back to full extraction. The cache
-//! changes cost, never output: nothing it does is recorded in any result.
+//! unreadable or mismatched entry, or a key that cannot be built, falls back
+//! to full extraction. The cache changes cost, never output: nothing it does
+//! is recorded in any result.
 
 use super::*;
-use std::io::Write as _;
+use std::io::{BufReader, BufWriter, Read, Write};
 
 const SCHEMA: &str = "mtg-kernel/archive-bank-tensor-cache/v1";
 const MAGIC: &[u8; 8] = b"MTGABC01";
+/// Each tensor stores 13 vector lengths, so it takes at least this many bytes.
+const MIN_TENSOR_BYTES: u64 = 13 * 8;
 
 /// The entry path for this binary and these pins, or `None` when the cache
-/// is off.
+/// is off or its key cannot be built (noted on stderr).
 pub(super) fn entry_path_v1(
     parent: &ExpandedModelSourceV1,
     lineage: &str,
     games: &PinnedFileV1,
     bank: &PinnedFileV1,
-) -> Result<Option<PathBuf>, String> {
-    let Some(directory) = std::env::var_os("MTG_KERNEL_ARCHIVE_BANK_CACHE") else {
-        return Ok(None);
-    };
-    let key = json!({"schema":SCHEMA,"runtime_binary_sha256":runtime_binary_sha256()?,
-        "parent":parent,"lineage":lineage,"games":games,"bank":bank});
-    let name = sha(&serde_json::to_vec(&key).map_err(err)?);
-    Ok(Some(PathBuf::from(directory).join(format!("{name}.bin"))))
+) -> Option<PathBuf> {
+    let directory = std::env::var_os("MTG_KERNEL_ARCHIVE_BANK_CACHE")?;
+    let key = runtime_binary_sha256().and_then(|binary| {
+        let key = json!({"schema":SCHEMA,"runtime_binary_sha256":binary,
+            "parent":parent,"lineage":lineage,"games":games,"bank":bank});
+        serde_json::to_vec(&key).map_err(err)
+    });
+    match key {
+        Ok(key) => Some(PathBuf::from(directory).join(format!("{}.bin", sha(&key)))),
+        Err(e) => {
+            eprintln!("archive bank cache: off for this run, no key: {e}");
+            None
+        }
+    }
 }
 
 /// The bank's rows with their cached tensors, or `None` (and a note on
 /// stderr) when the entry is missing or does not match the bank exactly.
 pub(super) fn load_v1(path: &Path, bank: &ArchiveBankV1) -> Option<ExtractedRowsV1> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => return miss(path, &e.to_string()),
     };
-    let tensors = match decode_v1(&bytes) {
+    let tensors = match file
+        .metadata()
+        .map_err(err)
+        .and_then(|meta| decode_v1(BufReader::new(file), meta.len(), bank.rows.len()))
+    {
         Ok(tensors) => tensors,
         Err(reason) => return miss(path, &reason),
     };
-    if tensors.len() != bank.rows.len() {
-        return miss(path, "row count differs from the bank");
-    }
     let mut rows = Vec::with_capacity(tensors.len());
     for (row, tensor) in bank.rows.iter().zip(tensors) {
         match tensor_sha256_v1(&tensor) {
@@ -78,20 +88,14 @@ pub(super) fn store_v1(path: &Path, rows: &ExtractedRowsV1) {
     if path.exists() {
         return;
     }
-    let mut bytes = Vec::new();
-    encode_v1(
-        rows.iter().map(|(_, tensor)| tensor),
-        rows.len(),
-        &mut bytes,
-    );
     let partial = path.with_extension(format!("partial-{}", std::process::id()));
     let written = path
         .parent()
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| {
-            let mut file = fs::File::create_new(&partial)?;
-            file.write_all(&bytes)?;
-            file.sync_all()
+            let mut out = BufWriter::new(fs::File::create_new(&partial)?);
+            encode_v1(rows.iter().map(|(_, tensor)| tensor), rows.len(), &mut out)?;
+            out.into_inner().map_err(|e| e.into_error())?.sync_all()
         })
         .and_then(|()| match fs::hard_link(&partial, path) {
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
@@ -106,92 +110,110 @@ pub(super) fn store_v1(path: &Path, rows: &ExtractedRowsV1) {
 fn encode_v1<'a>(
     tensors: impl Iterator<Item = &'a NativeFlatDecisionTensorV2>,
     count: usize,
-    out: &mut Vec<u8>,
-) {
-    fn floats(out: &mut Vec<u8>, values: &[f32]) {
-        out.extend_from_slice(&(values.len() as u64).to_le_bytes());
-        for value in values {
-            out.extend_from_slice(&value.to_bits().to_le_bytes());
-        }
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    fn floats(out: &mut impl Write, values: &[f32]) -> std::io::Result<()> {
+        out.write_all(&(values.len() as u64).to_le_bytes())?;
+        values
+            .iter()
+            .try_for_each(|value| out.write_all(&value.to_bits().to_le_bytes()))
     }
-    fn integers(out: &mut Vec<u8>, values: &[i64]) {
-        out.extend_from_slice(&(values.len() as u64).to_le_bytes());
-        for value in values {
-            out.extend_from_slice(&value.to_le_bytes());
-        }
+    fn integers(out: &mut impl Write, values: &[i64]) -> std::io::Result<()> {
+        out.write_all(&(values.len() as u64).to_le_bytes())?;
+        values
+            .iter()
+            .try_for_each(|value| out.write_all(&value.to_le_bytes()))
     }
-    out.extend_from_slice(MAGIC);
-    out.extend_from_slice(&(count as u64).to_le_bytes());
+    out.write_all(MAGIC)?;
+    out.write_all(&(count as u64).to_le_bytes())?;
     for t in tensors {
-        floats(out, &t.state);
-        floats(out, &t.object_features);
-        integers(out, &t.object_card_ids);
-        integers(out, &t.object_groups);
-        integers(out, &t.object_node_ids);
-        floats(out, &t.edge_features);
-        integers(out, &t.edge_source_indices);
-        integers(out, &t.edge_target_indices);
-        floats(out, &t.action_features);
-        floats(out, &t.action_ref_features);
-        integers(out, &t.action_ref_card_ids);
-        integers(out, &t.action_ref_action_indices);
-        integers(out, &t.action_ref_node_indices);
+        floats(out, &t.state)?;
+        floats(out, &t.object_features)?;
+        integers(out, &t.object_card_ids)?;
+        integers(out, &t.object_groups)?;
+        integers(out, &t.object_node_ids)?;
+        floats(out, &t.edge_features)?;
+        integers(out, &t.edge_source_indices)?;
+        integers(out, &t.edge_target_indices)?;
+        floats(out, &t.action_features)?;
+        floats(out, &t.action_ref_features)?;
+        integers(out, &t.action_ref_card_ids)?;
+        integers(out, &t.action_ref_action_indices)?;
+        integers(out, &t.action_ref_node_indices)?;
     }
+    Ok(())
 }
 
-struct Reader<'a> {
-    bytes: &'a [u8],
+/// Reads an entry's bytes in order, never past the size it was given, so a
+/// declared length can be checked before anything is allocated for it.
+struct Reader<R> {
+    input: R,
+    remaining: u64,
 }
 
-impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8], String> {
-        if self.bytes.len() < n {
-            return Err("truncated entry".into());
-        }
-        let (head, rest) = self.bytes.split_at(n);
-        self.bytes = rest;
-        Ok(head)
+impl<R: Read> Reader<R> {
+    fn bytes<const N: usize>(&mut self) -> Result<[u8; N], String> {
+        let mut buffer = [0; N];
+        self.claim(N as u64, 1)?;
+        self.input.read_exact(&mut buffer).map_err(err)?;
+        Ok(buffer)
     }
     fn word(&mut self) -> Result<u64, String> {
-        Ok(u64::from_le_bytes(
-            self.take(8)?.try_into().expect("eight bytes"),
-        ))
+        self.bytes::<8>().map(u64::from_le_bytes)
     }
-    fn length(&mut self, width: usize) -> Result<usize, String> {
-        let n = usize::try_from(self.word()?).map_err(err)?;
-        if n.checked_mul(width)
-            .is_none_or(|bytes| bytes > self.bytes.len())
-        {
-            return Err("vector length exceeds the entry".into());
+    /// Takes `count * width` bytes from the remaining budget.
+    fn claim(&mut self, count: u64, width: u64) -> Result<(), String> {
+        let bytes = count
+            .checked_mul(width)
+            .filter(|&bytes| bytes <= self.remaining)
+            .ok_or("a length exceeds the entry")?;
+        self.remaining -= bytes;
+        Ok(())
+    }
+    fn vector<T, const N: usize>(&mut self, decode: fn([u8; N]) -> T) -> Result<Vec<T>, String> {
+        let count = self.word()?;
+        self.claim(count, N as u64)?;
+        let count = usize::try_from(count).map_err(err)?;
+        let mut values = Vec::new();
+        values.try_reserve_exact(count).map_err(err)?;
+        let mut buffer = [0; N];
+        for _ in 0..count {
+            self.input.read_exact(&mut buffer).map_err(err)?;
+            values.push(decode(buffer));
         }
-        Ok(n)
+        Ok(values)
     }
     fn floats(&mut self) -> Result<Vec<f32>, String> {
-        let n = self.length(4)?;
-        Ok(self
-            .take(n * 4)?
-            .chunks_exact(4)
-            .map(|c| f32::from_bits(u32::from_le_bytes(c.try_into().expect("four bytes"))))
-            .collect())
+        self.vector(|b: [u8; 4]| f32::from_bits(u32::from_le_bytes(b)))
     }
     fn integers(&mut self) -> Result<Vec<i64>, String> {
-        let n = self.length(8)?;
-        Ok(self
-            .take(n * 8)?
-            .chunks_exact(8)
-            .map(|c| i64::from_le_bytes(c.try_into().expect("eight bytes")))
-            .collect())
+        self.vector(i64::from_le_bytes)
     }
 }
 
-fn decode_v1(bytes: &[u8]) -> Result<Vec<NativeFlatDecisionTensorV2>, String> {
-    let mut reader = Reader { bytes };
-    if reader.take(MAGIC.len())? != MAGIC {
+/// Decodes exactly `expected` tensors from an entry of `size` bytes.
+fn decode_v1(
+    input: impl Read,
+    size: u64,
+    expected: usize,
+) -> Result<Vec<NativeFlatDecisionTensorV2>, String> {
+    let mut reader = Reader {
+        input,
+        remaining: size,
+    };
+    if &reader.bytes::<8>()? != MAGIC {
         return Err("not a bank cache entry".into());
     }
-    let count = usize::try_from(reader.word()?).map_err(err)?;
-    let mut tensors = Vec::with_capacity(count.min(1 << 20));
-    for _ in 0..count {
+    let count = reader.word()?;
+    if count != expected as u64 {
+        return Err("row count differs from the bank".into());
+    }
+    if count.saturating_mul(MIN_TENSOR_BYTES) > reader.remaining {
+        return Err("the entry is too short for its row count".into());
+    }
+    let mut tensors = Vec::new();
+    tensors.try_reserve_exact(expected).map_err(err)?;
+    for _ in 0..expected {
         tensors.push(NativeFlatDecisionTensorV2 {
             state: reader.floats()?,
             object_features: reader.floats()?,
@@ -208,7 +230,7 @@ fn decode_v1(bytes: &[u8]) -> Result<Vec<NativeFlatDecisionTensorV2>, String> {
             action_ref_node_indices: reader.integers()?,
         });
     }
-    if !reader.bytes.is_empty() {
+    if reader.remaining != 0 {
         return Err("trailing bytes after the last tensor".into());
     }
     Ok(tensors)
@@ -242,6 +264,16 @@ mod tests {
         }
     }
 
+    fn encoded(tensors: &[NativeFlatDecisionTensorV2]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        encode_v1(tensors.iter(), tensors.len(), &mut bytes).unwrap();
+        bytes
+    }
+
+    fn decode(bytes: &[u8], expected: usize) -> Result<Vec<NativeFlatDecisionTensorV2>, String> {
+        decode_v1(bytes, bytes.len() as u64, expected)
+    }
+
     fn same_bits(a: &NativeFlatDecisionTensorV2, b: &NativeFlatDecisionTensorV2) -> bool {
         tensor_sha256_v1(a).unwrap() == tensor_sha256_v1(b).unwrap()
     }
@@ -249,9 +281,7 @@ mod tests {
     #[test]
     fn bank_cache_round_trips_tensor_bits() {
         let tensors: Vec<_> = (0..4).map(tensor).collect();
-        let mut bytes = Vec::new();
-        encode_v1(tensors.iter(), tensors.len(), &mut bytes);
-        let decoded = decode_v1(&bytes).unwrap();
+        let decoded = decode(&encoded(&tensors), tensors.len()).unwrap();
         assert_eq!(decoded.len(), tensors.len());
         assert!(tensors.iter().zip(&decoded).all(|(a, b)| same_bits(a, b)));
     }
@@ -259,17 +289,20 @@ mod tests {
     #[test]
     fn bank_cache_rejects_damaged_entries() {
         let tensors: Vec<_> = (0..2).map(tensor).collect();
-        let mut bytes = Vec::new();
-        encode_v1(tensors.iter(), tensors.len(), &mut bytes);
-        assert!(decode_v1(&bytes[..bytes.len() - 1]).is_err());
+        let bytes = encoded(&tensors);
+        assert!(decode(&bytes, 3).is_err());
+        assert!(decode(&bytes[..bytes.len() - 1], 2).is_err());
         let mut extra = bytes.clone();
         extra.push(0);
-        assert!(decode_v1(&extra).is_err());
+        assert!(decode(&extra, 2).is_err());
         let mut magic = bytes.clone();
         magic[0] ^= 1;
-        assert!(decode_v1(&magic).is_err());
-        let mut huge = bytes;
-        huge[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
-        assert!(decode_v1(&huge).is_err());
+        assert!(decode(&magic, 2).is_err());
+        let mut huge_vector = bytes.clone();
+        huge_vector[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(decode(&huge_vector, 2).is_err());
+        let mut huge_count = bytes[..16].to_vec();
+        huge_count[8..16].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(decode(&huge_count, usize::MAX).is_err());
     }
 }

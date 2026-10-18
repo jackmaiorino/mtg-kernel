@@ -1152,7 +1152,7 @@ fn reproduce_bank_v1(
             && bank.rows_sha256 == rows_sha256_v1(&bank.rows)?,
         "archive bank identity differs",
     )?;
-    let cache = bank_cache::entry_path_v1(parent, lineage, games, bank_pin)?;
+    let cache = bank_cache::entry_path_v1(parent, lineage, games, bank_pin);
     if let Some(rows) = cache
         .as_deref()
         .and_then(|path| bank_cache::load_v1(path, &bank))
@@ -1729,8 +1729,6 @@ fn write_checkpoint_v1(
     Ok((checkpoint_pin, source_pin, checkpoint.state_sha256))
 }
 
-/// `ArchiveDistillationPhase1`.
-#[allow(clippy::too_many_arguments)]
 /// Measurement only: cumulative phase times on stderr when
 /// `MTG_KERNEL_PHASE_TIMING` is set.
 fn phase_mark_v1(label: &str, started: std::time::Instant) {
@@ -1742,6 +1740,8 @@ fn phase_mark_v1(label: &str, started: std::time::Instant) {
     }
 }
 
+/// `ArchiveDistillationPhase1`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn phase1_v1(
     parent: ExpandedModelSourceV1,
     lineage: String,
