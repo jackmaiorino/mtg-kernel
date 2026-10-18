@@ -210,14 +210,15 @@ jobs:
           - windows-2025
         # Slowest groups first: runners take matrix jobs in this order.
         group:
-          - workspace
+          - workspace-lib
+          - workspace-targets
           - standard
           - cuda
           - native-store
           - trace
           - saved-input
           - limited-store
-        # Pull requests run Windows only for the workspace suite and the
+        # Pull requests run Windows only for the workspace suites and the
         # native Store group, whose production writer is Windows-only code.
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
@@ -339,9 +340,13 @@ jobs:
           python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: rl_session::heartfire_v12:: human_bo3_v1::sower_v14:: human_bo3_v1::heartfire_v12:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: human_bo3_v1::frenzied_v15:: human_bo3_v1::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: human_bo3_v1::authority_v17:: human_bo3_v1::employment_v18:: human_bo3_v1::cerberus_v19::
           python python/tools/run_rust_integration_tests.py standard_integration --features standard-magezero-fixtures
 
+      # The library tests and all other targets compile disjoint units, so
+      # the two halves of the workspace suite run as parallel jobs.
       - name: Run Rust release tests
-        if: matrix.group == 'workspace'
-        run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
+        if: startsWith(matrix.group, 'workspace-')
+        run: python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
+        env:
+          MATRIX_GROUP: ${{ matrix.group }}
 
       - name: Check opt-in gameplay decision tracing
         if: matrix.group == 'trace'
