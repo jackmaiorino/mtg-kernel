@@ -1,10 +1,10 @@
 use super::*;
 
 fn rules(arm: ArchiveDistillationRepresentationArmV1) -> ArchiveDistillationRepresentationV1 {
-    let (_, _, _, sha) = true_rows_v1().as_ref().unwrap();
+    let (_, _, _, _, sha) = true_rows_v1().as_ref().unwrap();
     ArchiveDistillationRepresentationV1 {
         arm,
-        rules_table_sha256: Some(sha.clone()),
+        rules_rows_sha256: Some(sha.clone()),
     }
 }
 
@@ -23,7 +23,7 @@ fn the_cell_names_a_table_exactly_for_the_rules_arms() {
     ] {
         let r = ArchiveDistillationRepresentationV1 {
             arm,
-            rules_table_sha256: table,
+            rules_rows_sha256: table,
         };
         assert_eq!(validate_representation_v1(&r).is_ok(), ok, "{r:?}");
     }
@@ -46,7 +46,7 @@ fn rules_rows_are_the_normalized_table_and_refuse_another_table() {
     }
     assert!(rows.salt.is_none() && rows.mapping.is_none());
     let mut other = rules(ArchiveDistillationRepresentationArmV1::Rules);
-    other.rules_table_sha256 = Some("0".repeat(64));
+    other.rules_rows_sha256 = Some("0".repeat(64));
     assert!(rules_rows_v1(&other).is_err());
 }
 

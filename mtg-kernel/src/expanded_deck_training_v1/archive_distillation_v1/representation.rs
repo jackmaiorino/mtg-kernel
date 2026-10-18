@@ -3,8 +3,12 @@
 //! by a phase-1 cell's optional `representation`:
 //!
 //! - `rules`: the rules pathway ([`RulesPathwayV1`]) over each card's rules
-//!   vector, `rules_vector_v1`'s table (its output SHA-256 pinned by the
-//!   cell) as log(1 + count), L2-normalized, in binary32.
+//!   vector, `rules_vector_v1`'s table as log(1 + count), L2-normalized, in
+//!   binary32. The cell pins the SHA-256 of these true rows (card order,
+//!   little-endian bits), which is what the network reads. The table's own
+//!   output SHA-256 is recorded but not pinned: it covers each card's rules
+//!   record, whose hash for one card differs between builds of the same
+//!   source while every feature count, hence every row, is the same.
 //! - `wrong_rules`: the same pathway, card c reading card π(c)'s row. π is
 //!   the cyclic successor in SHA-256 order of `rc1-perm|{salt}|{card id}`,
 //!   with the first salt from 0 under which no card reads a row equal to its
@@ -53,14 +57,14 @@ impl ArchiveDistillationRepresentationArmV1 {
     }
 }
 
-/// A cell's representation arm. The rules arms name the rules table's
-/// output SHA-256; the fresh-code arm names none.
+/// A cell's representation arm. The rules arms name the SHA-256 of the true
+/// rules rows; the fresh-code arm names none.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveDistillationRepresentationV1 {
     pub arm: ArchiveDistillationRepresentationArmV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rules_table_sha256: Option<String>,
+    pub rules_rows_sha256: Option<String>,
 }
 
 pub(super) fn validate_representation_v1(
@@ -68,14 +72,14 @@ pub(super) fn validate_representation_v1(
 ) -> Result<(), String> {
     match (
         representation.arm.has_pathway(),
-        &representation.rules_table_sha256,
+        &representation.rules_rows_sha256,
     ) {
         (true, Some(sha)) => ensure(
             sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
-            "a rules table SHA-256 is 64 lowercase hex digits",
+            "a rules rows SHA-256 is 64 lowercase hex digits",
         ),
         (false, None) => Ok(()),
-        _ => Err("only the rules arms name a rules table".into()),
+        _ => Err("only the rules arms name rules rows".into()),
     }
 }
 
@@ -85,7 +89,10 @@ pub(super) struct RulesRowsV1 {
     pub(super) rows: Vec<f32>,
     pub(super) cards: usize,
     pub(super) width: usize,
+    /// The table's output SHA-256 (recorded, not pinned) and the true rows'.
     pub(super) table_sha256: String,
+    pub(super) true_rows_sha256: String,
+    /// The arm's rows (permuted for the wrong-association control).
     pub(super) rows_sha256: String,
     /// The wrong-association control's salt and π (card c reads π[c]).
     pub(super) salt: Option<u64>,
@@ -94,7 +101,8 @@ pub(super) struct RulesRowsV1 {
 
 impl RulesRowsV1 {
     pub(super) fn identity_v1(&self) -> Value {
-        json!({"rules_table_sha256":self.table_sha256,"rows_sha256":self.rows_sha256,
+        json!({"rules_table_sha256":self.table_sha256,"true_rows_sha256":self.true_rows_sha256,
+            "rows_sha256":self.rows_sha256,
             "cards":self.cards,"width":self.width,"permutation_salt":self.salt,
             "mapping":self.mapping})
     }
@@ -108,9 +116,12 @@ fn rows_sha256_v1(rows: &[f32]) -> String {
     sha(&bytes)
 }
 
-/// The rules table's dense rows, card id order, built once per process.
-fn true_rows_v1() -> &'static Result<(Vec<f32>, usize, usize, String), String> {
-    static ROWS: OnceLock<Result<(Vec<f32>, usize, usize, String), String>> = OnceLock::new();
+type TrueRowsV1 = (Vec<f32>, usize, usize, String, String);
+
+/// The rules table's dense rows in card id order, their width, the table's
+/// output SHA-256 and the rows' SHA-256, built once per process.
+fn true_rows_v1() -> &'static Result<TrueRowsV1, String> {
+    static ROWS: OnceLock<Result<TrueRowsV1, String>> = OnceLock::new();
     ROWS.get_or_init(|| {
         let table = crate::rules_vector_v1::build_table();
         let cards = table.cards.len();
@@ -125,7 +136,8 @@ fn true_rows_v1() -> &'static Result<(Vec<f32>, usize, usize, String), String> {
             let (dense, _) = dense_vector(&card.features, &table.vocabulary);
             rows.extend(dense.into_iter().map(|v| v as f32));
         }
-        Ok((rows, cards, width, table.output_sha256()))
+        let rows_sha256 = rows_sha256_v1(&rows);
+        Ok((rows, cards, width, table.output_sha256(), rows_sha256))
     })
 }
 
@@ -143,11 +155,12 @@ fn permutation_v1(salt: u64, cards: usize) -> Vec<u16> {
 pub(super) fn rules_rows_v1(
     representation: &ArchiveDistillationRepresentationV1,
 ) -> Result<RulesRowsV1, String> {
-    let (rows, cards, width, table_sha256) = true_rows_v1().as_ref().map_err(Clone::clone)?;
+    let (rows, cards, width, table_sha256, true_rows_sha256) =
+        true_rows_v1().as_ref().map_err(Clone::clone)?;
     let (rows, cards, width) = (rows.clone(), *cards, *width);
-    if representation.rules_table_sha256.as_deref() != Some(table_sha256.as_str()) {
+    if representation.rules_rows_sha256.as_deref() != Some(true_rows_sha256.as_str()) {
         return Err(format!(
-            "the rules table differs from the cell's pinned table: this build's is {table_sha256}"
+            "the rules rows differ from the cell's pinned rows: this build's are {true_rows_sha256}"
         ));
     }
     let row = |c: usize| &rows[c * width..(c + 1) * width];
@@ -175,6 +188,7 @@ pub(super) fn rules_rows_v1(
         cards,
         width,
         table_sha256: table_sha256.clone(),
+        true_rows_sha256: true_rows_sha256.clone(),
         salt,
         mapping,
     })
@@ -233,7 +247,7 @@ pub(super) fn fresh_state_codes_v1(
 pub struct ArchiveDistillationRulesPathwayV1 {
     pub schema: String,
     pub arm: ArchiveDistillationRepresentationArmV1,
-    pub rules_table_sha256: String,
+    pub true_rows_sha256: String,
     pub rows_sha256: String,
     pub cards: u64,
     pub width: u64,
@@ -260,7 +274,7 @@ pub(super) fn sidecar_v1(
     ArchiveDistillationRulesPathwayV1 {
         schema: RULES_PATHWAY_SCHEMA_V1.into(),
         arm,
-        rules_table_sha256: rows.table_sha256.clone(),
+        true_rows_sha256: rows.true_rows_sha256.clone(),
         rows_sha256: rows.rows_sha256.clone(),
         cards: rows.cards as u64,
         width: rows.width as u64,
@@ -322,7 +336,7 @@ pub(super) fn validate_rules_checkpoint_v1(
     ensure(
         sidecar.schema == RULES_PATHWAY_SCHEMA_V1
             && sidecar.arm == representation.arm
-            && sidecar.rules_table_sha256 == rows.table_sha256
+            && sidecar.true_rows_sha256 == rows.true_rows_sha256
             && sidecar.rows_sha256 == rows.rows_sha256
             && sidecar.cards == rows.cards as u64
             && sidecar.width == rows.width as u64

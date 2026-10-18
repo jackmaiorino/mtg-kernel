@@ -320,10 +320,15 @@ fn rules_checkpoints_must_carry_their_valid_pathway_record() {
     let root = temp_root("rules-record");
     let (_, model, parent, file) = parent_fixture(&root);
     let base = restore_parameters(&parent.parameters, &model.parameter_snapshot_v1()).unwrap();
-    let table_sha = crate::rules_vector_v1::build_table().output_sha256();
+    let probe = ArchiveDistillationRepresentationV1 {
+        arm: WrongRules,
+        rules_rows_sha256: Some("0".repeat(64)),
+    };
+    let error = rules_rows_v1(&probe).unwrap_err();
+    let table_sha = error.rsplit(' ').next().unwrap().to_string();
     let wrong = ArchiveDistillationRepresentationV1 {
         arm: WrongRules,
-        rules_table_sha256: Some(table_sha.clone()),
+        rules_rows_sha256: Some(table_sha.clone()),
     };
     let rows = rules_rows_v1(&wrong).unwrap();
     let mut pathway = RulesPathwayV1::new_v1(rows.rows.clone(), rows.cards, rows.width).unwrap();
@@ -353,7 +358,7 @@ fn rules_checkpoints_must_carry_their_valid_pathway_record() {
     let mut fresh_named = missing.clone();
     fresh_named.cell.as_mut().unwrap().representation = Some(ArchiveDistillationRepresentationV1 {
         arm: FreshStateCodes,
-        rules_table_sha256: Some(table_sha),
+        rules_rows_sha256: Some(table_sha),
     });
     let mut scorer_only = record.clone();
     scorer_only.update_scope = ArchiveDistillationUpdateScopeV1::ScorerOnly;
