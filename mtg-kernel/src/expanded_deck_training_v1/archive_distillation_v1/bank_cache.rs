@@ -220,8 +220,16 @@ impl<R: Read> Reader<R> {
     pub(super) fn u32s(&mut self) -> Result<Vec<u32>, String> {
         self.vector(u32::from_le_bytes)
     }
-    pub(super) fn string(&mut self) -> Result<String, String> {
-        String::from_utf8(self.vector(|b: [u8; 1]| b[0])?).map_err(err)
+    /// A length-prefixed UTF-8 string of at most `limit` bytes.
+    pub(super) fn string(&mut self, limit: u64) -> Result<String, String> {
+        let length = self.word()?;
+        if length > limit {
+            return Err("a string exceeds its limit".into());
+        }
+        self.claim(length, 1)?;
+        let mut bytes = vec![0; usize::try_from(length).map_err(err)?];
+        self.input.read_exact(&mut bytes).map_err(err)?;
+        String::from_utf8(bytes).map_err(err)
     }
     /// One tensor written by `write_tensor_v1`.
     pub(super) fn tensor(&mut self) -> Result<NativeFlatDecisionTensorV2, String> {

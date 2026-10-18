@@ -1243,8 +1243,8 @@ fn load_anchor_split_v1(
     )?;
     let cache = anchor_cache::rows_path_v1(pins, policy, parent_state_sha256);
     if let Some(cached) = cache
-        .as_deref()
-        .and_then(|path| anchor_cache::load_rows_v1(path, pins.len()))
+        .as_ref()
+        .and_then(|entry| anchor_cache::load_rows_v1(entry, pins.len()))
     {
         // The same file checks and episode-id bookkeeping, in pin order.
         let mut rows = Vec::new();
@@ -1263,8 +1263,8 @@ fn load_anchor_split_v1(
         let trajectory = read_parent_trajectory_v1(pin, policy, parent_state_sha256, ids)?;
         trajectories.push((trajectory.episode.id.clone(), anchor_rows_v1(&trajectory)));
     }
-    if let Some(path) = &cache {
-        anchor_cache::store_rows_v1(path, &trajectories);
+    if let Some(entry) = &cache {
+        anchor_cache::store_rows_v1(entry, &trajectories);
     }
     Ok(trajectories
         .into_iter()
@@ -1909,8 +1909,8 @@ pub(super) fn phase1_v1(
         update_scope,
     );
     let cached_preflight = preflight_cache
-        .as_deref()
-        .and_then(|path| anchor_cache::load_preflight_v1(path, anchor_train.len()));
+        .as_ref()
+        .and_then(|entry| anchor_cache::load_preflight_v1(entry, anchor_train.len()));
     let preflight_rows = match cached_preflight {
         Some(rows) => rows,
         None => {
@@ -1922,8 +1922,8 @@ pub(super) fn phase1_v1(
                 &recipe_values,
                 update_scope,
             )?;
-            if let Some(path) = &preflight_cache {
-                anchor_cache::store_preflight_v1(path, rows);
+            if let Some(entry) = &preflight_cache {
+                anchor_cache::store_preflight_v1(entry, rows);
             }
             rows
         }
