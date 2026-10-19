@@ -70,11 +70,7 @@ impl TrainingMathV1 {
 
     pub(crate) fn tanh_in_place_v1(self, values: &mut [f32]) {
         match self {
-            Self::PlatformLibm => {
-                for value in values {
-                    *value = value.tanh();
-                }
-            }
+            Self::PlatformLibm => crate::vector_tanh_v1::libm_tanh_in_place_v1(values),
             Self::PortableV1 => deterministic_math_v1::tanh_f32_in_place_v1(values),
         }
     }

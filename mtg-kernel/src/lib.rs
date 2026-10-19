@@ -290,6 +290,7 @@ pub(crate) mod deterministic_math_v1;
 // The run-wide choice between the platform libm and portable, bit-defined
 // tanh/exp/ln for training (collection forwards, replay checks, learner).
 pub(crate) mod training_math_v1;
+pub(crate) mod vector_tanh_v1;
 // Auditable CPU inference reference for Python kernel-policy-value-net-8;
 // deliberately not a production or performance backend.
 #[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]
