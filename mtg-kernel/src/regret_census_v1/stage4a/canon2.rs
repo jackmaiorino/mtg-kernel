@@ -34,7 +34,7 @@
 use super::play::PlayErr;
 use super::seeds::{Purpose, RootSeeds};
 use super::tree::{
-    canon_prepared, child_key, masked, own_handle, permutation, prepare, raw_decision, Canon, Key,
+    child_key, masked, own_handle, permutation, prepare, raw_decision, Canon, CanonPlan, Key,
     TieRanks, UNORDERED_LISTS,
 };
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
@@ -575,11 +575,12 @@ fn permutations(items: &[u64]) -> Vec<Vec<u64>> {
 pub(crate) type ViewOutcome = Result<(Canon, Vec<u64>), Fallback>;
 
 /// The repaired canonical view of one frame, or why it falls back; with the
-/// number of canonicalizations used.
+/// number of canonicalizations used. `plan` is `CanonPlan::new(obs, menu)`.
 pub(crate) fn repaired_view(
     obs: &Value,
     menu: &[Value],
     legacy: &Canon,
+    plan: &CanonPlan<'_>,
     prefix: &[Frame],
     resolved: &HashSet<u64>,
     bound: usize,
@@ -640,7 +641,7 @@ pub(crate) fn repaired_view(
                 ranks.insert(h, r as u32);
             }
         }
-        let (c, _) = canon_prepared(obs.clone(), menu.to_vec(), Some(&ranks))?;
+        let c = plan.canon(Some(&ranks))?;
         tried += 1;
         if best
             .as_ref()
@@ -1254,30 +1255,26 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
             self.stats.borrow_mut().merged_candidates += merged;
             ids
         });
-        let (legacy, _) = canon_prepared(obs.clone(), menu.clone(), None)?;
+        // One plan serves the legacy view and every tie order tried.
+        let plan = CanonPlan::new(&obs, &menu);
+        let legacy = plan.canon(None)?;
         let legacy_key = child_key(&self.legacy.0, &self.legacy.1, &legacy);
         let legacy = Arc::new(legacy);
-        let step = if self.mode == KeyMode::Legacy {
-            Step {
-                legacy_key,
-                repaired_key: legacy_key,
-                repaired: Arc::clone(&legacy),
-                legacy,
-                view: Arc::new(FrameView::from_values(obs, menu)),
-                resolved: Vec::new(),
-                orbits,
-                memo_entry: None,
-                cache: Arc::default(),
-            }
+        let repaired = if self.mode == KeyMode::Legacy {
+            None
         } else {
-            let (view, tried, mattering) = repaired_view(
+            Some(repaired_view(
                 &obs,
                 &menu,
                 &legacy,
+                &plan,
                 &self.frames,
                 &self.resolved,
                 TIE_WORK_BOUND,
-            )?;
+            )?)
+        };
+        drop(plan);
+        let step = if let Some((view, tried, mattering)) = repaired {
             self.stats.borrow_mut().frames_with_mattering_ties += u64::from(mattering > 0);
             self.stats.borrow_mut().canonicalizations_for_ties += tried as u64;
             match view {
@@ -1314,6 +1311,18 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         cache: Arc::default(),
                     }
                 }
+            }
+        } else {
+            Step {
+                legacy_key,
+                repaired_key: legacy_key,
+                repaired: Arc::clone(&legacy),
+                legacy,
+                view: Arc::new(FrameView::from_values(obs, menu)),
+                resolved: Vec::new(),
+                orbits,
+                memo_entry: None,
+                cache: Arc::default(),
             }
         };
         self.stats.borrow_mut().frames += 1;
@@ -1784,8 +1793,9 @@ mod tests {
             .collect();
         let exact = |r: Vec<Value>| {
             let (o, m) = prepare(view(bf4.clone(), vec![], r), menu(&[]));
-            let (l, _) = canon_prepared(o.clone(), m.clone(), None).unwrap();
-            repaired_view(&o, &m, &l, &[], &HashSet::new(), 1000)
+            let plan = CanonPlan::new(&o, &m);
+            let l = plan.canon(None).unwrap();
+            repaired_view(&o, &m, &l, &plan, &[], &HashSet::new(), 1000)
                 .unwrap()
                 .0
                 .unwrap()
