@@ -5,7 +5,9 @@
 //! parse is a pure function of its bytes, and `GameState` has no hash maps or
 //! custom clones, so a clone of an earlier successful parse of byte-identical
 //! input is the same value. Only successes are remembered; a failure always
-//! takes the full parse and returns its own error.
+//! takes the full parse and returns its own error. Like every `GameState`
+//! clone, the returned clone shares copy-on-write arena storage until it is
+//! mutated; no caller depends on arena addresses.
 
 use crate::state::GameState;
 use std::cell::RefCell;
