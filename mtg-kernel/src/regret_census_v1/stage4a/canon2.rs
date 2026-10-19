@@ -1932,9 +1932,9 @@ mod tests {
         assert_eq!(o, &obs);
         assert_eq!(m, &menu);
         assert_eq!(serde_json::to_vec(o).unwrap(), compact.text().obs);
-        for i in 0..menu.len() {
-            assert_eq!(compact.compact().menu_entry(i), menu[i]);
-            assert_eq!(live.menu_entry(i), menu[i]);
+        for (i, entry) in menu.iter().enumerate() {
+            assert_eq!(&compact.compact().menu_entry(i), entry);
+            assert_eq!(&live.menu_entry(i), entry);
         }
         // A compact copy of a compact view shares the text and parses alike.
         assert!(Arc::ptr_eq(compact.text(), compact.compact().text()));
