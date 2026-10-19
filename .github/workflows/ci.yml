@@ -80,7 +80,7 @@ jobs:
             # also relevant because they determine which tests execute.
             # Other non-embedded python, docs, and markdown are irrelevant.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -492,6 +492,7 @@ jobs:
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - limited
+          - limited-only
           - limited-v2
           - limited-v5
           - limited-v3
@@ -744,6 +745,14 @@ jobs:
             shard="${shard##*-}"
           fi
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 8 --isolated-cases --skip-ignored --nocapture current_mixed_policy_v1:: human_bo3_v1::
+
+      # Cases only the Limited build compiles never run in the workspace
+      # suite. The runner lists the default build too and runs every such case
+      # that no Limited filter above selects, so a new one cannot fall outside
+      # CI (known failures: python/tools/rust_limited_only_known_failures.json).
+      - name: Validate every other Limited-only library case
+        if: ${{ !cancelled() && matrix.group == 'limited-only' }}
+        run: python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})
