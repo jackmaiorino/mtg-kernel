@@ -48,48 +48,53 @@ pub(crate) type HunterPublicPartsV45 = (
     Vec<crate::akroma_family_public_v40::FamilyProjectionV40>,
 );
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for s in [
-        SCHEMA,
-        include_str!("hunter_observation_v45.rs"),
-        include_str!("divine_public_v44.rs"),
-        include_str!("rules_meaning_divine_v44.rs"),
-        include_str!("engine.rs"),
-        include_str!("spell_costs_v1.rs"),
-        include_str!("rl.rs"),
-        include_str!("akroma_family_public_v40.rs"),
-        include_str!("planeswalker_v1.rs"),
-        include_str!("rl_session/hunter_v45.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-        include_str!("rl_session/flat_action_v4.rs"),
-        include_str!("policy_surface_v5.rs"),
-        include_str!("policy_surface_v5/hunter_order_v45.rs"),
-        include_str!("surface_v2.rs"),
-        include_str!("human_bo3_v1/hunter_v45.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/akroma_families_v40.rs"),
-        include_str!("divine_actions_v44.rs"),
-        include_str!("rl_variable_cast_v1.rs"),
-        include_str!("policy_observation_variable_cast_v1.rs"),
-        include_str!("faebloom_observation_v43.rs"),
-        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("event_history_v1.rs"),
-    ] {
-        h.update([0]);
-        h.update(s.as_bytes());
-    }
-    for s in [
-        crate::ajani_public_v42::producer_sha256(),
-        crate::akroma_public_v1::producer_sha256_v1(),
-        crate::faebloom_public_v43::producer_sha256(),
-        crate::high_society_hunter_public_v45::producer_sha256(),
-    ] {
-        h.update([1]);
-        h.update(s.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut h = Sha256::new();
+            for s in [
+                SCHEMA,
+                include_str!("hunter_observation_v45.rs"),
+                include_str!("divine_public_v44.rs"),
+                include_str!("rules_meaning_divine_v44.rs"),
+                include_str!("engine.rs"),
+                include_str!("spell_costs_v1.rs"),
+                include_str!("rl.rs"),
+                include_str!("akroma_family_public_v40.rs"),
+                include_str!("planeswalker_v1.rs"),
+                include_str!("rl_session/hunter_v45.rs"),
+                include_str!("rl_session.rs"),
+                include_str!("rl_session/flat_action_v3.rs"),
+                include_str!("rl_session/flat_action_v4.rs"),
+                include_str!("policy_surface_v5.rs"),
+                include_str!("policy_surface_v5/hunter_order_v45.rs"),
+                include_str!("surface_v2.rs"),
+                include_str!("human_bo3_v1/hunter_v45.rs"),
+                include_str!("human_bo3_v1/visible.rs"),
+                include_str!("human_bo3_v1/akroma_families_v40.rs"),
+                include_str!("divine_actions_v44.rs"),
+                include_str!("rl_variable_cast_v1.rs"),
+                include_str!("policy_observation_variable_cast_v1.rs"),
+                include_str!("faebloom_observation_v43.rs"),
+                include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+                include_str!("linked_aura_operation_v1.rs"),
+                include_str!("event_history_v1.rs"),
+            ] {
+                h.update([0]);
+                h.update(s.as_bytes());
+            }
+            for s in [
+                crate::ajani_public_v42::producer_sha256(),
+                crate::akroma_public_v1::producer_sha256_v1(),
+                crate::faebloom_public_v43::producer_sha256(),
+                crate::high_society_hunter_public_v45::producer_sha256(),
+            ] {
+                h.update([1]);
+                h.update(s.as_bytes());
+            }
+            h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+        })
+        .clone()
 }
 pub fn commitment(value: &HunterObservationV45) -> Result<String, RlContractError> {
     let mut v = value.clone();
