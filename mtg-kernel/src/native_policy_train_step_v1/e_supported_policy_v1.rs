@@ -232,12 +232,14 @@ impl NativePolicyValueTrainStateV1 {
         let total_loss = f64::from(result.loss) + dose.auxiliary_loss;
         Ok((
             result,
-            Some(serde_json::json!({"scheduled":input.scheduled,"valid":input.rows.len(),
+            Some(
+                serde_json::json!({"scheduled":input.scheduled,"valid":input.rows.len(),
                 "coefficient":input.coefficient,"kl_before":dose.divergences_before,
                 "auxiliary_loss":dose.auxiliary_loss,"total_loss":total_loss,
                 "gradient_components":dose.gradient_components,
                 "auxiliary_head_l2":dose.auxiliary_head_l2,"ordinary_head_l2":dose.ordinary_head_l2,
-                "auxiliary_bias_residual":dose.auxiliary_bias_residual})),
+                "auxiliary_bias_residual":dose.auxiliary_bias_residual}),
+            ),
         ))
     }
 }

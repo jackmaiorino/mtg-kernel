@@ -77,7 +77,9 @@ fn is_false(value: &bool) -> bool {
 fn validate_prior(prior: &[usize]) -> Result<(), String> {
     ensure(
         !prior.is_empty()
-            && prior.iter().all(|&i| i < crate::runtime_decks::RUNTIME_DECKS.len())
+            && prior
+                .iter()
+                .all(|&i| i < crate::runtime_decks::RUNTIME_DECKS.len())
             && prior.iter().collect::<BTreeSet<_>>().len() == prior.len(),
         "invalid SQ1 public prior",
     )
@@ -410,7 +412,10 @@ pub(super) fn root_target_v1(
         ordinals.iter().all(|o| o.returns.len() == n),
         "SQ1 root census width differs from the menu",
     )?;
-    if ordinals.iter().any(|o| o.returns.iter().any(Option::is_none)) {
+    if ordinals
+        .iter()
+        .any(|o| o.returns.iter().any(Option::is_none))
+    {
         return Ok(unavailable("censored"));
     }
     let mean: Vec<f64> = (0..n)
@@ -517,7 +522,12 @@ fn bind_root_input_v1(
     // The target and the deployed masses are built from the recorded logits:
     // they must be the student's own outputs at the root, bit for bit.
     ensure(
-        scores.logits.iter().map(|z| z.to_bits()).collect::<Vec<_>>() == row.logits
+        scores
+            .logits
+            .iter()
+            .map(|z| z.to_bits())
+            .collect::<Vec<_>>()
+            == row.logits
             && scores.value.to_bits() == row.value,
         "SQ1 recorded root outputs differ from the student's forward",
     )?;
@@ -634,13 +644,12 @@ pub(super) fn teach(
                     steps
                         .iter()
                         .enumerate()
-                        .filter(move |(_, (saved, _))| {
-                            *ordinal == index && saved.step == row.step
-                        })
+                        .filter(move |(_, (saved, _))| *ordinal == index && saved.step == row.step)
                         .map(move |(s, (_, tensor))| (g, s, tensor))
                 });
-            let (group_index, substep_index, tensor) =
-                matches.next().ok_or("SQ1 root missing from learner groups")?;
+            let (group_index, substep_index, tensor) = matches
+                .next()
+                .ok_or("SQ1 root missing from learner groups")?;
             ensure(
                 matches.next().is_none(),
                 "SQ1 root ambiguously bound to learner groups",
@@ -820,7 +829,12 @@ pub(super) fn diagnostic(
         }
         let saved = &trajectory.decisions[root.decision_index];
         let logits: Vec<f32> = saved.logits.iter().map(|&b| f32::from_bits(b)).collect();
-        let target = root_target_v1(&construction, &logits, SoftQArmV1::Treatment, &cases[i].case)?;
+        let target = root_target_v1(
+            &construction,
+            &logits,
+            SoftQArmV1::Treatment,
+            &cases[i].case,
+        )?;
         let mut row = base;
         row["status"] = json!(target.status);
         row["decision_index"] = json!(root.decision_index);

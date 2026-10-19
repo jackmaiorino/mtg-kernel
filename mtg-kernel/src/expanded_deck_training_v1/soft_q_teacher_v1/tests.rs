@@ -2,8 +2,16 @@ use super::*;
 
 #[test]
 fn seeds_follow_sorted_compact_json_and_ignore_field_order() {
-    let a = soft_q_seed_v1(&[("case", json!("c")), ("role", json!("world")), ("ordinal", json!(3))]);
-    let b = soft_q_seed_v1(&[("ordinal", json!(3)), ("role", json!("world")), ("case", json!("c"))]);
+    let a = soft_q_seed_v1(&[
+        ("case", json!("c")),
+        ("role", json!("world")),
+        ("ordinal", json!(3)),
+    ]);
+    let b = soft_q_seed_v1(&[
+        ("ordinal", json!(3)),
+        ("role", json!("world")),
+        ("case", json!("c")),
+    ]);
     assert_eq!(a, b);
     assert_eq!(a >> 63, 0, "masked to 63 bits");
     let expected = {
@@ -15,12 +23,24 @@ fn seeds_follow_sorted_compact_json_and_ignore_field_order() {
     assert_eq!(a, expected);
     assert_ne!(
         a,
-        soft_q_seed_v1(&[("case", json!("c")), ("role", json!("world")), ("ordinal", json!(4))])
+        soft_q_seed_v1(&[
+            ("case", json!("c")),
+            ("role", json!("world")),
+            ("ordinal", json!(4))
+        ])
     );
     // Construction and assessment never share a stream.
     assert_ne!(
-        case_seed("c", SoftQDomainV1::Construction.world_role(), &[("ordinal", json!(0)), ("attempt", json!(0))]),
-        case_seed("c", SoftQDomainV1::Assessment.world_role(), &[("ordinal", json!(0)), ("attempt", json!(0))])
+        case_seed(
+            "c",
+            SoftQDomainV1::Construction.world_role(),
+            &[("ordinal", json!(0)), ("attempt", json!(0))]
+        ),
+        case_seed(
+            "c",
+            SoftQDomainV1::Assessment.world_role(),
+            &[("ordinal", json!(0)), ("attempt", json!(0))]
+        )
     );
 }
 
@@ -94,14 +114,18 @@ fn targets_are_all_or_nothing_and_anchor_on_the_logits() {
     let mut censored = full([1, 0, -1]);
     censored[7].returns[2] = None;
     assert_eq!(
-        root_target_v1(&censored, &logits, SoftQArmV1::Treatment, "c").unwrap().status,
+        root_target_v1(&censored, &logits, SoftQArmV1::Treatment, "c")
+            .unwrap()
+            .status,
         "censored"
     );
     let mut rejected = full([1, 0, -1]);
     rejected[3].world_attempt = None;
     rejected[3].returns.clear();
     assert_eq!(
-        root_target_v1(&rejected, &logits, SoftQArmV1::Treatment, "c").unwrap().status,
+        root_target_v1(&rejected, &logits, SoftQArmV1::Treatment, "c")
+            .unwrap()
+            .status,
         "rejected"
     );
     assert!(root_target_v1(&full([1, 0, -1])[..15], &logits, SoftQArmV1::Treatment, "c").is_err());
@@ -191,10 +215,16 @@ fn worlds_do_not_read_the_true_opponent_deck() {
             obj.v4 = crate::state::ObjectStateV4::from_card_def(forest);
         }
     });
-    assert_ne!(original.diagnostic_state_hash(), changed.diagnostic_state_hash());
+    assert_ne!(
+        original.diagnostic_state_hash(),
+        changed.diagnostic_state_hash()
+    );
     let mut compared = 0;
     for seed in 0..24_u64 {
-        match (world::sample(&original, seed, &prior), world::sample(&changed, seed, &prior)) {
+        match (
+            world::sample(&original, seed, &prior),
+            world::sample(&changed, seed, &prior),
+        ) {
             (Ok(a), Ok(b)) => {
                 assert_eq!(a.prior_deck, b.prior_deck);
                 assert_eq!(

@@ -4,10 +4,10 @@
 
 pub mod archive_distillation_v1;
 pub mod e_supported_teacher_v1;
-pub mod soft_q_teacher_v1;
 pub mod exploration_probe_v1;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub mod own_registration;
+pub mod soft_q_teacher_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
 use soft_q_teacher_v1::{SoftQDiagnosticCaseV1, SoftQTeacherOptionsV1};
 
@@ -4219,7 +4219,9 @@ fn execute_update_v1(
                 let mut scratch = WideCategoricalScratchV1::default();
                 let mass = |logits: &[f32], scratch: &mut WideCategoricalScratchV1| {
                     scratch.apportion(logits).map(|m| {
-                        m.iter().map(|&x| x as f64 / (u64::MAX as f64 + 1.0)).collect::<Vec<f64>>()
+                        m.iter()
+                            .map(|&x| x as f64 / (u64::MAX as f64 + 1.0))
+                            .collect::<Vec<f64>>()
                     })
                 };
                 let b = mass(&before, &mut scratch).map_err(err)?;
@@ -4229,10 +4231,18 @@ fn execute_update_v1(
                     .probabilities
                     .iter()
                     .enumerate()
-                    .fold(0, |best, (i, &v)| if v > row.target.probabilities[best] { i } else { best });
-                rows.push(json!({"group_index":row.group_index,"substep_index":row.substep_index,
+                    .fold(0, |best, (i, &v)| {
+                        if v > row.target.probabilities[best] {
+                            i
+                        } else {
+                            best
+                        }
+                    });
+                rows.push(
+                    json!({"group_index":row.group_index,"substep_index":row.substep_index,
                     "deployed_tv":0.5 * b.iter().zip(&a).map(|(x, y)| (x - y).abs()).sum::<f64>(),
-                    "target_top":top,"deployed_top_before":b[top],"deployed_top_after":a[top]}));
+                    "target_top":top,"deployed_top_before":b[top],"deployed_top_after":a[top]}),
+                );
             }
             Some(rows)
         }

@@ -2430,7 +2430,11 @@ mod tests {
         assert!(error.contains("resume plan"), "{error}");
     }
 
-    fn soft_q_run_config_v1(label: &str, arm: SoftQArmV1, workers: usize) -> NativeExpandedTrainingRunV1 {
+    fn soft_q_run_config_v1(
+        label: &str,
+        arm: SoftQArmV1,
+        workers: usize,
+    ) -> NativeExpandedTrainingRunV1 {
         let mut config = real_two_iteration_config_v1(
             label,
             ExpandedLossSelectionV1::GaeAdvantageValueV1 {
@@ -2462,15 +2466,22 @@ mod tests {
         let z = run_native_expanded_training_v1(&zero, Some(1)).unwrap();
         let o = run_native_expanded_training_v1(&ordinary, Some(1)).unwrap();
         let state = |r: &Value| {
-            let d = read_pin(&serde_json::from_value(iteration_receipt_v1(r, 0)["update"].clone()).unwrap())
-                .unwrap();
+            let d = read_pin(
+                &serde_json::from_value(iteration_receipt_v1(r, 0)["update"].clone()).unwrap(),
+            )
+            .unwrap();
             (d["after_state_sha256"].clone(), d["adam_step"].clone())
         };
         assert_eq!(state(&z), state(&o));
-        let d = read_pin(&serde_json::from_value(iteration_receipt_v1(&z, 0)["update"].clone()).unwrap())
-            .unwrap();
+        let d = read_pin(
+            &serde_json::from_value(iteration_receipt_v1(&z, 0)["update"].clone()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(d["soft_q"]["available"], 1, "the teacher ran");
-        assert!(d["soft_q"]["gradient_exposure"].is_null(), "no target applied");
+        assert!(
+            d["soft_q"]["gradient_exposure"].is_null(),
+            "no target applied"
+        );
     }
 
     #[test]
@@ -2489,20 +2500,35 @@ mod tests {
         let checkpoint = parse_pin(&document, "checkpoint").unwrap();
         let checkpoint = read_pin_bounded(&checkpoint, ARTIFACT_CAP).unwrap();
         assert_eq!(checkpoint["soft_q"]["continuation"]["arm"], "treatment");
-        let packet = read_pin_bounded(&parse_pin(&document["soft_q"], "packet").unwrap(), ARTIFACT_CAP).unwrap();
+        let packet = read_pin_bounded(
+            &parse_pin(&document["soft_q"], "packet").unwrap(),
+            ARTIFACT_CAP,
+        )
+        .unwrap();
         let slot = &packet["slots"][0];
         assert_eq!(slot["status"], "available");
         assert_eq!(slot["ordinals"].as_array().unwrap().len(), 16);
-        assert!(document["soft_q"]["gradient_exposure"]["auxiliary_loss"].as_f64().unwrap() >= 0.0);
+        assert!(
+            document["soft_q"]["gradient_exposure"]["auxiliary_loss"]
+                .as_f64()
+                .unwrap()
+                >= 0.0
+        );
         let movement = document["soft_q"]["movement"].as_array().unwrap();
         assert_eq!(movement.len(), 1);
         assert!(movement[0]["deployed_tv"].as_f64().unwrap() >= 0.0);
         // A complete rerun only verifies; a fresh directory replays identically,
         // and the teacher's worker count changes no record.
-        assert_eq!(run_native_expanded_training_v1(&config, None).unwrap(), result);
+        assert_eq!(
+            run_native_expanded_training_v1(&config, None).unwrap(),
+            result
+        );
         let serial = soft_q_run_config_v1("sq-run-serial", SoftQArmV1::Treatment, 1);
         let again = run_native_expanded_training_v1(&serial, None).unwrap();
-        assert_eq!(again["actual_identity"]["state_sha256"], result["actual_identity"]["state_sha256"]);
+        assert_eq!(
+            again["actual_identity"]["state_sha256"],
+            result["actual_identity"]["state_sha256"]
+        );
         let again_document = read_pin(
             &serde_json::from_value(iteration_receipt_v1(&again, 0)["update"].clone()).unwrap(),
         )
@@ -2517,15 +2543,24 @@ mod tests {
         // opponent identity of these synthetic sources.
         for iteration in 0..2 {
             let packet_of = |r: &Value| {
-                let d = read_pin(&serde_json::from_value(iteration_receipt_v1(r, iteration)["update"].clone()).unwrap())
-                    .unwrap();
-                let mut p = read_pin_bounded(&parse_pin(&d["soft_q"], "packet").unwrap(), ARTIFACT_CAP).unwrap();
+                let d = read_pin(
+                    &serde_json::from_value(iteration_receipt_v1(r, iteration)["update"].clone())
+                        .unwrap(),
+                )
+                .unwrap();
+                let mut p =
+                    read_pin_bounded(&parse_pin(&d["soft_q"], "packet").unwrap(), ARTIFACT_CAP)
+                        .unwrap();
                 for slot in p["slots"].as_array_mut().unwrap() {
                     slot.as_object_mut().unwrap().remove("opponent_identity");
                 }
                 p["slots"].clone()
             };
-            assert_eq!(packet_of(&again), packet_of(&result), "iteration {iteration}");
+            assert_eq!(
+                packet_of(&again),
+                packet_of(&result),
+                "iteration {iteration}"
+            );
         }
         assert!(again_packet["slots"].is_array());
         // The arm is bound for resume.
@@ -2541,8 +2576,11 @@ mod tests {
             &serde_json::from_value(iteration_receipt_v1(&s, 0)["update"].clone()).unwrap(),
         )
         .unwrap();
-        let s_packet = read_pin_bounded(&parse_pin(&s_document["soft_q"], "packet").unwrap(), ARTIFACT_CAP)
-            .unwrap();
+        let s_packet = read_pin_bounded(
+            &parse_pin(&s_document["soft_q"], "packet").unwrap(),
+            ARTIFACT_CAP,
+        )
+        .unwrap();
         assert_eq!(s_packet["slots"][0]["ordinals"], slot["ordinals"]);
         assert_eq!(s_packet["slots"][0]["mean_returns"], slot["mean_returns"]);
         assert!(s_packet["slots"][0]["permutation"].is_array());
@@ -2557,10 +2595,12 @@ mod tests {
                 parent: config.initial_source.clone(),
                 prior_deck_indices: (0..9).collect(),
                 teacher_workers: 2,
-                cases: vec![crate::expanded_deck_training_v1::soft_q_teacher_v1::SoftQDiagnosticCaseV1 {
-                    case: "sq1-test/r0/s0/u000000/slot0".into(),
-                    trajectory: trajectories[0].clone(),
-                }],
+                cases: vec![
+                    crate::expanded_deck_training_v1::soft_q_teacher_v1::SoftQDiagnosticCaseV1 {
+                        case: "sq1-test/r0/s0/u000000/slot0".into(),
+                        trajectory: trajectories[0].clone(),
+                    },
+                ],
                 output_directory: output,
             },
         )
