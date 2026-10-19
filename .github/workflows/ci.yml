@@ -505,14 +505,6 @@ jobs:
           - limited-model-5
           - limited-model-6
           - limited-model-7
-          - limited-model-8
-          - limited-model-9
-          - limited-model-10
-          - limited-model-11
-          - limited-model-12
-          - limited-model-13
-          - limited-model-14
-          - limited-model-15
     # Linux uses hosted runners. Windows follows the routing variable of the
     # other groups; pull requests from forks never run on self-hosted runners.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
@@ -751,7 +743,7 @@ jobs:
             shard='${{ matrix.group }}'
             shard="${shard##*-}"
           fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --isolated-cases --skip-ignored --nocapture current_mixed_policy_v1:: human_bo3_v1::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 8 --isolated-cases --skip-ignored --nocapture current_mixed_policy_v1:: human_bo3_v1::
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})
