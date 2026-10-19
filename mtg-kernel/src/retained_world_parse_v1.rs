@@ -17,8 +17,9 @@ struct Parsed {
     world: GameState,
 }
 
-/// A few retained worlds are live at once; the small cap bounds memory.
+/// A few retained worlds are live at once; the small caps bound memory.
 const CAPACITY: usize = 32;
+const BYTE_BUDGET: usize = 16 << 20;
 
 pub(crate) fn parse_world(bytes: &[u8]) -> Result<GameState, serde_json::Error> {
     thread_local! {
@@ -41,8 +42,13 @@ pub(crate) fn parse_world(bytes: &[u8]) -> Result<GameState, serde_json::Error> 
     }
     let world: GameState = serde_json::from_slice(bytes)?;
     let _ = PARSED.try_with(|parsed| {
+        if bytes.len() > BYTE_BUDGET {
+            return;
+        }
         let mut parsed = parsed.borrow_mut();
-        if parsed.len() >= CAPACITY {
+        while parsed.len() >= CAPACITY
+            || parsed.iter().map(|row| row.bytes.len()).sum::<usize>() + bytes.len() > BYTE_BUDGET
+        {
             parsed.remove(0);
         }
         parsed.push(Parsed {
