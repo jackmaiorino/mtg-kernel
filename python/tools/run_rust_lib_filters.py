@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -22,6 +23,8 @@ SHARD_ENV = "MTG_CI_RUST_LIB_SHARD"
 NOCAPTURE_ENV = "MTG_CI_RUST_LIB_NOCAPTURE"
 SKIP_IGNORED_ENV = "MTG_CI_RUST_LIB_SKIP_IGNORED"
 ISOLATED_CASES_ENV = "MTG_CI_RUST_LIB_ISOLATED_CASES"
+REMAINING_ENV = "MTG_CI_RUST_LIB_REMAINING_WORKFLOW"
+LIMITED_FEATURE = "limited-fdn-fixtures"
 # Recorded seconds per isolated case on a hosted Linux runner, used only to
 # balance shards; refresh with update_rust_case_seconds.py.
 CASE_SECONDS_PATH = Path(__file__).with_name("rust_case_seconds.json")
@@ -63,9 +66,48 @@ def valid_filters(value: object) -> list[str]:
     return value
 
 
+def workflow_limited_filters(path: Path) -> list[str]:
+    """Library filters that the workflow's Limited steps already select.
+
+    Reads every run_rust_lib_filters.py call and plain `cargo test --lib`
+    call whose features include the Limited fixtures. Libtest matches these
+    filters as substrings, as here.
+    """
+    filters = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if LIMITED_FEATURE not in line:
+            continue
+        if "run_rust_lib_filters.py" in line:
+            words = shlex.split(line.split("run_rust_lib_filters.py", 1)[1])
+            valued = {"--features", "--shard-index", "--shard-count", "--filter-timeout-seconds"}
+        elif "cargo test" in line and "--lib" in line.split():
+            words = shlex.split(line.split("--lib", 1)[1].split(" -- ", 1)[0])
+            valued = {"--features", "--test", "--bin", "-p", "--package"}
+        else:
+            continue
+        if "--remaining-workflow" in words:
+            continue  # the remaining-case call itself selects no filter
+        index = 0
+        while index < len(words):
+            word = words[index]
+            if word == "--exact":
+                raise ValueError(f"Unsupported option in a Limited filter call: {line.strip()}")
+            if word in valued:
+                index += 2
+                continue
+            if not word.startswith("-"):
+                filters.append(word)
+            index += 1
+    if not filters:
+        raise ValueError(f"No Limited library filters found in {path}")
+    return sorted(set(filters))
+
+
 def compiled_names(executable: str, test_filter: str, timeout: int, *, ignored: bool) -> list[str]:
     # Pinned libtest's pretty listing includes a final count; terse does not.
-    command = [executable, test_filter, "--list", "--format", "pretty", "--color", "never"]
+    # An empty filter lists the whole library.
+    command = [executable, *([test_filter] if test_filter else []), "--list", "--format", "pretty",
+               "--color", "never"]
     if ignored:
         command.append("--ignored")
     result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout)
@@ -237,7 +279,8 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--run":
         if len(sys.argv) != 3:
             raise ValueError("Cargo runner expects exactly one library test executable")
-        filters = valid_filters(json.loads(os.environ[FILTERS_ENV]))
+        remaining = os.environ.get(REMAINING_ENV, "")
+        filters = [] if remaining else valid_filters(json.loads(os.environ[FILTERS_ENV]))
         filter_timeout = int(os.environ.get(FILTER_TIMEOUT_ENV, "1800"))
         if filter_timeout <= 0:
             raise ValueError("Library filter timeout must be positive")
@@ -247,6 +290,8 @@ def main() -> int:
         shard = json.loads(os.environ.get(SHARD_ENV, "null"))
         if isolated_cases and shard is None:
             raise ValueError("Isolated cases require compiled-name sharding")
+        if remaining and not isolated_cases:
+            raise ValueError("Remaining cases require isolated cases")
         commands = [(test_filter, [sys.argv[2], test_filter]) for test_filter in filters]
         if shard is not None:
             if (
@@ -256,10 +301,19 @@ def main() -> int:
             ):
                 raise ValueError("Expected a valid shard index/count")
             # Several filters share one balanced partition of their union.
-            names = sorted({name for test_filter in filters for name in compiled_names(
+            # Remaining cases start from the whole library.
+            listed = filters or [""]
+            names = sorted({name for test_filter in listed for name in compiled_names(
                 sys.argv[2], test_filter, filter_timeout, ignored=False)})
-            ignored = sorted({name for test_filter in filters for name in compiled_names(
+            ignored = sorted({name for test_filter in listed for name in compiled_names(
                 sys.argv[2], test_filter, filter_timeout, ignored=True)})
+            if remaining:
+                # Every compiled case that no Limited step selects, so a new
+                # test cannot fall outside CI.
+                covered = workflow_limited_filters(Path(remaining))
+                names = [name for name in names if not any(f in name for f in covered)]
+                ignored = [name for name in ignored if name in names]
+                filters = [f"remaining after {len(covered)} workflow filters"]
             if not names or not set(ignored) <= set(names) or (ignored and not skip_ignored):
                 raise ValueError("Sharded inventory is empty or contains unexpected ignored tests")
             # Preserve existing #[ignore] behavior only when explicitly requested.
@@ -308,9 +362,20 @@ def main() -> int:
     parser.add_argument("--skip-ignored", action="store_true")
     parser.add_argument("--isolated-cases", action="store_true",
                         help="Run each compiled shard name with its own timeout and at most four children")
-    parser.add_argument("filters", nargs="+")
+    parser.add_argument("--remaining-workflow", type=Path,
+                        help="Run every compiled case that no Limited filter in this workflow selects")
+    parser.add_argument("filters", nargs="*")
     args = parser.parse_args()
-    filters = valid_filters(args.filters)
+    if args.remaining_workflow is not None:
+        if args.filters:
+            parser.error("--remaining-workflow takes no filters")
+        if not args.isolated_cases:
+            parser.error("--remaining-workflow requires --isolated-cases")
+        # Fail before the build if the workflow cannot be read.
+        workflow_limited_filters(args.remaining_workflow)
+        filters = []
+    else:
+        filters = valid_filters(args.filters)
     if args.filter_timeout_seconds <= 0:
         parser.error("--filter-timeout-seconds must be positive")
     shard = None
@@ -330,6 +395,8 @@ def main() -> int:
     environment[NOCAPTURE_ENV] = "1" if args.nocapture else "0"
     environment[SKIP_IGNORED_ENV] = "1" if args.skip_ignored else "0"
     environment[ISOLATED_CASES_ENV] = "1" if args.isolated_cases else "0"
+    # Cargo runs the runner from the package directory.
+    environment[REMAINING_ENV] = str(args.remaining_workflow.resolve()) if args.remaining_workflow else ""
     runner = [sys.executable, str(Path(__file__).resolve()), "--run"]
     configuration = "target.'cfg(all())'.runner=" + json.dumps(runner)
     command = [

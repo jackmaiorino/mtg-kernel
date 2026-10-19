@@ -492,6 +492,8 @@ jobs:
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - limited
+          - limited-rest-0
+          - limited-rest-1
           - limited-v2
           - limited-v5
           - limited-v3
@@ -744,6 +746,14 @@ jobs:
             shard="${shard##*-}"
           fi
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 8 --isolated-cases --skip-ignored --nocapture current_mixed_policy_v1:: human_bo3_v1::
+
+      # Every other compiled Limited case: the runner removes each name that a
+      # Limited filter above selects, so a new test cannot fall outside CI.
+      - name: Validate every remaining Limited library case
+        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-rest-') }}
+        run: python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "${MATRIX_GROUP#limited-rest-}" --shard-count 2 --isolated-cases --skip-ignored --remaining-workflow .github/workflows/ci.yml
+        env:
+          MATRIX_GROUP: ${{ matrix.group }}
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})

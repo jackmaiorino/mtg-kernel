@@ -142,11 +142,17 @@ fn registered_partial_ajani_recipient_full_loyalty_binding_remains_scoped_both_s
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
         put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        // A real zone change installs the entering loyalty row; a direct
+        // battlefield placement would leave the walker without one.
         let walker = put(
             &mut state,
             actor.opponent(),
             "Ajani, Caller of the Pride",
-            Zone::Battlefield,
+            Zone::Hand,
+        );
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(walker, Zone::Battlefield),
         );
         assert_eq!(crate::planeswalker_v1::loyalty(&state, walker), Some(4));
         let (mut session, expected, binding) = input(state);
