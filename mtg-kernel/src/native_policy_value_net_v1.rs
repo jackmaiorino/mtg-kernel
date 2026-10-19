@@ -1585,11 +1585,8 @@ fn tanh_in_place_v1(values: &mut [f32], activation_mode: ForwardActivationModeV1
         ForwardActivationModeV1::KernelDeterministicTanh => {
             deterministic_math_v1::tanh_f32_in_place_v1(values)
         }
-        ForwardActivationModeV1::LibmTanh => {
-            for value in values {
-                *value = activation_mode.apply_v1(*value);
-            }
-        }
+        // The platform tanh, eight at a time where proved to give its bits.
+        ForwardActivationModeV1::LibmTanh => crate::vector_tanh_v1::libm_tanh_in_place_v1(values),
     }
 }
 
