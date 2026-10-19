@@ -256,9 +256,7 @@ pub(super) const SAMPLER_REJECTIONS_V1: &[&str] = &[
     "SampleBoundaryChanged",
     "SampleCandidateRebuildFailed",
     "SampleBoundaryEncodingFailed",
-    "LibraryChoicePlanFailed",
     "LibraryChoiceRebuildFailed",
-    "LibraryChoiceOriginFailed",
     "DecisionLocalLibrary",
 ];
 

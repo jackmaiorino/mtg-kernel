@@ -224,6 +224,9 @@ fn sampler_faults_are_not_rejections() {
         "UnsupportedActionContract",
         "StepFailed",
         "HaltedSimulation",
+        // Pending-choice validation and stale-origin binding failures.
+        "LibraryChoicePlanFailed",
+        "LibraryChoiceOriginFailed: detail",
         "deck prior hook did not run",
         "",
     ] {
