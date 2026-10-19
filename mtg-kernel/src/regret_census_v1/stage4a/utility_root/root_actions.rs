@@ -33,6 +33,7 @@
 //! sampler's exact masses (decimal strings summing to 2**64), and every
 //! branch, including a failed branch's partial receipt.
 
+use super::super::canon2::{KeyMode, KeyStats, Keyer};
 use super::*;
 use std::collections::HashSet;
 
@@ -135,11 +136,24 @@ fn authenticate(
     let saved_action = *actions
         .get(index)
         .ok_or("root step is beyond the saved actions")?;
+    // A reused root's cursor keyed every focal multi-action decision from its
+    // originating search on: rebuild that Keyer history along the replay.
+    let reused_origin = reused_origin(search, at.step)?;
+    let mut keyer = reused_origin.map(|_| Keyer::new(KeyMode::Repaired, KeyStats::default()));
     let mut root = bank::source_session(spec, src)?;
     for (step, &action) in actions[..index].iter().enumerate() {
         let d = decision(&root).ok_or("replay reached a terminal early")?;
         if d.step != step as u64 || action >= d.legal_action_count {
             return Err("saved-prefix step or executable action differs".into());
+        }
+        if let (Some((origin, search_index)), Some(keyer)) = (reused_origin, keyer.as_mut()) {
+            if d.step >= origin && acting(&d) == PlayerId(src.seat) && d.legal_action_count >= 2 {
+                if recorded_decision(search, &d)?["search"].as_u64() != Some(search_index) {
+                    return Err("reused root history switched searches".into());
+                }
+                let keyed = keyer.step(&root, d).map_err(bank::err)?;
+                keyer.advance(keyed, action);
+            }
         }
         root.step(d.episode_id, d.step, action)
             .map_err(|e| format!("{e:?}"))?;
@@ -158,6 +172,11 @@ fn authenticate(
     let recorded = recorded_decision(search, &d)?;
     let identity = bank::decision_identity(&root)?;
     validate_tree_root(search, recorded, &identity, saved_action)?;
+    if let Some(keyer) = keyer.as_mut() {
+        let keyed = keyer.step(&root, d).map_err(bank::err)?;
+        let (key, _, _, canon) = keyer.storage(&keyed);
+        bind_reused_edge(recorded, &key, canon, saved_action)?;
+    }
     let chooser = recorded["chooser"].clone();
     Ok(AuthenticatedStep {
         session: root,
@@ -170,6 +189,70 @@ fn authenticate(
         saved_action,
         chooser,
     })
+}
+
+/// The originating search's step and index of a reused root (None otherwise).
+fn reused_origin(search: &Value, step: u64) -> Result<Option<(u64, u64)>, String> {
+    let records = search["game"]["decisions"]
+        .as_array()
+        .ok_or("utility row has no decision records")?;
+    let Some(record) = records.iter().find(|r| r["step"] == step) else {
+        return Ok(None);
+    };
+    if record["chooser"] != "reused" {
+        return Ok(None);
+    }
+    let index = record["search"]
+        .as_u64()
+        .ok_or("reused root search index missing")?;
+    let origin = search["game"]["searches"]
+        .as_array()
+        .and_then(|s| s.get(usize::try_from(index).ok()?))
+        .and_then(|s| s["step"].as_u64())
+        .ok_or("reused root search record missing")?;
+    Ok(Some((origin, index)))
+}
+
+/// The witness's node and edge are the rebuilt cursor's: node key, storage
+/// edge bytes, the saved action's live mapping, and (when recorded) the node
+/// statistics' whole storage-to-live permutation.
+fn bind_reused_edge(
+    recorded: &Value,
+    key: &super::super::tree::Key,
+    canon: &super::super::tree::Canon,
+    saved_action: u32,
+) -> Result<(), String> {
+    let witness = &recorded["reuse_witness"];
+    let edge = witness["storage_edge_index"]
+        .as_u64()
+        .and_then(|e| usize::try_from(e).ok())
+        .ok_or("reused witness edge missing")?;
+    let bytes = canon
+        .edges
+        .get(edge)
+        .ok_or("reused witness edge outside the rebuilt menu")?;
+    let live = |bytes: &Vec<u8>| super::super::tree::live_index(canon, bytes).map_err(bank::err);
+    if witness["node_key"] != super::super::pathlog::key_hex(key)
+        || witness["storage_edge_sha256"] != sha(bytes)
+        || canon.menu.get(saved_action as usize) != Some(bytes)
+        || live(bytes)? != saved_action
+    {
+        return Err(
+            "reused witness node, edge or live mapping differs from the rebuilt cursor".into(),
+        );
+    }
+    let stats = &recorded["node_stats"];
+    if !stats.is_null() {
+        let map = canon
+            .edges
+            .iter()
+            .map(live)
+            .collect::<Result<Vec<u32>, _>>()?;
+        if stats["storage_to_live"] != json!(map) {
+            return Err("reused node statistics map differs from the rebuilt cursor".into());
+        }
+    }
+    Ok(())
 }
 
 /// Every branch run is retained, including a failed branch's partial receipt.
@@ -578,11 +661,11 @@ mod tests {
         });
     }
 
-    /// TP1: a reused tree decision authenticates against the reuse witness
-    /// recorded there, on every identity field and the search index, and its
-    /// chooser is carried; without a witness it stays refused.
+    /// TP1: a reused record whose witness lacks the rebuilt cursor history is
+    /// refused (a relabeled new root has no Keyer history), as is one with no
+    /// witness or a missing search index.
     #[test]
-    fn reused_roots_authenticate_only_against_their_reuse_witness() {
+    fn reused_roots_without_a_true_cursor_history_are_refused() {
         replay_stack(|| {
             let spec = spec(128, 256);
             for seat in [0, 1] {
@@ -591,75 +674,128 @@ mod tests {
                 let identity = row["game"]["searches"][0]["root"].clone();
                 let saved = row["game"]["actions"][at.step as usize].clone();
                 let mut reused = row.clone();
-                // The originating search ran at an earlier step, with a tree hash.
                 reused["game"]["searches"][0]["step"] = json!(0);
                 reused["game"]["searches"][0]["tree"] = json!({"hash":"ab".repeat(32)});
                 let record = &mut reused["game"]["decisions"][0];
                 record["chooser"] = json!("reused");
-                record["reuse_witness"] = json!({"schema":crate::regret_census_v1::stage4a::reuse_witness::SCHEMA,
-                    "decision":identity,"search":0,"search_tree_hash":"ab".repeat(32),
-                    "storage_edge_index":1,"applied_live_index":saved,
-                    "natural_terminal_backups":12,"focal_wins":7});
-                record["node_stats"] = json!({"n":[3,12],"wins":[1,7],"executed_edge":1,
-                    "executed_live":saved});
-                let root = authenticate(&src, &at, &spec, &reused, "binding", &mut 0).unwrap();
-                assert_eq!(root.chooser, json!("reused"));
-                assert_eq!(root.identity, identity);
                 let refused =
                     |row: &Value| authenticate(&src, &at, &spec, row, "binding", &mut 0).is_err();
-                for key in [
-                    "step",
-                    "physical_decision_id",
-                    "substep",
-                    "k",
-                    "obs_hash",
-                    "menu_hash",
-                    "state_hash",
-                ] {
-                    let mut tampered = reused.clone();
-                    tampered["game"]["decisions"][0]["reuse_witness"]["decision"][key] = json!("0");
-                    assert!(refused(&tampered), "{key}");
-                    let mut absent = reused.clone();
-                    absent["game"]["decisions"][0]["reuse_witness"]["decision"]
-                        .as_object_mut()
-                        .unwrap()
-                        .remove(key);
-                    assert!(refused(&absent), "{key}");
-                }
-                let mut search = reused.clone();
-                search["game"]["decisions"][0]["reuse_witness"]["search"] = json!(1);
-                assert!(refused(&search));
+                assert!(refused(&reused), "no witness");
+                reused["game"]["decisions"][0]["reuse_witness"] = json!({
+                    "schema":crate::regret_census_v1::stage4a::reuse_witness::SCHEMA,
+                    "decision":identity,"search":0,"search_tree_hash":"ab".repeat(32),
+                    "storage_edge_index":1,"applied_live_index":saved,
+                    "natural_terminal_backups":12,"focal_wins":7,
+                    "node_key":"00".repeat(32),"storage_edge_sha256":"00".repeat(32)});
+                assert!(refused(&reused), "forged witness");
                 let mut absent = reused.clone();
                 absent["game"]["decisions"][0]
                     .as_object_mut()
                     .unwrap()
                     .remove("search");
-                absent["game"]["decisions"][0]["reuse_witness"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("search");
-                assert!(refused(&absent));
-                let mut late = reused.clone();
-                late["game"]["searches"][0]["step"] = json!(at.step);
-                assert!(refused(&late));
-                for (key, value) in [
-                    ("search_tree_hash", json!("cd".repeat(32))),
-                    ("applied_live_index", json!(99)),
-                    ("natural_terminal_backups", json!(7)),
-                    ("focal_wins", json!(13)),
-                    ("storage_edge_index", json!(0)),
-                ] {
-                    let mut wrong = reused.clone();
-                    wrong["game"]["decisions"][0]["reuse_witness"][key] = value;
-                    assert!(refused(&wrong), "{key}");
-                }
-                let mut stats = reused.clone();
-                stats["game"]["decisions"][0]["node_stats"]["wins"] = json!([1, 6]);
-                assert!(refused(&stats));
-                let mut schema = reused.clone();
-                schema["game"]["decisions"][0]["reuse_witness"]["schema"] = json!("other");
-                assert!(refused(&schema));
+                assert!(refused(&absent), "missing search index");
             }
+        });
+    }
+
+    /// TP1: producer-generated reused rows (fixture games played with node
+    /// statistics and reuse witnesses, both seats and starting players)
+    /// authenticate through the rebuilt cursor; every forged binding is
+    /// refused: node key, edge hash, out-of-range edge (with node statistics
+    /// removed), permuted node map, tree hash, applied action, counts, search
+    /// index, schema and an identity field.
+    #[test]
+    #[ignore = "native qualification: complete fixture games with small searches; run with cargo test --release"]
+    fn producer_reused_rows_bind_to_the_rebuilt_cursor() {
+        use crate::regret_census_v1::stage4a::refresh::{self, tests::plain_control_fixture};
+        replay_stack(|| {
+            let (mut authenticated, mut permuted) = (0, 0);
+            for (seat, starting) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let (policy, sh, mut src) = plain_control_fixture(seat, starting, 100_000, 200_000);
+                src.id = format!("tp1-reused-s{seat}-p{starting}");
+                src.search_root = "tp1-reused".into();
+                let row = refresh::budget_case_with_executor(
+                    &sh,
+                    &policy,
+                    &src,
+                    40_000,
+                    KeyMode::Repaired,
+                    false,
+                    None,
+                    crate::regret_census_v1::stage4a::reuse_witness::Recording::Enabled,
+                    "fixture",
+                    refresh::ExecutionMode::Persistent,
+                    refresh::BudgetExtras {
+                        per_decision: Some((8_000, 4_000)),
+                        node_stats: true,
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    row["game"]["valid"], true,
+                    "{}",
+                    row["game"]["invalid_reason"]
+                );
+                let binding = row["bank_binding_sha256"].as_str().unwrap().to_owned();
+                let decisions = row["game"]["decisions"].as_array().unwrap().clone();
+                for (position, d) in decisions.iter().enumerate() {
+                    if d["chooser"] != "reused" {
+                        continue;
+                    }
+                    let at = Coordinates {
+                        step: d["step"].as_u64().unwrap(),
+                        physical_decision_id: d["physical_decision_id"].as_u64().unwrap(),
+                        substep: d["substep"].as_u64().unwrap() as u32,
+                    };
+                    let root = authenticate(&src, &at, &sh.spec, &row, &binding, &mut 0).unwrap();
+                    assert_eq!(root.chooser, json!("reused"));
+                    authenticated += 1;
+                    let map = d["node_stats"]["storage_to_live"].as_array().unwrap();
+                    permuted += usize::from(map.iter().enumerate().any(|(e, l)| *l != json!(e)));
+                    let refused = |edit: &dyn Fn(&mut Value)| {
+                        let mut forged = row.clone();
+                        edit(&mut forged["game"]["decisions"][position]);
+                        authenticate(&src, &at, &sh.spec, &forged, &binding, &mut 0).is_err()
+                    };
+                    let witness = |key: &'static str, value: Value| {
+                        move |r: &mut Value| r["reuse_witness"][key] = value.clone()
+                    };
+                    for (key, value) in [
+                        ("node_key", json!("00".repeat(32))),
+                        ("storage_edge_sha256", json!("00".repeat(32))),
+                        ("search_tree_hash", json!("cd".repeat(32))),
+                        ("applied_live_index", json!(99)),
+                        ("natural_terminal_backups", json!(3)),
+                        ("search", json!(999)),
+                        ("schema", json!("other")),
+                    ] {
+                        assert!(refused(&witness(key, value)), "{key}");
+                    }
+                    assert!(refused(&|r| {
+                        let n = r["reuse_witness"]["natural_terminal_backups"]
+                            .as_u64()
+                            .unwrap();
+                        r["reuse_witness"]["focal_wins"] = json!(n + 1);
+                    }));
+                    assert!(refused(&|r| r["reuse_witness"]["decision"]["state_hash"] =
+                        json!("0000000000000000")));
+                    assert!(refused(&|r| {
+                        r.as_object_mut().unwrap().remove("node_stats");
+                        r["reuse_witness"]["storage_edge_index"] = json!(r["k"].as_u64().unwrap());
+                    }));
+                    assert!(refused(&|r| {
+                        let map = r["node_stats"]["storage_to_live"].as_array_mut().unwrap();
+                        map.swap(0, 1);
+                    }));
+                }
+            }
+            assert!(
+                authenticated > 0,
+                "the fixture games executed no reused decision"
+            );
+            eprintln!(
+                "{authenticated} reused rows authenticated, {permuted} with a nonidentity live map"
+            );
         });
     }
 

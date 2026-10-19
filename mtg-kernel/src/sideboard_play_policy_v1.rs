@@ -2896,6 +2896,42 @@ mod tests {
         }
     }
 
+    /// TP1: the V4 fixture and a menu wider than the narrow sampler use their
+    /// active sampler's masses; the unclamped collection sampler is refused.
+    #[test]
+    fn deployed_masses_cover_v4_wide_menus_and_refuse_unclamped() {
+        let wide: Vec<f32> = (0..70)
+            .map(|i| ((i * 37) % 11) as f32 * 0.3 - 1.0)
+            .collect();
+        for mut policy in [
+            FrozenPlayPolicyV1::training_fixture_v3()
+                .fork_for_collection_v3()
+                .unwrap(),
+            FrozenPlayPolicyV1::training_fixture_v4()
+                .fork_for_collection_v3()
+                .unwrap(),
+        ] {
+            for logits in [vec![0.5_f32, -0.25, 1.0], wide.clone()] {
+                let masses = policy.deployed_masses_v1(&logits).unwrap();
+                assert_eq!(masses.len(), logits.len());
+                assert_eq!(masses.iter().sum::<u128>(), 1u128 << 64);
+                let expected = if let Some(successor) = &mut policy.successor {
+                    successor.sampler.apportion(&logits).unwrap().to_vec()
+                } else if let Some(fresh) = &mut policy.fresh_successor {
+                    fresh.sampler.apportion(&logits).unwrap().to_vec()
+                } else {
+                    policy.sampler.apportion(&logits).unwrap().to_vec()
+                };
+                assert_eq!(masses, expected);
+            }
+        }
+        let mut unclamped = FrozenPlayPolicyV1::training_fixture_v3()
+            .fork_for_collection_v3()
+            .unwrap();
+        unclamped.enable_unclamped_collection_sampler_v1();
+        assert!(unclamped.deployed_masses_v1(&[0.0, 1.0]).is_err());
+    }
+
     /// Proves the reconciliation layer, not just the raw action slice:
     /// `score_fast_session_v1`'s V3 path (`encode_current_flat_scoring_decision_owned_v3`,
     /// which shares `flat_policy_v2.rs`'s `build_scoring_owned_v3`) must

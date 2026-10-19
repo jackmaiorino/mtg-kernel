@@ -1249,7 +1249,7 @@ pub(super) fn source_arms(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::super::tree::canon;
     use super::*;
 
@@ -1476,7 +1476,7 @@ mod tests {
         );
     }
 
-    fn plain_control_fixture(
+    pub(in crate::regret_census_v1::stage4a) fn plain_control_fixture(
         seat: u8,
         starting_player: u8,
         max_physical_decisions: u64,
