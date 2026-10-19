@@ -86,51 +86,64 @@ mod windows {
             one,
         );
         let ye = _mm256_min_ps(_mm256_max_ps(y, one), _mm256_set1_ps(10.0));
-        // y + y*y2*n/d, coefficients for [0, 0.9) or [0.9, 1] per lane.
-        let pick = |a: f32, b: f32| _mm256_blendv_ps(_mm256_set1_ps(b), _mm256_set1_ps(a), below);
-        let c0 = pick(-0.281_928_06, -0.240_698_59);
-        let c1 = pick(-0.001_462_835_6, -0.001_232_564_4);
-        let c2 = pick(4.891_631e-5, 3.827_535e-5);
-        let d0 = pick(0.845_784_2, 0.722_097_4);
-        let d1 = pick(0.342_701_8, 0.292_529_07);
-        let y2 = _mm256_mul_ps(yr, yr);
-        let n = _mm256_fmadd_ps(_mm256_fmadd_ps(c2, y2, c1), y2, c0);
-        let d = _mm256_fmadd_ps(d1, y2, d0);
-        let rational = _mm256_add_ps(
-            yr,
-            _mm256_div_ps(_mm256_mul_ps(_mm256_mul_ps(yr, y2), n), d),
-        );
-        // 1 - 2/(exp(2y) + 1), exp as 2^m * (z1 + z2) (`splitexpf`).
-        let t = _mm256_mul_ps(_mm256_set1_ps(2.0), ye);
-        let r = _mm256_mul_ps(t, _mm256_set1_ps(46.166_24));
-        // r > 0 on this branch, so (int)(r + 0.5) truncates the rounded sum.
-        let ni = _mm256_cvttps_epi32(_mm256_add_ps(r, _mm256_set1_ps(0.5)));
-        let nf = _mm256_cvtepi32_ps(ni);
-        let trail = _mm256_set1_ps(9.983_182e-7);
-        let r1 = _mm256_sub_ps(t, _mm256_mul_ps(nf, _mm256_set1_ps(0.021_659_851)));
-        let r2 = _mm256_sub_ps(_mm256_setzero_ps(), _mm256_mul_ps(nf, trail));
-        let j = _mm256_and_si256(ni, _mm256_set1_epi32(0x1f));
-        let f1 = _mm256_i32gather_ps::<4>(LEAD.as_ptr().cast(), j);
-        let f2 = _mm256_i32gather_ps::<4>(TRAIL.as_ptr().cast(), j);
-        let m = _mm256_srai_epi32::<5>(_mm256_sub_epi32(ni, j));
-        let rr = _mm256_fnmadd_ps(nf, trail, r1);
-        let poly = _mm256_add_ps(
-            _mm256_set1_ps(0.5),
-            _mm256_mul_ps(rr, _mm256_set1_ps(0.166_666_67)),
-        );
-        let q = _mm256_add_ps(r1, _mm256_fmadd_ps(_mm256_mul_ps(rr, rr), poly, r2));
-        let z2 = _mm256_fmadd_ps(_mm256_add_ps(f1, f2), q, f2);
-        // `scaleFloat_2`: two exponent halves (m >= 0 here, so m / 2 is a shift).
-        let m1 = _mm256_srai_epi32::<1>(m);
-        let bias = _mm256_set1_epi32(127);
-        let t1 = _mm256_castsi256_ps(_mm256_slli_epi32::<23>(_mm256_add_epi32(m1, bias)));
-        let t2 = _mm256_castsi256_ps(_mm256_slli_epi32::<23>(_mm256_add_epi32(
-            _mm256_sub_epi32(m, m1),
-            bias,
-        )));
-        let scaled = _mm256_mul_ps(_mm256_mul_ps(_mm256_add_ps(f1, z2), t1), t2);
-        let p = _mm256_add_ps(scaled, _mm256_set1_ps(1.0));
-        let exp_branch = _mm256_sub_ps(_mm256_set1_ps(1.0), _mm256_div_ps(_mm256_set1_ps(2.0), p));
+        // A branch no lane takes is skipped (its lanes would be discarded).
+        let all = _mm256_castsi256_ps(_mm256_set1_epi32(-1));
+        let rational_lanes = _mm256_andnot_ps(_mm256_castsi256_ps(tiny), at_most_one);
+        let exp_lanes = _mm256_andnot_ps(_mm256_or_ps(at_most_one, big), all);
+        let rational = if _mm256_movemask_ps(rational_lanes) == 0 {
+            _mm256_setzero_ps()
+        } else {
+            // y + y*y2*n/d, coefficients for [0, 0.9) or [0.9, 1] per lane.
+            let pick =
+                |a: f32, b: f32| _mm256_blendv_ps(_mm256_set1_ps(b), _mm256_set1_ps(a), below);
+            let c0 = pick(-0.281_928_06, -0.240_698_59);
+            let c1 = pick(-0.001_462_835_6, -0.001_232_564_4);
+            let c2 = pick(4.891_631e-5, 3.827_535e-5);
+            let d0 = pick(0.845_784_2, 0.722_097_4);
+            let d1 = pick(0.342_701_8, 0.292_529_07);
+            let y2 = _mm256_mul_ps(yr, yr);
+            let n = _mm256_fmadd_ps(_mm256_fmadd_ps(c2, y2, c1), y2, c0);
+            let d = _mm256_fmadd_ps(d1, y2, d0);
+            _mm256_add_ps(
+                yr,
+                _mm256_div_ps(_mm256_mul_ps(_mm256_mul_ps(yr, y2), n), d),
+            )
+        };
+        let exp_branch = if _mm256_movemask_ps(exp_lanes) == 0 {
+            _mm256_setzero_ps()
+        } else {
+            // 1 - 2/(exp(2y) + 1), exp as 2^m * (z1 + z2) (`splitexpf`).
+            let t = _mm256_mul_ps(_mm256_set1_ps(2.0), ye);
+            let r = _mm256_mul_ps(t, _mm256_set1_ps(46.166_24));
+            // r > 0 on this branch, so (int)(r + 0.5) truncates the rounded sum.
+            let ni = _mm256_cvttps_epi32(_mm256_add_ps(r, _mm256_set1_ps(0.5)));
+            let nf = _mm256_cvtepi32_ps(ni);
+            let trail = _mm256_set1_ps(9.983_182e-7);
+            let r1 = _mm256_sub_ps(t, _mm256_mul_ps(nf, _mm256_set1_ps(0.021_659_851)));
+            let r2 = _mm256_sub_ps(_mm256_setzero_ps(), _mm256_mul_ps(nf, trail));
+            let j = _mm256_and_si256(ni, _mm256_set1_epi32(0x1f));
+            let f1 = _mm256_i32gather_ps::<4>(LEAD.as_ptr().cast(), j);
+            let f2 = _mm256_i32gather_ps::<4>(TRAIL.as_ptr().cast(), j);
+            let m = _mm256_srai_epi32::<5>(_mm256_sub_epi32(ni, j));
+            let rr = _mm256_fnmadd_ps(nf, trail, r1);
+            let poly = _mm256_add_ps(
+                _mm256_set1_ps(0.5),
+                _mm256_mul_ps(rr, _mm256_set1_ps(0.166_666_67)),
+            );
+            let q = _mm256_add_ps(r1, _mm256_fmadd_ps(_mm256_mul_ps(rr, rr), poly, r2));
+            let z2 = _mm256_fmadd_ps(_mm256_add_ps(f1, f2), q, f2);
+            // `scaleFloat_2`: two exponent halves (m >= 0 here, so m / 2 is a shift).
+            let m1 = _mm256_srai_epi32::<1>(m);
+            let bias = _mm256_set1_epi32(127);
+            let t1 = _mm256_castsi256_ps(_mm256_slli_epi32::<23>(_mm256_add_epi32(m1, bias)));
+            let t2 = _mm256_castsi256_ps(_mm256_slli_epi32::<23>(_mm256_add_epi32(
+                _mm256_sub_epi32(m, m1),
+                bias,
+            )));
+            let scaled = _mm256_mul_ps(_mm256_mul_ps(_mm256_add_ps(f1, z2), t1), t2);
+            let p = _mm256_add_ps(scaled, _mm256_set1_ps(1.0));
+            _mm256_sub_ps(_mm256_set1_ps(1.0), _mm256_div_ps(_mm256_set1_ps(2.0), p))
+        };
         let z = _mm256_blendv_ps(exp_branch, rational, at_most_one);
         let z = _mm256_blendv_ps(z, _mm256_set1_ps(1.0), big);
         // z >= 0, so multiplying by the sign of x sets the sign bit.
