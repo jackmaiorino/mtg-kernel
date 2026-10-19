@@ -295,6 +295,7 @@ fn validate_choosers(search: &Value, plain: &Value) -> Result<(), String> {
 /// consistent counts (and equal the decision's node statistics when they are
 /// recorded), and its identity must equal the replayed decision's on every
 /// field. The first-divergence utility path keeps refusing reused roots.
+#[cfg(feature = "gameplay-decision-trace-v1")]
 pub(super) fn validate_tree_root(
     search_row: &Value,
     search_decision: &Value,
