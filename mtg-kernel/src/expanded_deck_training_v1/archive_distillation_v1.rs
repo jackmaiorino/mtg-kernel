@@ -43,19 +43,35 @@
 //!   Omission keeps historical full-network updates and serialized fields.
 //!   Gradient telemetry still describes the unmasked loss derivatives.
 //!
+//! - A cell's optional `representation` runs one of RC1's arms (collab
+//!   LANES/representation-comparison-20261018): a rules pathway into the
+//!   card embeddings, the same with a wrong card-to-rules association, or
+//!   fresh state hash codes in evidence batches ([`representation`]).
+//!
 //! No policy plays a game here, and no outcome is ever a label or a readout.
 
 use super::*;
 use crate::line_b_teacher_target_v1::{
     line_b_divergence_v1, line_b_softmax_v1, LineBDivergenceV1, LineBSoftmaxV1,
 };
+use crate::native_policy_train_step_v1::training_forward_v1;
 use crate::native_policy_train_step_v1::{
     one_hot_target_v1, ArchiveDistillationUpdateScopeV1, ExternalAuxiliaryInputV1,
-    ExternalAuxiliaryRowV1,
+    ExternalAuxiliaryRowV1, RulesPathwayV1,
 };
 use crate::regret_census_v1::stage4a::{decision_replay_key, spy_menu_flags_v1};
 use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 use std::collections::{BTreeMap, HashMap};
+
+mod representation;
+use representation::{
+    displacement_v1, fresh_state_codes_v1, require_covered_v1, rules_rows_v1, sidecar_v1,
+    validate_representation_v1, validate_rules_checkpoint_v1,
+};
+pub use representation::{
+    ArchiveDistillationRepresentationArmV1, ArchiveDistillationRepresentationV1,
+    ArchiveDistillationRulesPathwayV1,
+};
 
 pub const ARCHIVE_DISTILLATION_NAMESPACE_V1: &str = "spy-archive-distillation-v1";
 /// The U collapse diagnostic's namespace (its count-control subsets).
@@ -284,6 +300,10 @@ pub struct ArchiveDistillationOptionsV1 {
     /// the target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_sets: Option<PinnedFileV1>,
+    /// RC1's representation arm ([`representation`]); absent, the network's
+    /// inputs are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub representation: Option<ArchiveDistillationRepresentationV1>,
 }
 
 /// A cell as its checkpoints record it: the resolved recipe, in bits. The
@@ -300,6 +320,8 @@ pub struct ArchiveDistillationCellV1 {
     pub checkpoint_steps: Vec<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_sets: Option<PinnedFileV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub representation: Option<ArchiveDistillationRepresentationV1>,
 }
 
 /// A keep-set file: one lineage's rows of one bank, and at each row the
@@ -417,6 +439,9 @@ fn recipe_v1(
         options.count_control.is_none_or(|n| n > 0),
         "a count control keeps at least one row",
     )?;
+    if let Some(representation) = &options.representation {
+        validate_representation_v1(representation)?;
+    }
     if let Some(steps) = &options.checkpoint_steps {
         ensure(
             steps.first().is_some_and(|&s| s > 0)
@@ -436,6 +461,7 @@ fn recipe_v1(
             count_control: options.count_control.map(|n| n as u64),
             checkpoint_steps: options.checkpoint_steps.clone().unwrap_or_default(),
             keep_sets: options.keep_sets.clone(),
+            representation: options.representation.clone(),
         }),
         order_seed,
     })
@@ -656,6 +682,10 @@ pub struct ArchiveDistillationProvenanceV1 {
         skip_serializing_if = "ArchiveDistillationUpdateScopeV1::is_full_network_v1"
     )]
     pub update_scope: ArchiveDistillationUpdateScopeV1,
+    /// A rules arm's pathway record: its weight and moments and the
+    /// network's own card rows at `steps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules_pathway: Option<ArchiveDistillationRulesPathwayV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -749,6 +779,28 @@ pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Res
             && parent.second_moments == saved.second_moments,
         "phase-1 checkpoint does not hold its parent's exact optimizer state",
     )?;
+    let representation = provenance
+        .cell
+        .as_ref()
+        .and_then(|cell| cell.representation.as_ref());
+    if let Some(representation) = representation {
+        validate_representation_v1(representation)?;
+    }
+    let pathway_arm = representation.is_some_and(|r| r.arm.has_pathway());
+    ensure(
+        pathway_arm == provenance.rules_pathway.is_some()
+            && (representation.is_none()
+                || provenance.update_scope == ArchiveDistillationUpdateScopeV1::FullNetwork),
+        "a phase-1 checkpoint's rules sidecar differs from its cell",
+    )?;
+    if let (Some(representation), Some(sidecar)) = (representation, &provenance.rules_pathway) {
+        let table = saved
+            .parameters
+            .first()
+            .filter(|p| p.name == "card_embedding.weight")
+            .ok_or("a rules checkpoint's first parameter is the card table")?;
+        validate_rules_checkpoint_v1(representation, sidecar, provenance.steps, &table.values)?;
+    }
     if provenance.update_scope == ArchiveDistillationUpdateScopeV1::ScorerOnly {
         ensure(
             saved.parameters.len() == parent.parameters.len()
@@ -1403,6 +1455,7 @@ fn anchor_identity_preflight_v1(
     targets: &[LineBSoftmaxV1],
     recipe: &RecipeV1,
     update_scope: ArchiveDistillationUpdateScopeV1,
+    pathway: Option<&RulesPathwayV1>,
 ) -> Result<usize, String> {
     ensure(
         fresh.adam_step_v1() == 0,
@@ -1423,16 +1476,25 @@ fn anchor_identity_preflight_v1(
             })
             .collect(),
     };
-    let result = match update_scope {
-        ArchiveDistillationUpdateScopeV1::FullNetwork => {
-            copy.train_step_auxiliary_only_v1(generation, recipe.learning_rate, &[&input])
-        }
-        ArchiveDistillationUpdateScopeV1::ScorerOnly => copy.train_step_auxiliary_only_scoped_v1(
+    let mut pathway_copy = pathway.cloned();
+    let result = match (update_scope, pathway_copy.as_mut()) {
+        (_, Some(pathway)) => copy.auxiliary_only_step_v1(
             generation,
             recipe.learning_rate,
             &[&input],
             update_scope,
+            Some(pathway),
         ),
+        (ArchiveDistillationUpdateScopeV1::FullNetwork, None) => {
+            copy.train_step_auxiliary_only_v1(generation, recipe.learning_rate, &[&input])
+        }
+        (ArchiveDistillationUpdateScopeV1::ScorerOnly, None) => copy
+            .train_step_auxiliary_only_scoped_v1(
+                generation,
+                recipe.learning_rate,
+                &[&input],
+                update_scope,
+            ),
     };
     result.map_err(|e| format!("anchor pre-flight step: {e:?}"))?;
     let after = copy.model_v1().parameter_snapshot_v1();
@@ -1440,6 +1502,12 @@ fn anchor_identity_preflight_v1(
         same_parameter_bits(&before, &after),
         "the anchor alone moves the parent: its targets are not exact",
     )?;
+    if let (Some(before), Some(after)) = (pathway, &pathway_copy) {
+        ensure(
+            before.state_bits_v1() == after.state_bits_v1(),
+            "the anchor alone moves the zero rules pathway",
+        )?;
+    }
     Ok(rows.len())
 }
 
@@ -1725,7 +1793,7 @@ fn write_checkpoint_v1(
     parent_checkpoint: &ExpandedCheckpointV1,
     parameters: &[NativeNamedParameterV1],
     provenance: ArchiveDistillationProvenanceV1,
-) -> Result<(PinnedFileV1, PinnedFileV1, String), String> {
+) -> Result<(PinnedFileV1, PinnedFileV1, String, NativePolicyValueNetV1), String> {
     let steps = provenance.steps;
     let checkpoint = checkpoint_v1(parent_checkpoint, parameters, provenance)?;
     let checkpoint_pin = publish_json(
@@ -1749,7 +1817,12 @@ fn write_checkpoint_v1(
         &format!("source-step-{steps}.json"),
         &source,
     )?;
-    Ok((checkpoint_pin, source_pin, checkpoint.state_sha256))
+    Ok((
+        checkpoint_pin,
+        source_pin,
+        checkpoint.state_sha256,
+        loaded.model_v1().clone(),
+    ))
 }
 
 /// Measurement only: cumulative phase times on stderr when
@@ -1784,6 +1857,27 @@ pub(super) fn phase1_v1(
         "phase-1 output directory must be fresh",
     )?;
     let recipe_values = recipe_v1(arm, options.as_ref())?;
+    let representation = recipe_values
+        .cell
+        .as_ref()
+        .and_then(|cell| cell.representation.clone());
+    ensure(
+        representation.is_none() || update_scope.is_full_network_v1(),
+        "a representation arm trains the full network",
+    )?;
+    let rules_rows = representation
+        .as_ref()
+        .filter(|r| r.arm.has_pathway())
+        .map(rules_rows_v1)
+        .transpose()?;
+    let fresh_codes = representation
+        .as_ref()
+        .is_some_and(|r| r.arm == ArchiveDistillationRepresentationArmV1::FreshStateCodes);
+    let cell_label = recipe_values
+        .cell
+        .as_ref()
+        .map(|cell| cell.cell.clone())
+        .unwrap_or_default();
     ensure(
         stop_after_steps.is_none_or(|n| n == REPRODUCTION_STEP),
         "a reproduction run stops after the reproduction step",
@@ -1809,13 +1903,13 @@ pub(super) fn phase1_v1(
         &inputs.state_sha256,
         &mut ids,
     )?;
-    let held_out_rows = load_anchor_split_v1(
+    let held_out = load_anchor_split_v1(
         &anchor.held_out,
         &inputs.policy,
         &inputs.state_sha256,
         &mut ids,
-    )?
-    .len();
+    )?;
+    let held_out_rows = held_out.len();
     let parent_model = inputs.state.model_v1();
     phase_mark_v1("anchors", started);
     let verified = verify_parent_outputs_v1(
@@ -1889,6 +1983,20 @@ pub(super) fn phase1_v1(
     if let Some(keep) = &keep {
         census["keep_rows"] = keep_census_v1(&rows, keep, &archive_targets)?;
     }
+    if let Some(rules) = &rules_rows {
+        recipe["representation_rows"] = rules.identity_v1();
+        census["rules_coverage"] = require_covered_v1(
+            rules.cards,
+            rows.iter()
+                .map(|(_, tensor)| tensor)
+                .chain(anchor_train.iter().map(|row| &row.tensor))
+                .chain(held_out.iter().map(|row| &row.tensor)),
+        )?;
+    }
+    if fresh_codes {
+        census["fresh_codes_step1"] =
+            fresh_codes_census_v1(parent_model, generation, &rows, &selected, &cell_label)?;
+    }
     let identity = json!({"lineage":lineage,"arm":arm,"parent":parent,
         "parent_state_sha256":inputs.state_sha256,"games":games,"bank":bank,
         "anchor":anchor,"anchor_sha256":anchor_sha256,"recipe":recipe,
@@ -1901,13 +2009,68 @@ pub(super) fn phase1_v1(
         state.scorer_bias_anchor_f32_bits_v1() == parent_checkpoint.scorer_bias_anchor_bits,
         "the parent's scorer bias differs from its gauge anchor",
     )?;
-    let preflight_cache = anchor_cache::preflight_path_v1(
-        &anchor.training,
-        &parent,
-        &inputs.state_sha256,
-        &recipe_values,
-        update_scope,
-    );
+    let mut pathway = rules_rows
+        .as_ref()
+        .map(|rules| RulesPathwayV1::new_v1(rules.rows.clone(), rules.cards, rules.width))
+        .transpose()
+        .map_err(|e| format!("rules pathway: {e:?}"))?;
+    if let Some(pathway) = &pathway {
+        let base = state.model_v1().parameter_snapshot_v1();
+        let effective = pathway
+            .effective_parameters_v1(&base)
+            .map_err(|e| format!("rules pathway: {e:?}"))?;
+        ensure(
+            same_parameter_bits(&base, &effective),
+            "the zero rules pathway changes the parent's card table",
+        )?;
+    }
+    if representation.is_some() {
+        // RC1's clean step 0: on true inputs, the training forward at the
+        // start parameters (the effective table for a rules arm) equals the
+        // parent's model forward bit for bit, logits and value, on every bank
+        // row (evidence and test) and both anchor splits.
+        let base = state.model_v1().parameter_snapshot_v1();
+        let start = match &pathway {
+            Some(pathway) => pathway
+                .effective_parameters_v1(&base)
+                .map_err(|e| format!("rules pathway: {e:?}"))?,
+            None => base,
+        };
+        let mut checked = 0usize;
+        for tensor in rows
+            .iter()
+            .map(|(_, tensor)| tensor)
+            .chain(anchor_train.iter().map(|row| &row.tensor))
+            .chain(held_out.iter().map(|row| &row.tensor))
+        {
+            let (logits, value) = training_forward_v1(
+                parent_model,
+                generation,
+                &start,
+                view_v1(tensor, generation),
+            )
+            .map_err(|e| format!("training forward: {e:?}"))?;
+            let (model_logits, model_value) = forward_v1(parent_model, tensor, generation)?;
+            ensure(
+                bits(&logits) == bits(&model_logits) && value.to_bits() == model_value.to_bits(),
+                "the step-0 training forward differs from the parent's model forward",
+            )?;
+            checked += 1;
+        }
+        census["step0_forward_identity_rows"] = json!(checked);
+    }
+    // A rules arm's pre-flight also checks its zero pathway, which the
+    // anchor cache's key does not cover: it always runs, and is not stored.
+    let preflight_cache = match &pathway {
+        Some(_) => None,
+        None => anchor_cache::preflight_path_v1(
+            &anchor.training,
+            &parent,
+            &inputs.state_sha256,
+            &recipe_values,
+            update_scope,
+        ),
+    };
     let cached_preflight = preflight_cache
         .as_ref()
         .and_then(|entry| anchor_cache::load_preflight_v1(entry, anchor_train.len()));
@@ -1921,6 +2084,7 @@ pub(super) fn phase1_v1(
                 &anchor_targets,
                 &recipe_values,
                 update_scope,
+                pathway.as_ref(),
             )?;
             if let Some(entry) = &preflight_cache {
                 anchor_cache::store_preflight_v1(entry, rows);
@@ -1954,6 +2118,24 @@ pub(super) fn phase1_v1(
                 })
                 .collect(),
         };
+        // RC1's fresh-code arm trains each evidence row on a copy with this
+        // step's state codes; the bank's tensors never change.
+        let fresh: Vec<NativeFlatDecisionTensorV2> = if fresh_codes {
+            step.archive
+                .iter()
+                .map(|&i| {
+                    fresh_state_codes_v1(
+                        &rows[i].1,
+                        &cell_label,
+                        &rows[i].0.game,
+                        rows[i].0.step,
+                        number,
+                    )
+                })
+                .collect::<Result<_, _>>()?
+        } else {
+            Vec::new()
+        };
         let archive_input = ExternalAuxiliaryInputV1 {
             direction: LineBDivergenceV1::Forward,
             coefficient: ARCHIVE_COEFFICIENT,
@@ -1961,18 +2143,20 @@ pub(super) fn phase1_v1(
             rows: step
                 .archive
                 .iter()
-                .map(|&i| ExternalAuxiliaryRowV1 {
-                    encoded: view_v1(&rows[i].1, generation),
+                .enumerate()
+                .map(|(j, &i)| ExternalAuxiliaryRowV1 {
+                    encoded: view_v1(if fresh_codes { &fresh[j] } else { &rows[i].1 }, generation),
                     target: &archive_targets[i],
                 })
                 .collect(),
         };
         let (terms, gauge) = state
-            .train_step_auxiliary_only_scoped_v1(
+            .auxiliary_only_step_v1(
                 generation,
                 recipe_values.learning_rate,
                 &[&anchor_input, &archive_input],
                 update_scope,
+                pathway.as_mut(),
             )
             .map_err(|e| format!("phase-1 step {number}: {e:?}"))?;
         let [anchor_term, archive_term] = terms.as_slice() else {
@@ -1988,19 +2172,31 @@ pub(super) fn phase1_v1(
                     "chosen":rows[i].0.line.line_chosen(),"divergence":divergence})
             })
             .collect();
-        telemetry.push(json!({"step":number,"archive_rows":step.archive.len(),
+        let mut entry = json!({"step":number,"archive_rows":step.archive.len(),
             "anchor_loss":anchor_term.auxiliary_loss,"archive_loss":archive_term.auxiliary_loss,
             "anchor_components":anchor_term.gradient_components,
             "archive_components":archive_term.gradient_components,
             "line_rows":line_divergences,
             "gauge_raw_residual":gauge.raw_gradient_residual,
-            "gauge_bound":gauge.derived_absolute_bound}));
+            "gauge_bound":gauge.derived_absolute_bound});
+        if let Some(pathway) = &pathway {
+            entry["rules_weight_norm"] = json!(pathway.weight_norm_v1());
+            entry["rules_gradient_norm"] = json!(pathway.last_gradient_norm_v1());
+        }
+        telemetry.push(entry);
         // Every step validates the state, as hashing it does; only the steps
         // the result records pay for the digest, a pass over the parameters
         // and both moments.
         let phase1_state = if number == REPRODUCTION_STEP || plan.checkpoints.contains(&number) {
             let digest = hex(&state.state_sha256_v1().map_err(err)?);
-            state_hashes.push(json!({"step":number,"phase1_state_sha256":digest}));
+            let mut record = json!({"step":number,"phase1_state_sha256":digest});
+            if let Some(pathway) = &pathway {
+                record["rules_state_sha256"] = json!(sha(&serde_json::to_vec(
+                    &pathway.state_bits_v1()
+                )
+                .map_err(err)?));
+            }
+            state_hashes.push(record);
             Some(digest)
         } else {
             state.validate_state_v1().map_err(err)?;
@@ -2008,7 +2204,19 @@ pub(super) fn phase1_v1(
         };
         if stop_after_steps.is_none() && plan.checkpoints.contains(&number) {
             let phase1_state = phase1_state.expect("every checkpoint step is recorded");
-            let parameters = state.model_v1().parameter_snapshot_v1();
+            let base = state.model_v1().parameter_snapshot_v1();
+            // A rules checkpoint holds the effective card table and carries
+            // the pathway's record in its provenance.
+            let (parameters, rules_pathway) = match (&pathway, &rules_rows, &representation) {
+                (Some(pathway), Some(rules), Some(representation)) => {
+                    let effective = pathway
+                        .effective_parameters_v1(&base)
+                        .map_err(|e| format!("rules pathway: {e:?}"))?;
+                    let record = sidecar_v1(representation.arm, rules, number, &base, pathway);
+                    (effective, Some(record))
+                }
+                _ => (base.clone(), None),
+            };
             let provenance = ArchiveDistillationProvenanceV1 {
                 method: METHOD.into(),
                 lineage: lineage.clone(),
@@ -2026,18 +2234,40 @@ pub(super) fn phase1_v1(
                 runtime_commit: env!("MTG_KERNEL_BUILD_GIT_HEAD").into(),
                 cell: recipe_values.cell.clone(),
                 update_scope,
+                rules_pathway,
             };
-            let (checkpoint_pin, source_pin, state_sha256) = write_checkpoint_v1(
+            let (checkpoint_pin, source_pin, state_sha256, loaded) = write_checkpoint_v1(
                 &output_directory,
                 &parent,
                 &parent_checkpoint,
                 &parameters,
                 provenance,
             )?;
-            checkpoints.push(json!({"step":number,
+            let mut entry = json!({"step":number,
                 "epochs":number as f64 / plan.epoch_steps as f64,"checkpoint":checkpoint_pin,
                 "source":source_pin,"state_sha256":state_sha256,
-                "phase1_state_sha256":phase1_state}));
+                "phase1_state_sha256":phase1_state});
+            if let Some(pathway) = &pathway {
+                // The training forward at the effective parameters and the
+                // reloaded checkpoint's model forward (the probe's) agree
+                // bit for bit on every bank row.
+                for (_, tensor) in &rows {
+                    let view = view_v1(tensor, generation);
+                    let (logits, value) =
+                        training_forward_v1(parent_model, generation, &parameters, view)
+                            .map_err(|e| format!("training forward: {e:?}"))?;
+                    let (loaded_logits, loaded_value) = forward_v1(&loaded, tensor, generation)?;
+                    ensure(
+                        bits(&logits) == bits(&loaded_logits)
+                            && value.to_bits() == loaded_value.to_bits(),
+                        "a rules checkpoint's model forward differs from the training forward",
+                    )?;
+                }
+                entry["forward_agreement_rows"] = json!(rows.len());
+                entry["rules_displacement"] =
+                    displacement_v1(pathway, &base, &parent_model.parameter_snapshot_v1());
+            }
+            checkpoints.push(entry);
         }
     }
     let telemetry_pin = publish_json(&output_directory, "telemetry.json", &telemetry)?;
@@ -2048,6 +2278,46 @@ pub(super) fn phase1_v1(
         "wall_seconds":started.elapsed().as_secs_f64()});
     publish_json(&output_directory, "phase1.json", &result)?;
     Ok(result)
+}
+
+/// RC1's fresh-code arm at its first step: on each kept evidence row, the
+/// parent's KL from its true-input softmax to its softmax with step 1's
+/// fresh codes, which must be finite.
+fn fresh_codes_census_v1(
+    parent: &NativePolicyValueNetV1,
+    generation: FreshLineageGenerationV1,
+    rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
+    selected: &[usize],
+    cell: &str,
+) -> Result<Value, String> {
+    let log_softmax = |logits: &[f32]| -> Vec<f64> {
+        let z: Vec<f64> = logits.iter().map(|&v| f64::from(v)).collect();
+        let max = z.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let lse = max + z.iter().map(|v| (v - max).exp()).sum::<f64>().ln();
+        z.iter().map(|v| v - lse).collect()
+    };
+    let mut kls = Vec::with_capacity(selected.len());
+    for &i in selected {
+        let (row, tensor) = &rows[i];
+        let fresh = fresh_state_codes_v1(tensor, cell, &row.game, row.step, 1)?;
+        let (logits, value) = forward_v1(parent, &fresh, generation)?;
+        ensure(
+            logits.iter().all(|v| v.is_finite()) && value.is_finite(),
+            "the parent's output with fresh codes is not finite",
+        )?;
+        let p = log_softmax(&recorded_logits(&row.parent_logits));
+        let q = log_softmax(&logits);
+        kls.push(
+            p.iter()
+                .zip(&q)
+                .map(|(a, b)| a.exp() * (a - b))
+                .sum::<f64>(),
+        );
+    }
+    Ok(
+        json!({"rows":kls.len(),"mean_kl":mean(&kls),"median_kl":median(kls.clone()),
+        "max_kl":kls.iter().copied().fold(0.0, f64::max)}),
+    )
 }
 
 fn median(mut values: Vec<f64>) -> Option<f64> {

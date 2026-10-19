@@ -94,6 +94,23 @@ fn input_config_v1(
     }
 }
 
+/// Logits and value of phase 1's CPU training forward (the tape its reverse
+/// pass reads) at `parameters`.
+pub(crate) fn training_forward_v1(
+    model: &NativePolicyValueNetV1,
+    generation: FreshLineageGenerationV1,
+    parameters: &[NativeNamedParameterV1],
+    encoded: NativeEncodedDecisionViewV1<'_>,
+) -> Result<(Vec<f32>, f32), NativePolicyTrainErrorV1> {
+    let tape = forward_with_tape(
+        parameters,
+        input_config_v1(model, generation),
+        encoded,
+        TrainingMathV1::PlatformLibm,
+    )?;
+    Ok((tape.logits_v1().to_vec(), tape.value_v1()))
+}
+
 /// Each row's own forward tape at the start-of-step parameters, its logit
 /// gradient `(c / D) * dKL/dz` rounded once to binary32, and the reverse pass
 /// into a separate gradient buffer, in row order. With `input_major` (the
@@ -193,7 +210,28 @@ impl NativePolicyValueTrainStateV1 {
         (Vec<LineBAuxiliaryResultV1>, NativeScorerBiasGaugeRecordV1),
         NativePolicyTrainErrorV1,
     > {
+        self.auxiliary_only_step_v1(generation, learning_rate, terms, update_scope, None)
+    }
+
+    /// The phase-1 step, with RC1's rules pathway when given
+    /// ([`rules_pathway_v1`]): rows read the effective card table, the
+    /// network's parameters take Adam on its gradients unchanged, and the
+    /// pathway's weight takes Adam at the same age.
+    pub(crate) fn auxiliary_only_step_v1(
+        &mut self,
+        generation: FreshLineageGenerationV1,
+        learning_rate: f32,
+        terms: &[&ExternalAuxiliaryInputV1<'_>],
+        update_scope: ArchiveDistillationUpdateScopeV1,
+        pathway: Option<&mut rules_pathway_v1::RulesPathwayV1>,
+    ) -> Result<
+        (Vec<LineBAuxiliaryResultV1>, NativeScorerBiasGaugeRecordV1),
+        NativePolicyTrainErrorV1,
+    > {
         self.require_platform_math_v1("archive distillation")?;
+        if pathway.is_some() && update_scope != ArchiveDistillationUpdateScopeV1::FullNetwork {
+            return Err(invalid("rules-pathway-scope"));
+        }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
         }
@@ -210,13 +248,17 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             self.scorer_bias_anchor_bits,
         )?;
+        // A rules pathway's rows read the effective card table; without one,
+        // the parameters themselves (no copy).
+        let effective: std::borrow::Cow<'_, [NativeNamedParameterV1]> = match &pathway {
+            Some(pathway) => std::borrow::Cow::Owned(pathway.effective_parameters_v1(&parameters)?),
+            None => std::borrow::Cow::Borrowed(&parameters),
+        };
         // Made once per step, for every term's rows.
-        let input_major = InputMajorWeightsV1::of_v1(&parameters);
+        let input_major = InputMajorWeightsV1::of_v1(&effective);
         let built = terms
             .iter()
-            .map(|input| {
-                external_auxiliary_terms_v1(input, &parameters, Some(&input_major), config)
-            })
+            .map(|input| external_auxiliary_terms_v1(input, &effective, Some(&input_major), config))
             .collect::<Result<Vec<_>, _>>()?;
         let mut gradients: Vec<Vec<f32>> = parameters
             .iter()
@@ -233,6 +275,21 @@ impl NativePolicyValueTrainStateV1 {
         let mut scorer_bias_gauge =
             gauge.finish(raw_scorer_bias_residual, scorer_bias_before_bits)?;
         gradients[SCORER_SECOND_BIAS][0] = 0.0;
+        // The pathway's step is computed first and assigned only after the
+        // network's step commits, so a failed step changes neither.
+        let pathway_next = match &pathway {
+            Some(pathway) => Some(
+                pathway.adam_step_v1(
+                    &gradients[CARD_EMBEDDING],
+                    self.adam_step
+                        .checked_add(1)
+                        .ok_or(NativePolicyTrainErrorV1::AdamStepOverflow)?,
+                    learning_rate,
+                    self.training_math,
+                )?,
+            ),
+            None => None,
+        };
         self.commit_adam_step_v1(
             &parameters,
             &gradients,
@@ -240,6 +297,9 @@ impl NativePolicyValueTrainStateV1 {
             &mut scorer_bias_gauge,
             update_scope,
         )?;
+        if let (Some(pathway), Some(next)) = (pathway, pathway_next) {
+            pathway.commit_v1(next);
+        }
         Ok((results, scorer_bias_gauge))
     }
 
@@ -301,6 +361,8 @@ impl NativePolicyValueTrainStateV1 {
         Ok(())
     }
 }
+
+pub(crate) mod rules_pathway_v1;
 
 #[cfg(test)]
 mod tests;
