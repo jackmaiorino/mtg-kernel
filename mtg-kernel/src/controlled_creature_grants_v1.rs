@@ -338,20 +338,7 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
                     state.objects.len(),
                 )?;
             }
-            let captured: crate::state::GameObject =
-                serde_json::from_str(&snapshot.private_snapshot_json)
-                    .map_err(|_| "invalid original color visibility snapshot")?;
-            if serde_json::to_string(&captured).map_err(|_| "color visibility serialization")?
-                != snapshot.private_snapshot_json
-                || captured.card_def != snapshot.source.card_def
-                || captured.owner != snapshot.source.owner
-                || captured.controller != snapshot.source.controller
-                || captured.zone != snapshot.source.zone
-                || captured.zone_change_count != snapshot.source.zone_change_count
-                || (captured.v4.face_down_v1.is_some() && snapshot.color_mask != 0)
-            {
-                return Err("color visibility snapshot changed original source".into());
-            }
+            validate_snapshot_object(snapshot)?;
             let live = state
                 .objects
                 .try_get(snapshot.source.source)
@@ -386,6 +373,50 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
         if missing_snapshot {
             return Err("battlefield departure lost its independent source color snapshot".into());
         }
+    }
+    Ok(())
+}
+/// History validation runs this for every retained departure on every
+/// decision. It depends only on the snapshot, so a snapshot that passed once
+/// passes again; every other case, including every failure, takes the full
+/// check below.
+fn validate_snapshot_object(snapshot: &DepartureColorV1) -> Result<(), &'static str> {
+    thread_local! {
+        static PASSED: std::cell::RefCell<std::collections::HashSet<DepartureColorV1>> =
+            std::cell::RefCell::default();
+    }
+    // try_with: during thread teardown the set may be gone; then this is
+    // simply the full check.
+    if PASSED
+        .try_with(|passed| passed.borrow().contains(snapshot))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    validate_snapshot_object_full(snapshot)?;
+    let _ = PASSED.try_with(|passed| {
+        let mut passed = passed.borrow_mut();
+        // A game retains few departures; the small cap bounds memory.
+        if passed.len() >= 256 {
+            passed.clear();
+        }
+        passed.insert(snapshot.clone());
+    });
+    Ok(())
+}
+fn validate_snapshot_object_full(snapshot: &DepartureColorV1) -> Result<(), &'static str> {
+    let captured: crate::state::GameObject = serde_json::from_str(&snapshot.private_snapshot_json)
+        .map_err(|_| "invalid original color visibility snapshot")?;
+    if serde_json::to_string(&captured).map_err(|_| "color visibility serialization")?
+        != snapshot.private_snapshot_json
+        || captured.card_def != snapshot.source.card_def
+        || captured.owner != snapshot.source.owner
+        || captured.controller != snapshot.source.controller
+        || captured.zone != snapshot.source.zone
+        || captured.zone_change_count != snapshot.source.zone_change_count
+        || (captured.v4.face_down_v1.is_some() && snapshot.color_mask != 0)
+    {
+        return Err("color visibility snapshot changed original source");
     }
     Ok(())
 }

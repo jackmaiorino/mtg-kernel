@@ -77,6 +77,7 @@ pub mod card_def;
 pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 pub(crate) mod continuous_source_frame_v1;
+pub(crate) mod retained_world_parse_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
 pub mod elenda_observation_v52;
