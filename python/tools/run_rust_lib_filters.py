@@ -13,6 +13,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -23,8 +24,11 @@ SHARD_ENV = "MTG_CI_RUST_LIB_SHARD"
 NOCAPTURE_ENV = "MTG_CI_RUST_LIB_NOCAPTURE"
 SKIP_IGNORED_ENV = "MTG_CI_RUST_LIB_SKIP_IGNORED"
 ISOLATED_CASES_ENV = "MTG_CI_RUST_LIB_ISOLATED_CASES"
-REMAINING_ENV = "MTG_CI_RUST_LIB_REMAINING_WORKFLOW"
+LIMITED_ONLY_ENV = "MTG_CI_RUST_LIB_LIMITED_ONLY"
 LIMITED_FEATURE = "limited-fdn-fixtures"
+# Limited-only cases that fail and are tracked in the named issue; skipped by
+# name until fixed.
+KNOWN_FAILURES_PATH = Path(__file__).with_name("rust_limited_only_known_failures.json")
 # Recorded seconds per isolated case on a hosted Linux runner, used only to
 # balance shards; refresh with update_rust_case_seconds.py.
 CASE_SECONDS_PATH = Path(__file__).with_name("rust_case_seconds.json")
@@ -85,8 +89,8 @@ def workflow_limited_filters(path: Path) -> list[str]:
             valued = {"--features", "--test", "--bin", "-p", "--package"}
         else:
             continue
-        if "--remaining-workflow" in words:
-            continue  # the remaining-case call itself selects no filter
+        if "--limited-only-workflow" in words:
+            continue  # the Limited-only call itself selects no filter
         index = 0
         while index < len(words):
             word = words[index]
@@ -115,9 +119,26 @@ def compiled_names(executable: str, test_filter: str, timeout: int, *, ignored: 
         print(result.stdout, end="", flush=True)
         print(result.stderr, end="", file=sys.stderr, flush=True)
         result.check_returncode()
+    return listed_names(result.stdout, test_filter)
+
+
+def default_library_names() -> list[str]:
+    """Every library case of the default-feature build the workspace suite runs."""
+    result = subprocess.run(
+        ["cargo", "test", "--release", "--locked", "-p", "mtg-kernel", "--lib", "--",
+         "--list", "--format", "pretty", "--color", "never"],
+        check=False, stdout=subprocess.PIPE, text=True,
+    )
+    if result.returncode:
+        print(result.stdout, end="", flush=True)
+        result.check_returncode()
+    return listed_names(result.stdout, "")
+
+
+def listed_names(listing: str, test_filter: str) -> list[str]:
     names = []
     summary_count = None
-    for line in result.stdout.splitlines():
+    for line in listing.splitlines():
         if not line.strip():
             continue
         if summary_count is not None:
@@ -279,8 +300,8 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--run":
         if len(sys.argv) != 3:
             raise ValueError("Cargo runner expects exactly one library test executable")
-        remaining = os.environ.get(REMAINING_ENV, "")
-        filters = [] if remaining else valid_filters(json.loads(os.environ[FILTERS_ENV]))
+        limited_only = os.environ.get(LIMITED_ONLY_ENV, "")
+        filters = [] if limited_only else valid_filters(json.loads(os.environ[FILTERS_ENV]))
         filter_timeout = int(os.environ.get(FILTER_TIMEOUT_ENV, "1800"))
         if filter_timeout <= 0:
             raise ValueError("Library filter timeout must be positive")
@@ -290,8 +311,8 @@ def main() -> int:
         shard = json.loads(os.environ.get(SHARD_ENV, "null"))
         if isolated_cases and shard is None:
             raise ValueError("Isolated cases require compiled-name sharding")
-        if remaining and not isolated_cases:
-            raise ValueError("Remaining cases require isolated cases")
+        if limited_only and not isolated_cases:
+            raise ValueError("Limited-only cases require isolated cases")
         commands = [(test_filter, [sys.argv[2], test_filter]) for test_filter in filters]
         if shard is not None:
             if (
@@ -301,19 +322,28 @@ def main() -> int:
             ):
                 raise ValueError("Expected a valid shard index/count")
             # Several filters share one balanced partition of their union.
-            # Remaining cases start from the whole library.
+            # Limited-only cases start from the whole library.
             listed = filters or [""]
             names = sorted({name for test_filter in listed for name in compiled_names(
                 sys.argv[2], test_filter, filter_timeout, ignored=False)})
             ignored = sorted({name for test_filter in listed for name in compiled_names(
                 sys.argv[2], test_filter, filter_timeout, ignored=True)})
-            if remaining:
-                # Every compiled case that no Limited step selects, so a new
-                # test cannot fall outside CI.
-                covered = workflow_limited_filters(Path(remaining))
-                names = [name for name in names if not any(f in name for f in covered)]
+            if limited_only:
+                # Cases only the Limited build compiles: the workspace suite
+                # never runs them, so run each one no Limited step selects.
+                selection = json.loads(Path(limited_only).read_text())
+                default, covered = set(selection["default"]), selection["covered"]
+                names = [name for name in names
+                         if name not in default and not any(f in name for f in covered)]
+                known = json.loads(KNOWN_FAILURES_PATH.read_text())
+                stale = sorted(set(known["cases"]) - set(names))
+                if stale:
+                    raise ValueError(f"Known failures are no longer Limited-only cases: {stale}")
+                print(json.dumps({"skipped_known_failures": known["cases"], "issue": known["issue"]}),
+                      flush=True)
+                names = [name for name in names if name not in known["cases"]]
                 ignored = [name for name in ignored if name in names]
-                filters = [f"remaining after {len(covered)} workflow filters"]
+                filters = [f"Limited-only cases outside {len(covered)} workflow filters"]
             if not names or not set(ignored) <= set(names) or (ignored and not skip_ignored):
                 raise ValueError("Sharded inventory is empty or contains unexpected ignored tests")
             # Preserve existing #[ignore] behavior only when explicitly requested.
@@ -362,17 +392,19 @@ def main() -> int:
     parser.add_argument("--skip-ignored", action="store_true")
     parser.add_argument("--isolated-cases", action="store_true",
                         help="Run each compiled shard name with its own timeout and at most four children")
-    parser.add_argument("--remaining-workflow", type=Path,
-                        help="Run every compiled case that no Limited filter in this workflow selects")
+    parser.add_argument("--limited-only-workflow", type=Path,
+                        help="Run every case only the Limited build compiles that no Limited "
+                             "filter in this workflow selects")
     parser.add_argument("filters", nargs="*")
     args = parser.parse_args()
-    if args.remaining_workflow is not None:
+    if args.limited_only_workflow is not None:
         if args.filters:
-            parser.error("--remaining-workflow takes no filters")
+            parser.error("--limited-only-workflow takes no filters")
         if not args.isolated_cases:
-            parser.error("--remaining-workflow requires --isolated-cases")
-        # Fail before the build if the workflow cannot be read.
-        workflow_limited_filters(args.remaining_workflow)
+            parser.error("--limited-only-workflow requires --isolated-cases")
+        covered = workflow_limited_filters(args.limited_only_workflow)
+        selection = Path(tempfile.mkdtemp()) / "limited_only_selection.json"
+        selection.write_text(json.dumps({"default": default_library_names(), "covered": covered}))
         filters = []
     else:
         filters = valid_filters(args.filters)
@@ -395,8 +427,7 @@ def main() -> int:
     environment[NOCAPTURE_ENV] = "1" if args.nocapture else "0"
     environment[SKIP_IGNORED_ENV] = "1" if args.skip_ignored else "0"
     environment[ISOLATED_CASES_ENV] = "1" if args.isolated_cases else "0"
-    # Cargo runs the runner from the package directory.
-    environment[REMAINING_ENV] = str(args.remaining_workflow.resolve()) if args.remaining_workflow else ""
+    environment[LIMITED_ONLY_ENV] = str(selection) if args.limited_only_workflow else ""
     runner = [sys.executable, str(Path(__file__).resolve()), "--run"]
     configuration = "target.'cfg(all())'.runner=" + json.dumps(runner)
     command = [

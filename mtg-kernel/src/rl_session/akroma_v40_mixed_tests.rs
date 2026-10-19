@@ -137,8 +137,10 @@ fn registered_employment_real_held_and_resolved_binding_forgery_and_restore_both
         assert_eq!(input(restored).2.observation, binding.observation);
     }
 }
+/// Ajani is Full: V40 keeps the scoped V12 recipient check and refuses it,
+/// and its V42 successor binds the full loyalty with the same scoping.
 #[test]
-fn registered_partial_ajani_recipient_full_loyalty_binding_remains_scoped_both_seats() {
+fn registered_full_ajani_recipient_refuses_v40_and_v42_loyalty_binding_remains_scoped_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
         put(&mut state, actor, "Lightning Bolt", Zone::Hand);
@@ -155,7 +157,23 @@ fn registered_partial_ajani_recipient_full_loyalty_binding_remains_scoped_both_s
             crate::event::ProposedEvent::zone_change(walker, Zone::Battlefield),
         );
         assert_eq!(crate::planeswalker_v1::loyalty(&state, walker), Some(4));
-        let (mut session, expected, binding) = input(state);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let refused = FastActorSessionV1::from_akroma_v40_fixture_state(state.clone());
+        let FastActorResponseV1::Terminal(terminal) = refused.current_response() else {
+            panic!("V40 must refuse a Full Ajani recipient");
+        };
+        assert_eq!(
+            terminal.terminal_reason,
+            "fail_closed:akroma_v40:Heartfire V12 unsupported or stale loyalty recipient"
+        );
+        assert_eq!(serde_json::to_vec(&refused.state).unwrap(), bytes);
+        let mut session = FastActorSessionV1::from_ajani_v42_fixture_state(state);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("genuine held decision");
+        };
+        let (_, _, binding) = session
+            .ajani_current_decision_input_v42(expected, expected.acting_player)
+            .unwrap();
         assert_eq!(
             binding
                 .observation
@@ -168,22 +186,22 @@ fn registered_partial_ajani_recipient_full_loyalty_binding_remains_scoped_both_s
                 .len(),
             1
         );
-        crate::planeswalker_v1::change_loyalty(session.akroma_fixture_state_mut(), walker, 1);
+        crate::planeswalker_v1::change_loyalty(session.ajani_fixture_state_mut(), walker, 1);
         let before = session.privileged_core_environment_hash();
         assert!(session
-            .akroma_validate_bound_decision_v40(expected, expected.acting_player, &binding)
+            .ajani_validate_bound_decision_v42(expected, expected.acting_player, &binding)
             .is_err());
         assert_eq!(session.privileged_core_environment_hash(), before);
         assert_eq!(
             crate::planeswalker_v1::remove_loyalty_row_for_test_v1(
-                session.akroma_fixture_state_mut(),
+                session.ajani_fixture_state_mut(),
                 walker
             ),
             Some(5)
         );
         let before = session.privileged_core_environment_hash();
         assert!(session
-            .akroma_current_decision_input_v40(expected, expected.acting_player)
+            .ajani_current_decision_input_v42(expected, expected.acting_player)
             .is_err());
         assert_eq!(session.privileged_core_environment_hash(), before);
     }
