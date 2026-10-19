@@ -142,8 +142,12 @@ fn registered_employment_real_held_and_resolved_binding_forgery_and_restore_both
 #[test]
 fn registered_full_ajani_recipient_refuses_v40_and_v42_loyalty_binding_remains_scoped_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
+        // The registered Heartfire V12 recipient fixture: the actor holds a
+        // genuine land choice while the opponent's walker is on the battlefield.
         let mut state = ready_state_for(actor);
-        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        put(&mut state, actor, "Forest", Zone::Hand);
+        put(&mut state, actor, "Mountain", Zone::Hand);
+        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
         // A real zone change installs the entering loyalty row; a direct
         // battlefield placement would leave the walker without one.
         let walker = put(
@@ -160,7 +164,10 @@ fn registered_full_ajani_recipient_refuses_v40_and_v42_loyalty_binding_remains_s
         let bytes = serde_json::to_vec(&state).unwrap();
         let refused = FastActorSessionV1::from_akroma_v40_fixture_state(state.clone());
         let FastActorResponseV1::Terminal(terminal) = refused.current_response() else {
-            panic!("V40 must refuse a Full Ajani recipient");
+            panic!(
+                "V40 must refuse a Full Ajani recipient: {:?}",
+                refused.current_response()
+            );
         };
         assert_eq!(
             terminal.terminal_reason,
@@ -169,8 +176,9 @@ fn registered_full_ajani_recipient_refuses_v40_and_v42_loyalty_binding_remains_s
         assert_eq!(serde_json::to_vec(&refused.state).unwrap(), bytes);
         let mut session = FastActorSessionV1::from_ajani_v42_fixture_state(state);
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
-            panic!("genuine held decision");
+            panic!("genuine held decision: {:?}", session.current_response());
         };
+        assert_eq!(expected.acting_player, actor.into());
         let (observation, _, binding) = session
             .ajani_current_decision_input_v42(expected, expected.acting_player)
             .unwrap();
