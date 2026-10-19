@@ -1459,7 +1459,7 @@ mod tests {
             for _ in 0..3 {
                 let mut ranks = TieRanks::new();
                 for h in 1..=8u64 {
-                    if rng.next_u64() % 3 > 0 {
+                    if !rng.next_u64().is_multiple_of(3) {
                         ranks.insert(h, (rng.next_u64() % 4) as u32);
                     }
                 }
