@@ -1866,6 +1866,26 @@ impl FrozenPlayPolicyV1 {
         self.inference_cache.as_ref().map(|c| &c.cache)
     }
 
+    /// The exact masses (summing to 2**64) of the sampler `sample_scores`
+    /// would use for `logits`, without drawing. The unclamped collection
+    /// sampler has no integer masses and is refused.
+    pub fn deployed_masses_v1(&mut self, logits: &[f32]) -> Result<Vec<u128>, String> {
+        if self.collection_sampler.is_some() {
+            return Err(
+                "deployed masses are not defined for the unclamped collection sampler".into(),
+            );
+        }
+        let masses = if let Some(successor) = &mut self.successor {
+            successor.sampler.apportion(logits)
+        } else if let Some(fresh) = &mut self.fresh_successor {
+            fresh.sampler.apportion(logits)
+        } else {
+            self.sampler.apportion(logits)
+        }
+        .map_err(|e| e.to_string())?;
+        Ok(masses.to_vec())
+    }
+
     fn sample_scores(
         &mut self,
         logits: &[f32],
@@ -2842,6 +2862,74 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_embeddings
         );
+    }
+
+    /// TP1: the deployed masses are the active sampler's own Hamilton
+    /// apportionment (exactly 2**64 in total) and do not draw: sampling after
+    /// reading them is unchanged.
+    #[test]
+    fn deployed_masses_are_the_samplers_exact_apportionment() {
+        let logits = [0.25_f32, -1.5, 2.0, 0.0];
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3()
+            .fork_for_collection_v3()
+            .unwrap();
+        let masses = policy.deployed_masses_v1(&logits).unwrap();
+        assert_eq!(masses.iter().sum::<u128>(), 1u128 << 64);
+        let mut reference = FastCategoricalScratch::default();
+        let expected = match &mut policy.successor {
+            Some(successor) => successor.sampler.apportion(&logits).unwrap().to_vec(),
+            None => reference.apportion(&logits).unwrap().to_vec(),
+        };
+        assert_eq!(masses, expected);
+        assert!(masses[2] > masses[0] && masses[0] > masses[3] && masses[3] > masses[1]);
+        let mut drawn = FrozenPlayPolicyV1::training_fixture_v3()
+            .fork_for_collection_v3()
+            .unwrap();
+        policy.reset_sampling_v1([3, 4]);
+        drawn.reset_sampling_v1([3, 4]);
+        let _ = drawn.deployed_masses_v1(&logits).unwrap();
+        for _ in 0..16 {
+            assert_eq!(
+                policy.sample_scores(&logits, PlayerSeatV1::P0, 4).unwrap(),
+                drawn.sample_scores(&logits, PlayerSeatV1::P0, 4).unwrap()
+            );
+        }
+    }
+
+    /// TP1: the V4 fixture and a menu wider than the narrow sampler use their
+    /// active sampler's masses; the unclamped collection sampler is refused.
+    #[test]
+    fn deployed_masses_cover_v4_wide_menus_and_refuse_unclamped() {
+        let wide: Vec<f32> = (0..70)
+            .map(|i| ((i * 37) % 11) as f32 * 0.3 - 1.0)
+            .collect();
+        for mut policy in [
+            FrozenPlayPolicyV1::training_fixture_v3()
+                .fork_for_collection_v3()
+                .unwrap(),
+            FrozenPlayPolicyV1::training_fixture_v4()
+                .fork_for_collection_v3()
+                .unwrap(),
+        ] {
+            for logits in [vec![0.5_f32, -0.25, 1.0], wide.clone()] {
+                let masses = policy.deployed_masses_v1(&logits).unwrap();
+                assert_eq!(masses.len(), logits.len());
+                assert_eq!(masses.iter().sum::<u128>(), 1u128 << 64);
+                let expected = if let Some(successor) = &mut policy.successor {
+                    successor.sampler.apportion(&logits).unwrap().to_vec()
+                } else if let Some(fresh) = &mut policy.fresh_successor {
+                    fresh.sampler.apportion(&logits).unwrap().to_vec()
+                } else {
+                    policy.sampler.apportion(&logits).unwrap().to_vec()
+                };
+                assert_eq!(masses, expected);
+            }
+        }
+        let mut unclamped = FrozenPlayPolicyV1::training_fixture_v3()
+            .fork_for_collection_v3()
+            .unwrap();
+        unclamped.enable_unclamped_collection_sampler_v1();
+        assert!(unclamped.deployed_masses_v1(&[0.0, 1.0]).is_err());
     }
 
     /// Proves the reconciliation layer, not just the raw action slice:
