@@ -87,7 +87,9 @@ pub use archive_distillation_v1::ArchiveDistillationUpdateScopeV1;
 pub(crate) use archive_distillation_v1::{
     one_hot_target_v1, ExternalAuxiliaryInputV1, ExternalAuxiliaryRowV1,
 };
-pub(crate) use e_supported_policy_v1::{ESupportedPolicyInputV1, ESupportedPolicyRowV1};
+pub(crate) use e_supported_policy_v1::{
+    ESupportedPolicyInputV1, ESupportedPolicyRowV1, SoftTargetPolicyInputV1, SoftTargetPolicyRowV1,
+};
 pub(crate) use head_only_mask_v1::{
     HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1, HEAD_ONLY_TRAINABLE_TENSORS_V1,
 };

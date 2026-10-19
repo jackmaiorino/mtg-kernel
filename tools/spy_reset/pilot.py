@@ -45,7 +45,9 @@ PANEL_REPEATS = 12
 # section 6), whose readings must not reuse the frozen panel's seeds.
 PANEL_NS = f"{NS}/eval"
 SD1_PANEL_NS = "sd1-panel-v1"
-PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS)
+# SQ1's fresh panel (collab LANES/soft-q-teaching-20261018, design section 7).
+SQ1_PANEL_NS = "sq1-panel-v1-20261018"
+PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS)
 
 
 def key(parts: list) -> bytes:
