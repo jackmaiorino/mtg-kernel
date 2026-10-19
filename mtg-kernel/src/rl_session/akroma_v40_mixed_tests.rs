@@ -171,12 +171,11 @@ fn registered_full_ajani_recipient_refuses_v40_and_v42_loyalty_binding_remains_s
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
             panic!("genuine held decision");
         };
-        let (_, _, binding) = session
+        let (observation, _, binding) = session
             .ajani_current_decision_input_v42(expected, expected.acting_player)
             .unwrap();
         assert_eq!(
-            binding
-                .observation
+            observation
                 .projection
                 .surface
                 .engine_context
