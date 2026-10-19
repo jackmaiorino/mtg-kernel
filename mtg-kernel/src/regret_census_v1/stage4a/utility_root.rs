@@ -287,6 +287,94 @@ fn validate_choosers(search: &Value, plain: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// `s4a-root-actions` (collab LANES/teacher-price-20261019): a new root binds
+/// to its search-root witness as before; a reused tree decision binds to the
+/// passive reuse witness recorded at that decision (`S4A_REUSE_WITNESS=1`).
+/// The witness must name the decision record's own earlier search, carry that
+/// search's tree hash, apply the saved action through a supported edge with
+/// consistent counts (and equal the decision's node statistics when they are
+/// recorded), and its identity must equal the replayed decision's on every
+/// field. The first-divergence utility path keeps refusing reused roots.
+pub(super) fn validate_tree_root(
+    search_row: &Value,
+    search_decision: &Value,
+    reconstructed: &Value,
+    saved_action: u32,
+) -> Result<(), String> {
+    if search_decision["chooser"] != "reused" {
+        return validate_historical_root(search_row, search_decision, reconstructed);
+    }
+    let witness = &search_decision["reuse_witness"];
+    if witness["schema"] != super::reuse_witness::SCHEMA {
+        return Err("reused root refused: no reuse witness at this decision".into());
+    }
+    let index = search_decision["search"]
+        .as_u64()
+        .ok_or("reused root search index missing or invalid")?;
+    if witness["search"].as_u64() != Some(index) {
+        return Err("reused root witness search differs from its decision record".into());
+    }
+    let record = search_row["game"]["searches"]
+        .as_array()
+        .and_then(|records| records.get(usize::try_from(index).ok()?))
+        .ok_or("reused root search record missing")?;
+    let step = reconstructed["step"]
+        .as_u64()
+        .ok_or("reused root step missing")?;
+    if record["search"].as_u64() != Some(index) || record["step"].as_u64().is_none_or(|s| s >= step)
+    {
+        return Err("reused root search record index differs or is not earlier".into());
+    }
+    let tree_hash = record["tree"]["hash"].as_str();
+    if tree_hash.is_none() || witness["search_tree_hash"].as_str() != tree_hash {
+        return Err("reused root witness tree hash differs from its search record".into());
+    }
+    let (Some(edge), Some(backups), Some(wins)) = (
+        witness["storage_edge_index"].as_u64(),
+        witness["natural_terminal_backups"].as_u64(),
+        witness["focal_wins"].as_u64(),
+    ) else {
+        return Err("reused root witness edge or counts missing".into());
+    };
+    if witness["applied_live_index"].as_u64() != Some(u64::from(saved_action))
+        || backups < super::tree::MIN_EXEC_BACKUPS
+        || wins > backups
+    {
+        return Err("reused root witness action or counts differ".into());
+    }
+    let stats = &search_decision["node_stats"];
+    if !stats.is_null() {
+        let at = |key: &str| stats[key].get(edge as usize).and_then(Value::as_u64);
+        if stats["executed_edge"].as_u64() != Some(edge)
+            || stats["executed_live"].as_u64() != Some(u64::from(saved_action))
+            || at("n") != Some(backups)
+            || at("wins") != Some(wins)
+        {
+            return Err("reused root node statistics differ from the witness".into());
+        }
+    }
+    for key in [
+        "step",
+        "physical_decision_id",
+        "substep",
+        "k",
+        "obs_hash",
+        "menu_hash",
+        "state_hash",
+    ] {
+        if reconstructed.get(key).is_none()
+            || witness["decision"].get(key).is_none()
+            || witness["decision"][key] != reconstructed[key]
+        {
+            return Err(format!("reused root witness {key} differs or is absent"));
+        }
+    }
+    if witness["search"] != search_decision["search"] {
+        return Err("reused root witness search differs from its decision record".into());
+    }
+    Ok(())
+}
+
 /// An in-range saved index is insufficient if replay semantics changed.
 /// Bind it to the exact historical decision/menu/state witness emitted by
 /// refresh::Searches::run before the original search. Reused nodes do not

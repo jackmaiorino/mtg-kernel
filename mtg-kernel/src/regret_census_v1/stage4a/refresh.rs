@@ -148,6 +148,9 @@ pub(super) struct GuideRun {
     pub(super) bestline: Option<u64>,
     /// Passive actual reused-decision evidence; never changes execution.
     pub(super) reuse_witnesses: Recording,
+    /// Passive matched-node statistics at every tree-executed decision
+    /// (`S4A_NODE_STATS=1`); never changes execution.
+    pub(super) node_stats: bool,
     /// Opt-in root-only execution, independently of search allocation.
     pub(super) executor: ExecutionMode,
 }
@@ -160,7 +163,67 @@ impl GuideRun {
         bestline: None,
         reuse_witnesses: Recording::Disabled,
         executor: ExecutionMode::Persistent,
+        node_stats: false,
     };
+}
+
+/// Opt-in settings of a searched budget game (collab
+/// LANES/teacher-price-20261019): a per-decision allocation other than the
+/// formal 128k initial and 64k refresh, and passive node statistics. The
+/// default leaves the game and its row byte-identical.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct BudgetExtras {
+    /// (initial, refresh) transitions; None keeps ANCHOR_BUDGET and REFRESH_BUDGET.
+    pub(super) per_decision: Option<(u64, u64)>,
+    pub(super) node_stats: bool,
+}
+
+impl BudgetExtras {
+    /// Strict runner-boundary parsing of `S4A_ALLOCATION=initial,refresh`
+    /// and `S4A_NODE_STATS=0|1`.
+    pub(super) fn parse(
+        allocation: Result<String, std::env::VarError>,
+        node_stats: Result<String, std::env::VarError>,
+    ) -> Result<Self, String> {
+        let per_decision = match allocation.as_deref() {
+            Err(std::env::VarError::NotPresent) => None,
+            Ok(value) => {
+                let parsed = value
+                    .split(',')
+                    .map(|x| x.trim().parse::<u64>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| {
+                        format!("S4A_ALLOCATION must be initial,refresh counts, not {value}")
+                    })?;
+                if parsed.len() != 2 || parsed[0] == 0 || parsed[1] == 0 {
+                    return Err(format!(
+                        "S4A_ALLOCATION must be two positive counts, not {value}"
+                    ));
+                }
+                Some((parsed[0], parsed[1]))
+            }
+            Err(error) => return Err(format!("invalid S4A_ALLOCATION: {error}")),
+        };
+        let node_stats = match node_stats.as_deref() {
+            Ok("1") => true,
+            Ok("0") | Err(std::env::VarError::NotPresent) => false,
+            Ok(value) => return Err(format!("S4A_NODE_STATS must be 0 or 1, not {value}")),
+            Err(error) => return Err(format!("invalid S4A_NODE_STATS: {error}")),
+        };
+        Ok(Self {
+            per_decision,
+            node_stats,
+        })
+    }
+
+    pub(super) fn allocation(self, total: u64) -> Allocation {
+        let (anchor, refresh) = self.per_decision.unwrap_or((ANCHOR_BUDGET, REFRESH_BUDGET));
+        Allocation {
+            anchor,
+            refresh,
+            total,
+        }
+    }
 }
 
 pub(super) fn rule(
@@ -189,6 +252,8 @@ struct Cursor {
     depth: u32,
     last_phys: Option<u64>,
     search: usize,
+    /// Copy node statistics into lookups (`S4A_NODE_STATS=1` only).
+    record_stats: bool,
 }
 
 /// A looked-up decision: the keyed step and, on a hit, the supported edge's
@@ -198,6 +263,8 @@ struct Hit {
     backups: Option<u64>,
     /// The matched node's key (Supported or Unsupported lookups).
     key: Option<super::tree::Key>,
+    /// The matched node's per-edge backups, wins and seeded order.
+    stats: Option<(Vec<u64>, Vec<u64>, Vec<usize>)>,
 }
 
 impl Cursor {
@@ -210,7 +277,13 @@ impl Cursor {
             depth: 0,
             last_phys: None,
             search,
+            record_stats: false,
         }
+    }
+
+    fn recording(mut self, record_stats: bool) -> Self {
+        self.record_stats = record_stats;
+        self
     }
 
     /// Looks up the current decision.
@@ -231,12 +304,17 @@ impl Cursor {
         }
         let st = self.keyer.step(s, d).map_err(err)?;
         let (key, pk, pe, cn) = self.keyer.storage(&st);
-        let (found, backups) = match self.tree.find(&key, &pk, &pe, cn).map_err(err)? {
-            Found::Hit(node) => match node.frozen_choice() {
-                Some(e) => (Lookup::Supported(e), Some(node.n[e])),
-                None => (Lookup::Unsupported, None),
-            },
-            Found::Miss => (Lookup::Miss, None),
+        let (found, backups, stats) = match self.tree.find(&key, &pk, &pe, cn).map_err(err)? {
+            Found::Hit(node) => {
+                let stats = self
+                    .record_stats
+                    .then(|| (node.n.clone(), node.wins.clone(), node.perm.clone()));
+                match node.frozen_choice() {
+                    Some(e) => (Lookup::Supported(e), Some(node.n[e]), stats),
+                    None => (Lookup::Unsupported, None, stats),
+                }
+            }
+            Found::Miss => (Lookup::Miss, None, None),
         };
         if found == Lookup::Miss {
             self.matching = false;
@@ -248,6 +326,7 @@ impl Cursor {
                 step: st,
                 backups,
                 key,
+                stats,
             }),
         ))
     }
@@ -553,12 +632,19 @@ fn guide_inner(
         // A bank anchor tree was built without merging.
         return Err("interchangeable-choice merging runs from openings only".into());
     }
-    let mut cursor = Cursor::new(first, 0, run.mode, run.interchange);
+    let mut cursor = Cursor::new(first, 0, run.mode, run.interchange).recording(run.node_stats);
     let mut cursor_keys = KeyStats::default();
     let mut suffix = run.opening.then(|| super::labels::Suffix::new(true));
     live_focal.reset_sampling_v1(src.guide_policy_seeds);
     live_opp.reset_sampling_v1(src.guide_policy_seeds);
     let mut s = anchor.clone();
+    // A separate scorer for node statistics: scoring draws nothing and no
+    // live stream is touched, so the game is unchanged.
+    let mut scorer = if run.node_stats {
+        Some(live_focal.fork_for_collection_v3()?)
+    } else {
+        None
+    };
     let mut meter = Meter::new(u64::MAX);
     let mut c = Counters::default();
     let (mut actions, mut decisions) = (Vec::new(), Vec::new());
@@ -613,7 +699,8 @@ fn guide_inner(
                                 searches.records.len() - 1,
                                 run.mode,
                                 run.interchange,
-                            );
+                            )
+                            .recording(run.node_stats);
                             refreshed = Some(reason);
                             (lookup, hit) = cursor.lookup(&s, d)?;
                         }
@@ -675,6 +762,33 @@ fn guide_inner(
                     acquisition_target =
                         control.candidate(&s, d, a, witness, &searches.records, actions.len())?;
                 }
+                let node_stats = match (&hit, run.node_stats, chooser) {
+                    (Some(h), true, "new_root" | "reused") => {
+                        let (n, wins, perm) = h
+                            .stats
+                            .as_ref()
+                            .ok_or("tree-executed decision lacks node statistics")?;
+                        let live = (0..n.len())
+                            .map(|e| cursor.live(h, e))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let Lookup::Supported(edge) = lookup else {
+                            return Err("tree-executed decision lacks a supported edge".into());
+                        };
+                        let scorer = scorer.as_mut().ok_or("node statistics without a scorer")?;
+                        let scores = scorer.score_fast_session_v1(&s)?;
+                        if scores.logits.len() != n.len() {
+                            return Err("root scores width differs from the node".into());
+                        }
+                        let masses = scorer.deployed_masses_v1(&scores.logits)?;
+                        Some(json!({"schema":"s4a-node-stats/v1","n":n,"wins":wins,
+                            "tie_order":perm,"storage_to_live":live,"executed_edge":edge,
+                            "executed_live":a,
+                            "root_logit_bits":scores.logits.iter().map(|x| x.to_bits()).collect::<Vec<u32>>(),
+                            "root_value_bits":scores.value.to_bits(),
+                            "deployed_masses":masses.iter().map(|m| m.to_string()).collect::<Vec<_>>()}))
+                    }
+                    _ => None,
+                };
                 if let Some(h) = hit {
                     if cursor.matching {
                         cursor.advance(h, a);
@@ -716,6 +830,9 @@ fn guide_inner(
                 if let Some(witness) = reuse_witness {
                     decisions.last_mut().expect("just recorded decision")["reuse_witness"] =
                         witness;
+                }
+                if let Some(stats) = node_stats {
+                    decisions.last_mut().expect("just recorded decision")["node_stats"] = stats;
                 }
                 a
             } else if acting(&d) == focal {
@@ -835,6 +952,7 @@ pub(super) fn budget_case(
         reuse_witnesses,
         binding,
         ExecutionMode::Persistent,
+        BudgetExtras::default(),
     )
 }
 
@@ -854,6 +972,7 @@ pub(super) fn budget_case_with_executor(
     reuse_witnesses: Recording,
     binding: &str,
     executor: ExecutionMode,
+    extras: BudgetExtras,
 ) -> Result<Value, String> {
     executor.validate_budget(false, mode, interchange, bestline, reuse_witnesses)?;
     let started = Instant::now();
@@ -866,11 +985,7 @@ pub(super) fn budget_case_with_executor(
     let mut live_focal = policy.fork_for_collection_v3()?;
     let mut live_opp = sh.opponents[opp].fork_for_collection_v3()?;
     let opening = source_session(&sh.spec, src)?;
-    let allocation = Allocation {
-        anchor: ANCHOR_BUDGET,
-        refresh: REFRESH_BUDGET,
-        total,
-    };
+    let allocation = extras.allocation(total);
     let (rec, _) = guide(
         sh,
         &mut roles,
@@ -888,6 +1003,7 @@ pub(super) fn budget_case_with_executor(
             bestline,
             reuse_witnesses,
             executor,
+            node_stats: extras.node_stats,
         },
     )?;
     let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -1448,6 +1564,7 @@ mod tests {
                             bestline: None,
                             reuse_witnesses: recording,
                             executor: ExecutionMode::Persistent,
+                            node_stats: false,
                         },
                     )
                     .unwrap()
@@ -1759,6 +1876,183 @@ mod tests {
             roots.len(),
             rebuilt["choosers"],
             roots.iter().map(|r| r["view"].as_str().unwrap()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn budget_extras_parse_is_strict() {
+        use std::env::VarError::NotPresent;
+        let unset = BudgetExtras::parse(Err(NotPresent), Err(NotPresent)).unwrap();
+        assert_eq!(unset, BudgetExtras::default());
+        assert_eq!(
+            unset.allocation(9),
+            Allocation {
+                anchor: ANCHOR_BUDGET,
+                refresh: REFRESH_BUDGET,
+                total: 9
+            }
+        );
+        let set = BudgetExtras::parse(Ok("32000,16000".into()), Ok("1".into())).unwrap();
+        assert_eq!(set.per_decision, Some((32_000, 16_000)));
+        assert!(set.node_stats);
+        assert_eq!(set.allocation(512_000).refresh, 16_000);
+        for bad in ["", "1", "1,2,3", "0,4", "4,0", "a,b", "-1,2"] {
+            assert!(
+                BudgetExtras::parse(Ok(bad.into()), Err(NotPresent)).is_err(),
+                "{bad}"
+            );
+        }
+        for bad in ["", "2", "yes", "true"] {
+            assert!(
+                BudgetExtras::parse(Err(NotPresent), Ok(bad.into())).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(
+            !BudgetExtras::parse(Err(NotPresent), Ok("0".into()))
+                .unwrap()
+                .node_stats
+        );
+    }
+
+    /// TP1 (collab LANES/teacher-price-20261019): node statistics are
+    /// passive (the game and every other field are unchanged), a
+    /// per-decision allocation reaches the initial search and every refresh,
+    /// each tree-executed decision records its node with a live permutation,
+    /// the executed edge is the node's frozen choice, and at new roots the
+    /// statistics equal the root rebuild's.
+    #[test]
+    #[ignore = "native qualification: complete fixture games with small searches; run with cargo test --release"]
+    fn node_stats_are_passive_and_allocation_is_bound() {
+        let (policy, sh, mut src) = plain_control_fixture(0, 0, 100_000, 200_000);
+        src.id = "tp1-node-stats-s0-p0".into();
+        src.search_root = "root-rebuild".into();
+        let per_decision = Some((8_000, 4_000));
+        let play = |node_stats: bool| {
+            budget_case_with_executor(
+                &sh,
+                &policy,
+                &src,
+                40_000,
+                KeyMode::Repaired,
+                false,
+                None,
+                Recording::Enabled,
+                "fixture",
+                ExecutionMode::Persistent,
+                BudgetExtras {
+                    per_decision,
+                    node_stats,
+                },
+            )
+            .unwrap()
+        };
+        let (plain_row, row, rebuilt) = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(256 << 20)
+                .spawn_scoped(scope, || {
+                    let plain_row = play(false);
+                    let row = play(true);
+                    let rebuilt = super::super::root_rebuild::game(&sh.spec, &row, None);
+                    (plain_row, row, rebuilt)
+                })
+                .unwrap()
+                .join()
+                .unwrap()
+        });
+        let game = &row["game"];
+        assert_eq!(game["valid"], true, "{}", game["invalid_reason"]);
+        assert_eq!(
+            row["allocation"],
+            json!({"initial":8_000,"refresh":4_000,"total":40_000})
+        );
+        let searches = game["searches"].as_array().unwrap();
+        assert!(searches.len() >= 2, "no refresh ran");
+        assert_eq!(searches[0]["budget"], 8_000);
+        assert!(searches[1..]
+            .iter()
+            .all(|r| r["budget"].as_u64().unwrap() <= 4_000));
+        // Passive: removing the statistics gives the unrecorded row.
+        let mut stripped = row.clone();
+        stripped["wall"] = plain_row["wall"].clone();
+        for d in stripped["game"]["decisions"].as_array_mut().unwrap() {
+            d.as_object_mut().unwrap().remove("node_stats");
+        }
+        assert_eq!(stripped["game"]["actions"], plain_row["game"]["actions"]);
+        assert_eq!(
+            stripped["game"]["decisions"],
+            plain_row["game"]["decisions"]
+        );
+        let mut tree_rows = (0, 0);
+        for d in game["decisions"].as_array().unwrap() {
+            let chooser = d["chooser"].as_str().unwrap();
+            let stats = &d["node_stats"];
+            if !matches!(chooser, "new_root" | "reused") {
+                assert!(stats.is_null());
+                continue;
+            }
+            let k = d["k"].as_u64().unwrap() as usize;
+            let n: Vec<u64> = serde_json::from_value(stats["n"].clone()).unwrap();
+            let wins: Vec<u64> = serde_json::from_value(stats["wins"].clone()).unwrap();
+            let live: Vec<u32> = serde_json::from_value(stats["storage_to_live"].clone()).unwrap();
+            assert_eq!((n.len(), wins.len(), live.len()), (k, k, k));
+            assert!(n.iter().zip(&wins).all(|(n, w)| w <= n));
+            let mut sorted = live.clone();
+            sorted.sort_unstable();
+            assert!(sorted.into_iter().eq(0..k as u32));
+            let e = stats["executed_edge"].as_u64().unwrap() as usize;
+            assert!(n[e] >= 8);
+            assert_eq!(json!(live[e]), stats["executed_live"]);
+            assert_eq!(
+                game["actions"][d["step"].as_u64().unwrap() as usize],
+                stats["executed_live"]
+            );
+            let m = |a: usize| wins[a] as f64 / n[a] as f64;
+            assert!((0..k).all(|a| n[a] < 8 || m(a) <= m(e)));
+            assert_eq!(stats["root_logit_bits"].as_array().unwrap().len(), k);
+            let masses: Vec<u128> = stats["deployed_masses"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_str().unwrap().parse().unwrap())
+                .collect();
+            assert_eq!(
+                (masses.len(), masses.iter().sum::<u128>()),
+                (k, 1u128 << 64)
+            );
+            if chooser == "reused" {
+                let witness = &d["reuse_witness"];
+                assert_eq!(witness["storage_edge_index"], json!(e));
+                assert_eq!(witness["applied_live_index"], stats["executed_live"]);
+                assert_eq!(witness["natural_terminal_backups"], json!(n[e]));
+                assert_eq!(witness["focal_wins"], json!(wins[e]));
+                assert_eq!(witness["search"], d["search"]);
+                tree_rows.1 += 1;
+            } else {
+                tree_rows.0 += 1;
+            }
+        }
+        assert!(rebuilt["void"].is_null(), "{}", rebuilt["void"]);
+        let new_roots: Vec<&Value> = game["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["chooser"] == "new_root")
+            .collect();
+        let roots = rebuilt["roots"].as_array().unwrap();
+        assert_eq!(roots.len(), new_roots.len());
+        for (r, d) in roots.iter().zip(&new_roots) {
+            assert_eq!(r["step"], d["step"]);
+            assert_eq!(r["n"], d["node_stats"]["n"]);
+            assert_eq!(r["wins"], d["node_stats"]["wins"]);
+            assert_eq!(r["map"], d["node_stats"]["storage_to_live"]);
+        }
+        assert!(tree_rows.0 > 0, "no new-root row");
+        eprintln!(
+            "node stats: {} new-root and {} reused rows, {} searches",
+            tree_rows.0,
+            tree_rows.1,
+            searches.len()
         );
     }
 

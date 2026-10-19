@@ -18,18 +18,20 @@
 //! The search row's saved executable actions before step N are replayed
 //! without inference. The decision reached must have the requested
 //! coordinates, be a focal multi-action choice whose saved action is in the
-//! live menu, carry a `new_root` record, and match that record's search-root
-//! witness exactly (`validate_historical_root`). Actions are strictly
+//! live menu, and carry either a `new_root` record matching that record's
+//! search-root witness exactly, or a `reused` record matching its passive
+//! reuse witness exactly (`validate_tree_root`). Actions are strictly
 //! increasing live menu indices. 1..=8 repetitions name fresh focal and
 //! opponent streams, distinct from each other and from the case's source and
 //! guide seeds. For each repetition, then each action in order, a branch
 //! forces the action, resets both named streams and plays on with the frozen
 //! policies (`branch_retained`), so every action at a root shares a
 //! repetition's streams. No search and no hidden-world sampling. The receipt
-//! (one row at a fresh `out`) carries the root identity, the saved action,
-//! the root's ordered menu (action kind and actor-visible label), the focal
-//! policy's root logit and value bits, and every branch, including a failed
-//! branch's partial receipt.
+//! (one row at a fresh `out`) carries the root identity, the saved action
+//! and its chooser, the root's ordered menu (action kind and actor-visible
+//! label), the focal policy's root logit and value bits, its deployed
+//! sampler's exact masses (decimal strings summing to 2**64), and every
+//! branch, including a failed branch's partial receipt.
 
 use super::*;
 use std::collections::HashSet;
@@ -114,6 +116,7 @@ struct AuthenticatedStep {
     prefix_len: usize,
     prefix_sha256: String,
     saved_action: u32,
+    chooser: Value,
 }
 
 /// Replay the search row's saved prefix without inference and bind the
@@ -154,7 +157,8 @@ fn authenticate(
     }
     let recorded = recorded_decision(search, &d)?;
     let identity = bank::decision_identity(&root)?;
-    validate_historical_root(search, recorded, &identity)?;
+    validate_tree_root(search, recorded, &identity, saved_action)?;
+    let chooser = recorded["chooser"].clone();
     Ok(AuthenticatedStep {
         session: root,
         identity,
@@ -164,6 +168,7 @@ fn authenticate(
             .flat_map(|a| a.to_le_bytes())
             .collect::<Vec<_>>()),
         saved_action,
+        chooser,
     })
 }
 
@@ -211,14 +216,14 @@ fn diagnose(
         out["shared_prefix_transitions"] = json!(root.prefix_len);
         out["shared_prefix_actions_sha256"] = json!(root.prefix_sha256);
         out["saved_action"] = json!(root.saved_action);
+        out["saved_chooser"] = root.chooser.clone();
         out["ordered_menu"] = Value::Array(super::inspect::menu(&observation, &menu)?);
         // The focal policy's own scores at the root, from a separate fork so no
         // branch stream is touched. Consumers compare these bits with the bank
         // that recorded the root: equal bits show this build encodes and scores
         // the root as the bank's build did.
-        let scores = policy
-            .fork_for_collection_v3()?
-            .score_fast_session_v1(&root.session)?;
+        let mut scorer = policy.fork_for_collection_v3()?;
+        let scores = scorer.score_fast_session_v1(&root.session)?;
         if scores.logits.len() != d.legal_action_count as usize {
             return Err("root scores width differs from the live menu".into());
         }
@@ -228,6 +233,11 @@ fn diagnose(
             .map(|x| x.to_bits())
             .collect::<Vec<u32>>());
         out["root_policy_value_bits"] = json!(scores.value.to_bits());
+        out["root_deployed_masses"] = json!(scorer
+            .deployed_masses_v1(&scores.logits)?
+            .iter()
+            .map(|m| m.to_string())
+            .collect::<Vec<_>>());
         let mut focal = policy.fork_for_collection_v3()?;
         let mut opponent = sh.opponents[opponent_index].fork_for_collection_v3()?;
         for (repetition, seeds) in req.repetitions.iter().enumerate() {
@@ -564,6 +574,91 @@ mod tests {
                 },
             ] {
                 assert!(refused(&row, &wrong));
+            }
+        });
+    }
+
+    /// TP1: a reused tree decision authenticates against the reuse witness
+    /// recorded there, on every identity field and the search index, and its
+    /// chooser is carried; without a witness it stays refused.
+    #[test]
+    fn reused_roots_authenticate_only_against_their_reuse_witness() {
+        replay_stack(|| {
+            let spec = spec(128, 256);
+            for seat in [0, 1] {
+                let src = case(seat);
+                let (row, at) = later_root(&src, &spec, 2);
+                let identity = row["game"]["searches"][0]["root"].clone();
+                let saved = row["game"]["actions"][at.step as usize].clone();
+                let mut reused = row.clone();
+                // The originating search ran at an earlier step, with a tree hash.
+                reused["game"]["searches"][0]["step"] = json!(0);
+                reused["game"]["searches"][0]["tree"] = json!({"hash":"ab".repeat(32)});
+                let record = &mut reused["game"]["decisions"][0];
+                record["chooser"] = json!("reused");
+                record["reuse_witness"] = json!({"schema":crate::regret_census_v1::stage4a::reuse_witness::SCHEMA,
+                    "decision":identity,"search":0,"search_tree_hash":"ab".repeat(32),
+                    "storage_edge_index":1,"applied_live_index":saved,
+                    "natural_terminal_backups":12,"focal_wins":7});
+                record["node_stats"] = json!({"n":[3,12],"wins":[1,7],"executed_edge":1,
+                    "executed_live":saved});
+                let root = authenticate(&src, &at, &spec, &reused, "binding", &mut 0).unwrap();
+                assert_eq!(root.chooser, json!("reused"));
+                assert_eq!(root.identity, identity);
+                let refused =
+                    |row: &Value| authenticate(&src, &at, &spec, row, "binding", &mut 0).is_err();
+                for key in [
+                    "step",
+                    "physical_decision_id",
+                    "substep",
+                    "k",
+                    "obs_hash",
+                    "menu_hash",
+                    "state_hash",
+                ] {
+                    let mut tampered = reused.clone();
+                    tampered["game"]["decisions"][0]["reuse_witness"]["decision"][key] = json!("0");
+                    assert!(refused(&tampered), "{key}");
+                    let mut absent = reused.clone();
+                    absent["game"]["decisions"][0]["reuse_witness"]["decision"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove(key);
+                    assert!(refused(&absent), "{key}");
+                }
+                let mut search = reused.clone();
+                search["game"]["decisions"][0]["reuse_witness"]["search"] = json!(1);
+                assert!(refused(&search));
+                let mut absent = reused.clone();
+                absent["game"]["decisions"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("search");
+                absent["game"]["decisions"][0]["reuse_witness"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("search");
+                assert!(refused(&absent));
+                let mut late = reused.clone();
+                late["game"]["searches"][0]["step"] = json!(at.step);
+                assert!(refused(&late));
+                for (key, value) in [
+                    ("search_tree_hash", json!("cd".repeat(32))),
+                    ("applied_live_index", json!(99)),
+                    ("natural_terminal_backups", json!(7)),
+                    ("focal_wins", json!(13)),
+                    ("storage_edge_index", json!(0)),
+                ] {
+                    let mut wrong = reused.clone();
+                    wrong["game"]["decisions"][0]["reuse_witness"][key] = value;
+                    assert!(refused(&wrong), "{key}");
+                }
+                let mut stats = reused.clone();
+                stats["game"]["decisions"][0]["node_stats"]["wins"] = json!([1, 6]);
+                assert!(refused(&stats));
+                let mut schema = reused.clone();
+                schema["game"]["decisions"][0]["reuse_witness"]["schema"] = json!("other");
+                assert!(refused(&schema));
             }
         });
     }

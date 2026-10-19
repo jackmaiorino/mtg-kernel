@@ -1331,6 +1331,13 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         }
         let executor = refresh::ExecutionMode::parse(&cfg.mode, std::env::var("S4A_EXECUTOR"))?;
         executor.validate_budget(plain, mode, interchange, bestline, reuse_witnesses)?;
+        let extras = refresh::BudgetExtras::parse(
+            std::env::var("S4A_ALLOCATION"),
+            std::env::var("S4A_NODE_STATS"),
+        )?;
+        if plain && extras != refresh::BudgetExtras::default() {
+            return Err("S4A_ALLOCATION and S4A_NODE_STATS require BUDGET_ARM=search-v1".into());
+        }
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1342,7 +1349,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                         if plain {
                             return refresh::budget_plain_case(&sh, policy, src, &binding);
                         }
-                        if executor == refresh::ExecutionMode::Persistent {
+                        if executor == refresh::ExecutionMode::Persistent
+                            && extras == refresh::BudgetExtras::default()
+                        {
                             return refresh::budget_case(
                                 &sh,
                                 policy,
@@ -1366,6 +1375,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                             reuse_witnesses,
                             &binding,
                             executor,
+                            extras,
                         )
                     })
                     .map_err(|e| e.to_string())?
