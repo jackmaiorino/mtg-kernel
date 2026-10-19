@@ -22,6 +22,37 @@ SHARD_ENV = "MTG_CI_RUST_LIB_SHARD"
 NOCAPTURE_ENV = "MTG_CI_RUST_LIB_NOCAPTURE"
 SKIP_IGNORED_ENV = "MTG_CI_RUST_LIB_SKIP_IGNORED"
 ISOLATED_CASES_ENV = "MTG_CI_RUST_LIB_ISOLATED_CASES"
+# Recorded seconds per isolated case on a hosted Linux runner, used only to
+# balance shards; refresh with update_rust_case_seconds.py.
+CASE_SECONDS_PATH = Path(__file__).with_name("rust_case_seconds.json")
+
+
+def case_seconds() -> tuple[dict[str, float], float]:
+    recorded = json.loads(CASE_SECONDS_PATH.read_text()) if CASE_SECONDS_PATH.is_file() else {}
+    # Names without a recorded time get the mean, so a new test is never
+    # assumed to be cheap.
+    return recorded, (sum(recorded.values()) / len(recorded) if recorded else 1.0)
+
+
+def longest_first(names: list[str]) -> list[str]:
+    recorded, default = case_seconds()
+    return sorted(names, key=lambda name: (-recorded.get(name, default), name))
+
+
+def balanced_shard(names: list[str], index: int, count: int) -> list[str]:
+    """Longest-first assignment by recorded case seconds.
+
+    Every shard computes the same complete, disjoint partition from the same
+    inventory and table.
+    """
+    recorded, default = case_seconds()
+    loads = [0.0] * count
+    members: list[list[str]] = [[] for _ in range(count)]
+    for name in longest_first(names):
+        target = min(range(count), key=lambda shard: (loads[shard], shard))
+        loads[target] += recorded.get(name, default)
+        members[target].append(name)
+    return sorted(members[index])
 
 
 def valid_filters(value: object) -> list[str]:
@@ -178,7 +209,8 @@ def run_isolated_cases(executable: str, selected: list[str], timeout: int, ignor
     futures = []
     results = {}
     try:
-        futures = [pool.submit(run_case, name) for name in selected]
+        # Start the longest recorded cases first so they overlap the short ones.
+        futures = [pool.submit(run_case, name) for name in longest_first(selected)]
         for future in as_completed(futures):
             row = future.result()
             results[row["case"]] = row
@@ -220,29 +252,32 @@ def main() -> int:
             if (
                 not isinstance(shard, list) or len(shard) != 2
                 or any(type(value) is not int for value in shard)
-                or not 0 <= shard[0] < shard[1] or len(filters) != 1
+                or not 0 <= shard[0] < shard[1]
             ):
-                raise ValueError("Expected one filter and a valid shard index/count")
-            names = compiled_names(sys.argv[2], filters[0], filter_timeout, ignored=False)
-            ignored = compiled_names(sys.argv[2], filters[0], filter_timeout, ignored=True)
+                raise ValueError("Expected a valid shard index/count")
+            # Several filters share one balanced partition of their union.
+            names = sorted({name for test_filter in filters for name in compiled_names(
+                sys.argv[2], test_filter, filter_timeout, ignored=False)})
+            ignored = sorted({name for test_filter in filters for name in compiled_names(
+                sys.argv[2], test_filter, filter_timeout, ignored=True)})
             if not names or not set(ignored) <= set(names) or (ignored and not skip_ignored):
                 raise ValueError("Sharded inventory is empty or contains unexpected ignored tests")
             # Preserve existing #[ignore] behavior only when explicitly requested.
             # Log every skipped compiled name; never enable its unregistered fixture.
             runnable = [name for name in names if name not in ignored]
-            selected = runnable[shard[0]::shard[1]]
+            selected = balanced_shard(runnable, shard[0], shard[1])
             if not selected:
                 raise ValueError("Compiled test shard is empty")
             encoded = json.dumps(names, separators=(",", ":")).encode("utf-8")
             print(json.dumps({
-                "filter": filters[0], "inventory": names, "count": len(names),
+                "filter": " ".join(filters), "inventory": names, "count": len(names),
                 "inventory_sha256": hashlib.sha256(encoded).hexdigest(),
                 "ignored": ignored, "runnable_count": len(runnable),
                 "shard_index": shard[0], "shard_count": shard[1], "selected": selected,
             }), flush=True)
             if isolated_cases:
                 return run_isolated_cases(sys.argv[2], selected, filter_timeout, ignored)
-            commands = [(f"{filters[0]} shard {shard[0]}/{shard[1]}",
+            commands = [(f"{' '.join(filters)} shard {shard[0]}/{shard[1]}",
                          [sys.argv[2], "--exact", *selected])]
         failed_filters = []
         first_failure = 0
@@ -281,8 +316,8 @@ def main() -> int:
     shard = None
     if args.shard_index is not None or args.shard_count is not None:
         if (args.shard_index is None or args.shard_count is None
-                or not 0 <= args.shard_index < args.shard_count or len(filters) != 1):
-            parser.error("Sharding requires one filter and 0 <= --shard-index < --shard-count")
+                or not 0 <= args.shard_index < args.shard_count):
+            parser.error("Sharding requires 0 <= --shard-index < --shard-count")
         shard = [args.shard_index, args.shard_count]
     if args.skip_ignored and shard is None:
         parser.error("--skip-ignored requires sharding")
