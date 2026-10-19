@@ -78,6 +78,11 @@ pub(crate) fn sources(
     kind: SourceKindV1,
     collect: impl FnOnce() -> Vec<ObjectId>,
 ) -> Option<Rc<[ObjectId]>> {
+    // `Arena::iter` names an object by its index as u32, so beyond that range
+    // a listed id could name a different object; such states keep the scan.
+    if u32::try_from(state.objects.len()).is_err() {
+        return None;
+    }
     let recorded = FRAME
         .try_with(|frame| {
             frame
