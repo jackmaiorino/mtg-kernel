@@ -316,6 +316,10 @@ pub fn validate(state: &GameState, value: &FactsV51) -> Result<(), RlContractErr
 }
 
 pub fn battlefield(state: &GameState) -> Result<BattlefieldV51, RlContractError> {
+    crate::continuous_source_frame_v1::with_frame(state, || battlefield_unframed(state))
+}
+// The body of the function above, run inside its source-list frame.
+fn battlefield_unframed(state: &GameState) -> Result<BattlefieldV51, RlContractError> {
     let facts = capture(state)?;
     let mut cards: [Vec<CardV51>; 2] = [Vec::new(), Vec::new()];
     let mut seen = Vec::new();
@@ -350,6 +354,12 @@ pub fn battlefield(state: &GameState) -> Result<BattlefieldV51, RlContractError>
 pub(crate) fn battlefield_prepared_v57(
     state: &GameState,
 ) -> Result<BattlefieldV51, RlContractError> {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        battlefield_prepared_v57_unframed(state)
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn battlefield_prepared_v57_unframed(state: &GameState) -> Result<BattlefieldV51, RlContractError> {
     let facts = capture(state)?;
     let mut cards: [Vec<CardV51>; 2] = [Vec::new(), Vec::new()];
     let mut seen = Vec::new();

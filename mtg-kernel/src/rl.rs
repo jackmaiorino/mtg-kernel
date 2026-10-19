@@ -8831,6 +8831,16 @@ fn public_card_v2(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPublicV2> {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        public_card_v2_unframed(state, id, text_mode)
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn public_card_v2_unframed(
+    state: &GameState,
+    id: ObjectId,
+    text_mode: ObservationTextModeV2,
+) -> Result<CardPublicV2> {
     let object = state
         .objects
         .try_get(id)
@@ -8968,6 +8978,16 @@ fn public_cards(state: &GameState, ids: &[ObjectId]) -> Result<Vec<CardPublicV1>
 }
 
 fn public_cards_v2(
+    state: &GameState,
+    ids: &[ObjectId],
+    text_mode: ObservationTextModeV2,
+) -> Result<Vec<CardPublicV2>> {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        public_cards_v2_unframed(state, ids, text_mode)
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn public_cards_v2_unframed(
     state: &GameState,
     ids: &[ObjectId],
     text_mode: ObservationTextModeV2,

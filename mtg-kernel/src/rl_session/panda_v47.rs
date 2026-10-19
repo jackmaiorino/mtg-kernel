@@ -574,6 +574,23 @@ impl FastActorSessionV1 {
         ),
         FlatActionDecisionSliceErrorV1,
     > {
+        crate::continuous_source_frame_v1::with_frame(&self.state, || {
+            self.panda_current_decision_input_v47_unframed(expected, human_seat)
+        })
+    }
+    // The body of the function above, run inside its source-list frame.
+    fn panda_current_decision_input_v47_unframed(
+        &self,
+        expected: FastActorDecisionV1,
+        human_seat: PlayerSeatV1,
+    ) -> Result<
+        (
+            PandaObservationV47,
+            Vec<ActionSemanticV1>,
+            PandaDecisionBindingV47,
+        ),
+        FlatActionDecisionSliceErrorV1,
+    > {
         if self.flat_action_contract_mode != FlatActionContractModeV1::PandaV47 {
             return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
         }

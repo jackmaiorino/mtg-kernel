@@ -162,6 +162,11 @@ struct ObservationReplayKeys {
     history: *const CommittedEvent,
     length: usize,
     keys: Option<BTreeMap<u64, ReplayKey>>,
+    // The frame's own borrowed state, and whether `world` already succeeded
+    // on it. The borrow keeps that whole state immutable for the frame, so a
+    // repeated `world` check on the same address has the same outcome.
+    state: *const GameState,
+    world_checked: bool,
 }
 impl ObservationReplayKeys {
     fn matches(&self, history: &[CommittedEvent]) -> bool {
@@ -190,10 +195,35 @@ pub(crate) fn with_observation_replay_keys<T>(
             history: history.as_ptr(),
             length: history.len(),
             keys: None,
+            state: std::ptr::from_ref(state),
+            world_checked: false,
         }))
     });
     let _guard = ObservationReplayKeysGuard(previous);
     run(state)
+}
+
+/// Whether `world(state)` already succeeded on this frame's own borrowed state.
+/// Any other state, a foreign frame, or unavailable thread storage misses.
+fn world_checked_in_frame(state: &GameState) -> bool {
+    OBSERVATION_REPLAY_KEYS
+        .try_with(|frame| {
+            frame.borrow().as_ref().is_some_and(|frame| {
+                frame.world_checked
+                    && std::ptr::eq(frame.state, state)
+                    && frame.matches(&state.engine.event_history)
+            })
+        })
+        .unwrap_or(false)
+}
+fn remember_world_checked_in_frame(state: &GameState) {
+    let _ = OBSERVATION_REPLAY_KEYS.try_with(|frame| {
+        if let Some(frame) = frame.borrow_mut().as_mut().filter(|frame| {
+            std::ptr::eq(frame.state, state) && frame.matches(&state.engine.event_history)
+        }) {
+            frame.world_checked = true;
+        }
+    });
 }
 
 /// A complete read-only validation can reuse keys across its own checks even
@@ -1370,10 +1400,12 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     if rows.len() as u64 != state.engine.drake_ledger_v1.issued {
         return Err("Drake original journal was erased/replayed".into());
     }
-    if !rows.is_empty() {
+    if !rows.is_empty() && !world_checked_in_frame(state) {
         // Compression must prove every discarded nested original equals the
         // whole actual indexed record before any caller can normalize it.
+        // Only a success on the frame's own immutable state is remembered.
         world(state)?;
+        remember_world_checked_in_frame(state);
     }
     if state
         .engine
