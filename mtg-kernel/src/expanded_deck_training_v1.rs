@@ -2929,6 +2929,12 @@ pub enum ExpandedTrainingCommandV1 {
         /// prior output byte.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         evidence: Option<archive_distillation_v1::ArchiveDistillationProbeEvidenceV1>,
+        /// With `evidence`, also writes each candidate's raw logit bits and
+        /// deployed probabilities at every evidence row (TV1's D1 scoring,
+        /// collab LANES/target-validity-20261017). Off keeps every prior
+        /// output byte.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        evidence_logits: bool,
         output_directory: PathBuf,
     },
     /// Spy line retention trace (collab LANES/spy-line-retention-20261015):
@@ -3038,6 +3044,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             anchor,
             offers,
             evidence,
+            evidence_logits,
             output_directory,
         } => archive_distillation_v1::probe_v1(
             parent,
@@ -3047,6 +3054,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             anchor,
             offers,
             evidence,
+            evidence_logits,
             output_directory,
         ),
         ExpandedTrainingCommandV1::LineRetentionTrace {

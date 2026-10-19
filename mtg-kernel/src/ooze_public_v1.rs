@@ -8,25 +8,30 @@ use sha2::{Digest, Sha256};
 
 pub const SCHEMA: &str = "mtg-kernel/public-ooze/v1";
 pub fn source_sha256() -> String {
-    let mut digest = Sha256::new();
-    digest.update(rules_meaning_ooze_v1::source_sha256().as_bytes());
-    for source in [
-        include_str!("ooze_public_v1.rs"),
-        include_str!("human_bo3_v1/ooze_v11.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/life_ward_v8.rs"),
-        include_str!("policy_observation_v9.rs"),
-        include_str!("rl_session/human_v8.rs"),
-        include_str!("rl_session/raid_v9.rs"),
-    ] {
-        digest.update([0]);
-        digest.update(source.as_bytes());
-    }
-    digest
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut digest = Sha256::new();
+            digest.update(rules_meaning_ooze_v1::source_sha256().as_bytes());
+            for source in [
+                include_str!("ooze_public_v1.rs"),
+                include_str!("human_bo3_v1/ooze_v11.rs"),
+                include_str!("human_bo3_v1/labels.rs"),
+                include_str!("human_bo3_v1/life_ward_v8.rs"),
+                include_str!("policy_observation_v9.rs"),
+                include_str!("rl_session/human_v8.rs"),
+                include_str!("rl_session/raid_v9.rs"),
+            ] {
+                digest.update([0]);
+                digest.update(source.as_bytes());
+            }
+            digest
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

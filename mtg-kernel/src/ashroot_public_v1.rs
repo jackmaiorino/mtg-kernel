@@ -62,55 +62,60 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("ashroot_public_v1.rs"),
-        include_str!("ashroot_animist_v1.rs"),
-        include_str!("ashroot_dispatch_v2.rs"),
-        include_str!("trigger.rs"),
-        include_str!("effect.rs"),
-        include_str!("event.rs"),
-        include_str!("effect/temporary_control_v1.rs"),
-        include_str!("rules_meaning_ashroot_v1.rs"),
-        include_str!("engine.rs"),
-        include_str!("policy_surface_v5.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("standard_keywords_v1.rs"),
-        include_str!("standard_legends_v1.rs"),
-        include_str!("creature_stats_lki_v1.rs"),
-        include_str!("sower_of_chaos_v1.rs"),
-        include_str!("sower_restriction_capture_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("state.rs"),
-        include_str!("../build.rs"),
-        include_str!("rl.rs"),
-        include_str!("policy_observation_v8.rs"),
-        include_str!("policy_observation_v9.rs"),
-        include_str!("policy_observation_v7.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("rl_session/ashroot_v27.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-        include_str!("rl_session/flat_action_v4.rs"),
-        include_str!("rl_session/human_v8.rs"),
-        include_str!("human_bo3_v1/ashroot_v27.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/life_ward_v8.rs"),
-        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("event_history_v1.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut hash = Sha256::new();
+            for source in [
+                SCHEMA,
+                include_str!("ashroot_public_v1.rs"),
+                include_str!("ashroot_animist_v1.rs"),
+                include_str!("ashroot_dispatch_v2.rs"),
+                include_str!("trigger.rs"),
+                include_str!("effect.rs"),
+                include_str!("event.rs"),
+                include_str!("effect/temporary_control_v1.rs"),
+                include_str!("rules_meaning_ashroot_v1.rs"),
+                include_str!("engine.rs"),
+                include_str!("policy_surface_v5.rs"),
+                include_str!("continuous_characteristics_v1.rs"),
+                include_str!("standard_creatures_v1.rs"),
+                include_str!("standard_cards_v1.rs"),
+                include_str!("standard_statics_v1.rs"),
+                include_str!("standard_keywords_v1.rs"),
+                include_str!("standard_legends_v1.rs"),
+                include_str!("creature_stats_lki_v1.rs"),
+                include_str!("sower_of_chaos_v1.rs"),
+                include_str!("sower_restriction_capture_v1.rs"),
+                include_str!("card_def.rs"),
+                include_str!("state.rs"),
+                include_str!("../build.rs"),
+                include_str!("rl.rs"),
+                include_str!("policy_observation_v8.rs"),
+                include_str!("policy_observation_v9.rs"),
+                include_str!("policy_observation_v7.rs"),
+                include_str!("rl_session.rs"),
+                include_str!("rl_session/ashroot_v27.rs"),
+                include_str!("rl_session/flat_action_v3.rs"),
+                include_str!("rl_session/flat_action_v4.rs"),
+                include_str!("rl_session/human_v8.rs"),
+                include_str!("human_bo3_v1/ashroot_v27.rs"),
+                include_str!("human_bo3_v1/visible.rs"),
+                include_str!("human_bo3_v1/labels.rs"),
+                include_str!("human_bo3_v1/life_ward_v8.rs"),
+                include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+                include_str!("linked_aura_operation_v1.rs"),
+                include_str!("event_history_v1.rs"),
+            ] {
+                hash.update([0]);
+                hash.update(source.as_bytes());
+            }
+            hash.finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 fn commitment(observation: &AshrootObservationV1) -> Result<String, RlContractError> {
     let mut value = serde_json::to_value(observation)?;

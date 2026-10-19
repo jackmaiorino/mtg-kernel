@@ -1241,12 +1241,35 @@ fn load_anchor_split_v1(
         !pins.is_empty() && pins.len() <= MAX_TRAJECTORIES,
         "invalid anchor trajectory count",
     )?;
-    let mut rows = Vec::new();
+    let cache = anchor_cache::rows_path_v1(pins, policy, parent_state_sha256);
+    if let Some(cached) = cache
+        .as_ref()
+        .and_then(|entry| anchor_cache::load_rows_v1(entry, pins.len()))
+    {
+        // The same file checks and episode-id bookkeeping, in pin order.
+        let mut rows = Vec::new();
+        for (pin, (episode, trajectory_rows)) in pins.iter().zip(cached) {
+            read_pinned_bytes(pin)?;
+            ensure(
+                ids.insert(episode),
+                "an episode appears twice across the anchor and offer sets",
+            )?;
+            rows.extend(trajectory_rows);
+        }
+        return Ok(rows);
+    }
+    let mut trajectories = Vec::with_capacity(pins.len());
     for pin in pins {
         let trajectory = read_parent_trajectory_v1(pin, policy, parent_state_sha256, ids)?;
-        rows.extend(anchor_rows_v1(&trajectory));
+        trajectories.push((trajectory.episode.id.clone(), anchor_rows_v1(&trajectory)));
     }
-    Ok(rows)
+    if let Some(entry) = &cache {
+        anchor_cache::store_rows_v1(entry, &trajectories);
+    }
+    Ok(trajectories
+        .into_iter()
+        .flat_map(|(_, rows)| rows)
+        .collect())
 }
 
 /// The exact anchor targets: `line_b_softmax_v1` in binary64 of each row's
@@ -1878,14 +1901,33 @@ pub(super) fn phase1_v1(
         state.scorer_bias_anchor_f32_bits_v1() == parent_checkpoint.scorer_bias_anchor_bits,
         "the parent's scorer bias differs from its gauge anchor",
     )?;
-    let preflight_rows = anchor_identity_preflight_v1(
-        &state,
-        generation,
-        &anchor_train,
-        &anchor_targets,
+    let preflight_cache = anchor_cache::preflight_path_v1(
+        &anchor.training,
+        &parent,
+        &inputs.state_sha256,
         &recipe_values,
         update_scope,
-    )?;
+    );
+    let cached_preflight = preflight_cache
+        .as_ref()
+        .and_then(|entry| anchor_cache::load_preflight_v1(entry, anchor_train.len()));
+    let preflight_rows = match cached_preflight {
+        Some(rows) => rows,
+        None => {
+            let rows = anchor_identity_preflight_v1(
+                &state,
+                generation,
+                &anchor_train,
+                &anchor_targets,
+                &recipe_values,
+                update_scope,
+            )?;
+            if let Some(entry) = &preflight_cache {
+                anchor_cache::store_preflight_v1(entry, rows);
+            }
+            rows
+        }
+    };
     phase_mark_v1("preflight", started);
     if dry_run {
         let result = json!({"schema":PHASE1_SCHEMA,"dry_run":true,"identity":identity,
@@ -2312,9 +2354,14 @@ pub(super) fn probe_v1(
     anchor: ArchiveDistillationAnchorV1,
     offers: Vec<PinnedFileV1>,
     evidence: Option<ArchiveDistillationProbeEvidenceV1>,
+    evidence_logits: bool,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
+    ensure(
+        !evidence_logits || evidence.is_some(),
+        "evidence logits need the evidence keep sets",
+    )?;
     ensure(
         !output_directory.exists(),
         "probe output directory must be fresh",
@@ -2550,11 +2597,18 @@ pub(super) fn probe_v1(
                 .expect("the probe reads the training bank")
                 .1;
             let mut fit = serde_json::Map::new();
+            let mut scored = serde_json::Map::new();
             for (name, members) in [("training", training), ("held_out", held)] {
                 let mut readings = Vec::with_capacity(members.len());
+                let mut rows = Vec::new();
                 for member in members {
                     let (row, tensor) = &bank_rows[member.index];
                     let (logits, _) = forward_v1(model, tensor, generation)?;
+                    if evidence_logits {
+                        rows.push(json!({"game":row.game,"step":row.step,
+                            "logit_bits":logits.iter().map(|x| x.to_bits()).collect::<Vec<u32>>(),
+                            "deployed":deployed_v1(&logits)?}));
+                    }
                     readings.push(EvidenceReadingV1 {
                         game: &row.game,
                         step: row.step,
@@ -2573,8 +2627,14 @@ pub(super) fn probe_v1(
                     name.into(),
                     evidence_summary_v1(&readings, name == "held_out"),
                 );
+                if evidence_logits {
+                    scored.insert(name.into(), rows.into());
+                }
             }
             readout["evidence"] = fit.into();
+            if evidence_logits {
+                readout["evidence_rows"] = scored.into();
+            }
             readout["anchor_held_out_decks"] = anchor_decks_v1(&deck_readings);
         }
         readouts.push(readout);
@@ -2595,6 +2655,7 @@ pub(super) fn probe_v1(
     Ok(result)
 }
 
+mod anchor_cache;
 mod bank_cache;
 mod retention_trace;
 pub(super) use retention_trace::retention_trace_v1;

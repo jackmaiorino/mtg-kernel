@@ -29,24 +29,29 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 pub fn producer_sha256_v41() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("game_outcome_observation_v41.rs"),
-        include_str!("game_outcome_protection_public_v1.rs"),
-        include_str!("rules_meaning_game_outcome_protection_v1.rs"),
-        include_str!("game_outcome_protection_v1.rs"),
-        include_str!("rl_session/game_outcome_v41.rs"),
-        include_str!("human_bo3_v1/game_outcome_v41.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.update(crate::akroma_public_v1::producer_sha256_v1().as_bytes());
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut hash = Sha256::new();
+            for source in [
+                SCHEMA,
+                include_str!("game_outcome_observation_v41.rs"),
+                include_str!("game_outcome_protection_public_v1.rs"),
+                include_str!("rules_meaning_game_outcome_protection_v1.rs"),
+                include_str!("game_outcome_protection_v1.rs"),
+                include_str!("rl_session/game_outcome_v41.rs"),
+                include_str!("human_bo3_v1/game_outcome_v41.rs"),
+            ] {
+                hash.update([0]);
+                hash.update(source.as_bytes());
+            }
+            hash.update(crate::akroma_public_v1::producer_sha256_v1().as_bytes());
+            hash.finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 
 fn commitment(record: &GameOutcomeObservationV41) -> Result<String, RlContractError> {

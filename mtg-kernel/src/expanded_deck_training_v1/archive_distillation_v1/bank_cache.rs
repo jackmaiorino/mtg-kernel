@@ -88,13 +88,24 @@ pub(super) fn store_v1(path: &Path, rows: &ExtractedRowsV1) {
     if path.exists() {
         return;
     }
+    publish_v1(path, |out| {
+        encode_v1(rows.iter().map(|(_, tensor)| tensor), rows.len(), out)
+    });
+}
+
+/// Writes an entry through a per-process partial file, syncs it and links it
+/// into place, never replacing an existing entry; a failure only skips it.
+pub(super) fn publish_v1(
+    path: &Path,
+    write: impl FnOnce(&mut BufWriter<fs::File>) -> std::io::Result<()>,
+) {
     let partial = path.with_extension(format!("partial-{}", std::process::id()));
     let written = path
         .parent()
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| {
             let mut out = BufWriter::new(fs::File::create_new(&partial)?);
-            encode_v1(rows.iter().map(|(_, tensor)| tensor), rows.len(), &mut out)?;
+            write(&mut out)?;
             out.into_inner().map_err(|e| e.into_error())?.sync_all()
         })
         .and_then(|()| match fs::hard_link(&partial, path) {
@@ -103,7 +114,7 @@ pub(super) fn store_v1(path: &Path, rows: &ExtractedRowsV1) {
         });
     let _ = fs::remove_file(&partial);
     if let Err(e) = written {
-        eprintln!("archive bank cache: not stored at {}: {e}", path.display());
+        eprintln!("archive cache: not stored at {}: {e}", path.display());
     }
 }
 
@@ -112,21 +123,38 @@ fn encode_v1<'a>(
     count: usize,
     out: &mut impl Write,
 ) -> std::io::Result<()> {
-    fn floats(out: &mut impl Write, values: &[f32]) -> std::io::Result<()> {
-        out.write_all(&(values.len() as u64).to_le_bytes())?;
-        values
-            .iter()
-            .try_for_each(|value| out.write_all(&value.to_bits().to_le_bytes()))
-    }
-    fn integers(out: &mut impl Write, values: &[i64]) -> std::io::Result<()> {
-        out.write_all(&(values.len() as u64).to_le_bytes())?;
-        values
-            .iter()
-            .try_for_each(|value| out.write_all(&value.to_le_bytes()))
-    }
     out.write_all(MAGIC)?;
     out.write_all(&(count as u64).to_le_bytes())?;
     for t in tensors {
+        write_tensor_v1(out, t)?;
+    }
+    Ok(())
+}
+
+/// A length-prefixed little-endian vector.
+pub(super) fn write_words_v1<const N: usize, T>(
+    out: &mut impl Write,
+    values: &[T],
+    bytes: fn(&T) -> [u8; N],
+) -> std::io::Result<()> {
+    out.write_all(&(values.len() as u64).to_le_bytes())?;
+    values
+        .iter()
+        .try_for_each(|value| out.write_all(&bytes(value)))
+}
+
+/// One tensor's 13 vectors, f32 as their bits.
+pub(super) fn write_tensor_v1(
+    out: &mut impl Write,
+    t: &NativeFlatDecisionTensorV2,
+) -> std::io::Result<()> {
+    fn floats(out: &mut impl Write, values: &[f32]) -> std::io::Result<()> {
+        write_words_v1(out, values, |v| v.to_bits().to_le_bytes())
+    }
+    fn integers(out: &mut impl Write, values: &[i64]) -> std::io::Result<()> {
+        write_words_v1(out, values, |v| v.to_le_bytes())
+    }
+    {
         floats(out, &t.state)?;
         floats(out, &t.object_features)?;
         integers(out, &t.object_card_ids)?;
@@ -146,19 +174,19 @@ fn encode_v1<'a>(
 
 /// Reads an entry's bytes in order, never past the size it was given, so a
 /// declared length can be checked before anything is allocated for it.
-struct Reader<R> {
-    input: R,
-    remaining: u64,
+pub(super) struct Reader<R> {
+    pub(super) input: R,
+    pub(super) remaining: u64,
 }
 
 impl<R: Read> Reader<R> {
-    fn bytes<const N: usize>(&mut self) -> Result<[u8; N], String> {
+    pub(super) fn bytes<const N: usize>(&mut self) -> Result<[u8; N], String> {
         let mut buffer = [0; N];
         self.claim(N as u64, 1)?;
         self.input.read_exact(&mut buffer).map_err(err)?;
         Ok(buffer)
     }
-    fn word(&mut self) -> Result<u64, String> {
+    pub(super) fn word(&mut self) -> Result<u64, String> {
         self.bytes::<8>().map(u64::from_le_bytes)
     }
     /// Takes `count * width` bytes from the remaining budget.
@@ -189,6 +217,38 @@ impl<R: Read> Reader<R> {
     fn integers(&mut self) -> Result<Vec<i64>, String> {
         self.vector(i64::from_le_bytes)
     }
+    pub(super) fn u32s(&mut self) -> Result<Vec<u32>, String> {
+        self.vector(u32::from_le_bytes)
+    }
+    /// A length-prefixed UTF-8 string of at most `limit` bytes.
+    pub(super) fn string(&mut self, limit: u64) -> Result<String, String> {
+        let length = self.word()?;
+        if length > limit {
+            return Err("a string exceeds its limit".into());
+        }
+        self.claim(length, 1)?;
+        let mut bytes = vec![0; usize::try_from(length).map_err(err)?];
+        self.input.read_exact(&mut bytes).map_err(err)?;
+        String::from_utf8(bytes).map_err(err)
+    }
+    /// One tensor written by `write_tensor_v1`.
+    pub(super) fn tensor(&mut self) -> Result<NativeFlatDecisionTensorV2, String> {
+        Ok(NativeFlatDecisionTensorV2 {
+            state: self.floats()?,
+            object_features: self.floats()?,
+            object_card_ids: self.integers()?,
+            object_groups: self.integers()?,
+            object_node_ids: self.integers()?,
+            edge_features: self.floats()?,
+            edge_source_indices: self.integers()?,
+            edge_target_indices: self.integers()?,
+            action_features: self.floats()?,
+            action_ref_features: self.floats()?,
+            action_ref_card_ids: self.integers()?,
+            action_ref_action_indices: self.integers()?,
+            action_ref_node_indices: self.integers()?,
+        })
+    }
 }
 
 /// Decodes exactly `expected` tensors from an entry of `size` bytes.
@@ -214,21 +274,7 @@ fn decode_v1(
     let mut tensors = Vec::new();
     tensors.try_reserve_exact(expected).map_err(err)?;
     for _ in 0..expected {
-        tensors.push(NativeFlatDecisionTensorV2 {
-            state: reader.floats()?,
-            object_features: reader.floats()?,
-            object_card_ids: reader.integers()?,
-            object_groups: reader.integers()?,
-            object_node_ids: reader.integers()?,
-            edge_features: reader.floats()?,
-            edge_source_indices: reader.integers()?,
-            edge_target_indices: reader.integers()?,
-            action_features: reader.floats()?,
-            action_ref_features: reader.floats()?,
-            action_ref_card_ids: reader.integers()?,
-            action_ref_action_indices: reader.integers()?,
-            action_ref_node_indices: reader.integers()?,
-        });
+        tensors.push(reader.tensor()?);
     }
     if reader.remaining != 0 {
         return Err("trailing bytes after the last tensor".into());

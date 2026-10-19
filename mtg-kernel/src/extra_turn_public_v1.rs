@@ -126,48 +126,53 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("extra_turn_public_v1.rs"),
-        include_str!("extra_turn_v1.rs"),
-        include_str!("rules_meaning_extra_turn_v1.rs"),
-        include_str!("rl_session/extra_turn_v23.rs"),
-        include_str!("human_bo3_v1/extra_turn_v23.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/life_ward_v8.rs"),
-        include_str!("engine.rs"),
-        include_str!("event.rs"),
-        include_str!("effect.rs"),
-        include_str!("trigger.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("standard_spell_copy.rs"),
-        include_str!("effect/standard_copy.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_keywords_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("life_gain_turn_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("../build.rs"),
-        include_str!("rl.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("state.rs"),
-        include_str!("policy_observation_v8.rs"),
-        include_str!("policy_observation_v7.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-        include_str!("rl_session/flat_action_v4.rs"),
-        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("event_history_v1.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut hash = Sha256::new();
+            for source in [
+                SCHEMA,
+                include_str!("extra_turn_public_v1.rs"),
+                include_str!("extra_turn_v1.rs"),
+                include_str!("rules_meaning_extra_turn_v1.rs"),
+                include_str!("rl_session/extra_turn_v23.rs"),
+                include_str!("human_bo3_v1/extra_turn_v23.rs"),
+                include_str!("human_bo3_v1/labels.rs"),
+                include_str!("human_bo3_v1/visible.rs"),
+                include_str!("human_bo3_v1/life_ward_v8.rs"),
+                include_str!("engine.rs"),
+                include_str!("event.rs"),
+                include_str!("effect.rs"),
+                include_str!("trigger.rs"),
+                include_str!("standard_cards_v1.rs"),
+                include_str!("standard_spell_copy.rs"),
+                include_str!("effect/standard_copy.rs"),
+                include_str!("continuous_characteristics_v1.rs"),
+                include_str!("standard_keywords_v1.rs"),
+                include_str!("standard_creatures_v1.rs"),
+                include_str!("life_gain_turn_v1.rs"),
+                include_str!("card_def.rs"),
+                include_str!("../build.rs"),
+                include_str!("rl.rs"),
+                include_str!("rl_session.rs"),
+                include_str!("state.rs"),
+                include_str!("policy_observation_v8.rs"),
+                include_str!("policy_observation_v7.rs"),
+                include_str!("rl_session/flat_action_v3.rs"),
+                include_str!("rl_session/flat_action_v4.rs"),
+                include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+                include_str!("linked_aura_operation_v1.rs"),
+                include_str!("event_history_v1.rs"),
+            ] {
+                hash.update([0]);
+                hash.update(source.as_bytes());
+            }
+            hash.finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 fn commitment(observation: &ExtraTurnObservationV1) -> Result<String, RlContractError> {
     let mut value = serde_json::to_value(observation)?;

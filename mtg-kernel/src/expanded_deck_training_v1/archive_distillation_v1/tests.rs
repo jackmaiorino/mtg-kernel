@@ -388,6 +388,18 @@ fn archive_distillation_commands_keep_their_wire_shape() {
     evidenced["evidence"] = json!({"training":file,"held_out":file});
     let command: ExpandedTrainingCommandV1 = serde_json::from_value(evidenced.clone()).unwrap();
     assert_eq!(serde_json::to_value(&command).unwrap(), evidenced);
+    // Evidence logits are opt-in and round-trip; off stays off the wire.
+    let mut logged = evidenced.clone();
+    logged["evidence_logits"] = json!(true);
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(logged.clone()).unwrap();
+    assert!(matches!(
+        command,
+        ExpandedTrainingCommandV1::ArchiveDistillationProbe {
+            evidence_logits: true,
+            ..
+        }
+    ));
+    assert_eq!(serde_json::to_value(&command).unwrap(), logged);
     let mut partial = probe.clone();
     partial["evidence"] = json!({"training":file});
     assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(partial).is_err());
@@ -2256,6 +2268,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
         anchor: world.anchor.clone(),
         offers: world.offers.clone(),
         evidence: None,
+        evidence_logits: false,
         output_directory: world.root.join("probe"),
     })
     .unwrap();
@@ -2292,6 +2305,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
         anchor: world.anchor.clone(),
         offers: world.anchor.held_out.clone(),
         evidence: None,
+        evidence_logits: false,
         output_directory: world.root.join("probe-reused-offers"),
     })
     .unwrap_err();
@@ -2353,6 +2367,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
             anchor: world.anchor.clone(),
             offers: world.offers.clone(),
             evidence: Some(evidence),
+            evidence_logits: false,
             output_directory: world.root.join(out),
         })
     };
@@ -2615,6 +2630,7 @@ fn phase1_runs_write_reloadable_checkpoints_and_reproduce_their_first_steps() {
         anchor: world.anchor.clone(),
         offers: world.offers.clone(),
         evidence: None,
+        evidence_logits: false,
         output_directory: world.root.join("probe"),
     })
     .unwrap();

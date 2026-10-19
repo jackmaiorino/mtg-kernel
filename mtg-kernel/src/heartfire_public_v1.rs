@@ -33,27 +33,32 @@ pub struct HeartfirePublicObservationV1 {
     pub projection_sha256: String,
 }
 pub fn source_sha256() -> String {
-    let mut hash = Sha256::new();
-    hash.update(rules_meaning_heartfire_v1::source_sha256().as_bytes());
-    for source in [
-        include_str!("heartfire_public_v1.rs"),
-        include_str!("human_bo3_v1/heartfire_v12.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/life_ward_v8.rs"),
-        include_str!("policy_observation_v9.rs"),
-        include_str!("rl_session/human_v8.rs"),
-        include_str!("rl_session/raid_v9.rs"),
-        include_str!("rl_session/heartfire_v12.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("planeswalker_v1.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut hash = Sha256::new();
+            hash.update(rules_meaning_heartfire_v1::source_sha256().as_bytes());
+            for source in [
+                include_str!("heartfire_public_v1.rs"),
+                include_str!("human_bo3_v1/heartfire_v12.rs"),
+                include_str!("human_bo3_v1/labels.rs"),
+                include_str!("human_bo3_v1/life_ward_v8.rs"),
+                include_str!("policy_observation_v9.rs"),
+                include_str!("rl_session/human_v8.rs"),
+                include_str!("rl_session/raid_v9.rs"),
+                include_str!("rl_session/heartfire_v12.rs"),
+                include_str!("rl_session.rs"),
+                include_str!("planeswalker_v1.rs"),
+            ] {
+                hash.update([0]);
+                hash.update(source.as_bytes());
+            }
+            hash.finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 fn digest(record: &HeartfirePublicObservationV1) -> Result<String, RlContractError> {
     let bytes = serde_json::to_vec(&(

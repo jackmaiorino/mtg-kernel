@@ -52,40 +52,45 @@ pub enum MeaningErrorV1 {
 }
 
 pub fn source_sha256() -> String {
-    let mut digest = Sha256::new();
-    for (path, source) in [
-        (
-            "rules_meaning_ooze_v1.rs",
-            include_str!("rules_meaning_ooze_v1.rs"),
-        ),
-        (
-            "effect/scavenging_ooze_v1.rs",
-            include_str!("effect/scavenging_ooze_v1.rs"),
-        ),
-        ("build.rs", include_str!("../build.rs")),
-        ("card_def.rs", include_str!("card_def.rs")),
-        ("engine.rs", include_str!("engine.rs")),
-        ("state.rs", include_str!("state.rs")),
-        (
-            "bloodthirsty_conqueror_v49/custody.rs",
-            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        ),
-        (
-            "linked_aura_operation_v1.rs",
-            include_str!("linked_aura_operation_v1.rs"),
-        ),
-        ("event_history_v1.rs", include_str!("event_history_v1.rs")),
-    ] {
-        digest.update(path.as_bytes());
-        digest.update([0]);
-        digest.update(source.as_bytes());
-        digest.update([0]);
-    }
-    digest
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut digest = Sha256::new();
+            for (path, source) in [
+                (
+                    "rules_meaning_ooze_v1.rs",
+                    include_str!("rules_meaning_ooze_v1.rs"),
+                ),
+                (
+                    "effect/scavenging_ooze_v1.rs",
+                    include_str!("effect/scavenging_ooze_v1.rs"),
+                ),
+                ("build.rs", include_str!("../build.rs")),
+                ("card_def.rs", include_str!("card_def.rs")),
+                ("engine.rs", include_str!("engine.rs")),
+                ("state.rs", include_str!("state.rs")),
+                (
+                    "bloodthirsty_conqueror_v49/custody.rs",
+                    include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+                ),
+                (
+                    "linked_aura_operation_v1.rs",
+                    include_str!("linked_aura_operation_v1.rs"),
+                ),
+                ("event_history_v1.rs", include_str!("event_history_v1.rs")),
+            ] {
+                digest.update(path.as_bytes());
+                digest.update([0]);
+                digest.update(source.as_bytes());
+                digest.update([0]);
+            }
+            digest
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 /// Authenticates the actual selected definition root, never a caller's opcode.
 pub fn root_meaning(card_id: u16, ability_index: u32) -> Result<OozeRootMeaningV1, MeaningErrorV1> {

@@ -246,35 +246,40 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
         def.damage_replacement_v1,
     ))
     .map_err(|e| e.to_string())?;
-    let producer = [
-        include_str!("twinflame_tyrant_v1.rs"),
-        include_str!("twinflame_tyrant_v1/ordering.rs"),
-        include_str!("twinflame_tyrant_v1/sampling.rs"),
-        include_str!("twinflame_tyrant_v1/combat.rs"),
-        include_str!("twinflame_tyrant_v1/fiery.rs"),
-        include_str!("fiery_annihilation_v1.rs"),
-        include_str!("rules_meaning_fiery_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("event.rs"),
-        include_str!("source_power_activation_v1.rs"),
-        include_str!("gorehorn_damage_v1.rs"),
-        include_str!("equipment_damage_source_v4.rs"),
-        include_str!("fixed_source_damage_v3.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("../build.rs"),
-        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("event_history_v1.rs"),
-    ]
-    .join("\0");
+    // Embedded sources are fixed for one build, so hash them once per process.
+    static PRODUCER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let producer = PRODUCER.get_or_init(|| {
+        let producer = [
+            include_str!("twinflame_tyrant_v1.rs"),
+            include_str!("twinflame_tyrant_v1/ordering.rs"),
+            include_str!("twinflame_tyrant_v1/sampling.rs"),
+            include_str!("twinflame_tyrant_v1/combat.rs"),
+            include_str!("twinflame_tyrant_v1/fiery.rs"),
+            include_str!("fiery_annihilation_v1.rs"),
+            include_str!("rules_meaning_fiery_v1.rs"),
+            include_str!("card_def.rs"),
+            include_str!("event.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("gorehorn_damage_v1.rs"),
+            include_str!("equipment_damage_source_v4.rs"),
+            include_str!("fixed_source_damage_v3.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("../build.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
+        ]
+        .join("\0");
+        digest(producer.as_bytes())
+    });
     Ok(PrintedMeaningV1 {
         schema: "mtg-kernel/twinflame-printed-meaning/v1".into(),
         card_id: id,
         card_db_hash: crate::card_def::KERNEL_CARDDB_HASH,
-        producer_sha256: digest(producer.as_bytes()),
+        producer_sha256: producer.clone(),
         printing_root_sha256: digest(&root),
         current_source_controller: true,
         damage_source_captured_controller_when_historical: true,
