@@ -80,7 +80,7 @@ mod utility_root;
 pub(super) mod viewer_replay;
 #[cfg(feature = "viewer-recording-v1")]
 pub(super) mod viewer_uct;
-mod world;
+pub(crate) mod world;
 
 use super::search::{game_setup, new_session, GameSetup};
 use super::{load_policy_v1, CensusConfigV1};

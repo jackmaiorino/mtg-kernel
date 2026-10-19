@@ -146,9 +146,9 @@ pub(super) struct LineBTeacherRootInputV1<'a> {
     pub(super) policies: LineBRolloutPoliciesV1<'a>,
 }
 
-struct RolloutForksV1 {
-    student: FrozenPlayPolicyV1,
-    opponent: Option<FrozenPlayPolicyV1>,
+pub(super) struct RolloutForksV1 {
+    pub(super) student: FrozenPlayPolicyV1,
+    pub(super) opponent: Option<FrozenPlayPolicyV1>,
 }
 
 fn forks_v1(policies: &LineBRolloutPoliciesV1<'_>) -> Result<RolloutForksV1, String> {
@@ -165,7 +165,7 @@ fn forks_v1(policies: &LineBRolloutPoliciesV1<'_>) -> Result<RolloutForksV1, Str
     Ok(RolloutForksV1 { student, opponent })
 }
 
-fn search_defect_v1(context: &str, error: impl core::fmt::Debug) -> LineBDefectV1 {
+pub(super) fn search_defect_v1(context: &str, error: impl core::fmt::Debug) -> LineBDefectV1 {
     let text = format!("{context}: {error:?}");
     // Binding and liveness failures are invalid states; the rest are
     // determinization or library-choice branches the sampler does not support.
@@ -185,15 +185,15 @@ fn search_defect_v1(context: &str, error: impl core::fmt::Debug) -> LineBDefectV
 }
 
 #[derive(Default)]
-struct ProgressV1 {
-    physical: u64,
-    steps: u64,
+pub(super) struct ProgressV1 {
+    pub(super) physical: u64,
+    pub(super) steps: u64,
 }
 
 /// Continue a world after its root action to a terminal or a cap. Every
 /// rollout starts its seat streams afresh (no state from the collected game
 /// or an earlier rollout).
-fn continue_v1(
+pub(super) fn continue_v1(
     session: &mut FastActorSessionV1,
     forks: &mut RolloutForksV1,
     seeds: [u64; 2],
@@ -399,7 +399,7 @@ pub(super) fn line_b_rollout_with_new_forks_v1(
 
 /// Runs `task(0..count)` on `workers` scoped threads (index-strided) and
 /// returns the results in index order.
-fn run_indexed_v1<T: Send>(
+pub(super) fn run_indexed_v1<T: Send>(
     count: usize,
     workers: usize,
     task: impl Fn(usize) -> T + Sync,

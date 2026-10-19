@@ -2968,6 +2968,7 @@ fn retention_run_config_v1(
         training_math: TrainingMathV1::PlatformLibm,
         line_b: None,
         e_supported: None,
+        soft_q: None,
         output_directory: root.join("run"),
     }
 }
