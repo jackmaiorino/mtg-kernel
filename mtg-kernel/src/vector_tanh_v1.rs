@@ -177,7 +177,7 @@ mod windows {
         let get = GET.get_or_init(|| {
             let (module, _, _) = linked_tanhf()?;
             // SAFETY: `module` is loaded and the name is NUL-terminated.
-            let f = unsafe { GetProcAddress(module, b"_get_FMA3_enable\0".as_ptr()) };
+            let f = unsafe { GetProcAddress(module, c"_get_FMA3_enable".as_ptr().cast()) };
             // SAFETY: UCRT exports `int __cdecl _get_FMA3_enable(void)`.
             (!f.is_null()).then(|| unsafe {
                 std::mem::transmute::<*const c_void, unsafe extern "C" fn() -> i32>(f)
@@ -262,7 +262,7 @@ mod windows {
             return None;
         }
         // SAFETY: `module` is a loaded module and the name is NUL-terminated.
-        let exported = unsafe { GetProcAddress(module, b"tanhf\0".as_ptr()) };
+        let exported = unsafe { GetProcAddress(module, c"tanhf".as_ptr().cast()) };
         let linked = tanhf as unsafe extern "C" fn(f32) -> f32 as *const c_void;
         let code = linked.cast::<u8>();
         // SAFETY: `linked` is a function entry in a loaded image, so its first
@@ -520,11 +520,10 @@ mod windows {
                     })
                 })
                 .collect();
-            // Join every worker that started, whatever the others did.
+            // Workers not joined here are joined when the scope ends.
             workers
                 .into_iter()
-                .map(|w| w.is_ok_and(|w| w.join().unwrap_or(false)))
-                .fold(true, |all, ok| all && ok)
+                .all(|w| w.is_ok_and(|w| w.join().unwrap_or(false)))
         })
     }
 }
