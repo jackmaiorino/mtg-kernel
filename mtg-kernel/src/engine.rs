@@ -3329,6 +3329,24 @@ fn legal_targets_for_controller_from_source(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> Vec<Target> {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        legal_targets_for_controller_from_source_unframed(
+            spec,
+            targets_chosen,
+            controller,
+            source,
+            state,
+        )
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn legal_targets_for_controller_from_source_unframed(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> Vec<Target> {
     if spec == TargetSpec::AnyTarget {
         if let Some(source) =
             source.filter(|source| crate::gorehorn_damage_v1::owns_definition(source.card_def))
@@ -4357,11 +4375,34 @@ fn target_prefix_can_complete_for_controller_and_source(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> bool {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        target_prefix_can_complete_for_controller_and_source_unframed(
+            spec,
+            targets_chosen,
+            controller,
+            source,
+            state,
+        )
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn target_prefix_can_complete_for_controller_and_source_unframed(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> bool {
     if spec == TargetSpec::KickerControlledCreatures {
-        let legal = legal_targets_for_controller_from_source(spec, &[], controller, source, state);
-        return targets_chosen.iter().enumerate().all(|(index, target)| {
-            legal.contains(target) && !targets_chosen[..index].contains(target)
-        });
+        let legal = legal_targets_for_controller_from_source(spec, &[], controller, source, state)
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        // Every target legal and none equal to an earlier one: `seen` holds
+        // exactly the earlier targets whenever a target is tested.
+        let mut seen = std::collections::HashSet::with_capacity(targets_chosen.len());
+        return targets_chosen
+            .iter()
+            .all(|target| legal.contains(target) && seen.insert(*target));
     }
     let max = target_count(spec) as usize;
     if spec != TargetSpec::CounterDistribution && targets_chosen.len() > max {
@@ -17098,25 +17139,49 @@ fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i128, i1
         return (0, 0);
     }
     let subtypes = effective_subtype_ids(state, recipient);
-    state.players[object.controller.index()]
-        .battlefield
+    let battlefield = &state.players[object.controller.index()].battlefield;
+    let lord = |source: ObjectId| {
+        let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+        definition
+            .is_executable()
+            .then(|| static_controlled_subtype_boost_for(definition.name))
+            .flatten()
+    };
+    let boost = |source: ObjectId| {
+        // The pure name table is consulted before the pure, panic-free
+        // printed-abilities query; both only filter, so order is free.
+        let boost = lord(source)?;
+        if !crate::continuous_characteristics_v1::printed_abilities_active(state, source) {
+            return None;
+        }
+        ((!boost.exclude_source || source != recipient)
+            && boost.subtype.is_in_subtype_ids(&subtypes))
+        .then_some((boost.power, boost.toughness))
+    };
+    let add = |(power, toughness): (i128, i128), (p, t): (i32, i32)| {
+        (power + i128::from(p), toughness + i128::from(t))
+    };
+    // Entries without a lord definition never contribute.
+    if let Some(lords) = crate::continuous_source_frame_v1::sources(
+        state,
+        crate::continuous_source_frame_v1::SourceKindV1::ControlledSubtypeBoost(
+            object.controller.index(),
+        ),
+        || {
+            battlefield
+                .iter()
+                .copied()
+                .filter(|&source| lord(source).is_some())
+                .collect()
+        },
+    ) {
+        return lords.iter().copied().filter_map(boost).fold((0, 0), add);
+    }
+    battlefield
         .iter()
         .copied()
-        .filter_map(|source| {
-            let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
-            if !definition.is_executable()
-                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-            {
-                return None;
-            }
-            let boost = static_controlled_subtype_boost_for(definition.name)?;
-            ((!boost.exclude_source || source != recipient)
-                && boost.subtype.is_in_subtype_ids(&subtypes))
-            .then_some((boost.power, boost.toughness))
-        })
-        .fold((0, 0), |(power, toughness), (p, t)| {
-            (power + i128::from(p), toughness + i128::from(t))
-        })
+        .filter_map(boost)
+        .fold((0, 0), add)
 }
 
 /// A layer-7c team bonus whose recipient predicate reads layer-6 keywords.
@@ -17164,38 +17229,74 @@ fn controlled_creature_boost_v1(state: &GameState, recipient: ObjectId) -> (i128
     if object.zone != Zone::Battlefield || !object_has_type(state, recipient, CardType::Creature) {
         return (0, 0);
     }
+    // Only an out-of-range definition or one carrying this static can
+    // contribute; an out-of-range one still reaches the original index below.
+    let candidate = |source_object: &crate::state::GameObject| {
+        card_def::CARD_DEFS
+            .get(source_object.card_def as usize)
+            .is_none_or(|definition| {
+                definition.is_executable()
+                    && static_controlled_creature_boost_for_v1(definition.name).is_some()
+            })
+    };
+    let boost = |source: ObjectId, source_object: &crate::state::GameObject| {
+        if source_object.zone != Zone::Battlefield
+            || source_object.controller != object.controller
+            || source_object.v4.face_index != 0
+        {
+            return None;
+        }
+        // Skip the printed-abilities query for definitions without this
+        // static. Both checks are pure filters.
+        if !candidate(source_object) {
+            return None;
+        }
+        if !crate::continuous_characteristics_v1::printed_abilities_active(state, source) {
+            return None;
+        }
+        let definition = &card_def::CARD_DEFS[source_object.card_def as usize];
+        if !definition.is_executable() {
+            return None;
+        }
+        let boost = static_controlled_creature_boost_for_v1(definition.name)?;
+        if boost.exclude_source && source == recipient {
+            return None;
+        }
+        let matches = match boost.filter {
+            StaticControlledCreatureFilterV1::All => true,
+            // Keyword evaluation never reads P/T or this bonus table, so
+            // the layer-6 predicate cannot recurse into layer 7c here.
+            StaticControlledCreatureFilterV1::WithKeyword(keyword) => {
+                has_effective_keyword(state, recipient, keyword)
+            }
+        };
+        matches.then_some((boost.power, boost.toughness))
+    };
+    let add = |(power, toughness): (i128, i128), (p, t): (i32, i32)| {
+        (power + i128::from(p), toughness + i128::from(t))
+    };
+    if let Some(sources) = crate::continuous_source_frame_v1::sources(
+        state,
+        crate::continuous_source_frame_v1::SourceKindV1::ControlledCreatureBoost,
+        || {
+            state
+                .objects
+                .iter()
+                .filter(|(_, source_object)| candidate(source_object))
+                .map(|(source, _)| source)
+                .collect()
+        },
+    ) {
+        return sources
+            .iter()
+            .filter_map(|&source| boost(source, state.objects.get(source)))
+            .fold((0, 0), add);
+    }
     state
         .objects
         .iter()
-        .filter_map(|(source, source_object)| {
-            if source_object.zone != Zone::Battlefield
-                || source_object.controller != object.controller
-                || source_object.v4.face_index != 0
-                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-            {
-                return None;
-            }
-            let definition = &card_def::CARD_DEFS[source_object.card_def as usize];
-            if !definition.is_executable() {
-                return None;
-            }
-            let boost = static_controlled_creature_boost_for_v1(definition.name)?;
-            if boost.exclude_source && source == recipient {
-                return None;
-            }
-            let matches = match boost.filter {
-                StaticControlledCreatureFilterV1::All => true,
-                // Keyword evaluation never reads P/T or this bonus table, so
-                // the layer-6 predicate cannot recurse into layer 7c here.
-                StaticControlledCreatureFilterV1::WithKeyword(keyword) => {
-                    has_effective_keyword(state, recipient, keyword)
-                }
-            };
-            matches.then_some((boost.power, boost.toughness))
-        })
-        .fold((0, 0), |(power, toughness), (p, t)| {
-            (power + i128::from(p), toughness + i128::from(t))
-        })
+        .filter_map(|(source, source_object)| boost(source, source_object))
+        .fold((0, 0), add)
 }
 
 fn controls_an_artifact(controller: PlayerId, state: &GameState) -> bool {
@@ -17671,6 +17772,10 @@ fn checked_effective_stat(
 
 /// Read-only ingress check. Noncreature objects have no current PT envelope.
 pub(crate) fn validate_battlefield_pt(state: &GameState) -> Result<(), ObjectId> {
+    crate::continuous_source_frame_v1::with_frame(state, || validate_battlefield_pt_unframed(state))
+}
+// The body of the function above, run inside its source-list frame.
+fn validate_battlefield_pt_unframed(state: &GameState) -> Result<(), ObjectId> {
     for (id, object) in state.objects.iter() {
         if object.zone == Zone::Battlefield
             && object_has_type(state, id, CardType::Creature)

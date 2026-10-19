@@ -57,31 +57,67 @@ pub(crate) fn applies(state: &GameState, source: ObjectId, recipient: ObjectId) 
             )
     })
 }
+fn grant_of(
+    live: &crate::state::GameObject,
+) -> Option<crate::card_def::ControlledCreatureGrantDef> {
+    CARD_DEFS
+        .get(usize::from(live.card_def))
+        .and_then(|d| d.controlled_creature_grant)
+}
+/// Every object whose definition carries a grant, in arena order. Objects
+/// without one never grant or protect, so the scans below may skip them.
+fn grant_sources(state: &GameState) -> Option<std::rc::Rc<[ObjectId]>> {
+    crate::continuous_source_frame_v1::sources(
+        state,
+        crate::continuous_source_frame_v1::SourceKindV1::ControlledCreatureGrant,
+        || {
+            state
+                .objects
+                .iter()
+                .filter(|(_, live)| grant_of(live).is_some())
+                .map(|(source, _)| source)
+                .collect()
+        },
+    )
+}
 pub(crate) fn grants_keyword(state: &GameState, recipient: ObjectId, keyword: Keywords) -> bool {
     if !enabled() {
         return false;
     }
-    state.objects.iter().any(|(source, live)| {
-        CARD_DEFS
-            .get(usize::from(live.card_def))
-            .and_then(|d| d.controlled_creature_grant)
+    let grants = |source: ObjectId, live: &crate::state::GameObject| {
+        grant_of(live)
             .is_some_and(|grant| grant.keywords.has(keyword) && applies(state, source, recipient))
-    })
+    };
+    if let Some(sources) = grant_sources(state) {
+        return sources
+            .iter()
+            .any(|&source| grants(source, state.objects.get(source)));
+    }
+    state
+        .objects
+        .iter()
+        .any(|(source, live)| grants(source, live))
 }
 pub(crate) fn color_protection(state: &GameState, recipient: ObjectId) -> u8 {
     if !enabled() {
         return 0;
     }
-    state.objects.iter().fold(0, |mask, (source, live)| {
-        let grant = CARD_DEFS
-            .get(usize::from(live.card_def))
-            .and_then(|d| d.controlled_creature_grant);
-        if let Some(grant) = grant.filter(|_| applies(state, source, recipient)) {
+    let protect = |mask: u8, source: ObjectId, live: &crate::state::GameObject| {
+        if let Some(grant) = grant_of(live).filter(|_| applies(state, source, recipient)) {
             mask | grant.protection_color_mask
         } else {
             mask
         }
-    })
+    };
+    if let Some(sources) = grant_sources(state) {
+        return sources.iter().fold(0, |mask, &source| {
+            protect(mask, source, state.objects.get(source))
+        });
+    }
+    state
+        .objects
+        .iter()
+        .fold(0, |mask, (source, live)| protect(mask, source, live))
 }
 pub(crate) fn protects_from_colors(
     state: &GameState,
