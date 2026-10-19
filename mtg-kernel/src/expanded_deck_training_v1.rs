@@ -4200,6 +4200,44 @@ fn execute_update_v1(
         )?),
         _ => None,
     };
+    // SQ1 movement (design section 6.2): each taught root rescored by the
+    // updated model, as deployed masses before and after the step.
+    let sq_movement = match &sq_teacher {
+        Some((_, input)) => {
+            let model = state.model_v1();
+            let mut rows = Vec::with_capacity(input.rows.len());
+            for row in &input.rows {
+                let (saved, tensor) = &tensor_groups[row.group_index].2[row.substep_index];
+                let view = encoded_decision_view_generic_v1(tensor, generation);
+                let after = match generation {
+                    FreshLineageGenerationV1::V3 => model.forward_feature_transfer_v3(view),
+                    FreshLineageGenerationV1::V4 => model.forward_feature_transfer_v4(view),
+                }
+                .map_err(err)?
+                .logits;
+                let before: Vec<f32> = saved.logits.iter().map(|&b| f32::from_bits(b)).collect();
+                let mut scratch = WideCategoricalScratchV1::default();
+                let mass = |logits: &[f32], scratch: &mut WideCategoricalScratchV1| {
+                    scratch.apportion(logits).map(|m| {
+                        m.iter().map(|&x| x as f64 / (u64::MAX as f64 + 1.0)).collect::<Vec<f64>>()
+                    })
+                };
+                let b = mass(&before, &mut scratch).map_err(err)?;
+                let a = mass(&after, &mut scratch).map_err(err)?;
+                let top = row
+                    .target
+                    .probabilities
+                    .iter()
+                    .enumerate()
+                    .fold(0, |best, (i, &v)| if v > row.target.probabilities[best] { i } else { best });
+                rows.push(json!({"group_index":row.group_index,"substep_index":row.substep_index,
+                    "deployed_tv":0.5 * b.iter().zip(&a).map(|(x, y)| (x - y).abs()).sum::<f64>(),
+                    "target_top":top,"deployed_top_before":b[top],"deployed_top_after":a[top]}));
+            }
+            Some(rows)
+        }
+        None => None,
+    };
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
@@ -4394,7 +4432,7 @@ fn execute_update_v1(
             .expect("SQ1 packet published before checkpoint");
         result["soft_q"] = json!({"method":soft_q_teacher_v1::SOFT_Q_METHOD_V1,
             "packet":pin,"scheduled":packet["scheduled"],"available":packet["available"],
-            "gradient_exposure":sq_auxiliary,"teacher_seconds":teacher_seconds});
+            "gradient_exposure":sq_auxiliary,"movement":sq_movement,"teacher_seconds":teacher_seconds});
     }
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)

@@ -247,6 +247,27 @@ impl SoftQDomainV1 {
     }
 }
 
+/// Stage 4a sampler errors that depend on the sample (declared rejections:
+/// the ordinal's next attempt follows); every other kind is an instrument or
+/// binding fault that fails the update.
+pub(super) const SAMPLER_REJECTIONS_V1: &[&str] = &[
+    "SampleHookRejected",
+    "HiddenReferenceConflict",
+    "SampleBoundaryChanged",
+    "SampleCandidateRebuildFailed",
+    "SampleBoundaryEncodingFailed",
+    "LibraryChoicePlanFailed",
+    "LibraryChoiceRebuildFailed",
+    "LibraryChoiceOriginFailed",
+    "DecisionLocalLibrary",
+];
+
+/// `world::sample` errors read `{kind:?}` or `{kind:?}: {hook detail}`.
+pub(super) fn sampler_rejection_v1(error: &str) -> bool {
+    let kind = error.split(':').next().unwrap_or("").trim();
+    SAMPLER_REJECTIONS_V1.contains(&kind)
+}
+
 /// One work item: ordinal `ordinal` of a root.
 pub(super) struct SoftQWorkV1<'a> {
     pub(super) root: &'a SoftQRootV1,
@@ -282,7 +303,8 @@ pub(super) fn ordinal_v1(work: &SoftQWorkV1<'_>, ordinal: u32) -> Result<SoftQOr
                 sample = Some((attempt, accepted));
                 break;
             }
-            Err(kind) => record.rejections.push(kind),
+            Err(kind) if sampler_rejection_v1(&kind) => record.rejections.push(kind),
+            Err(kind) => return Err(format!("SQ1 sampler fault at ordinal {ordinal}: {kind}")),
         }
     }
     let Some((attempt, sample)) = sample else {
@@ -479,18 +501,27 @@ fn bind_root_input_v1(
     let row = &trajectory.decisions[root.decision_index];
     let mut capture = student.fork_for_collection_v3()?;
     capture.reset_sampling_v1([0, 0]);
-    let tensor = match trajectory_generation_v1(trajectory) {
+    let (scores, tensor) = match trajectory_generation_v1(trajectory) {
         FreshLineageGenerationV1::V3 => {
-            TensorBitsV1::from_tensor(&capture.select_with_training_tensor_v3(&root.session)?.2.common)
+            let (_, scores, tensor) = capture.select_with_training_tensor_v3(&root.session)?;
+            (scores, TensorBitsV1::from_tensor(&tensor.common))
         }
         FreshLineageGenerationV1::V4 => {
-            TensorBitsV1::from_tensor(&capture.select_with_training_tensor_v4(&root.session)?.2.common)
+            let (_, scores, tensor) = capture.select_with_training_tensor_v4(&root.session)?;
+            (scores, TensorBitsV1::from_tensor(&tensor.common))
         }
     };
     let bytes = serde_json::to_vec(&tensor).map_err(err)?;
     ensure(
         bytes == serde_json::to_vec(&row.tensor).map_err(err)?,
         "SQ1 live encoded input differs from the learner row",
+    )?;
+    // The target and the deployed masses are built from the recorded logits:
+    // they must be the student's own outputs at the root, bit for bit.
+    ensure(
+        scores.logits.iter().map(|z| z.to_bits()).collect::<Vec<_>>() == row.logits
+            && scores.value.to_bits() == row.value,
+        "SQ1 recorded root outputs differ from the student's forward",
     )?;
     Ok(bytes)
 }
@@ -711,6 +742,7 @@ pub(super) fn diagnostic(
             "duplicate or empty SQ1 diagnostic case",
         )?;
         let trajectory: ExpandedTrajectoryV1 = read_pinned(&case.trajectory)?;
+        validate_trajectory(&trajectory)?;
         ensure(
             trajectory.learner_sampler.is_none(),
             "SQ1 diagnostic requires the unchanged deployment collection sampler",

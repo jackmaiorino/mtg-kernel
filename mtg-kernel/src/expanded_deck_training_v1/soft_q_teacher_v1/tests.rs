@@ -210,3 +210,23 @@ fn worlds_do_not_read_the_true_opponent_deck() {
     }
     assert!(compared >= 12, "only {compared} accepted samples");
 }
+
+#[test]
+fn sampler_faults_are_not_rejections() {
+    for kind in SAMPLER_REJECTIONS_V1 {
+        assert!(sampler_rejection_v1(kind));
+        assert!(sampler_rejection_v1(&format!("{kind}: hook detail")));
+    }
+    for fault in [
+        "InvalidVisibleBinding",
+        "HiddenStateContract",
+        "NoLiveDecision",
+        "UnsupportedActionContract",
+        "StepFailed",
+        "HaltedSimulation",
+        "deck prior hook did not run",
+        "",
+    ] {
+        assert!(!sampler_rejection_v1(fault), "{fault}");
+    }
+}

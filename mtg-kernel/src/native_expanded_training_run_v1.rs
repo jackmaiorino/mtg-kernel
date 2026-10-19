@@ -2494,6 +2494,9 @@ mod tests {
         assert_eq!(slot["status"], "available");
         assert_eq!(slot["ordinals"].as_array().unwrap().len(), 16);
         assert!(document["soft_q"]["gradient_exposure"]["auxiliary_loss"].as_f64().unwrap() >= 0.0);
+        let movement = document["soft_q"]["movement"].as_array().unwrap();
+        assert_eq!(movement.len(), 1);
+        assert!(movement[0]["deployed_tv"].as_f64().unwrap() >= 0.0);
         // A complete rerun only verifies; a fresh directory replays identically,
         // and the teacher's worker count changes no record.
         assert_eq!(run_native_expanded_training_v1(&config, None).unwrap(), result);
@@ -2509,9 +2512,22 @@ mod tests {
             ARTIFACT_CAP,
         )
         .unwrap();
-        for field in ["ordinals", "mean_returns", "target", "decision_index", "status"] {
-            assert_eq!(again_packet["slots"][0][field], slot[field], "{field}");
+        // Every slot of every update is the same apart from execution metadata
+        // (teacher_workers sits in the options) and the label-dependent
+        // opponent identity of these synthetic sources.
+        for iteration in 0..2 {
+            let packet_of = |r: &Value| {
+                let d = read_pin(&serde_json::from_value(iteration_receipt_v1(r, iteration)["update"].clone()).unwrap())
+                    .unwrap();
+                let mut p = read_pin_bounded(&parse_pin(&d["soft_q"], "packet").unwrap(), ARTIFACT_CAP).unwrap();
+                for slot in p["slots"].as_array_mut().unwrap() {
+                    slot.as_object_mut().unwrap().remove("opponent_identity");
+                }
+                p["slots"].clone()
+            };
+            assert_eq!(packet_of(&again), packet_of(&result), "iteration {iteration}");
         }
+        assert!(again_packet["slots"].is_array());
         // The arm is bound for resume.
         let mut changed = config.clone();
         changed.soft_q.as_mut().unwrap().arm = SoftQArmV1::ShuffledQ;
