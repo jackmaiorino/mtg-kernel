@@ -2281,7 +2281,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
         .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
-    crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    validate_copy_prefix_for_mode_v1(state, text_mode)?;
     if !matches!(
         text_mode,
         ObservationTextModeV2::EndTurnV68Artifact
@@ -2858,12 +2858,35 @@ fn refuse_chosen_type_mana_v60(state: &GameState) -> Result<()> {
     Ok(())
 }
 
+/// Carry the complete owning envelope through shared observation and mana
+/// prefixes. Every predecessor keeps the original refusal and all native
+/// copied-ability checks remain active.
+fn validate_copy_prefix_for_mode_v1(state: &GameState, mode: ObservationTextModeV2) -> Result<()> {
+    use crate::optional_trigger_public_v1::ConsumerV1;
+    let consumer = match mode {
+        ObservationTextModeV2::KaitoV75Artifact => ConsumerV1::KaitoV75,
+        ObservationTextModeV2::ChandraV74Artifact => ConsumerV1::ChandraV74,
+        _ => ConsumerV1::Legacy,
+    };
+    consumer
+        .validate_copy_prefix(state)
+        .map_err(RlContractError)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "rl/complete_copy_prefix_scope_tests.rs"]
+mod complete_copy_prefix_scope_tests;
+
 fn public_restricted_mana_v1(
     state: &GameState,
     text_mode: ObservationTextModeV2,
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
     refuse_chosen_type_mana_v60(state)?;
-    crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    validate_copy_prefix_for_mode_v1(state, text_mode)?;
     // Both frozen and complete constructors project this field, even for an
     // empty mana pool. Retain their private scope through these legacy guards.
     if !matches!(
@@ -5721,7 +5744,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
-    crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    validate_copy_prefix_for_mode_v1(state, text_mode)?;
     if !matches!(
         text_mode,
         ObservationTextModeV2::EndTurnV68Artifact

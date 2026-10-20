@@ -30,6 +30,18 @@ pub(crate) fn owning_ready(
     priority(&mut s, p);
     (s, id, ours, theirs)
 }
+pub(crate) fn copied_token_boundary(p: PlayerId) -> GameState {
+    let (mut s, walker, creature, _) = owning_ready(p, false, "Island");
+    activate(&mut s, p, walker, 1, &[Target::Object(creature)]);
+    finish(&mut s);
+    assert!(s
+        .objects
+        .iter()
+        .any(|(_, object)| object.zone == Zone::Battlefield
+            && object.v4.copied_end_step_sacrifices_v1 == 1));
+    s
+}
+
 pub(crate) fn published_source_boundary(
     p: PlayerId,
     concealed: bool,
