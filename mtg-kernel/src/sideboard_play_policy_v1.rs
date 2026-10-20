@@ -185,6 +185,9 @@ pub struct FrozenPlayDecisionScoresV1 {
 pub struct FrozenPlayPolicyV1 {
     model: NativePolicyValueNetV1,
     forward_scratch: NativePolicyValueForwardScratchV1,
+    /// Exact per-row forward cache for `model`; cleared when its parameters
+    /// are replaced.
+    row_cache: crate::native_policy_value_net_v1::ForwardRowCacheV1,
     embeddings: Vec<f32>,
     identity: PlayPolicyOriginV1,
     encoder: FlatDecisionEncoderV2,
@@ -478,6 +481,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -526,6 +530,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -609,6 +614,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -674,6 +680,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -739,6 +746,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -816,6 +824,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -998,6 +1007,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -1068,6 +1078,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -1276,9 +1287,11 @@ impl FrozenPlayPolicyV1 {
         self.model
             .replace_parameter_snapshot_v1(parameters)
             .map_err(|e| e.to_string())?;
-        // A cached prediction and a probe namespace belong to the old parameters.
+        // A cached prediction, cached rows and a probe namespace belong to the
+        // old parameters.
         self.inference_cache = None;
         self.inference_probe = None;
+        self.row_cache = Default::default();
         // Replacement validates the whole model before committing. Copy the
         // installed table so sideboard inputs cannot retain ancestral rows.
         self.model.visit_parameters_v1(|name, _, values| {
@@ -1790,6 +1803,7 @@ impl FrozenPlayPolicyV1 {
         let scores = cached_forward_v1(
             &self.model,
             &mut self.forward_scratch,
+            &mut self.row_cache,
             self.inference_cache.as_ref(),
             &mut self.inference_key,
             self.inference_probe.as_mut(),
@@ -1947,9 +1961,11 @@ impl FrozenPlayPolicyV1 {
 /// the declared forward and stores its output. Without a cache this is the
 /// plain forward.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "the forward plus its two caches")]
 fn cached_forward_v1(
     model: &NativePolicyValueNetV1,
     scratch: &mut NativePolicyValueForwardScratchV1,
+    rows: &mut crate::native_policy_value_net_v1::ForwardRowCacheV1,
     cache: Option<&crate::inference_cache_v1::PolicyCacheV1>,
     key: &mut Vec<u8>,
     probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
@@ -1983,16 +1999,34 @@ fn cached_forward_v1(
         outcome = CallOutcomeV1::Miss;
     }
     let span_forward = span(Bucket::PolicyForward);
-    let output = match path {
-        ForwardPathV1::TransferV3 => model
-            .forward_feature_transfer_v3_with_scratch_v1(view, scratch, mode)
-            .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?,
-        ForwardPathV1::TransferV4 => model
-            .forward_feature_transfer_v4_with_scratch_v1(view, scratch, mode)
-            .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?,
-        ForwardPathV1::Flat => model
-            .forward_with_scratch_v1(view, scratch, mode)
-            .map_err(|e| format!("frozen scalar inference: {e:?}"))?,
+    // The row cache is exact; MTG_KERNEL_ROW_CACHE=0 turns it off.
+    let output = if row_cache_enabled_v1() {
+        let (config, what) = match path {
+            ForwardPathV1::TransferV3 => (
+                model.feature_transfer_config_v3(),
+                "explicit V3 frozen feature transfer",
+            ),
+            ForwardPathV1::TransferV4 => (
+                model.feature_transfer_config_v4(),
+                "explicit V4 frozen feature transfer",
+            ),
+            ForwardPathV1::Flat => (model.config_v1(), "frozen scalar inference"),
+        };
+        model
+            .forward_rows_cached_with_scratch_v1(view, config, scratch, rows, mode)
+            .map_err(|e| format!("{what}: {e:?}"))?
+    } else {
+        match path {
+            ForwardPathV1::TransferV3 => model
+                .forward_feature_transfer_v3_with_scratch_v1(view, scratch, mode)
+                .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?,
+            ForwardPathV1::TransferV4 => model
+                .forward_feature_transfer_v4_with_scratch_v1(view, scratch, mode)
+                .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?,
+            ForwardPathV1::Flat => model
+                .forward_with_scratch_v1(view, scratch, mode)
+                .map_err(|e| format!("frozen scalar inference: {e:?}"))?,
+        }
     };
     drop(span_forward);
     if let (Some(c), Some(hash)) = (cache, hash) {
@@ -3202,4 +3236,11 @@ mod tests {
         tampered.expected_metadata_sha256 = "0".repeat(64);
         assert!(FrozenPlayPolicyV1::load_v1(&tampered).is_err());
     }
+}
+
+/// Whether the exact per-row forward cache is on (`MTG_KERNEL_ROW_CACHE=0`
+/// turns it off).
+fn row_cache_enabled_v1() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("MTG_KERNEL_ROW_CACHE").map_or(true, |v| v != "0"))
 }
