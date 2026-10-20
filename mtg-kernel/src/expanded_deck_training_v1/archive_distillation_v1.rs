@@ -1467,6 +1467,8 @@ fn anchor_identity_preflight_v1(
         direction: LineBDivergenceV1::Forward,
         coefficient: recipe.anchor_coefficient,
         denominator: rows.len(),
+        cap: None,
+        step_telemetry: false,
         rows: rows
             .iter()
             .zip(targets)
@@ -2109,6 +2111,8 @@ pub(super) fn phase1_v1(
             direction: LineBDivergenceV1::Forward,
             coefficient: recipe_values.anchor_coefficient,
             denominator: ANCHOR_BATCH,
+            cap: None,
+            step_telemetry: false,
             rows: step
                 .anchor
                 .iter()
@@ -2140,6 +2144,8 @@ pub(super) fn phase1_v1(
             direction: LineBDivergenceV1::Forward,
             coefficient: ARCHIVE_COEFFICIENT,
             denominator: step.denominator,
+            cap: None,
+            step_telemetry: false,
             rows: step
                 .archive
                 .iter()
