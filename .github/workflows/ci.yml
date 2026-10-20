@@ -342,6 +342,12 @@ jobs:
 
       # The library tests and all other targets compile disjoint units, so
       # the two halves of the workspace suite run as parallel jobs.
+      # This group repeatedly lost its hosted runner during compilation.
+      # Bound concurrent compilers/linkers without changing the target list.
+      - name: Bound Ubuntu workspace target compilation
+        if: matrix.os == 'ubuntu-24.04' && matrix.group == 'workspace-targets'
+        run: echo 'CARGO_BUILD_JOBS=1' >> "$GITHUB_ENV"
+
       - name: Run Rust release tests
         if: startsWith(matrix.group, 'workspace-')
         run: python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
