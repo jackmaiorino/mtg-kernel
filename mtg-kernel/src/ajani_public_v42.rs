@@ -279,7 +279,27 @@ pub fn facts(state: &GameState) -> Result<FactsV42, RlContractError> {
     })
 }
 
+/// Every input below is static printed card data or a constant, so the
+/// first successful result is the result of every later call. A failure is
+/// never remembered and always recomputes.
 pub(crate) fn meanings() -> Result<Vec<MeaningV42>, RlContractError> {
+    thread_local! {
+        static MEANINGS: std::cell::RefCell<Option<Vec<MeaningV42>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    if let Some(meanings) = MEANINGS
+        .try_with(|meanings| meanings.borrow().clone())
+        .ok()
+        .flatten()
+    {
+        return Ok(meanings);
+    }
+    let meanings = meanings_uncached()?;
+    let _ = MEANINGS.try_with(|remembered| *remembered.borrow_mut() = Some(meanings.clone()));
+    Ok(meanings)
+}
+
+fn meanings_uncached() -> Result<Vec<MeaningV42>, RlContractError> {
     let mut meanings = Vec::new();
     for (id, _) in crate::card_def::CARD_DEFS
         .iter()

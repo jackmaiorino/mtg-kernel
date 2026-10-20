@@ -7,7 +7,11 @@ pub mod e_supported_teacher_v1;
 pub mod exploration_probe_v1;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub mod own_registration;
+pub mod search_targets_v1;
+pub mod soft_q_teacher_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
+use search_targets_v1::SearchTargetsOptionsV1;
+use soft_q_teacher_v1::{SoftQDiagnosticCaseV1, SoftQTeacherOptionsV1};
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
@@ -819,11 +823,14 @@ impl ExpandedDeckListV1 {
 }
 
 /// Opt-in opponent kinds of the public-feature collector beyond ordinary V4
-/// and the D3 wrapper, in the evaluator's `ModelSource` JSON shape so a
-/// launcher can copy an evaluation source (opponent kinds interface v1).
+/// and the D3 wrapper. Pinned kinds use the evaluator's `ModelSource` JSON
+/// shape; Current is a training-only declaration (opponent kinds interface v1).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExpandedOpponentKindV1 {
+    /// Frozen update-start public policy with private actor and sampler state.
+    /// This training-only tag is not an evaluator model source.
+    Current {},
     /// A recent public-input training checkpoint.
     PublicCheckpoint {
         config: PinnedFileV1,
@@ -951,13 +958,13 @@ impl ExpandedEpisodeV1 {
 
     /// Validation for the public-feature collector only, which admits the D3
     /// search pin and the opt-in opponent kinds. Conflicting opponent fields
-    /// fail closed before collection. That collector builds its own games,
-    /// so it refuses runtime rules and reset starts.
+    /// fail closed before collection. The shared episode-session builder
+    /// applies declared runtime rules; reset starts remain unsupported here.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn configurations_for_public_collector_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         ensure(
-            self.runtime_rules.is_none() && self.reset.is_none(),
-            "runtime rules and reset starts are admitted only by the expanded collector",
+            self.reset.is_none(),
+            "reset starts are admitted only by the expanded collector",
         )?;
         self.configurations_checked_v1()
     }
@@ -1281,6 +1288,12 @@ pub(crate) struct ExpandedCheckpointV1 {
     state_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     e_supported: Option<Value>,
+    /// SQ1's continuation identity and packet pin; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    soft_q: Option<Value>,
+    /// TP1 Stage B's continuation identity and packet pin; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_targets: Option<Value>,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
     parameters: Vec<ParameterBitsV1>,
@@ -1346,6 +1359,10 @@ fn identity_valid(contract: &str, encoding: &str, cards: &str) -> Result<(), Str
 struct CheckpointESupportedProbeV1 {
     #[serde(default, deserialize_with = "present_value_v1")]
     e_supported: Option<Value>,
+    #[serde(default, deserialize_with = "present_value_v1")]
+    soft_q: Option<Value>,
+    #[serde(default, deserialize_with = "present_value_v1")]
+    search_targets: Option<Value>,
 }
 
 fn present_value_v1<'de, D: serde::Deserializer<'de>>(
@@ -1837,8 +1854,8 @@ impl From<CollectEpisodeErrorV1> for String {
     }
 }
 
-/// The collection session for `episode`. The line (b) root replay builds its
-/// game through this same call.
+/// The collection session for `episode`. Expanded and public collectors,
+/// opponent-menu replay and line (b) root replay share this runtime profile.
 fn episode_session_v1(
     episode: &ExpandedEpisodeV1,
     configs: &[DeckConfigurationV1; 2],
@@ -2849,6 +2866,38 @@ pub enum ExpandedTrainingCommandV1 {
         teacher: ESupportedTeacherOptionsV1,
         output_directory: PathBuf,
     },
+    /// SQ1 soft rollout-Q supervision (collab LANES/soft-q-teaching-20261018):
+    /// ordinary CPU GAE with full Adam and the unchanged sampler.
+    SoftQUpdate {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        loss_selection: ExpandedLossSelectionV1,
+        teacher: SoftQTeacherOptionsV1,
+        output_directory: PathBuf,
+    },
+    /// TP1 Stage B searched-game targets (collab
+    /// LANES/teacher-price-20261019, STAGE-B.md): ordinary CPU GAE with full
+    /// Adam plus off-batch forward-KL rows from one packet.
+    SearchTargetsUpdate {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        loss_selection: ExpandedLossSelectionV1,
+        targets: SearchTargetsOptionsV1,
+        output_directory: PathBuf,
+    },
+    /// SQ1's target diagnostic (design section 6.1): construction and
+    /// independent assessment censuses at each case's root.
+    SoftQDiagnostic {
+        parent: ExpandedModelSourceV1,
+        prior_deck_indices: Vec<usize>,
+        teacher_workers: usize,
+        cases: Vec<SoftQDiagnosticCaseV1>,
+        output_directory: PathBuf,
+    },
     /// Fixed-probe readout of E targets for one source (no update or search).
     ESupportedProbeScore {
         source: ExpandedModelSourceV1,
@@ -2926,6 +2975,12 @@ pub enum ExpandedTrainingCommandV1 {
         /// prior output byte.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         evidence: Option<archive_distillation_v1::ArchiveDistillationProbeEvidenceV1>,
+        /// With `evidence`, also writes each candidate's raw logit bits and
+        /// deployed probabilities at every evidence row (TV1's D1 scoring,
+        /// collab LANES/target-validity-20261017). Off keeps every prior
+        /// output byte.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        evidence_logits: bool,
         output_directory: PathBuf,
     },
     /// Spy line retention trace (collab LANES/spy-line-retention-20261015):
@@ -2963,7 +3018,70 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             None,
             Some(teacher),
+            None,
             TrainingMathV1::PlatformLibm,
+        ),
+        ExpandedTrainingCommandV1::SoftQUpdate {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            loss_selection,
+            teacher,
+            output_directory,
+        } => execute_update_v1(
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            ExpandedUpdateBackendV1::Cpu,
+            UpdateBackwardExecutionV1::Sequential,
+            loss_selection,
+            output_directory,
+            None,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            None,
+            None,
+            Some(teacher),
+            TrainingMathV1::PlatformLibm,
+        ),
+        ExpandedTrainingCommandV1::SearchTargetsUpdate {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            loss_selection,
+            targets,
+            output_directory,
+        } => execute_update_inner_v1(
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            ExpandedUpdateBackendV1::Cpu,
+            UpdateBackwardExecutionV1::Sequential,
+            loss_selection,
+            output_directory,
+            None,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            None,
+            None,
+            None,
+            Some(targets),
+            TrainingMathV1::PlatformLibm,
+        ),
+        ExpandedTrainingCommandV1::SoftQDiagnostic {
+            parent,
+            prior_deck_indices,
+            teacher_workers,
+            cases,
+            output_directory,
+        } => soft_q_teacher_v1::diagnostic(
+            &parent,
+            &prior_deck_indices,
+            teacher_workers,
+            &cases,
+            &output_directory,
         ),
 
         ExpandedTrainingCommandV1::ScoreSavedStates {
@@ -3035,6 +3153,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             anchor,
             offers,
             evidence,
+            evidence_logits,
             output_directory,
         } => archive_distillation_v1::probe_v1(
             parent,
@@ -3044,6 +3163,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             anchor,
             offers,
             evidence,
+            evidence_logits,
             output_directory,
         ),
         ExpandedTrainingCommandV1::LineRetentionTrace {
@@ -3208,6 +3328,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             line_b,
             None,
+            None,
             training_math,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
@@ -3238,6 +3359,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
                 line_b,
+                None,
                 None,
                 training_math,
             )
@@ -3383,6 +3505,47 @@ fn execute_update_v1(
     max_prepared_tensor_mebibytes: usize,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
+    soft_q: Option<SoftQTeacherOptionsV1>,
+    training_math: TrainingMathV1,
+) -> Result<Value, String> {
+    execute_update_inner_v1(
+        source,
+        trajectories,
+        learning_rate,
+        value_coefficient,
+        update_backend,
+        backward_execution,
+        loss_selection,
+        output_directory,
+        preparation_workers,
+        max_prepared_tensor_mebibytes,
+        line_b,
+        e_supported,
+        soft_q,
+        None,
+        training_math,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the versioned update contract plus TP1 Stage B's search targets"
+)]
+fn execute_update_inner_v1(
+    source: ExpandedModelSourceV1,
+    trajectories: Vec<PinnedFileV1>,
+    learning_rate: f32,
+    value_coefficient: f32,
+    update_backend: ExpandedUpdateBackendV1,
+    backward_execution: UpdateBackwardExecutionV1,
+    loss_selection: ExpandedLossSelectionV1,
+    output_directory: PathBuf,
+    preparation_workers: Option<usize>,
+    max_prepared_tensor_mebibytes: usize,
+    line_b: Option<LineBUpdateOptionsV1>,
+    e_supported: Option<ESupportedTeacherOptionsV1>,
+    soft_q: Option<SoftQTeacherOptionsV1>,
+    search_targets: Option<SearchTargetsOptionsV1>,
     training_math: TrainingMathV1,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
@@ -3393,8 +3556,37 @@ fn execute_update_v1(
         update_backend,
         &loss_selection,
         line_b.is_some(),
-        e_supported.is_some(),
+        e_supported.is_some() || soft_q.is_some() || search_targets.is_some(),
     )?;
+    if let Some(options) = &search_targets {
+        options.validate_v1()?;
+        ensure(
+            line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && backward_execution.is_sequential(),
+            "search targets require ordinary sequential CPU GAE with full Adam",
+        )?;
+    }
+    if let Some(options) = &soft_q {
+        options.validate_v1()?;
+        ensure(
+            line_b.is_none()
+                && e_supported.is_none()
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && backward_execution.is_sequential(),
+            "SQ1 requires ordinary sequential CPU GAE with full Adam",
+        )?;
+    }
     ensure(
         !trajectories.is_empty() && trajectories.len() <= 1024,
         "invalid update size",
@@ -3421,6 +3613,25 @@ fn execute_update_v1(
                     .as_ref()
                     == identity.get("continuation"),
                 "E continuation must preserve method, teacher, runtime and treatment identity",
+            )?;
+            let packet: PinnedFileV1 =
+                serde_json::from_value(identity["packet"].clone()).map_err(err)?;
+            read_pinned_bytes(&packet)?;
+        }
+        if let Some(identity) = &saved.search_targets {
+            search_targets_v1::check_continuation_v1(identity, search_targets.as_ref())?;
+            let packet: PinnedFileV1 =
+                serde_json::from_value(identity["packet"].clone()).map_err(err)?;
+            search_targets_v1::revalidate_packet_v1(&packet)?;
+        }
+        if let Some(identity) = &saved.soft_q {
+            ensure(
+                soft_q
+                    .as_ref()
+                    .map(soft_q_teacher_v1::continuation_identity)
+                    .as_ref()
+                    == identity.get("continuation"),
+                "SQ1 continuation must preserve method, arm, prior and runtime identity",
             )?;
             let packet: PinnedFileV1 =
                 serde_json::from_value(identity["packet"].clone()).map_err(err)?;
@@ -3665,6 +3876,18 @@ fn execute_update_v1(
         })
         .transpose()?;
     let mut e_auxiliary = None;
+    let sq_teacher = soft_q
+        .as_ref()
+        .map(|options| {
+            soft_q_teacher_v1::teach(&episodes, &policy, &before, &tensor_groups, options)
+        })
+        .transpose()?;
+    let mut sq_auxiliary = None;
+    let st_teacher = search_targets
+        .as_ref()
+        .map(|options| search_targets_v1::teach(&source, &state, options))
+        .transpose()?;
+    let mut st_auxiliary = None;
     let teacher_seconds = teacher_started.elapsed().as_secs_f64();
     // Each trajectory's learner list, for the receipt's census by list
     // (review change 10).
@@ -3872,6 +4095,65 @@ fn execute_update_v1(
                 .as_ref()
                 .expect("computed above whenever loss_selection is gae_advantage_value/v1");
             match (update_backend, generation) {
+                (ExpandedUpdateBackendV1::Cpu, _)
+                    if st_teacher.as_ref().is_some_and(|(_, rows)| {
+                        !rows.is_empty()
+                            || search_targets
+                                .as_ref()
+                                .is_some_and(search_targets_v1::stage_b2_v1)
+                    }) =>
+                {
+                    let (_, rows) = st_teacher.as_ref().expect("guarded");
+                    let options = search_targets.as_ref().expect("teacher implies options");
+                    let input = search_targets_v1::auxiliary_input_v1(rows, options, generation);
+                    let (result, auxiliary) = state
+                        .train_step_gae_external_auxiliary_v1(
+                            generation,
+                            &groups,
+                            &gae.value_targets,
+                            &gae.advantages,
+                            value_coefficient,
+                            learning_rate,
+                            None,
+                            &input,
+                        )
+                        .map_err(err)?;
+                    st_auxiliary = Some(json!({"rows":rows.len(),
+                        "denominator":options.denominator,"coefficient":options.coefficient,
+                        "kl_before":auxiliary.divergences_before,
+                        "auxiliary_loss":auxiliary.auxiliary_loss,
+                        "total_loss":f64::from(result.loss) + auxiliary.auxiliary_loss,
+                        "gradient_components":auxiliary.gradient_components,
+                        "auxiliary_head_l2":auxiliary.auxiliary_head_l2,
+                        "ordinary_head_l2":auxiliary.ordinary_head_l2,
+                        "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual}));
+                    if let Some(exposure) = st_auxiliary.as_mut() {
+                        if let Some(cap) = auxiliary.cap {
+                            exposure["cap"] = cap;
+                        }
+                        if let Some(steps) = auxiliary.adam_steps {
+                            exposure["adam_steps"] = steps;
+                        }
+                    }
+                    result
+                }
+                (ExpandedUpdateBackendV1::Cpu, _) if sq_teacher.is_some() => {
+                    let (_, input) = sq_teacher.as_ref().expect("guarded");
+                    let (result, auxiliary) = state
+                        .train_step_gae_soft_targets_v1(
+                            generation,
+                            &groups,
+                            &gae.value_targets,
+                            &gae.advantages,
+                            value_coefficient,
+                            learning_rate,
+                            None,
+                            input,
+                        )
+                        .map_err(err)?;
+                    sq_auxiliary = auxiliary;
+                    result
+                }
                 (ExpandedUpdateBackendV1::Cpu, _) if e_teacher.is_some() => {
                     let (_, input) = e_teacher.as_ref().expect("guarded");
                     let (result, auxiliary) = state
@@ -4070,6 +4352,54 @@ fn execute_update_v1(
         )?),
         _ => None,
     };
+    // SQ1 movement (design section 6.2): each taught root rescored by the
+    // updated model, as deployed masses before and after the step.
+    let sq_movement = match &sq_teacher {
+        Some((_, input)) => {
+            let model = state.model_v1();
+            let mut rows = Vec::with_capacity(input.rows.len());
+            for row in &input.rows {
+                let (saved, tensor) = &tensor_groups[row.group_index].2[row.substep_index];
+                let view = encoded_decision_view_generic_v1(tensor, generation);
+                let after = match generation {
+                    FreshLineageGenerationV1::V3 => model.forward_feature_transfer_v3(view),
+                    FreshLineageGenerationV1::V4 => model.forward_feature_transfer_v4(view),
+                }
+                .map_err(err)?
+                .logits;
+                let before: Vec<f32> = saved.logits.iter().map(|&b| f32::from_bits(b)).collect();
+                let mut scratch = WideCategoricalScratchV1::default();
+                let mass = |logits: &[f32], scratch: &mut WideCategoricalScratchV1| {
+                    scratch.apportion(logits).map(|m| {
+                        m.iter()
+                            .map(|&x| x as f64 / (u64::MAX as f64 + 1.0))
+                            .collect::<Vec<f64>>()
+                    })
+                };
+                let b = mass(&before, &mut scratch).map_err(err)?;
+                let a = mass(&after, &mut scratch).map_err(err)?;
+                let top = row
+                    .target
+                    .probabilities
+                    .iter()
+                    .enumerate()
+                    .fold(0, |best, (i, &v)| {
+                        if v > row.target.probabilities[best] {
+                            i
+                        } else {
+                            best
+                        }
+                    });
+                rows.push(
+                    json!({"group_index":row.group_index,"substep_index":row.substep_index,
+                    "deployed_tv":0.5 * b.iter().zip(&a).map(|(x, y)| (x - y).abs()).sum::<f64>(),
+                    "target_top":top,"deployed_top_before":b[top],"deployed_top_after":a[top]}),
+                );
+            }
+            Some(rows)
+        }
+        None => None,
+    };
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
@@ -4077,6 +4407,14 @@ fn execute_update_v1(
     let e_packet_pin = e_teacher
         .as_ref()
         .map(|(packet, _)| publish_json(&output_directory, "e-supported-teacher.json", packet))
+        .transpose()?;
+    let sq_packet_pin = sq_teacher
+        .as_ref()
+        .map(|(packet, _)| publish_json(&output_directory, "soft-q-teacher.json", packet))
+        .transpose()?;
+    let st_census_pin = st_teacher
+        .as_ref()
+        .map(|(census, _)| publish_json(&output_directory, "search-targets.json", census))
         .transpose()?;
     let checkpoint = ExpandedCheckpointV1 {
         schema: match &transfer {
@@ -4098,6 +4436,11 @@ fn execute_update_v1(
         state_sha256: after.clone(),
         e_supported:e_supported.as_ref().map(|options|json!({
             "continuation":e_supported_teacher_v1::continuation_identity(options),"packet":e_packet_pin})),
+        soft_q:soft_q.as_ref().map(|options|json!({
+            "continuation":soft_q_teacher_v1::continuation_identity(options),"packet":sq_packet_pin})),
+        search_targets:search_targets.as_ref().map(|options|json!({
+            "continuation":search_targets_v1::continuation_identity(options),
+            "packet":options.packet,"census":st_census_pin})),
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: snapshot
@@ -4251,6 +4594,21 @@ fn execute_update_v1(
         result["e_supported"] = json!({"method":crate::regret_census_v1::stage4a::e_supported::METHOD,
             "packet":pin,"scheduled":packet["scheduled"],"valid":packet["valid"],
             "gradient_exposure":e_auxiliary,"teacher_seconds":teacher_seconds});
+    }
+    if let Some((packet, _)) = &sq_teacher {
+        let pin = sq_packet_pin
+            .as_ref()
+            .expect("SQ1 packet published before checkpoint");
+        result["soft_q"] = json!({"method":soft_q_teacher_v1::SOFT_Q_METHOD_V1,
+            "packet":pin,"scheduled":packet["scheduled"],"available":packet["available"],
+            "gradient_exposure":sq_auxiliary,"movement":sq_movement,"teacher_seconds":teacher_seconds});
+    }
+    if let Some((census, _)) = &st_teacher {
+        let options = search_targets.as_ref().expect("teacher implies options");
+        result["search_targets"] = json!({"method":search_targets_v1::SEARCH_TARGETS_METHOD_V1,
+            "packet":options.packet,"census":st_census_pin,"rows":census["rows"],
+            "denominator":options.denominator,"coefficient_bits":options.coefficient.to_bits(),
+            "gradient_exposure":st_auxiliary,"teacher_seconds":teacher_seconds});
     }
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
@@ -5204,6 +5562,8 @@ pub(crate) mod tests {
             source_import: policy.identity_v1().clone(),
             state_sha256: hex(&snapshot.state_sha256_v1().unwrap()),
             e_supported: None,
+            soft_q: None,
+            search_targets: None,
             adam_step: snapshot.adam_step,
             scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
             parameters: snapshot

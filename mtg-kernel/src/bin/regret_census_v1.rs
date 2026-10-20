@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::regret_census_v1::{run_v1, CensusConfigV1};
 
 fn main() {
@@ -41,8 +43,21 @@ fn main() {
     if !max_actions_set && matches!(cfg.mode.as_str(), "roots" | "cond" | "cross") {
         cfg.max_actions = 4;
     }
-    if let Err(e) = run_v1(cfg) {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+    // Model loading and the stage 4a setup run deep on this thread; main's
+    // 1 MiB stack had under 64 KiB to spare (2026-10-20), so run on a thread
+    // with the same 256 MiB stack as the search workers.
+    let result = std::thread::Builder::new()
+        .name("census".into())
+        .stack_size(256 << 20)
+        .spawn(move || run_v1(cfg))
+        .expect("spawn the census thread")
+        .join();
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        Err(panic) => std::panic::resume_unwind(panic),
     }
 }

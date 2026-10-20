@@ -3592,6 +3592,24 @@ fn legal_targets_for_controller_from_source(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> Vec<Target> {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        legal_targets_for_controller_from_source_unframed(
+            spec,
+            targets_chosen,
+            controller,
+            source,
+            state,
+        )
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn legal_targets_for_controller_from_source_unframed(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> Vec<Target> {
     if spec == TargetSpec::AnyTarget {
         if let Some(source) =
             source.filter(|source| crate::gorehorn_damage_v1::owns_definition(source.card_def))
@@ -4697,11 +4715,34 @@ fn target_prefix_can_complete_for_controller_and_source(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> bool {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        target_prefix_can_complete_for_controller_and_source_unframed(
+            spec,
+            targets_chosen,
+            controller,
+            source,
+            state,
+        )
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn target_prefix_can_complete_for_controller_and_source_unframed(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> bool {
     if spec == TargetSpec::KickerControlledCreatures {
-        let legal = legal_targets_for_controller_from_source(spec, &[], controller, source, state);
-        return targets_chosen.iter().enumerate().all(|(index, target)| {
-            legal.contains(target) && !targets_chosen[..index].contains(target)
-        });
+        let legal = legal_targets_for_controller_from_source(spec, &[], controller, source, state)
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        // Every target legal and none equal to an earlier one: `seen` holds
+        // exactly the earlier targets whenever a target is tested.
+        let mut seen = std::collections::HashSet::with_capacity(targets_chosen.len());
+        return targets_chosen
+            .iter()
+            .all(|target| legal.contains(target) && seen.insert(*target));
     }
     let max = target_count(spec) as usize;
     if spec != TargetSpec::CounterDistribution && targets_chosen.len() > max {
@@ -18796,25 +18837,49 @@ fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i128, i1
         return (0, 0);
     }
     let subtypes = effective_subtype_ids(state, recipient);
-    state.players[object.controller.index()]
-        .battlefield
+    let battlefield = &state.players[object.controller.index()].battlefield;
+    let lord = |source: ObjectId| {
+        let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+        definition
+            .is_executable()
+            .then(|| static_controlled_subtype_boost_for(definition.name))
+            .flatten()
+    };
+    let boost = |source: ObjectId| {
+        // The pure name table is consulted before the pure, panic-free
+        // printed-abilities query; both only filter, so order is free.
+        let boost = lord(source)?;
+        if !crate::continuous_characteristics_v1::printed_abilities_active(state, source) {
+            return None;
+        }
+        ((!boost.exclude_source || source != recipient)
+            && boost.subtype.is_in_subtype_ids(&subtypes))
+        .then_some((boost.power, boost.toughness))
+    };
+    let add = |(power, toughness): (i128, i128), (p, t): (i32, i32)| {
+        (power + i128::from(p), toughness + i128::from(t))
+    };
+    // Entries without a lord definition never contribute.
+    if let Some(lords) = crate::continuous_source_frame_v1::sources(
+        state,
+        crate::continuous_source_frame_v1::SourceKindV1::ControlledSubtypeBoost(
+            object.controller.index(),
+        ),
+        || {
+            battlefield
+                .iter()
+                .copied()
+                .filter(|&source| lord(source).is_some())
+                .collect()
+        },
+    ) {
+        return lords.iter().copied().filter_map(boost).fold((0, 0), add);
+    }
+    battlefield
         .iter()
         .copied()
-        .filter_map(|source| {
-            let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
-            if !definition.is_executable()
-                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-            {
-                return None;
-            }
-            let boost = static_controlled_subtype_boost_for(definition.name)?;
-            ((!boost.exclude_source || source != recipient)
-                && boost.subtype.is_in_subtype_ids(&subtypes))
-            .then_some((boost.power, boost.toughness))
-        })
-        .fold((0, 0), |(power, toughness), (p, t)| {
-            (power + i128::from(p), toughness + i128::from(t))
-        })
+        .filter_map(boost)
+        .fold((0, 0), add)
 }
 
 /// A layer-7c team bonus whose recipient predicate reads layer-6 keywords.
@@ -18862,38 +18927,74 @@ fn controlled_creature_boost_v1(state: &GameState, recipient: ObjectId) -> (i128
     if object.zone != Zone::Battlefield || !object_has_type(state, recipient, CardType::Creature) {
         return (0, 0);
     }
+    // Only an out-of-range definition or one carrying this static can
+    // contribute; an out-of-range one still reaches the original index below.
+    let candidate = |source_object: &crate::state::GameObject| {
+        card_def::CARD_DEFS
+            .get(source_object.card_def as usize)
+            .is_none_or(|definition| {
+                definition.is_executable()
+                    && static_controlled_creature_boost_for_v1(definition.name).is_some()
+            })
+    };
+    let boost = |source: ObjectId, source_object: &crate::state::GameObject| {
+        if source_object.zone != Zone::Battlefield
+            || source_object.controller != object.controller
+            || source_object.v4.face_index != 0
+        {
+            return None;
+        }
+        // Skip the printed-abilities query for definitions without this
+        // static. Both checks are pure filters.
+        if !candidate(source_object) {
+            return None;
+        }
+        if !crate::continuous_characteristics_v1::printed_abilities_active(state, source) {
+            return None;
+        }
+        let definition = &card_def::CARD_DEFS[source_object.card_def as usize];
+        if !definition.is_executable() {
+            return None;
+        }
+        let boost = static_controlled_creature_boost_for_v1(definition.name)?;
+        if boost.exclude_source && source == recipient {
+            return None;
+        }
+        let matches = match boost.filter {
+            StaticControlledCreatureFilterV1::All => true,
+            // Keyword evaluation never reads P/T or this bonus table, so
+            // the layer-6 predicate cannot recurse into layer 7c here.
+            StaticControlledCreatureFilterV1::WithKeyword(keyword) => {
+                has_effective_keyword(state, recipient, keyword)
+            }
+        };
+        matches.then_some((boost.power, boost.toughness))
+    };
+    let add = |(power, toughness): (i128, i128), (p, t): (i32, i32)| {
+        (power + i128::from(p), toughness + i128::from(t))
+    };
+    if let Some(sources) = crate::continuous_source_frame_v1::sources(
+        state,
+        crate::continuous_source_frame_v1::SourceKindV1::ControlledCreatureBoost,
+        || {
+            state
+                .objects
+                .iter()
+                .filter(|(_, source_object)| candidate(source_object))
+                .map(|(source, _)| source)
+                .collect()
+        },
+    ) {
+        return sources
+            .iter()
+            .filter_map(|&source| boost(source, state.objects.get(source)))
+            .fold((0, 0), add);
+    }
     state
         .objects
         .iter()
-        .filter_map(|(source, source_object)| {
-            if source_object.zone != Zone::Battlefield
-                || source_object.controller != object.controller
-                || source_object.v4.face_index != 0
-                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-            {
-                return None;
-            }
-            let definition = &card_def::CARD_DEFS[source_object.card_def as usize];
-            if !definition.is_executable() {
-                return None;
-            }
-            let boost = static_controlled_creature_boost_for_v1(definition.name)?;
-            if boost.exclude_source && source == recipient {
-                return None;
-            }
-            let matches = match boost.filter {
-                StaticControlledCreatureFilterV1::All => true,
-                // Keyword evaluation never reads P/T or this bonus table, so
-                // the layer-6 predicate cannot recurse into layer 7c here.
-                StaticControlledCreatureFilterV1::WithKeyword(keyword) => {
-                    has_effective_keyword(state, recipient, keyword)
-                }
-            };
-            matches.then_some((boost.power, boost.toughness))
-        })
-        .fold((0, 0), |(power, toughness), (p, t)| {
-            (power + i128::from(p), toughness + i128::from(t))
-        })
+        .filter_map(|(source, source_object)| boost(source, source_object))
+        .fold((0, 0), add)
 }
 
 fn controls_an_artifact(controller: PlayerId, state: &GameState) -> bool {
@@ -19448,6 +19549,10 @@ fn checked_effective_stat(
 
 /// Read-only ingress check. Noncreature objects have no current PT envelope.
 pub(crate) fn validate_battlefield_pt(state: &GameState) -> Result<(), ObjectId> {
+    crate::continuous_source_frame_v1::with_frame(state, || validate_battlefield_pt_unframed(state))
+}
+// The body of the function above, run inside its source-list frame.
+fn validate_battlefield_pt_unframed(state: &GameState) -> Result<(), ObjectId> {
     for (id, object) in state.objects.iter() {
         if object.zone == Zone::Battlefield
             && object_has_type(state, id, CardType::Creature)
@@ -19798,6 +19903,290 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         }
     }
     false
+}
+
+/// The keywords in `wanted` (read bit by bit) that `id` currently has:
+/// exactly `{k in wanted : has_effective_keyword(state, id, k)}`, with each
+/// source of keywords consulted once for all of them instead of once per
+/// keyword. Every source below mirrors one test of `has_effective_keyword`,
+/// in the same order: a test `X.has(kw) && condition` there contributes `X`
+/// here when `condition` holds, and a test for one keyword (`kw == K`)
+/// contributes `K` only when `wanted` asks for it. `MTG_KERNEL_KEYWORD_CHECK=1`
+/// (and every lib test) compares the result with `has_effective_keyword` for
+/// each asked keyword.
+pub fn effective_keywords(state: &GameState, id: ObjectId, wanted: Keywords) -> Keywords {
+    let found = effective_keywords_unchecked(state, id, wanted);
+    if keyword_check() {
+        for bit in 0..u32::BITS {
+            let k = Keywords(1 << bit);
+            if wanted.has(k) {
+                assert_eq!(
+                    found.has(k),
+                    has_effective_keyword(state, id, k),
+                    "effective_keywords differs from has_effective_keyword for {:?} on {:?}",
+                    k,
+                    id
+                );
+            }
+        }
+    }
+    found
+}
+
+fn keyword_check() -> bool {
+    static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    cfg!(test)
+        || *CHECK.get_or_init(|| {
+            std::env::var("MTG_KERNEL_KEYWORD_CHECK").is_ok_and(|value| value == "1")
+        })
+}
+
+fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keywords) -> Keywords {
+    let asks = |k: Keywords| wanted.has(k);
+    let mut found = Keywords::NONE;
+    if asks(Keywords::HEXPROOF)
+        && crate::standard_cards_v1::kaito_is_creature(state, id)
+        && crate::continuous_characteristics_v1::grant_survives(
+            state,
+            id,
+            state.objects.get(id).v4.layer_timestamp.unwrap_or(0),
+        )
+    {
+        found = found | Keywords::HEXPROOF;
+    }
+    let obj = state.objects.get(id);
+    let def = &card_def::CARD_DEFS[obj.card_def as usize];
+    if !def.is_executable() {
+        return Keywords(found.0 & wanted.0);
+    }
+    let printed_active = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
+    let bestowed = Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0);
+    if wanted.has(bestowed) {
+        for aura in obj.attachments.iter().copied() {
+            if valid_bestow_attachment_host(state, aura) == Some(id)
+                && crate::continuous_characteristics_v1::grant_survives(
+                    state,
+                    id,
+                    state.objects.get(aura).v4.layer_timestamp.unwrap_or(0),
+                )
+            {
+                let keywords =
+                    card_def::CARD_DEFS[state.objects.get(aura).card_def as usize].keywords;
+                found = found | Keywords(keywords.0 & bestowed.0);
+            }
+        }
+    }
+    found = found | crate::controlled_creature_grants_v1::granted_keywords(state, id);
+    if asks(Keywords::TRAMPLE)
+        && crate::garruks_uprising_v1::grants_keyword(state, id, Keywords::TRAMPLE)
+    {
+        found = found | Keywords::TRAMPLE;
+    }
+    found = found | crate::standard_creatures_v1::granted_keywords(state, id);
+    found = found | crate::starting_life_statics_v1::self_bonus(state, id).keywords;
+    if printed_active {
+        let removed = crate::standard_creatures_v1::removed_printed_keywords(state, id);
+        found = found | Keywords(def.keywords_for_face(obj.v4.face_index).0 & !removed.0);
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if asks(Keywords::HASTE) && crate::standard_cards_v1::has_copied_haste(state, id) {
+        found = found | Keywords::HASTE;
+    }
+    if let Some((keywords, _)) = live_plus_one_counter_characteristics(state, id) {
+        found = found | keywords;
+    }
+    if printed_active && obj.zone == Zone::Battlefield && obj.v4.face_index == 0 && !obj.tapped {
+        if let Some(keyword) = static_untapped_self_keyword_for(def.name) {
+            found = found | keyword;
+        }
+    }
+    if printed_active
+        && obj.zone == Zone::Battlefield
+        && obj.v4.face_index == 0
+        && state.active_player == obj.controller
+    {
+        if let Some(keyword) = static_controller_turn_self_keyword_for(def.name) {
+            found = found | keyword;
+        }
+    }
+    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
+        found = found | animation.keywords;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        if printed_active {
+            found = found | crate::standard_keywords_v1::max_speed_keywords(state, id);
+        }
+        found = found | crate::standard_statics_v1::conditional_self_keywords(state, id);
+    }
+    if printed_active && obj.zone == Zone::Battlefield {
+        if let Some((minimum, keyword)) = static_graveyard_threshold_keyword_for(def.name) {
+            // `kw == keyword` there: only a single keyword can equal an asked one.
+            if keyword.0.count_ones() == 1
+                && asks(keyword)
+                && crate::effect::controller_graveyard_card_count(state, obj.controller)
+                    >= usize::from(minimum)
+            {
+                found = found | keyword;
+            }
+        }
+    }
+    if obj.zone == Zone::Battlefield
+        && obj.counters.plus1_plus1 > 0
+        && object_has_type(state, id, CardType::Creature)
+    {
+        for (source_id, source) in state.objects.iter() {
+            let source_def = &card_def::CARD_DEFS[source.card_def as usize];
+            let Some(keyword) = source_def.controlled_counter_keyword else {
+                continue;
+            };
+            if source.zone == Zone::Battlefield
+                && source.controller == obj.controller
+                && source_def.is_executable()
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source_id)
+                && (!static_counter_keyword_controller_turn_only_for(source_def.name)
+                    || (source.v4.face_index == 0 && state.active_player == source.controller))
+                && crate::continuous_characteristics_v1::grant_survives(
+                    state,
+                    id,
+                    source.v4.layer_timestamp.unwrap_or(0),
+                )
+            {
+                found = found | keyword;
+            }
+        }
+    }
+    if asks(Keywords::LIFELINK)
+        && obj.v4.lifelink_keyword_counters > 0
+        && crate::continuous_characteristics_v1::grant_survives(
+            state,
+            id,
+            obj.v4.lifelink_counter_timestamp.unwrap_or(0),
+        )
+    {
+        found = found | Keywords::LIFELINK;
+    }
+    for (equipment_id, equipment) in attached_equipment_profiles(state, id) {
+        let equipment_controller = state.objects.get(equipment_id).controller;
+        let keywords = if state.active_player == equipment_controller {
+            equipment.controller_turn_keywords
+        } else {
+            equipment.other_turn_keywords
+        };
+        if keywords != Keywords::NONE
+            && crate::continuous_characteristics_v1::grant_survives(
+                state,
+                id,
+                state
+                    .objects
+                    .get(equipment_id)
+                    .v4
+                    .layer_timestamp
+                    .unwrap_or(0),
+            )
+        {
+            found = found | keywords;
+        }
+    }
+    for (aura, profile) in attached_static_aura_profiles(state, id) {
+        if profile.keywords != Keywords::NONE
+            && crate::continuous_characteristics_v1::grant_survives(
+                state,
+                id,
+                state.objects.get(aura).v4.layer_timestamp.unwrap_or(0),
+            )
+        {
+            found = found | profile.keywords;
+        }
+    }
+    for effect in &state.engine.until_next_turn_keywords {
+        if effect.object_id == id
+            && obj.zone == Zone::Battlefield
+            && obj.zone_change_count == effect.object_zone_change_count
+            && crate::continuous_characteristics_v1::grant_survives(
+                state,
+                id,
+                effect.timestamp.unwrap_or(0),
+            )
+        {
+            found = found | effect.keywords;
+        }
+    }
+    for effect in &state.engine.until_end_of_turn {
+        if let UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+            object_id,
+            object_zone_change_count,
+            keywords,
+            timestamp,
+            ..
+        } = effect
+        {
+            if *object_id == id
+                && obj.zone == Zone::Battlefield
+                && obj.zone_change_count == *object_zone_change_count
+                && crate::continuous_characteristics_v1::grant_survives(state, id, *timestamp)
+            {
+                found = found | *keywords;
+            }
+        }
+    }
+    if asks(Keywords::HASTE)
+        && !found.has(Keywords::HASTE)
+        && haste_granted(state, id, obj, def, printed_active)
+    {
+        found = found | Keywords::HASTE;
+    }
+    Keywords(found.0 & wanted.0)
+}
+
+/// `has_effective_keyword`'s haste-only sources (its final block).
+fn haste_granted(
+    state: &GameState,
+    id: ObjectId,
+    obj: &crate::state::GameObject,
+    def: &card_def::CardDef,
+    printed_active: bool,
+) -> bool {
+    if let Some(boost) = static_self_boost_for(def.name) {
+        if printed_active
+            && boost.grant_haste
+            && (!boost.battlefield_only || obj.zone == Zone::Battlefield)
+            && (boost.condition)(obj.controller, state)
+        {
+            return true;
+        }
+    }
+    state.engine.until_end_of_turn.iter().any(|eff| match eff {
+        UntilEndOfTurnEffect::ResolvedSetEffect {
+            object_ids,
+            grant_haste,
+            timestamp,
+            ..
+        } => {
+            *grant_haste
+                && object_ids.contains(&id)
+                && crate::continuous_characteristics_v1::grant_survives(state, id, *timestamp)
+        }
+        UntilEndOfTurnEffect::ResolvedObjectEffect {
+            object_id,
+            object_zone_change_count,
+            grant_haste,
+            timestamp,
+            ..
+        } => {
+            *grant_haste
+                && crate::continuous_characteristics_v1::grant_survives(state, id, *timestamp)
+                && *object_id == id
+                && obj.zone == Zone::Battlefield
+                && obj.zone_change_count == *object_zone_change_count
+        }
+        UntilEndOfTurnEffect::ResolvedObjectKeywordEffect { .. } => false,
+        UntilEndOfTurnEffect::SyntheticMarker(_) => false,
+        UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+        | UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
+        | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+        | UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. } => false,
+    })
 }
 
 /// Static creature Auras validly attached to `host`'s current incarnation

@@ -34,7 +34,7 @@
 use super::play::PlayErr;
 use super::seeds::{Purpose, RootSeeds};
 use super::tree::{
-    canon_prepared, child_key, masked, own_handle, permutation, prepare, raw_decision, Canon, Key,
+    child_key, masked, own_handle, permutation, prepare, raw_decision, Canon, CanonPlan, Key,
     TieRanks, UNORDERED_LISTS,
 };
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
@@ -275,17 +275,37 @@ fn matters(c: &Class, total: &HashMap<u64, usize>, menu: &[Value]) -> bool {
             return true;
         }
     }
-    let base = menu_multiset(menu);
+    // Exchanging x and y changes no menu entry that names neither: every
+    // handle `swap_handles` rewrites is one `handles` collects (`handles`
+    // also collects ids inside objects nested in `attachments`, which
+    // `swap_handles` leaves alone, so `touched` may include unchanged
+    // entries). Entries outside `touched` are the same before and after, so
+    // the whole menu's multiset changes exactly when `touched`'s does.
+    let x = c.members[0];
+    let named: Vec<(&Value, Vec<u64>)> = menu
+        .iter()
+        .map(|m| {
+            let mut hs = Vec::new();
+            handles(m, &mut hs);
+            (m, hs)
+        })
+        .collect();
     c.members[1..].iter().any(|&y| {
-        let swapped: Vec<Value> = menu
+        let touched: Vec<&Value> = named
+            .iter()
+            .filter(|(_, hs)| hs.contains(&x) || hs.contains(&y))
+            .map(|(m, _)| *m)
+            .collect();
+        let swapped: Vec<Value> = touched
             .iter()
             .map(|m| {
-                let mut m = m.clone();
-                swap_handles(&mut m, c.members[0], y);
+                let mut m = (*m).clone();
+                swap_handles(&mut m, x, y);
                 m
             })
             .collect();
-        menu_multiset(&swapped) != base
+        let before: Vec<Value> = touched.into_iter().cloned().collect();
+        menu_multiset(&swapped) != menu_multiset(&before)
     })
 }
 
@@ -293,9 +313,158 @@ fn matters(c: &Class, total: &HashMap<u64, usize>, menu: &[Value]) -> bool {
 /// taken there.
 #[derive(Clone, Debug)]
 pub(crate) struct Frame {
-    pub(crate) obs: Arc<Value>,
-    pub(crate) menu: Arc<Vec<Value>>,
+    view: Arc<FrameView>,
     pub(crate) taken: Value,
+    /// `qualifies` results for this view and menu, shared with the step.
+    cache: Arc<FrameCache>,
+}
+
+/// A step's prepared view and menu. A step keyed now holds them as values;
+/// a `KeyMemo` entry holds only their JSON text, and a step served from the
+/// memo parses that text when (if ever) a later frame's tie qualification
+/// reads it. `serde_json` parses its own output of a `Value` back to an equal
+/// `Value` (integers, strings, booleans, null, arrays and sorted maps, and
+/// `float_roundtrip` floats), so every reader sees the values the step was
+/// keyed from.
+#[derive(Debug, Default)]
+pub(crate) struct FrameView {
+    values: std::sync::OnceLock<Arc<(Value, Vec<Value>)>>,
+    text: std::sync::OnceLock<Arc<FrameText>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Views parsed from text on this thread (tests).
+    static VIEW_PARSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The JSON text of a view and of each menu entry.
+#[derive(Debug)]
+struct FrameText {
+    obs: Vec<u8>,
+    menu: Vec<Vec<u8>>,
+}
+
+impl FrameView {
+    fn from_values(obs: Value, menu: Vec<Value>) -> Self {
+        let view = Self::default();
+        let _ = view.values.set(Arc::new((obs, menu)));
+        view
+    }
+
+    /// The text, serialized once from the values if this view has none.
+    fn text(&self) -> &Arc<FrameText> {
+        self.text.get_or_init(|| {
+            let (obs, menu) = &**self.values.get().expect("a view has values or text");
+            Arc::new(FrameText {
+                obs: serde_json::to_vec(obs).expect("a JSON value serializes"),
+                menu: menu
+                    .iter()
+                    .map(|m| serde_json::to_vec(m).expect("a JSON value serializes"))
+                    .collect(),
+            })
+        })
+    }
+
+    /// A view sharing this one's text and nothing else.
+    fn compact(&self) -> Self {
+        let view = Self::default();
+        let _ = view.text.set(Arc::clone(self.text()));
+        view
+    }
+
+    /// The values, parsed once from the text if this view has none.
+    fn values(&self) -> &(Value, Vec<Value>) {
+        self.values.get_or_init(|| {
+            #[cfg(test)]
+            VIEW_PARSES.with(|n| n.set(n.get() + 1));
+            let text = self.text.get().expect("a view has values or text");
+            let parse = |bytes: &[u8]| -> Value {
+                serde_json::from_slice(bytes).expect("the view's own JSON text parses")
+            };
+            Arc::new((
+                parse(&text.obs),
+                text.menu.iter().map(|m| parse(m)).collect(),
+            ))
+        })
+    }
+
+    /// Menu entry `i` alone, without parsing the whole view.
+    fn menu_entry(&self, i: usize) -> Value {
+        match self.values.get() {
+            Some(values) => values.1[i].clone(),
+            None => {
+                serde_json::from_slice(&self.text.get().expect("a view has values or text").menu[i])
+                    .expect("the view's own JSON text parses")
+            }
+        }
+    }
+
+    /// Estimated heap bytes of the text.
+    fn text_bytes(&self) -> usize {
+        let text = self.text();
+        text.obs.capacity() + text.menu.iter().map(|m| 24 + m.capacity()).sum::<usize>() + 64
+    }
+}
+
+/// `shown`'s result: (masked entry, zone, incarnation), if shown.
+type Shown = Option<(String, Value, Value)>;
+
+/// Small results `qualifies` reads from an earlier frame, each a pure
+/// function of that frame's view and menu (which never change), shared by
+/// every clone of the step and frame: later frames of the path, and later
+/// simulations through a memoized step, reuse them. Each map keeps at most
+/// `FRAME_CACHE_ENTRIES` entries and computes anything past that afresh, and
+/// no copy of the view is kept, so it changes cost, never a result, and its
+/// memory stays small next to the frame itself.
+#[derive(Debug, Default)]
+pub(crate) struct FrameCache {
+    shown: std::sync::Mutex<HashMap<u64, Shown>>,
+    exchange: std::sync::Mutex<HashMap<(u64, u64), bool>>,
+}
+
+/// Entries per `FrameCache` map.
+const FRAME_CACHE_ENTRIES: usize = 64;
+
+impl FrameCache {
+    /// `shown(obs, id)` for the view's `obs`.
+    fn shown(&self, view: &FrameView, id: u64) -> Shown {
+        if let Some(known) = self.shown.lock().expect("frame cache").get(&id) {
+            return known.clone();
+        }
+        let value = shown(&view.values().0, id);
+        let mut cache = self.shown.lock().expect("frame cache");
+        if cache.len() < FRAME_CACHE_ENTRIES {
+            cache.insert(id, value.clone());
+        }
+        value
+    }
+
+    /// Whether exchanging `x` and `y` leaves the view's unordered-list
+    /// multisets and the menu's multiset unchanged.
+    fn exchange_symmetric(&self, view: &FrameView, x: u64, y: u64) -> bool {
+        if let Some(&known) = self.exchange.lock().expect("frame cache").get(&(x, y)) {
+            return known;
+        }
+        let (obs, menu) = view.values();
+        let mut o = obs.clone();
+        swap_handles(&mut o, x, y);
+        let swapped: Vec<Value> = menu
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                swap_handles(&mut m, x, y);
+                m
+            })
+            .collect();
+        let symmetric =
+            as_multisets(&o) == as_multisets(obs) && menu_multiset(&swapped) == menu_multiset(menu);
+        let mut cache = self.exchange.lock().expect("frame cache");
+        if cache.len() < FRAME_CACHE_ENTRIES {
+            cache.insert((x, y), symmetric);
+        }
+        symmetric
+    }
 }
 
 /// (masked entry, zone, incarnation) of the entry a handle names, if shown in
@@ -357,7 +526,7 @@ fn qualifies(c: &Class, now: &Value, prefix: &[Frame]) -> Result<(), Fallback> {
     for f in prefix {
         let mut masks = Vec::new();
         for (id, cur) in c.members.iter().zip(&current) {
-            let (m, z, n) = shown(&f.obs, *id).ok_or(Fallback::MemberAbsent)?;
+            let (m, z, n) = f.cache.shown(&f.view, *id).ok_or(Fallback::MemberAbsent)?;
             if (z, n) != *cur {
                 return Err(Fallback::ContinuityBroken);
             }
@@ -371,21 +540,8 @@ fn qualifies(c: &Class, now: &Value, prefix: &[Frame]) -> Result<(), Fallback> {
         if hs.iter().any(|h| c.members.contains(h)) {
             return Err(Fallback::ActionNamedMember);
         }
-        let base_obs = as_multisets(&f.obs);
-        let base_menu = menu_multiset(&f.menu);
         for &y in &c.members[1..] {
-            let mut o = (*f.obs).clone();
-            swap_handles(&mut o, c.members[0], y);
-            let menu: Vec<Value> = f
-                .menu
-                .iter()
-                .map(|m| {
-                    let mut m = m.clone();
-                    swap_handles(&mut m, c.members[0], y);
-                    m
-                })
-                .collect();
-            if as_multisets(&o) != base_obs || menu_multiset(&menu) != base_menu {
+            if !f.cache.exchange_symmetric(&f.view, c.members[0], y) {
                 return Err(Fallback::PrefixAsymmetric);
             }
         }
@@ -419,11 +575,12 @@ fn permutations(items: &[u64]) -> Vec<Vec<u64>> {
 pub(crate) type ViewOutcome = Result<(Canon, Vec<u64>), Fallback>;
 
 /// The repaired canonical view of one frame, or why it falls back; with the
-/// number of canonicalizations used.
+/// number of canonicalizations used. `plan` is `CanonPlan::new(obs, menu)`.
 pub(crate) fn repaired_view(
     obs: &Value,
     menu: &[Value],
     legacy: &Canon,
+    plan: &CanonPlan<'_>,
     prefix: &[Frame],
     resolved: &HashSet<u64>,
     bound: usize,
@@ -484,7 +641,7 @@ pub(crate) fn repaired_view(
                 ranks.insert(h, r as u32);
             }
         }
-        let (c, _) = canon_prepared(obs.clone(), menu.to_vec(), Some(&ranks))?;
+        let c = plan.canon(Some(&ranks))?;
         tried += 1;
         if best
             .as_ref()
@@ -563,23 +720,51 @@ impl KeyStats {
 #[derive(Clone)]
 pub(crate) struct Step {
     pub(crate) legacy_key: Key,
+    /// The legacy canonical frame. A repaired-mode step served from a
+    /// `KeyMemo` keeps only its menu (`KeyMemo::stored`): that mode reads
+    /// nothing else of it.
     pub(crate) legacy: Arc<Canon>,
     pub(crate) repaired_key: Key,
     pub(crate) repaired: Arc<Canon>,
-    obs: Arc<Value>,
-    menu: Arc<Vec<Value>>,
+    view: Arc<FrameView>,
     /// Members of classes this frame resolved by exchange.
     resolved: Vec<u64>,
     /// Orbit id per live candidate when interchangeable choices merge.
     orbits: Option<Vec<usize>>,
     /// The `KeyMemo` entry this step came from or was stored as, if any.
     memo_entry: Option<u32>,
+    /// Shared with the `Frame` this step becomes (`FrameCache`).
+    cache: Arc<FrameCache>,
 }
 
-/// Estimated heap bytes one `KeyMemo` may hold. Late-game views take up to
-/// about a megabyte per stored frame, so the memo stops storing new frames
-/// (and keeps serving the ones it has, the hot top of the tree) at this size.
-pub(crate) const KEY_MEMO_BYTES: usize = 256 << 20;
+/// Estimated heap bytes one `KeyMemo` may hold. A late-game entry keeps up to
+/// a few hundred kilobytes (its view as JSON text and its canonical bytes),
+/// so the memo stops storing new frames (and keeps serving the ones it has,
+/// the hot top of the tree) at this size. At 512 MiB a late-game search
+/// peaks near 1 GB resident; a frozen whole game's searches needed at most
+/// 522 MiB.
+pub(crate) const KEY_MEMO_BYTES: usize = 512 << 20;
+
+/// The memo's size limit: `KEY_MEMO_BYTES` unless `S4A_KEY_MEMO_MIB` names
+/// another whole number of MiB (1 to 65536, and representable in bytes). The
+/// limit only decides which steps are stored, never a key, tree, selection
+/// or statistic of a transition- or work-limited search. A CPU-second budget
+/// (the allocation experiment) is timing-dependent: like `S4A_KEY_MEMO`
+/// itself or host load, the limit can change how many simulations fit.
+fn key_memo_max_bytes() -> usize {
+    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| match std::env::var("S4A_KEY_MEMO_MIB") {
+        Err(_) => KEY_MEMO_BYTES,
+        Ok(v) => v
+            .parse::<usize>()
+            .ok()
+            .filter(|mib| (1..=65536).contains(mib))
+            .and_then(|mib| mib.checked_mul(1 << 20))
+            .unwrap_or_else(|| {
+                panic!("S4A_KEY_MEMO_MIB must be 1 to 65536 MiB and fit in memory, got {v:?}")
+            }),
+    })
+}
 
 /// Exact per-search memo of key steps (`S4A_KEY_MEMO=1`).
 ///
@@ -595,6 +780,14 @@ pub(crate) const KEY_MEMO_BYTES: usize = 256 << 20;
 #[derive(Default)]
 pub(crate) struct KeyMemo {
     index: HashMap<(u32, [u8; 32]), u32>,
+    /// First-level index by the raw frame's digest (`raw_frame_digest`):
+    /// equal raw frames prepare equally, so a raw hit names the entry the
+    /// prepared lookup would find, without building or preparing the view.
+    raw_index: HashMap<(u32, [u8; 32]), u32>,
+    /// Estimated bytes of `raw_index`, against its own budget (a sixteenth
+    /// of `max_bytes`), so step storage and every recorded memo counter stay
+    /// exactly as without it.
+    raw_bytes: usize,
     entries: Vec<MemoEntry>,
     nodes: u32,
     /// Estimated heap bytes of the stored steps, and their limit.
@@ -602,6 +795,9 @@ pub(crate) struct KeyMemo {
     max_bytes: usize,
     pub(crate) hits: u64,
     pub(crate) misses: u64,
+    /// The key mode of the keyers using this memo: one per memo, since its
+    /// steps are that mode's (and `stored` keeps only what that mode reads).
+    mode: Option<KeyMode>,
 }
 
 struct MemoEntry {
@@ -610,15 +806,56 @@ struct MemoEntry {
     children: HashMap<u32, u32>,
 }
 
+/// Estimated bytes of one `raw_index` entry.
+const RAW_INDEX_ENTRY_BYTES: usize = 96;
+
 impl KeyMemo {
+    /// Records that raw frame `raw` at `node` resolves to entry `e`, within
+    /// the raw index's own budget.
+    fn remember_raw(&mut self, node: u32, raw: Option<[u8; 32]>, e: u32) {
+        let Some(raw) = raw else { return };
+        if self.raw_bytes + RAW_INDEX_ENTRY_BYTES <= self.max_bytes / 16
+            && self.raw_index.insert((node, raw), e).is_none()
+        {
+            self.raw_bytes += RAW_INDEX_ENTRY_BYTES;
+        }
+    }
+
     pub(crate) fn new() -> Self {
-        Self::with_max_bytes(KEY_MEMO_BYTES)
+        Self::with_max_bytes(key_memo_max_bytes())
     }
 
     fn with_max_bytes(max_bytes: usize) -> Self {
         Self {
             max_bytes,
             ..Self::default()
+        }
+    }
+
+    /// Checks that every keyer using this memo has one key mode.
+    fn bind_mode(&mut self, mode: KeyMode) {
+        let bound = *self.mode.get_or_insert(mode);
+        assert_eq!(bound, mode, "one KeyMemo serves one key mode");
+    }
+
+    /// The copy of `st` an entry keeps. In the repaired mode it keeps only
+    /// the legacy menu: that mode reads the legacy frame only for its menu
+    /// (`advance` follows the legacy parent edge); `storage`, `perm` and
+    /// everything downstream use the repaired frame. Its view is made
+    /// text-only once the entry is stored.
+    fn stored(st: &Step, mode: KeyMode) -> Step {
+        let legacy = if mode == KeyMode::Repaired && !Arc::ptr_eq(&st.legacy, &st.repaired) {
+            Arc::new(Canon {
+                obs: Vec::new(),
+                menu: st.legacy.menu.clone(),
+                edges: Vec::new(),
+            })
+        } else {
+            Arc::clone(&st.legacy)
+        };
+        Step {
+            legacy,
+            ..st.clone()
         }
     }
 
@@ -639,6 +876,40 @@ impl KeyMemo {
         }
         id
     }
+}
+
+/// SHA-256 over the raw actor-visible observation and menu as their JSON
+/// text, written straight from their types. For the fixed engine types
+/// (`ObservationV6` and `ActionSemanticV1`, and `Value` in tests), equal text
+/// gives equal `serde_json::to_value` results: both come from the same
+/// `Serialize` calls, and the text encodes them unambiguously for those
+/// types. (It would not for arbitrary types: an `f32` and an `f64` can print
+/// alike yet widen to different values; never mix types at one memo.) So
+/// frames with equal raw digests prepare to equal views and menus.
+fn raw_frame_digest<O: serde::Serialize, M: serde::Serialize>(
+    obs: &O,
+    menu: &[M],
+) -> Result<[u8; 32], PlayErr> {
+    struct Hashing<'a>(&'a mut Sha256);
+    impl std::io::Write for Hashing<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let fault = |e: serde_json::Error| PlayErr::Fault(e.to_string());
+    let mut h = Sha256::new();
+    h.update(b"key-memo-raw-v1");
+    serde_json::to_writer(Hashing(&mut h), obs).map_err(fault)?;
+    h.update((menu.len() as u64).to_le_bytes());
+    for m in menu {
+        h.update(b"\n");
+        serde_json::to_writer(Hashing(&mut h), m).map_err(fault)?;
+    }
+    Ok(h.finalize().into())
 }
 
 /// SHA-256 over a prepared observation and its menu: a tagged,
@@ -693,18 +964,10 @@ fn prepared_digest(obs: &Value, menu: &[Value]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// Estimated heap bytes a stored step keeps alive.
-fn step_bytes(st: &Step) -> usize {
-    fn value(v: &Value) -> usize {
-        std::mem::size_of::<Value>()
-            + match v {
-                Value::String(x) => x.capacity(),
-                Value::Array(a) => a.iter().map(value).sum(),
-                // Key string plus map node overhead per entry.
-                Value::Object(m) => m.iter().map(|(k, x)| 48 + k.capacity() + value(x)).sum(),
-                _ => 0,
-            }
-    }
+/// Estimated heap bytes a stored step keeps alive besides its view's text
+/// (`FrameView::text_bytes`): its canonical bytes and its resolved members.
+/// `st` is the entry's copy (`KeyMemo::stored`).
+fn step_bytes_without_view(st: &Step) -> usize {
     fn canon(c: &Canon) -> usize {
         let list = |l: &Vec<Vec<u8>>| l.iter().map(|x| 24 + x.capacity()).sum::<usize>();
         c.obs.capacity() + list(&c.menu) + list(&c.edges)
@@ -714,12 +977,7 @@ fn step_bytes(st: &Step) -> usize {
     } else {
         canon(&st.repaired)
     };
-    value(&st.obs)
-        + st.menu.iter().map(value).sum::<usize>()
-        + canon(&st.legacy)
-        + repaired
-        + 8 * st.resolved.len()
-        + 256
+    canon(&st.legacy) + repaired + 8 * st.resolved.len() + 256
 }
 
 impl KeyStats {
@@ -820,11 +1078,62 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         if memo.is_none() || self.memo_node.is_none() || self.interchange {
             return self.step(s, d);
         }
-        let (raw_obs, raw_menu) = raw_decision(s, d)?;
-        self.key_raw_memo(raw_obs, raw_menu, memo)
+        let (obs, sem) = s
+            .actor_visible_decision_v4(d)
+            .map_err(|e| PlayErr::Fault(format!("actor-visible decision: {e:?}")))?;
+        self.key_typed_memo(&obs, &sem, memo)
     }
 
-    /// `key_raw` through `memo` (see `step_memo`).
+    /// `key_raw_memo` on an observation and menu not yet turned into JSON
+    /// values: the raw digest is looked up first, and the values are built
+    /// and prepared only when it misses.
+    fn key_typed_memo<O: serde::Serialize, M: serde::Serialize>(
+        &mut self,
+        obs: &O,
+        sem: &[M],
+        memo: Option<&mut KeyMemo>,
+    ) -> Result<Step, PlayErr> {
+        let fault = |e: serde_json::Error| PlayErr::Fault(e.to_string());
+        let (Some(memo), Some(node), false) = (memo, self.memo_node, self.interchange) else {
+            let raw_obs = serde_json::to_value(obs).map_err(fault)?;
+            let raw_menu = sem
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<_, _>>();
+            return self.key_raw(raw_obs, raw_menu.map_err(fault)?);
+        };
+        let t0 = Instant::now();
+        let raw = raw_frame_digest(obs, sem)?;
+        if let Some(&e) = memo.raw_index.get(&(node, raw)) {
+            return Ok(self.memo_hit(memo, e, t0));
+        }
+        let raw_obs = serde_json::to_value(obs).map_err(fault)?;
+        let raw_menu = sem
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<Result<_, _>>();
+        self.key_raw_memo_at(raw_obs, raw_menu.map_err(fault)?, memo, node, Some(raw), t0)
+    }
+
+    /// A memo hit on entry `e`: replays its statistics increments and
+    /// returns its step.
+    fn memo_hit(&mut self, memo: &mut KeyMemo, e: u32, t0: Instant) -> Step {
+        memo.hits += 1;
+        memo.bind_mode(self.mode);
+        let entry = &memo.entries[e as usize];
+        self.stats.borrow_mut().merge(&entry.delta);
+        let mut st = entry.step.clone();
+        // A fresh view over the entry's text: parsing it later never grows
+        // the entry.
+        st.view = Arc::new(entry.step.view.compact());
+        st.memo_entry = Some(e);
+        self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
+        st
+    }
+
+    /// `key_raw` through `memo` (see `step_memo`), on frames already turned
+    /// into JSON values (tests).
+    #[cfg(test)]
     pub(crate) fn key_raw_memo(
         &mut self,
         raw_obs: Value,
@@ -834,31 +1143,51 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         let (Some(memo), Some(node), false) = (memo, self.memo_node, self.interchange) else {
             return self.key_raw(raw_obs, raw_menu);
         };
-        let t0 = Instant::now();
+        self.key_raw_memo_at(raw_obs, raw_menu, memo, node, None, Instant::now())
+    }
+
+    /// `key_raw_memo` at memo node `node`; `raw`, when given, is the frame's
+    /// `raw_frame_digest`, recorded for the entry this frame resolves to.
+    fn key_raw_memo_at(
+        &mut self,
+        raw_obs: Value,
+        raw_menu: Vec<Value>,
+        memo: &mut KeyMemo,
+        node: u32,
+        raw: Option<[u8; 32]>,
+        t0: Instant,
+    ) -> Result<Step, PlayErr> {
         let (obs, menu) = prepare(raw_obs, raw_menu);
         let digest = prepared_digest(&obs, &menu);
         if let Some(&e) = memo.index.get(&(node, digest)) {
-            memo.hits += 1;
-            let entry = &memo.entries[e as usize];
-            self.stats.borrow_mut().merge(&entry.delta);
-            let mut st = entry.step.clone();
-            st.memo_entry = Some(e);
-            self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
-            return Ok(st);
+            memo.remember_raw(node, raw, e);
+            return Ok(self.memo_hit(memo, e, t0));
         }
         memo.misses += 1;
         let before = self.stats.borrow().clone();
         let mut st = self.key_prepared(obs, menu, t0, &[])?;
-        let bytes = step_bytes(&st);
-        if memo.bytes + bytes <= memo.max_bytes {
+        memo.bind_mode(self.mode);
+        let mut entry = KeyMemo::stored(&st, self.mode);
+        // The view's text (serialized here) is sized only when the rest of
+        // the entry fits; an entry that does not fit is never stored either way.
+        let rest = step_bytes_without_view(&entry);
+        let bytes = if memo.bytes.saturating_add(rest) <= memo.max_bytes {
+            rest + entry.view.text_bytes()
+        } else {
+            usize::MAX
+        };
+        if memo.bytes.saturating_add(bytes) <= memo.max_bytes {
             memo.bytes += bytes;
             let e = memo.entries.len() as u32;
+            // The entry keeps its view's text only (`FrameView`).
+            entry.view = Arc::new(entry.view.compact());
             memo.entries.push(MemoEntry {
-                step: st.clone(),
+                step: entry,
                 delta: self.stats.borrow().delta_since(&before),
                 children: HashMap::new(),
             });
             memo.index.insert((node, digest), e);
+            memo.remember_raw(node, raw, e);
             st.memo_entry = Some(e);
         }
         Ok(st)
@@ -926,30 +1255,26 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
             self.stats.borrow_mut().merged_candidates += merged;
             ids
         });
-        let (legacy, _) = canon_prepared(obs.clone(), menu.clone(), None)?;
+        // One plan serves the legacy view and every tie order tried.
+        let plan = CanonPlan::new(&obs, &menu);
+        let legacy = plan.canon(None)?;
         let legacy_key = child_key(&self.legacy.0, &self.legacy.1, &legacy);
         let legacy = Arc::new(legacy);
-        let step = if self.mode == KeyMode::Legacy {
-            Step {
-                legacy_key,
-                repaired_key: legacy_key,
-                repaired: Arc::clone(&legacy),
-                legacy,
-                obs: Arc::new(obs),
-                menu: Arc::new(menu),
-                resolved: Vec::new(),
-                orbits,
-                memo_entry: None,
-            }
+        let repaired = if self.mode == KeyMode::Legacy {
+            None
         } else {
-            let (view, tried, mattering) = repaired_view(
+            Some(repaired_view(
                 &obs,
                 &menu,
                 &legacy,
+                &plan,
                 &self.frames,
                 &self.resolved,
                 TIE_WORK_BOUND,
-            )?;
+            )?)
+        };
+        drop(plan);
+        let step = if let Some((view, tried, mattering)) = repaired {
             self.stats.borrow_mut().frames_with_mattering_ties += u64::from(mattering > 0);
             self.stats.borrow_mut().canonicalizations_for_ties += tried as u64;
             match view {
@@ -960,11 +1285,11 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         repaired_key: child_key_v2(&self.repaired.0, &self.repaired.1, &c),
                         repaired: Arc::new(c),
                         legacy,
-                        obs: Arc::new(obs),
-                        menu: Arc::new(menu),
+                        view: Arc::new(FrameView::from_values(obs, menu)),
                         resolved: members,
                         orbits,
                         memo_entry: None,
+                        cache: Arc::default(),
                     }
                 }
                 Err(f) => {
@@ -979,13 +1304,25 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         repaired_key: fallback_key(&legacy_key, &self.repaired.0),
                         repaired: Arc::clone(&legacy),
                         legacy,
-                        obs: Arc::new(obs),
-                        menu: Arc::new(menu),
+                        view: Arc::new(FrameView::from_values(obs, menu)),
                         resolved: Vec::new(),
                         orbits,
                         memo_entry: None,
+                        cache: Arc::default(),
                     }
                 }
+            }
+        } else {
+            Step {
+                legacy_key,
+                repaired_key: legacy_key,
+                repaired: Arc::clone(&legacy),
+                legacy,
+                view: Arc::new(FrameView::from_values(obs, menu)),
+                resolved: Vec::new(),
+                orbits,
+                memo_entry: None,
+                cache: Arc::default(),
             }
         };
         self.stats.borrow_mut().frames += 1;
@@ -1074,11 +1411,11 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         self.repaired = (st.repaired_key, st.repaired.menu[i].clone());
         if self.mode != KeyMode::Legacy {
             self.resolved.extend(st.resolved.iter().copied());
-            let taken = st.menu[i].clone();
+            let taken = st.view.menu_entry(i);
             self.frames.push(Frame {
-                obs: st.obs,
-                menu: st.menu,
+                view: st.view,
                 taken,
+                cache: st.cache,
             });
         }
     }
@@ -1122,6 +1459,91 @@ mod tests {
     use super::super::tree::{canon_values, live_index};
     use super::*;
     use serde_json::json;
+
+    /// `matters`' menu test as it was: the whole menu's multiset.
+    fn menu_changes_by_whole_menu(menu: &[Value], x: u64, y: u64) -> bool {
+        let swapped: Vec<Value> = menu
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                swap_handles(&mut m, x, y);
+                m
+            })
+            .collect();
+        menu_multiset(&swapped) != menu_multiset(menu)
+    }
+
+    #[test]
+    fn matters_reads_only_entries_naming_the_pair() {
+        let menus = [
+            vec![
+                json!({"cast":{"arena_id":1}}),
+                json!({"cast":{"arena_id":2}}),
+            ],
+            vec![
+                json!({"cast":{"arena_id":1},"t":"a"}),
+                json!({"cast":{"arena_id":2},"t":"b"}),
+            ],
+            vec![
+                json!({"pass":true}),
+                json!({"attack":{"arena_id":1,"attachments":[2]}}),
+            ],
+            vec![
+                json!({"target":[{"arena_id":3},{"arena_id":1}]}),
+                json!({"target":[{"arena_id":3},{"arena_id":2}]}),
+                json!({"pass":true}),
+            ],
+            vec![json!({"pass":true})],
+        ];
+        for menu in &menus {
+            for (x, y) in [(1u64, 2u64), (2, 1), (1, 3), (3, 4)] {
+                let c = Class {
+                    members: vec![x, y],
+                    foreign: false,
+                    inside: vec![1, 1],
+                };
+                // No other occurrences, so only the menu test decides.
+                let total: HashMap<u64, usize> = [(x, 1), (y, 1)].into_iter().collect();
+                assert_eq!(
+                    matters(&c, &total, menu),
+                    menu_changes_by_whole_menu(menu, x, y),
+                    "{menu:?} {x} {y}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cached_exchange_check_matches_direct_and_repeats() {
+        let obs = json!({"battlefield":[[{"arena_id":1,"name":"Elf"},{"arena_id":2,"name":"Elf"}],
+            [{"arena_id":3,"name":"Bear","attachments":[1]}]]});
+        let menu = vec![
+            json!({"attack":{"arena_id":1}}),
+            json!({"attack":{"arena_id":2}}),
+        ];
+        let cache = FrameCache::default();
+        let view = FrameView::from_values(obs.clone(), menu.clone());
+        let parsed = FrameView::from_values(obs.clone(), menu.clone()).compact();
+        for (x, y) in [(1u64, 2u64), (1, 3), (2, 3), (1, 2)] {
+            let mut o = obs.clone();
+            swap_handles(&mut o, x, y);
+            let swapped: Vec<Value> = menu
+                .iter()
+                .map(|m| {
+                    let mut m = m.clone();
+                    swap_handles(&mut m, x, y);
+                    m
+                })
+                .collect();
+            let direct = as_multisets(&o) == as_multisets(&obs)
+                && menu_multiset(&swapped) == menu_multiset(&menu);
+            assert_eq!(cache.exchange_symmetric(&view, x, y), direct, "{x} {y}");
+        }
+        for id in [1u64, 2, 3, 9] {
+            assert_eq!(cache.shown(&view, id), shown(&obs, id));
+            assert_eq!(cache.shown(&parsed, id), shown(&obs, id));
+        }
+    }
 
     /// A creature entry: handle, card, incarnation, damage, tapped, attachments.
     fn cr(id: u64, card: u64, zcc: u64, damage: u64, tapped: bool, att: Vec<u64>) -> Value {
@@ -1371,8 +1793,9 @@ mod tests {
             .collect();
         let exact = |r: Vec<Value>| {
             let (o, m) = prepare(view(bf4.clone(), vec![], r), menu(&[]));
-            let (l, _) = canon_prepared(o.clone(), m.clone(), None).unwrap();
-            repaired_view(&o, &m, &l, &[], &HashSet::new(), 1000)
+            let plan = CanonPlan::new(&o, &m);
+            let l = plan.canon(None).unwrap();
+            repaired_view(&o, &m, &l, &plan, &[], &HashSet::new(), 1000)
                 .unwrap()
                 .0
                 .unwrap()
@@ -1501,6 +1924,116 @@ mod tests {
         assert_ne!(a2, b2, "the later tie is not relabeled by engine order");
     }
 
+    /// A view kept as text parses back to the values it was made from, and
+    /// serializes to the same text again.
+    #[test]
+    fn frame_view_text_round_trips_exactly() {
+        let obs = json!({"z":1,"a":{"n":u64::MAX,"i":i64::MIN,"s":"tab\t quote\" uni \u{e9} nul \u{0}",
+            "f":0.1,"g":1e300,"h":-2.5e-308,"e":[],"o":{},"t":true,"x":null},
+            "list":[[{"arena_id":3}],{"k":[1,2,3]}]});
+        let menu = vec![
+            json!({"action_kind":"pass"}),
+            json!({"source":{"arena_id":12}}),
+            json!([]),
+        ];
+        let live = FrameView::from_values(obs.clone(), menu.clone());
+        let compact = live.compact();
+        let (o, m) = compact.values();
+        assert_eq!(o, &obs);
+        assert_eq!(m, &menu);
+        assert_eq!(serde_json::to_vec(o).unwrap(), compact.text().obs);
+        for (i, entry) in menu.iter().enumerate() {
+            assert_eq!(&compact.compact().menu_entry(i), entry);
+            assert_eq!(&live.menu_entry(i), entry);
+        }
+        // A compact copy of a compact view shares the text and parses alike.
+        assert!(Arc::ptr_eq(compact.text(), compact.compact().text()));
+    }
+
+    /// A frame served from the memo keeps only its view's text; when a later
+    /// tie's qualification reads it (here: copies 13 and 14, which the first
+    /// path's tie on 11 and 12 never asked about), the step parses its own
+    /// view, the memo entry stays text-only, and every key and statistic is
+    /// the same as without the memo.
+    #[test]
+    fn memo_served_frame_parses_its_view_for_later_ties() {
+        let z = || cr(13, 29, 3, 0, false, vec![]);
+        let w = || cr(14, 29, 3, 0, false, vec![]);
+        let bf = || vec![x(), y(), z(), w()];
+        let root = view(bf(), vec![], vec![]);
+        let paths = [obj(11, 19, 3), obj(13, 29, 3)];
+        for mode in [KeyMode::Repaired, KeyMode::Shadow] {
+            let run = |mut memo: Option<&mut KeyMemo>| {
+                let mut stats = KeyStats::default();
+                let mut out = Vec::new();
+                let mut parses = Vec::new();
+                for target in &paths {
+                    let mut k = keyer(mode, &mut stats);
+                    if memo.is_some() {
+                        k.start_memo();
+                    }
+                    let st = k
+                        .key_typed_memo(&root, &menu(&[]), memo.as_deref_mut())
+                        .unwrap();
+                    k.advance_memo(st, 0, memo.as_deref_mut());
+                    let before = VIEW_PARSES.with(|n| n.get());
+                    let st = k
+                        .key_typed_memo(
+                            &view(bf(), vec![target.clone()], vec![]),
+                            &menu(&[]),
+                            memo.as_deref_mut(),
+                        )
+                        .unwrap();
+                    parses.push(VIEW_PARSES.with(|n| n.get()) - before);
+                    let (key, pk, pe, cn) = k.storage(&st);
+                    out.push((
+                        st.repaired_key,
+                        key,
+                        pk,
+                        pe.to_vec(),
+                        cn.obs.clone(),
+                        st.resolved.clone(),
+                    ));
+                }
+                stats.seconds = 0.0;
+                (out, stats.json(), parses)
+            };
+            let (plain, plain_stats, plain_parses) = run(None);
+            let mut memo = KeyMemo::new();
+            let (memoized, memo_stats, parses) = run(Some(&mut memo));
+            assert_eq!((&plain, &plain_stats), (&memoized, &memo_stats), "{mode:?}");
+            // Both later ties resolve by exchange, so qualification ran.
+            assert!(plain.iter().all(|o| !o.5.is_empty()), "{mode:?}");
+            assert_eq!(plain_parses, [0, 0], "{mode:?}");
+            // The second path's root came from the memo as text and its tie
+            // on 13 and 14 was new to the root's frame cache.
+            assert_eq!(memo.hits, 1, "{mode:?}");
+            assert_eq!(parses, [0, 1], "{mode:?}");
+            assert!(memo
+                .entries
+                .iter()
+                .all(|e| e.step.view.values.get().is_none()));
+        }
+    }
+
+    /// One memo serves one key mode.
+    #[test]
+    #[should_panic(expected = "one KeyMemo serves one key mode")]
+    fn key_memo_refuses_a_second_mode() {
+        let mut memo = KeyMemo::new();
+        for mode in [KeyMode::Repaired, KeyMode::Shadow] {
+            let mut stats = KeyStats::default();
+            let mut k = keyer(mode, &mut stats);
+            k.start_memo();
+            k.key_typed_memo(
+                &view(vec![x(), y()], vec![], vec![]),
+                &menu(&[11]),
+                Some(&mut memo),
+            )
+            .unwrap();
+        }
+    }
+
     /// The key memo is exact: paths keyed through one shared memo give the
     /// same keys, canonical frames, seeded orders and statistics as keying
     /// without it, in every mode, including merged and fallback histories
@@ -1524,7 +2057,10 @@ mod tests {
             vec![(f2(), menu(&[11, 12]), 2), (f1(11), menu(&[]), 0)],
             vec![(f2(), menu(&[11, 12]), 1), (f1(11), menu(&[]), 0)],
         ];
-        for mode in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow] {
+        for (mode, typed) in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow]
+            .into_iter()
+            .flat_map(|m| [(m, false), (m, true)])
+        {
             let run = |memo: Option<&mut KeyMemo>| {
                 let mut memo = memo;
                 let mut stats = KeyStats::default();
@@ -1535,9 +2071,12 @@ mod tests {
                         k.start_memo();
                     }
                     for (o, m, live) in path {
-                        let st = k
-                            .key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
-                            .unwrap();
+                        let st = if typed {
+                            k.key_typed_memo(o, m, memo.as_deref_mut()).unwrap()
+                        } else {
+                            k.key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
+                                .unwrap()
+                        };
                         let (key, pk, pe, cn) = k.storage(&st);
                         out.push((
                             st.legacy_key,
@@ -1558,8 +2097,26 @@ mod tests {
             let plain = run(None);
             let mut memo = KeyMemo::new();
             let memoized = run(Some(&mut memo));
+            assert!(memo
+                .entries
+                .iter()
+                .all(|e| e.step.view.values.get().is_none()));
             assert_eq!(plain, memoized, "{mode:?}");
+            // Repaired-mode entries with a distinct repaired frame keep only
+            // the legacy menu.
+            for e in &memo.entries {
+                let st = &e.step;
+                let kept = !Arc::ptr_eq(&st.legacy, &st.repaired) && mode == KeyMode::Repaired;
+                assert_eq!(st.legacy.obs.is_empty(), kept, "{mode:?}");
+            }
+            assert!(
+                mode != KeyMode::Repaired
+                    || memo.entries.iter().any(|e| e.step.legacy.obs.is_empty()),
+                "{mode:?}"
+            );
             assert_eq!((memo.hits, memo.misses), (7, 7), "{mode:?}");
+            // The typed path answers repeated raw frames from the raw index.
+            assert_eq!(memo.raw_index.is_empty(), !typed, "{mode:?}");
             assert_eq!(memo.json()["nodes"], 10, "{mode:?}");
             // A full memo stops storing frames and stays exact.
             let mut small = KeyMemo::with_max_bytes(memo.bytes / 3);

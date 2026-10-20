@@ -62,7 +62,10 @@ fn validate_batch(req: &InspectRequest, lineage: &str) -> Result<(), String> {
 
 /// Keep only the discriminant and the safe visible label, in executable order.
 /// No serialized semantic object or observation escapes this boundary.
-fn menu(observation: &ObservationV6, actions: &[ActionSemanticV1]) -> Result<Vec<Value>, String> {
+pub(super) fn menu(
+    observation: &ObservationV6,
+    actions: &[ActionSemanticV1],
+) -> Result<Vec<Value>, String> {
     let labels = crate::human_bo3_v1::gameplay_trace_labels_v1(observation, actions)
         .map_err(|_| "utility inspection actor-visible labels unavailable")?;
     if labels.len() != actions.len() {

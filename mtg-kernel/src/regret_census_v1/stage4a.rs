@@ -46,6 +46,9 @@
 //! reuse under a separate acquisition ceiling. `s4a-reused-action` consumes
 //! that prefix and compares its action with one isolated ordinary-policy
 //! draw or an explicit same-action control (utility_root/reused.rs).
+//! `s4a-root-actions` authenticates one recorded new-root decision at any
+//! step of a search game and forces each requested action under fresh named
+//! continuation streams (utility_root/root_actions.rs).
 
 mod allocation_experiment;
 mod arms;
@@ -62,7 +65,7 @@ mod labels;
 mod pathlog;
 mod play;
 mod policy_ensemble;
-mod process_cpu;
+pub(crate) mod process_cpu;
 mod profile_roots;
 mod refresh;
 mod replay_labels;
@@ -73,11 +76,13 @@ mod seeds;
 mod sharing;
 mod tree;
 mod utility_root;
+#[cfg(feature = "gameplay-decision-trace-v1")]
+pub(crate) use utility_root::{authenticated_roots_v1, validate_searched_game_v1, SearchedRootV1};
 #[cfg(feature = "viewer-recording-v1")]
 pub(super) mod viewer_replay;
 #[cfg(feature = "viewer-recording-v1")]
 pub(super) mod viewer_uct;
-mod world;
+pub(crate) mod world;
 
 use super::search::{game_setup, new_session, GameSetup};
 use super::{load_policy_v1, CensusConfigV1};
@@ -115,6 +120,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-search-profile"
             | "s4a-utility-root"
             | "s4a-utility-root-inspect"
+            | "s4a-root-actions"
             | "s4a-reuse-prefix"
             | "s4a-reused-action"
             | "s4a-policy-ensemble"
@@ -1046,6 +1052,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
     if cfg.mode == "s4a-utility-root-inspect" {
         return utility_root::run_inspect(cfg, policy, &sh, &spec_bytes);
     }
+    if cfg.mode == "s4a-root-actions" {
+        return utility_root::run_root_actions(cfg, policy, &sh, &spec_bytes);
+    }
     if cfg.mode == "s4a-reuse-prefix" {
         return utility_root::run_acquisition(cfg, policy, &sh, &spec_bytes);
     }
@@ -1324,6 +1333,13 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         }
         let executor = refresh::ExecutionMode::parse(&cfg.mode, std::env::var("S4A_EXECUTOR"))?;
         executor.validate_budget(plain, mode, interchange, bestline, reuse_witnesses)?;
+        let extras = refresh::BudgetExtras::parse(
+            std::env::var("S4A_ALLOCATION"),
+            std::env::var("S4A_NODE_STATS"),
+        )?;
+        if plain && extras != refresh::BudgetExtras::default() {
+            return Err("S4A_ALLOCATION and S4A_NODE_STATS require BUDGET_ARM=search-v1".into());
+        }
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1335,7 +1351,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                         if plain {
                             return refresh::budget_plain_case(&sh, policy, src, &binding);
                         }
-                        if executor == refresh::ExecutionMode::Persistent {
+                        if executor == refresh::ExecutionMode::Persistent
+                            && extras == refresh::BudgetExtras::default()
+                        {
                             return refresh::budget_case(
                                 &sh,
                                 policy,
@@ -1359,6 +1377,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                             reuse_witnesses,
                             &binding,
                             executor,
+                            extras,
                         )
                     })
                     .map_err(|e| e.to_string())?
@@ -1559,6 +1578,9 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     if cfg.mode == "s4a-utility-root-inspect" && !cfg!(feature = "gameplay-decision-trace-v1") {
         return Err("s4a-utility-root-inspect requires gameplay-decision-trace-v1".into());
     }
+    if cfg.mode == "s4a-root-actions" && !cfg!(feature = "gameplay-decision-trace-v1") {
+        return Err("s4a-root-actions requires gameplay-decision-trace-v1".into());
+    }
     // Every mode refuses a best-line `S4A_BACKUP` it would not use.
     parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
     if matches!(cfg.mode.as_str(), "s4a-reuse-prefix" | "s4a-reused-action")
@@ -1580,7 +1602,8 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-reuse-prefix"
         | "s4a-reused-action"
         | "s4a-policy-ensemble"
-        | "s4a-utility-root-inspect" => return run_bank_mode(cfg, policy),
+        | "s4a-utility-root-inspect"
+        | "s4a-root-actions" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}

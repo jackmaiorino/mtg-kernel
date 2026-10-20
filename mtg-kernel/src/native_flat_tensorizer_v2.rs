@@ -640,7 +640,7 @@ const STATE_HASH_NAMESPACE_V2: &[u8] = b"observation-state";
 /// Converts SHA-512 blocks to digest features exactly as
 /// `append_digest_features_v2` and `action_hash_features_v1` do: each
 /// little-endian u32 chunk `x` becomes `((x / u32::MAX) * 2 - 1) as f32`.
-fn digest_block_features_v1(blocks: &[[u8; 64]], output: &mut [f32]) {
+pub(crate) fn digest_block_features_v1(blocks: &[[u8; 64]], output: &mut [f32]) {
     debug_assert_eq!(blocks.len() * 16, output.len());
     for (block, features) in blocks.iter().zip(output.chunks_exact_mut(16)) {
         for (chunk, feature) in block.chunks_exact(4).zip(features) {

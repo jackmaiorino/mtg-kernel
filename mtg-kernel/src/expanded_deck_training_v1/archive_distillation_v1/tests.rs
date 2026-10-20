@@ -17,6 +17,7 @@ fn cell(label: &str) -> ArchiveDistillationOptionsV1 {
         count_control: None,
         checkpoint_steps: None,
         keep_sets: None,
+        representation: None,
     }
 }
 
@@ -110,6 +111,7 @@ fn provenance(
         runtime_commit: "test".into(),
         cell: None,
         update_scope: ArchiveDistillationUpdateScopeV1::FullNetwork,
+        rules_pathway: None,
     }
 }
 
@@ -313,6 +315,66 @@ fn scorer_only_checkpoint_records_scope_and_refuses_frozen_parameter_changes() {
 }
 
 #[test]
+fn rules_checkpoints_must_carry_their_valid_pathway_record() {
+    use ArchiveDistillationRepresentationArmV1::{FreshStateCodes, WrongRules};
+    let root = temp_root("rules-record");
+    let (_, model, parent, file) = parent_fixture(&root);
+    let base = restore_parameters(&parent.parameters, &model.parameter_snapshot_v1()).unwrap();
+    let probe = ArchiveDistillationRepresentationV1 {
+        arm: WrongRules,
+        rules_rows_sha256: Some("0".repeat(64)),
+    };
+    let error = rules_rows_v1(&probe).unwrap_err();
+    let table_sha = error.rsplit(' ').next().unwrap().to_string();
+    let wrong = ArchiveDistillationRepresentationV1 {
+        arm: WrongRules,
+        rules_rows_sha256: Some(table_sha.clone()),
+    };
+    let rows = rules_rows_v1(&wrong).unwrap();
+    let mut pathway = RulesPathwayV1::new_v1(rows.rows.clone(), rows.cards, rows.width).unwrap();
+    let mut state = pathway.state_bits_v1();
+    for (i, w) in state.weight.iter_mut().enumerate() {
+        *w = (((i % 13) as f32 - 6.0) * 1e-3).to_bits();
+    }
+    pathway.restore_v1(&state).unwrap();
+    let effective = pathway.effective_parameters_v1(&base).unwrap();
+    let mut record = provenance(&parent, &file);
+    record.cell = Some(ArchiveDistillationCellV1 {
+        cell: "A2".into(),
+        anchor_coefficient_bits: ANCHOR_COEFFICIENT.to_bits(),
+        min_edge_backups: None,
+        count_control: None,
+        checkpoint_steps: Vec::new(),
+        keep_sets: None,
+        representation: Some(wrong.clone()),
+    });
+    record.rules_pathway = Some(sidecar_v1(wrong.arm, &rows, record.steps, &base, &pathway));
+    validate_phase1_checkpoint_v1(&checkpoint_v1(&parent, &effective, record.clone()).unwrap())
+        .unwrap();
+    // No record; a fresh-code cell naming a table; a table that is not the
+    // rows plus the pathway; a scorer-only scope: each is refused.
+    let mut missing = record.clone();
+    missing.rules_pathway = None;
+    let mut fresh_named = missing.clone();
+    fresh_named.cell.as_mut().unwrap().representation = Some(ArchiveDistillationRepresentationV1 {
+        arm: FreshStateCodes,
+        rules_rows_sha256: Some(table_sha),
+    });
+    let mut scorer_only = record.clone();
+    scorer_only.update_scope = ArchiveDistillationUpdateScopeV1::ScorerOnly;
+    for (name, record, parameters) in [
+        ("missing", missing, &effective),
+        ("fresh named", fresh_named, &effective),
+        ("unfolded", record.clone(), &base),
+        ("scorer only", scorer_only, &effective),
+    ] {
+        let saved = checkpoint_v1(&parent, parameters, record).unwrap();
+        assert!(validate_phase1_checkpoint_v1(&saved).is_err(), "{name}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn archive_distillation_commands_keep_their_wire_shape() {
     let source = json!({"play_import":{"path":"import.json","sha256":"a".repeat(64)},
         "feature_transfer":{"expected_feature_contract_digest":"b",
@@ -388,6 +450,18 @@ fn archive_distillation_commands_keep_their_wire_shape() {
     evidenced["evidence"] = json!({"training":file,"held_out":file});
     let command: ExpandedTrainingCommandV1 = serde_json::from_value(evidenced.clone()).unwrap();
     assert_eq!(serde_json::to_value(&command).unwrap(), evidenced);
+    // Evidence logits are opt-in and round-trip; off stays off the wire.
+    let mut logged = evidenced.clone();
+    logged["evidence_logits"] = json!(true);
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(logged.clone()).unwrap();
+    assert!(matches!(
+        command,
+        ExpandedTrainingCommandV1::ArchiveDistillationProbe {
+            evidence_logits: true,
+            ..
+        }
+    ));
+    assert_eq!(serde_json::to_value(&command).unwrap(), logged);
     let mut partial = probe.clone();
     partial["evidence"] = json!({"training":file});
     assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(partial).is_err());
@@ -682,6 +756,7 @@ fn cell_options_resolve_to_one_recorded_recipe_and_refuse_anything_else() {
             count_control: None,
             checkpoint_steps: vec![8, 16, 32, 189],
             keep_sets: None,
+            representation: None,
         })
     );
     // A label alone keeps every frozen value and the epoch schedule.
@@ -1326,6 +1401,7 @@ fn a_cell_checkpoint_loads_only_at_its_recorded_step_size_on_arm_u() {
         count_control: None,
         checkpoint_steps: vec![8, 16, 32],
         keep_sets: Some(pin("keep.json", 'e')),
+        representation: None,
     });
     let saved = checkpoint_v1(&parent, &parameters, record.clone()).unwrap();
     assert_eq!(saved.learning_rate_bits, 2.5e-5_f32.to_bits());
@@ -1450,6 +1526,8 @@ fn anchor_input<'a>(
         direction: LineBDivergenceV1::Forward,
         coefficient: ANCHOR_COEFFICIENT,
         denominator: rows.len(),
+        cap: None,
+        step_telemetry: false,
         rows: rows
             .iter()
             .zip(targets)
@@ -1490,11 +1568,32 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
             &rows,
             &exact,
             &frozen_recipe(),
-            ArchiveDistillationUpdateScopeV1::FullNetwork
+            ArchiveDistillationUpdateScopeV1::FullNetwork,
+            None
         ),
         Ok(3)
     );
     assert_eq!(fresh.adam_step_v1(), 0, "the pre-flight steps a copy");
+    // RC1's zero rules pathway: exact anchors leave it and the parent unchanged.
+    let cards = rows
+        .iter()
+        .flat_map(|row| row.tensor.object_card_ids.iter().copied())
+        .max()
+        .unwrap()
+        .max(1) as usize;
+    let pathway = RulesPathwayV1::new_v1(vec![0.5; cards * 3], cards, 3).unwrap();
+    assert_eq!(
+        anchor_identity_preflight_v1(
+            &fresh,
+            generation,
+            &rows,
+            &exact,
+            &frozen_recipe(),
+            ArchiveDistillationUpdateScopeV1::FullNetwork,
+            Some(&pathway)
+        ),
+        Ok(3)
+    );
     let deployed: Vec<LineBSoftmaxV1> = rows
         .iter()
         .map(|row| softmax_target(deployed_v1(&recorded_logits(&row.logits)).unwrap()))
@@ -1515,6 +1614,7 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
             targets,
             &frozen_recipe(),
             ArchiveDistillationUpdateScopeV1::FullNetwork,
+            None,
         )
         .unwrap_err();
         assert!(error.contains("not exact"), "{name}: {error}");
@@ -1535,6 +1635,7 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
         &exact,
         &frozen_recipe(),
         ArchiveDistillationUpdateScopeV1::FullNetwork,
+        None,
     )
     .unwrap_err();
     assert!(error.contains("fresh phase-1 optimizer"), "{error}");
@@ -2228,7 +2329,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
     record_provenance.steps = 7;
     let output = world.root.join("written");
     fs::create_dir_all(&output).unwrap();
-    let (checkpoint_pin, source_pin, state_sha256) = write_checkpoint_v1(
+    let (checkpoint_pin, source_pin, state_sha256, _) = write_checkpoint_v1(
         &output,
         &world.parent,
         &parent_checkpoint,
@@ -2256,6 +2357,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
         anchor: world.anchor.clone(),
         offers: world.offers.clone(),
         evidence: None,
+        evidence_logits: false,
         output_directory: world.root.join("probe"),
     })
     .unwrap();
@@ -2292,6 +2394,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
         anchor: world.anchor.clone(),
         offers: world.anchor.held_out.clone(),
         evidence: None,
+        evidence_logits: false,
         output_directory: world.root.join("probe-reused-offers"),
     })
     .unwrap_err();
@@ -2353,6 +2456,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
             anchor: world.anchor.clone(),
             offers: world.offers.clone(),
             evidence: Some(evidence),
+            evidence_logits: false,
             output_directory: world.root.join(out),
         })
     };
@@ -2615,6 +2719,7 @@ fn phase1_runs_write_reloadable_checkpoints_and_reproduce_their_first_steps() {
         anchor: world.anchor.clone(),
         offers: world.offers.clone(),
         evidence: None,
+        evidence_logits: false,
         output_directory: world.root.join("probe"),
     })
     .unwrap();
@@ -2865,6 +2970,9 @@ fn retention_run_config_v1(
         training_math: TrainingMathV1::PlatformLibm,
         line_b: None,
         e_supported: None,
+        soft_q: None,
+        search_targets: None,
+        record_process_cpu: false,
         output_directory: root.join("run"),
     }
 }

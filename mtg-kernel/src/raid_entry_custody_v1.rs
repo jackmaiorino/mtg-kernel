@@ -802,9 +802,7 @@ mod tests {
         not(feature = "standard-magezero-fixtures")
     ))]
     fn entered(actor: PlayerId, name: &str, attacks: bool) -> (GameState, crate::ids::ObjectId) {
-        let mut state = crate::policy_observation_v6::tests::ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         state.step = crate::state::Step::DeclareAttackers;
         let attacker = crate::policy_observation_v6::tests::put(
             &mut state,

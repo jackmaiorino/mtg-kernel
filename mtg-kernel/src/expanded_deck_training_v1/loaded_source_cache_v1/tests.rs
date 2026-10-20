@@ -97,6 +97,8 @@ fn write_checkpoint(
         source_import: policy.identity_v1().clone(),
         state_sha256: hex(&snapshot.state_sha256_v1().unwrap()),
         e_supported: None,
+        soft_q: None,
+        search_targets: None,
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: as_bits(&snapshot.parameters),
@@ -304,6 +306,7 @@ fn checkpoints_that_name_another_file_are_not_cached() {
         runtime_commit: "test".into(),
         cell: None,
         update_scope: Default::default(),
+        rules_pathway: None,
     });
     remember_v1(&resumed, &descriptor_bytes, &policy, &state, Some(&phase1));
     let before = matches();

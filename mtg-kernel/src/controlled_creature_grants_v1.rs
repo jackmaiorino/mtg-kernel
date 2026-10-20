@@ -57,31 +57,90 @@ pub(crate) fn applies(state: &GameState, source: ObjectId, recipient: ObjectId) 
             )
     })
 }
+fn grant_of(
+    live: &crate::state::GameObject,
+) -> Option<crate::card_def::ControlledCreatureGrantDef> {
+    CARD_DEFS
+        .get(usize::from(live.card_def))
+        .and_then(|d| d.controlled_creature_grant)
+}
+/// Every object whose definition carries a grant, in arena order. Objects
+/// without one never grant or protect, so the scans below may skip them.
+fn grant_sources(state: &GameState) -> Option<std::rc::Rc<[ObjectId]>> {
+    crate::continuous_source_frame_v1::sources(
+        state,
+        crate::continuous_source_frame_v1::SourceKindV1::ControlledCreatureGrant,
+        || {
+            state
+                .objects
+                .iter()
+                .filter(|(_, live)| grant_of(live).is_some())
+                .map(|(source, _)| source)
+                .collect()
+        },
+    )
+}
 pub(crate) fn grants_keyword(state: &GameState, recipient: ObjectId, keyword: Keywords) -> bool {
     if !enabled() {
         return false;
     }
-    state.objects.iter().any(|(source, live)| {
-        CARD_DEFS
-            .get(usize::from(live.card_def))
-            .and_then(|d| d.controlled_creature_grant)
+    let grants = |source: ObjectId, live: &crate::state::GameObject| {
+        grant_of(live)
             .is_some_and(|grant| grant.keywords.has(keyword) && applies(state, source, recipient))
-    })
+    };
+    if let Some(sources) = grant_sources(state) {
+        return sources
+            .iter()
+            .any(|&source| grants(source, state.objects.get(source)));
+    }
+    state
+        .objects
+        .iter()
+        .any(|(source, live)| grants(source, live))
+}
+/// Every keyword `grants_keyword` reports for `recipient`, as one set: a
+/// keyword is granted exactly when some applying source's grant holds it.
+pub(crate) fn granted_keywords(state: &GameState, recipient: ObjectId) -> Keywords {
+    if !enabled() {
+        return Keywords::NONE;
+    }
+    let granted = |source: ObjectId, live: &crate::state::GameObject| {
+        grant_of(live)
+            .filter(|grant| grant.keywords != Keywords::NONE && applies(state, source, recipient))
+            .map_or(Keywords::NONE, |grant| grant.keywords)
+    };
+    if let Some(sources) = grant_sources(state) {
+        return sources.iter().fold(Keywords::NONE, |all, &source| {
+            all | granted(source, state.objects.get(source))
+        });
+    }
+    state
+        .objects
+        .iter()
+        .fold(Keywords::NONE, |all, (source, live)| {
+            all | granted(source, live)
+        })
 }
 pub(crate) fn color_protection(state: &GameState, recipient: ObjectId) -> u8 {
     if !enabled() {
         return 0;
     }
-    state.objects.iter().fold(0, |mask, (source, live)| {
-        let grant = CARD_DEFS
-            .get(usize::from(live.card_def))
-            .and_then(|d| d.controlled_creature_grant);
-        if let Some(grant) = grant.filter(|_| applies(state, source, recipient)) {
+    let protect = |mask: u8, source: ObjectId, live: &crate::state::GameObject| {
+        if let Some(grant) = grant_of(live).filter(|_| applies(state, source, recipient)) {
             mask | grant.protection_color_mask
         } else {
             mask
         }
-    })
+    };
+    if let Some(sources) = grant_sources(state) {
+        return sources.iter().fold(0, |mask, &source| {
+            protect(mask, source, state.objects.get(source))
+        });
+    }
+    state
+        .objects
+        .iter()
+        .fold(0, |mask, (source, live)| protect(mask, source, live))
 }
 pub(crate) fn protects_from_colors(
     state: &GameState,
@@ -303,20 +362,7 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
                     state.objects.len(),
                 )?;
             }
-            let captured: crate::state::GameObject =
-                serde_json::from_str(&snapshot.private_snapshot_json)
-                    .map_err(|_| "invalid original color visibility snapshot")?;
-            if serde_json::to_string(&captured).map_err(|_| "color visibility serialization")?
-                != snapshot.private_snapshot_json
-                || captured.card_def != snapshot.source.card_def
-                || captured.owner != snapshot.source.owner
-                || captured.controller != snapshot.source.controller
-                || captured.zone != snapshot.source.zone
-                || captured.zone_change_count != snapshot.source.zone_change_count
-                || (captured.v4.face_down_v1.is_some() && snapshot.color_mask != 0)
-            {
-                return Err("color visibility snapshot changed original source".into());
-            }
+            validate_snapshot_object(snapshot)?;
             let live = state
                 .objects
                 .try_get(snapshot.source.source)
@@ -351,6 +397,50 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
         if missing_snapshot {
             return Err("battlefield departure lost its independent source color snapshot".into());
         }
+    }
+    Ok(())
+}
+/// History validation runs this for every retained departure on every
+/// decision. It depends only on the snapshot, so a snapshot that passed once
+/// passes again; every other case, including every failure, takes the full
+/// check below.
+fn validate_snapshot_object(snapshot: &DepartureColorV1) -> Result<(), &'static str> {
+    thread_local! {
+        static PASSED: std::cell::RefCell<std::collections::HashSet<DepartureColorV1>> =
+            std::cell::RefCell::default();
+    }
+    // try_with: during thread teardown the set may be gone; then this is
+    // simply the full check.
+    if PASSED
+        .try_with(|passed| passed.borrow().contains(snapshot))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    validate_snapshot_object_full(snapshot)?;
+    let _ = PASSED.try_with(|passed| {
+        let mut passed = passed.borrow_mut();
+        // A game retains few departures; the small cap bounds memory.
+        if passed.len() >= 256 {
+            passed.clear();
+        }
+        passed.insert(snapshot.clone());
+    });
+    Ok(())
+}
+fn validate_snapshot_object_full(snapshot: &DepartureColorV1) -> Result<(), &'static str> {
+    let captured: crate::state::GameObject = serde_json::from_str(&snapshot.private_snapshot_json)
+        .map_err(|_| "invalid original color visibility snapshot")?;
+    if serde_json::to_string(&captured).map_err(|_| "color visibility serialization")?
+        != snapshot.private_snapshot_json
+        || captured.card_def != snapshot.source.card_def
+        || captured.owner != snapshot.source.owner
+        || captured.controller != snapshot.source.controller
+        || captured.zone != snapshot.source.zone
+        || captured.zone_change_count != snapshot.source.zone_change_count
+        || (captured.v4.face_down_v1.is_some() && snapshot.color_mask != 0)
+    {
+        return Err("color visibility snapshot changed original source");
     }
     Ok(())
 }

@@ -418,6 +418,37 @@ pub(crate) fn keyword_granted(state: &GameState, id: ObjectId, keyword: Keywords
     })
 }
 
+/// Every keyword `keyword_granted` reports for `id`, as one set: a surviving
+/// grant's keywords less those a later loss names.
+pub(crate) fn granted_keywords(state: &GameState, id: ObjectId) -> Keywords {
+    upgrade(state, id).map_or(Keywords::NONE, |value| {
+        value
+            .keyword_grants
+            .iter()
+            .filter(|(_, timestamp)| {
+                crate::continuous_characteristics_v1::grant_survives(state, id, *timestamp)
+            })
+            .fold(Keywords::NONE, |all, (granted, timestamp)| {
+                let lost = value
+                    .keyword_losses
+                    .iter()
+                    .filter(|(_, other)| other > timestamp)
+                    .fold(0, |lost, (keywords, _)| lost | keywords.0);
+                all | Keywords(granted.0 & !lost)
+            })
+    })
+}
+
+/// Every keyword `printed_keyword_removed` reports for `id`, as one set.
+pub(crate) fn removed_printed_keywords(state: &GameState, id: ObjectId) -> Keywords {
+    upgrade(state, id).map_or(Keywords::NONE, |value| {
+        value
+            .keyword_losses
+            .iter()
+            .fold(Keywords::NONE, |all, (lost, _)| all | *lost)
+    })
+}
+
 pub(crate) fn printed_keyword_removed(state: &GameState, id: ObjectId, keyword: Keywords) -> bool {
     upgrade(state, id).is_some_and(|value| {
         value

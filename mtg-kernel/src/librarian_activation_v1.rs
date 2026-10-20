@@ -503,14 +503,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 ))]
 mod tests {
     use super::*;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
     #[test]
     fn genuine_counter_primitive_closes_paid_ability_once_without_upgrading_or_drawing_both_seats()
     {
         for actor in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state =
+                crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
             let source = put(
                 &mut state,
                 actor,

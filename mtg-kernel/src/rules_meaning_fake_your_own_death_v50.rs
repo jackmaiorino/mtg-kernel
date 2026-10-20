@@ -190,22 +190,46 @@ pub fn printed_meaning(card_id: u16, root: RootV50) -> Result<MeaningV50, String
     } else {
         death_instructions()
     };
-    let root_sha256 = digest(
-        &serde_json::to_vec(&(
-            SCHEMA,
-            card_id,
-            root,
-            definition.cost.generic,
-            format!("{:?}", definition.cost.pips),
-            definition.cost.x_count,
-            definition.mana_value,
-            format!("{:?}", definition.types),
-            format!("{:?}", definition.colors),
-            (definition.spell_effect)(),
-            &ordered_instructions,
-        ))
-        .map_err(|error| error.to_string())?,
-    );
+    // The digest input is static printed data for this card and root, so a
+    // digest computed once is the same string every time.
+    thread_local! {
+        static ROOT_SHA256: std::cell::RefCell<Vec<(u16, RootV50, String)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let remembered = ROOT_SHA256
+        .try_with(|rows| {
+            rows.borrow()
+                .iter()
+                .find(|(id, r, _)| *id == card_id && *r == root)
+                .map(|(_, _, sha)| sha.clone())
+        })
+        .ok()
+        .flatten();
+    let root_sha256 = match remembered {
+        Some(sha) => sha,
+        None => {
+            let sha = digest(
+                &serde_json::to_vec(&(
+                    SCHEMA,
+                    card_id,
+                    root,
+                    definition.cost.generic,
+                    format!("{:?}", definition.cost.pips),
+                    definition.cost.x_count,
+                    definition.mana_value,
+                    format!("{:?}", definition.types),
+                    format!("{:?}", definition.colors),
+                    (definition.spell_effect)(),
+                    &ordered_instructions,
+                ))
+                .map_err(|error| error.to_string())?,
+            );
+            let _ = ROOT_SHA256.try_with(|rows| {
+                rows.borrow_mut().push((card_id, root, sha.clone()));
+            });
+            sha
+        }
+    };
     Ok(MeaningV50 {
         selector: selector(),
         card_id,

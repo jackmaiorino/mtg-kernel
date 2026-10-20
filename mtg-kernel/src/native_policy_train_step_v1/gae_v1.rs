@@ -22,6 +22,15 @@
 
 use super::*;
 
+/// Where an update's auxiliary term reads its rows: the GAE batch's own
+/// groups (line (b), SQ1) or off-batch rows with their own forward tapes
+/// (TP1 Stage B searched-game roots).
+#[derive(Clone, Copy)]
+pub(crate) enum AuxiliaryTermsSourceV1<'a> {
+    InBatch(&'a LineBAuxiliaryInputV1),
+    External(&'a archive_distillation_v1::ExternalAuxiliaryInputV1<'a>),
+}
+
 fn validate_gae_inputs_v1(
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     value_targets: &[f32],
@@ -267,11 +276,63 @@ impl NativePolicyValueTrainStateV1 {
             backward_execution,
             input_config,
             false,
-            Some(line_b),
+            Some(AuxiliaryTermsSourceV1::InBatch(line_b)),
             None,
         )?;
         let auxiliary = auxiliary.ok_or(NativePolicyTrainErrorV1::LineBAuxiliary {
             code: "line-b-auxiliary-missing-result",
+        })?;
+        Ok((result, auxiliary))
+    }
+
+    /// TP1 Stage B CPU update (collab LANES/teacher-price-20261019,
+    /// STAGE-B.md): the GAE objective plus an auxiliary term over off-batch
+    /// rows (searched-game roots, never part of the GAE batch), combined
+    /// before the single Adam step. The rows take no policy or value loss and
+    /// do not enter the GAE group mean. Callers with no rows use the
+    /// ordinary update, so it stays bit-identical.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
+    pub(crate) fn train_step_gae_external_auxiliary_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        external: &archive_distillation_v1::ExternalAuxiliaryInputV1<'_>,
+    ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
+    {
+        let input_config = match generation {
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
+                self.model.feature_transfer_config_v3()
+            }
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
+                self.model.feature_transfer_config_v4()
+            }
+        };
+        let backward_execution = match backward_worker_limit {
+            None => BackwardExecutionV1::Sequential,
+            Some(worker_limit) => BackwardExecutionV1::FixedPartitions { worker_limit },
+        };
+        let (result, auxiliary, _) = self.train_step_gae_core_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_execution,
+            input_config,
+            false,
+            Some(AuxiliaryTermsSourceV1::External(external)),
+            None,
+        )?;
+        let auxiliary = auxiliary.ok_or(NativePolicyTrainErrorV1::LineBAuxiliary {
+            code: "external-auxiliary-missing-result",
         })?;
         Ok((result, auxiliary))
     }
@@ -402,7 +463,7 @@ impl NativePolicyValueTrainStateV1 {
         backward_execution: BackwardExecutionV1,
         input_config: NativePolicyValueModelConfigV1,
         imitation: bool,
-        line_b: Option<&LineBAuxiliaryInputV1>,
+        line_b: Option<AuxiliaryTermsSourceV1<'_>>,
         exploration: Option<(f32, u64, bool)>,
     ) -> Result<
         (
@@ -439,7 +500,7 @@ impl NativePolicyValueTrainStateV1 {
         backward_execution: BackwardExecutionV1,
         input_config: NativePolicyValueModelConfigV1,
         imitation: bool,
-        line_b: Option<&LineBAuxiliaryInputV1>,
+        line_b: Option<AuxiliaryTermsSourceV1<'_>>,
         exploration: Option<(f32, u64, bool)>,
         forward_workers: usize,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
@@ -614,8 +675,18 @@ impl NativePolicyValueTrainStateV1 {
         finite_scalar("gae_loss", 2, loss)?;
         // Before the ordinary backward consumes the tapes.
         let line_b_terms = line_b
-            .map(|input| {
-                line_b_auxiliary_v1::line_b_auxiliary_terms_v1(input, &group_tapes, &parameters)
+            .map(|source| match source {
+                AuxiliaryTermsSourceV1::InBatch(input) => {
+                    line_b_auxiliary_v1::line_b_auxiliary_terms_v1(input, &group_tapes, &parameters)
+                }
+                AuxiliaryTermsSourceV1::External(input) => {
+                    archive_distillation_v1::external_auxiliary_terms_v1(
+                        input,
+                        &parameters,
+                        Some(&input_major),
+                        input_config,
+                    )
+                }
             })
             .transpose()?;
 
@@ -743,7 +814,16 @@ impl NativePolicyValueTrainStateV1 {
             }
         };
         validate_finite_nested("gae_gradient", &gradients)?;
-        let line_b_result = line_b_terms
+        // STAGE-B2.md telemetry: the ordinary gradient alone, as Adam would see it.
+        let ordinary_only = line_b_terms
+            .as_ref()
+            .filter(|terms| terms.step_telemetry_v1())
+            .map(|_| {
+                let mut ordinary = gradients.clone();
+                ordinary[SCORER_SECOND_BIAS][0] = 0.0;
+                ordinary
+            });
+        let mut line_b_result = line_b_terms
             .map(|terms| terms.combine_v1(&parameters, &mut gradients, &mut gauge_accumulator))
             .transpose()?;
         validate_finite_nested("gae_line_b_gradient", &gradients)?;
@@ -774,6 +854,29 @@ impl NativePolicyValueTrainStateV1 {
         next_second_moments[SCORER_SECOND_BIAS][0] = 0.0;
         scorer_bias_gauge.parameter_after_bits =
             next_parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+        if let (Some(ordinary), Some(result)) = (&ordinary_only, line_b_result.as_mut()) {
+            let (mut alone, _, _) = adam_update(
+                &parameters,
+                ordinary,
+                &self.first_moments,
+                &self.second_moments,
+                next_step,
+                learning_rate,
+                math,
+            )?;
+            alone[SCORER_SECOND_BIAS].values[0] = f32::from_bits(self.scorer_bias_anchor_bits);
+            let (mut combined, mut ordinary_step, mut difference) = (0.0_f64, 0.0_f64, 0.0_f64);
+            for ((before, after), only) in parameters.iter().zip(&next_parameters).zip(&alone) {
+                for ((&x, &y), &o) in before.values.iter().zip(&after.values).zip(&only.values) {
+                    let (x, y, o) = (f64::from(x), f64::from(y), f64::from(o));
+                    combined += (y - x) * (y - x);
+                    ordinary_step += (o - x) * (o - x);
+                    difference += (y - o) * (y - o);
+                }
+            }
+            result.adam_steps = Some(serde_json::json!({"combined_l2":combined.sqrt(),
+                "ordinary_l2":ordinary_step.sqrt(),"difference_l2":difference.sqrt()}));
+        }
 
         phase_recorder.finish_v1(adam_timer);
         let finalization_timer =

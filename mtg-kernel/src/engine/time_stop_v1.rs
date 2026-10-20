@@ -1804,6 +1804,14 @@ pub(crate) fn source_sha256_v1() -> &'static str {
                     "mtg-kernel/src/engine/greatwurm_cast_v1.rs",
                     include_str!("greatwurm_cast_v1.rs"),
                 ),
+                (
+                    "mtg-kernel/src/continuous_source_frame_v1.rs",
+                    include_str!("../continuous_source_frame_v1.rs"),
+                ),
+                (
+                    "mtg-kernel/src/retained_world_parse_v1.rs",
+                    include_str!("../retained_world_parse_v1.rs"),
+                ),
             ] {
                 hash.update((name.len() as u64).to_le_bytes());
                 hash.update(name.as_bytes());

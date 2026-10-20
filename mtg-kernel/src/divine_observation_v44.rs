@@ -46,77 +46,82 @@ pub(crate) type DivinePublicPartsV44 = (
     Vec<crate::akroma_family_public_v40::FamilyProjectionV40>,
 );
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for s in [
-        SCHEMA,
-        include_str!("divine_observation_v44.rs"),
-        include_str!("divine_public_v44.rs"),
-        include_str!("rules_meaning_divine_v44.rs"),
-        include_str!("engine.rs"),
-        include_str!("spell_costs_v1.rs"),
-        include_str!("rl.rs"),
-        include_str!("akroma_family_public_v40.rs"),
-        include_str!("planeswalker_v1.rs"),
-        include_str!("rl_session/divine_v44.rs"),
-        include_str!("human_bo3_v1/divine_v44.rs"),
-        include_str!("divine_actions_v44.rs"),
-        include_str!("rl_variable_cast_v1.rs"),
-        include_str!("policy_observation_variable_cast_v1.rs"),
-        include_str!("faebloom_observation_v43.rs"),
-        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("engine/omniscience_cast_v1.rs"),
-        include_str!("resolution_cast_v1.rs"),
-        include_str!("effect/harvester_v1.rs"),
-        include_str!("leyline_axe_v1.rs"),
-        include_str!("london_mulligan_v1.rs"),
-        include_str!("life_loss_turn_v1.rs"),
-        include_str!("soul_shackled_zombie_v1.rs"),
-        include_str!("progenitus_v1.rs"),
-        include_str!("controlled_creature_grants_v1.rs"),
-        include_str!("source_power_activation_v1.rs"),
-        include_str!("effect/nonland_copy_v1.rs"),
-        include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
-        include_str!("effect/inspiration_resolution_v1.rs"),
-        include_str!("effect/standard_exile.rs"),
-        include_str!("snack_wide_life_v59.rs"),
-        include_str!("snack_wide_life_v59/custody.rs"),
-        include_str!("bloodthirsty_conqueror_v49.rs"),
-        include_str!("fiendish_panda_v1.rs"),
-        include_str!("fiendish_panda_v1/custody.rs"),
-        include_str!("life_gain_turn_v1.rs"),
-        include_str!("midnight_snack_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("mana.rs"),
-        include_str!("legend_rule_v1.rs"),
-        include_str!("doubling_season_v48.rs"),
-        include_str!("event.rs"),
-        include_str!("standard_cast_convoke.rs"),
-        include_str!("engine/mandatory_cast_cost_v1.rs"),
-        include_str!("rules_meaning_next_five_v59.rs"),
-        include_str!("effect/thousand_year_storm_v1.rs"),
-        include_str!("effect/standard_copy.rs"),
-        include_str!("standard_spell_copy.rs"),
-        include_str!("event_history_v1.rs"),
-        crate::engine::time_stop_v1::source_sha256_v1(),
-        crate::effect::genesis_wave_v1::source_sha256_v1(),
-        include_str!("engine/tinybones_v72.rs"),
-    ] {
-        h.update([0]);
-        h.update(s.as_bytes());
-    }
-    for s in [
-        crate::ajani_public_v42::producer_sha256(),
-        crate::akroma_public_v1::producer_sha256_v1(),
-        crate::faebloom_public_v43::producer_sha256(),
-    ] {
-        h.update([1]);
-        h.update(s.as_bytes());
-    }
-    h.update(b"legacy-graveyard-return-guard/v61\0");
-    h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let mut h = Sha256::new();
+            for s in [
+                SCHEMA,
+                include_str!("divine_observation_v44.rs"),
+                include_str!("divine_public_v44.rs"),
+                include_str!("rules_meaning_divine_v44.rs"),
+                include_str!("engine.rs"),
+                include_str!("spell_costs_v1.rs"),
+                include_str!("rl.rs"),
+                include_str!("akroma_family_public_v40.rs"),
+                include_str!("planeswalker_v1.rs"),
+                include_str!("rl_session/divine_v44.rs"),
+                include_str!("human_bo3_v1/divine_v44.rs"),
+                include_str!("divine_actions_v44.rs"),
+                include_str!("rl_variable_cast_v1.rs"),
+                include_str!("policy_observation_variable_cast_v1.rs"),
+                include_str!("faebloom_observation_v43.rs"),
+                include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+                include_str!("linked_aura_operation_v1.rs"),
+                include_str!("engine/omniscience_cast_v1.rs"),
+                include_str!("resolution_cast_v1.rs"),
+                include_str!("effect/harvester_v1.rs"),
+                include_str!("leyline_axe_v1.rs"),
+                include_str!("london_mulligan_v1.rs"),
+                include_str!("life_loss_turn_v1.rs"),
+                include_str!("soul_shackled_zombie_v1.rs"),
+                include_str!("progenitus_v1.rs"),
+                include_str!("controlled_creature_grants_v1.rs"),
+                include_str!("source_power_activation_v1.rs"),
+                include_str!("effect/nonland_copy_v1.rs"),
+                include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+                include_str!("effect/inspiration_resolution_v1.rs"),
+                include_str!("effect/standard_exile.rs"),
+                include_str!("snack_wide_life_v59.rs"),
+                include_str!("snack_wide_life_v59/custody.rs"),
+                include_str!("bloodthirsty_conqueror_v49.rs"),
+                include_str!("fiendish_panda_v1.rs"),
+                include_str!("fiendish_panda_v1/custody.rs"),
+                include_str!("life_gain_turn_v1.rs"),
+                include_str!("midnight_snack_v1.rs"),
+                include_str!("continuous_characteristics_v1.rs"),
+                include_str!("standard_cards_v1.rs"),
+                include_str!("mana.rs"),
+                include_str!("legend_rule_v1.rs"),
+                include_str!("doubling_season_v48.rs"),
+                include_str!("event.rs"),
+                include_str!("standard_cast_convoke.rs"),
+                include_str!("engine/mandatory_cast_cost_v1.rs"),
+                include_str!("rules_meaning_next_five_v59.rs"),
+                include_str!("effect/thousand_year_storm_v1.rs"),
+                include_str!("effect/standard_copy.rs"),
+                include_str!("standard_spell_copy.rs"),
+                include_str!("event_history_v1.rs"),
+                crate::engine::time_stop_v1::source_sha256_v1(),
+                crate::effect::genesis_wave_v1::source_sha256_v1(),
+                include_str!("engine/tinybones_v72.rs"),
+            ] {
+                h.update([0]);
+                h.update(s.as_bytes());
+            }
+            for s in [
+                crate::ajani_public_v42::producer_sha256(),
+                crate::akroma_public_v1::producer_sha256_v1(),
+                crate::faebloom_public_v43::producer_sha256(),
+            ] {
+                h.update([1]);
+                h.update(s.as_bytes());
+            }
+            h.update(b"legacy-graveyard-return-guard/v61\0");
+            h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
+            h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+        })
+        .clone()
 }
 pub fn commitment(value: &DivineObservationV44) -> Result<String, RlContractError> {
     let mut v = value.clone();

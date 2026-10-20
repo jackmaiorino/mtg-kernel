@@ -101,84 +101,89 @@ fn digest(bytes: &[u8]) -> String {
 /// Actual source digest, not a fabricated generated catalog identity. Include
 /// the resolver, engine recipient rules, definitions/programs and facet types.
 pub fn producer_sha256_v2() -> String {
-    let sources = [
-        ("rules_meaning_v2.rs", include_str!("rules_meaning_v2.rs")),
-        ("engine.rs", include_str!("engine.rs")),
-        ("card_def.rs", include_str!("card_def.rs")),
-        ("trigger.rs", include_str!("trigger.rs")),
-        ("effect.rs", include_str!("effect.rs")),
-        ("build.rs", include_str!("../build.rs")),
-        ("facets.rs", include_str!("rules_vector_v1/facets.rs")),
-        (
-            "bloodthirsty_conqueror_v49/custody.rs",
-            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        ),
-        (
-            "linked_aura_operation_v1.rs",
-            include_str!("linked_aura_operation_v1.rs"),
-        ),
-        ("planeswalker_v1.rs", include_str!("planeswalker_v1.rs")),
-        ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
-        ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
-        ("progenitus_v1.rs", include_str!("progenitus_v1.rs")),
-        ("fiendish_panda_v1.rs", include_str!("fiendish_panda_v1.rs")),
-        ("life_gain_turn_v1.rs", include_str!("life_gain_turn_v1.rs")),
-        ("midnight_snack_v1.rs", include_str!("midnight_snack_v1.rs")),
-        ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
-        ("mana.rs", include_str!("mana.rs")),
-        ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
-        ("event.rs", include_str!("event.rs")),
-        ("rl.rs", include_str!("rl.rs")),
-        (
-            "standard_cast_convoke.rs",
-            include_str!("standard_cast_convoke.rs"),
-        ),
-        (
-            "engine/mandatory_cast_cost_v1.rs",
-            include_str!("engine/mandatory_cast_cost_v1.rs"),
-        ),
-        (
-            "rules_meaning_next_five_v59.rs",
-            include_str!("rules_meaning_next_five_v59.rs"),
-        ),
-        (
-            "effect/thousand_year_storm_v1.rs",
-            include_str!("effect/thousand_year_storm_v1.rs"),
-        ),
-        (
-            "effect/standard_copy.rs",
-            include_str!("effect/standard_copy.rs"),
-        ),
-        (
-            "standard_spell_copy.rs",
-            include_str!("standard_spell_copy.rs"),
-        ),
-        ("event_history_v1.rs", include_str!("event_history_v1.rs")),
-        (
-            "time-stop-native-semantic-source/v1",
-            crate::engine::time_stop_v1::source_sha256_v1(),
-        ),
-        (
-            "genesis-wave-native-source/v1",
-            crate::effect::genesis_wave_v1::source_sha256_v1(),
-        ),
-        (
-            "engine/tinybones_v72.rs",
-            include_str!("engine/tinybones_v72.rs"),
-        ),
-    ];
-    let mut hash = Sha256::new();
-    hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());
-    for (path, source) in sources {
-        hash.update([0]);
-        hash.update(path.as_bytes());
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            let sources = [
+                ("rules_meaning_v2.rs", include_str!("rules_meaning_v2.rs")),
+                ("engine.rs", include_str!("engine.rs")),
+                ("card_def.rs", include_str!("card_def.rs")),
+                ("trigger.rs", include_str!("trigger.rs")),
+                ("effect.rs", include_str!("effect.rs")),
+                ("build.rs", include_str!("../build.rs")),
+                ("facets.rs", include_str!("rules_vector_v1/facets.rs")),
+                (
+                    "bloodthirsty_conqueror_v49/custody.rs",
+                    include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+                ),
+                (
+                    "linked_aura_operation_v1.rs",
+                    include_str!("linked_aura_operation_v1.rs"),
+                ),
+                ("planeswalker_v1.rs", include_str!("planeswalker_v1.rs")),
+                ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
+                ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
+                ("progenitus_v1.rs", include_str!("progenitus_v1.rs")),
+                ("fiendish_panda_v1.rs", include_str!("fiendish_panda_v1.rs")),
+                ("life_gain_turn_v1.rs", include_str!("life_gain_turn_v1.rs")),
+                ("midnight_snack_v1.rs", include_str!("midnight_snack_v1.rs")),
+                ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
+                ("mana.rs", include_str!("mana.rs")),
+                ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
+                ("event.rs", include_str!("event.rs")),
+                ("rl.rs", include_str!("rl.rs")),
+                (
+                    "standard_cast_convoke.rs",
+                    include_str!("standard_cast_convoke.rs"),
+                ),
+                (
+                    "engine/mandatory_cast_cost_v1.rs",
+                    include_str!("engine/mandatory_cast_cost_v1.rs"),
+                ),
+                (
+                    "rules_meaning_next_five_v59.rs",
+                    include_str!("rules_meaning_next_five_v59.rs"),
+                ),
+                (
+                    "effect/thousand_year_storm_v1.rs",
+                    include_str!("effect/thousand_year_storm_v1.rs"),
+                ),
+                (
+                    "effect/standard_copy.rs",
+                    include_str!("effect/standard_copy.rs"),
+                ),
+                (
+                    "standard_spell_copy.rs",
+                    include_str!("standard_spell_copy.rs"),
+                ),
+                ("event_history_v1.rs", include_str!("event_history_v1.rs")),
+                (
+                    "time-stop-native-semantic-source/v1",
+                    crate::engine::time_stop_v1::source_sha256_v1(),
+                ),
+                (
+                    "genesis-wave-native-source/v1",
+                    crate::effect::genesis_wave_v1::source_sha256_v1(),
+                ),
+                (
+                    "engine/tinybones_v72.rs",
+                    include_str!("engine/tinybones_v72.rs"),
+                ),
+            ];
+            let mut hash = Sha256::new();
+            hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());
+            for (path, source) in sources {
+                hash.update([0]);
+                hash.update(path.as_bytes());
+                hash.update([0]);
+                hash.update(source.as_bytes());
+            }
+            hash.finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .clone()
 }
 
 pub fn live_selector_v2() -> Result<MeaningSelectorV2, MeaningErrorV2> {

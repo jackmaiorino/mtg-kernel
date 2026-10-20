@@ -83,7 +83,7 @@ impl WorldV1 {
             return Err("Panda original input prefix moved forward".into());
         }
         let mut original: GameState =
-            serde_json::from_slice(&self.bytes).map_err(|e| e.to_string())?;
+            crate::retained_world_parse_v1::parse_world(&self.bytes).map_err(|e| e.to_string())?;
         if !original.engine.event_history.is_empty() {
             return Err("Panda private world contains recursive history".into());
         }

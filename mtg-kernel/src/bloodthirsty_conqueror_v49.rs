@@ -341,14 +341,16 @@ impl ObserverInputV49 {
         {
             return Err("Conqueror actual loss operation changed".into());
         }
-        let mut original: GameState =
-            serde_json::from_slice(&self.original_world).map_err(|e| e.to_string())?;
+        let original: GameState = crate::retained_world_parse_v1::parse_world(&self.original_world)
+            .map_err(|e| e.to_string())?;
         let mut observed: GameState =
-            serde_json::from_slice(&self.observer_world).map_err(|e| e.to_string())?;
+            crate::retained_world_parse_v1::parse_world(&self.observer_world)
+                .map_err(|e| e.to_string())?;
         if !original.engine.event_history.is_empty() || !observed.engine.event_history.is_empty() {
             return Err("Conqueror recursive original input history".into());
         }
-        original.engine.event_history = state.engine.event_history[..start].to_vec().into();
+        // `original` is read below only for turn, step, active player and
+        // life totals, none of which depend on its history.
         observed.engine.event_history = state.engine.event_history[..end].to_vec().into();
         if original.turn_key_v1() != observed.turn_key_v1()
             || original.active_player != observed.active_player

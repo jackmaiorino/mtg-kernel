@@ -11,6 +11,8 @@
 //! count, or the output path: each is a pre-registered choice, and a
 //! silently defaulted one would be a choice made by accident.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::native_checkpoint_shadow_stdio_v1::ShadowCheckpointAuthorityV1;
 use mtg_kernel::native_tts_s1_corpus_v1::{
     build_tts_s1_corpus_v1, publish_tts_s1_corpus_v1, TtsS1CorpusConfigV1,

@@ -1,3 +1,5 @@
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::limited_session_v1::{LimitedJsonlServerV1, MAX_LIMITED_LINE_BYTES_V1};
 use std::io::{self, BufRead, Read, Write};
 

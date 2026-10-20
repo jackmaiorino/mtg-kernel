@@ -920,9 +920,8 @@ mod tests {
         // Physical registered-permanent setup plus actual declaration/targeting;
         // the counter is the accepted exact-ID primitive, not a printed Counterspell.
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = crate::policy_observation_v6::tests::ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state =
+                crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
             state.step = crate::state::Step::DeclareAttackers;
             let source = crate::policy_observation_v6::tests::put(
                 &mut state,

@@ -62,7 +62,28 @@ fn input(
     FastActorDecisionV1,
     AkromaDecisionBindingV40,
 ) {
-    let session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+    held_input(FastActorSessionV1::from_akroma_v40_fixture_state(state))
+}
+/// The caster's own priority window over its held spell: the session surface
+/// passes it automatically, so this uses the engine's priority windows.
+fn caster_input(
+    state: GameState,
+) -> (
+    FastActorSessionV1,
+    FastActorDecisionV1,
+    AkromaDecisionBindingV40,
+) {
+    held_input(FastActorSessionV1::from_akroma_v40_engine_priority_fixture(
+        state,
+    ))
+}
+fn held_input(
+    session: FastActorSessionV1,
+) -> (
+    FastActorSessionV1,
+    FastActorDecisionV1,
+    AkromaDecisionBindingV40,
+) {
     let FastActorResponseV1::Decision(expected) = session.current_response() else {
         panic!("genuine held decision");
     };
@@ -137,22 +158,53 @@ fn registered_employment_real_held_and_resolved_binding_forgery_and_restore_both
         assert_eq!(input(restored).2.observation, binding.observation);
     }
 }
+/// Ajani is Full: V40 keeps the scoped V12 recipient check and refuses it,
+/// and its V42 successor binds the full loyalty with the same scoping.
 #[test]
-fn registered_partial_ajani_recipient_full_loyalty_binding_remains_scoped_both_seats() {
+fn registered_full_ajani_recipient_refuses_v40_and_v42_loyalty_binding_remains_scoped_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
+        // The registered Heartfire V12 recipient fixture: the actor holds a
+        // genuine land choice while the opponent's walker is on the battlefield.
         let mut state = ready_state_for(actor);
-        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        put(&mut state, actor, "Forest", Zone::Hand);
+        put(&mut state, actor, "Mountain", Zone::Hand);
+        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+        // A real zone change installs the entering loyalty row; a direct
+        // battlefield placement would leave the walker without one.
         let walker = put(
             &mut state,
             actor.opponent(),
             "Ajani, Caller of the Pride",
-            Zone::Battlefield,
+            Zone::Hand,
+        );
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(walker, Zone::Battlefield),
         );
         assert_eq!(crate::planeswalker_v1::loyalty(&state, walker), Some(4));
-        let (mut session, expected, binding) = input(state);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let refused = FastActorSessionV1::from_akroma_v40_fixture_state(state.clone());
+        let FastActorResponseV1::Terminal(terminal) = refused.current_response() else {
+            panic!(
+                "V40 must refuse a Full Ajani recipient: {:?}",
+                refused.current_response()
+            );
+        };
         assert_eq!(
-            binding
-                .observation
+            terminal.terminal_reason,
+            "fail_closed:akroma_v40:Heartfire V12 unsupported or stale loyalty recipient"
+        );
+        assert_eq!(serde_json::to_vec(&refused.state).unwrap(), bytes);
+        let mut session = FastActorSessionV1::from_ajani_v42_fixture_state(state);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("genuine held decision: {:?}", session.current_response());
+        };
+        assert_eq!(expected.acting_player, actor.into());
+        let (observation, _, binding) = session
+            .ajani_current_decision_input_v42(expected, expected.acting_player)
+            .unwrap();
+        assert_eq!(
+            observation
                 .projection
                 .surface
                 .engine_context
@@ -162,22 +214,22 @@ fn registered_partial_ajani_recipient_full_loyalty_binding_remains_scoped_both_s
                 .len(),
             1
         );
-        crate::planeswalker_v1::change_loyalty(session.akroma_fixture_state_mut(), walker, 1);
+        crate::planeswalker_v1::change_loyalty(session.ajani_fixture_state_mut(), walker, 1);
         let before = session.privileged_core_environment_hash();
         assert!(session
-            .akroma_validate_bound_decision_v40(expected, expected.acting_player, &binding)
+            .ajani_validate_bound_decision_v42(expected, expected.acting_player, &binding)
             .is_err());
         assert_eq!(session.privileged_core_environment_hash(), before);
         assert_eq!(
             crate::planeswalker_v1::remove_loyalty_row_for_test_v1(
-                session.akroma_fixture_state_mut(),
+                session.ajani_fixture_state_mut(),
                 walker
             ),
             Some(5)
         );
         let before = session.privileged_core_environment_hash();
         assert!(session
-            .akroma_current_decision_input_v40(expected, expected.acting_player)
+            .ajani_current_decision_input_v42(expected, expected.acting_player)
             .is_err());
         assert_eq!(session.privileged_core_environment_hash(), before);
     }
@@ -198,7 +250,7 @@ fn actual_memorial_and_employment_control_grants_full_union_and_legacy_refusal_b
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
         state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
         cast_target(&mut state, actor, spell, target);
-        let (session, expected, held) = input(state.clone());
+        let (session, expected, held) = caster_input(state.clone());
         assert!(held.observation.grants[0]
             .recipients
             .iter()

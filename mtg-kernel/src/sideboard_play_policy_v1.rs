@@ -185,6 +185,10 @@ pub struct FrozenPlayDecisionScoresV1 {
 pub struct FrozenPlayPolicyV1 {
     model: NativePolicyValueNetV1,
     forward_scratch: NativePolicyValueForwardScratchV1,
+    /// Exact per-row forward cache for `model`, made on first use (boxed: it
+    /// must not grow this struct, which moves by value) and dropped when the
+    /// parameters are replaced.
+    row_cache: Option<Box<crate::native_policy_value_net_v1::ForwardRowCacheV1>>,
     embeddings: Vec<f32>,
     identity: PlayPolicyOriginV1,
     encoder: FlatDecisionEncoderV2,
@@ -478,6 +482,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -526,6 +531,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -609,6 +615,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -674,6 +681,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -739,6 +747,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -816,6 +825,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -998,6 +1008,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -1068,6 +1079,7 @@ impl FrozenPlayPolicyV1 {
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             forward_scratch: NativePolicyValueForwardScratchV1::default(),
+            row_cache: Default::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -1276,9 +1288,11 @@ impl FrozenPlayPolicyV1 {
         self.model
             .replace_parameter_snapshot_v1(parameters)
             .map_err(|e| e.to_string())?;
-        // A cached prediction and a probe namespace belong to the old parameters.
+        // A cached prediction, cached rows and a probe namespace belong to the
+        // old parameters.
         self.inference_cache = None;
         self.inference_probe = None;
+        self.row_cache = Default::default();
         // Replacement validates the whole model before committing. Copy the
         // installed table so sideboard inputs cannot retain ancestral rows.
         self.model.visit_parameters_v1(|name, _, values| {
@@ -1790,6 +1804,7 @@ impl FrozenPlayPolicyV1 {
         let scores = cached_forward_v1(
             &self.model,
             &mut self.forward_scratch,
+            self.row_cache.get_or_insert_with(Default::default),
             self.inference_cache.as_ref(),
             &mut self.inference_key,
             self.inference_probe.as_mut(),
@@ -1866,6 +1881,26 @@ impl FrozenPlayPolicyV1 {
         self.inference_cache.as_ref().map(|c| &c.cache)
     }
 
+    /// The exact masses (summing to 2**64) of the sampler `sample_scores`
+    /// would use for `logits`, without drawing. The unclamped collection
+    /// sampler has no integer masses and is refused.
+    pub fn deployed_masses_v1(&mut self, logits: &[f32]) -> Result<Vec<u128>, String> {
+        if self.collection_sampler.is_some() {
+            return Err(
+                "deployed masses are not defined for the unclamped collection sampler".into(),
+            );
+        }
+        let masses = if let Some(successor) = &mut self.successor {
+            successor.sampler.apportion(logits)
+        } else if let Some(fresh) = &mut self.fresh_successor {
+            fresh.sampler.apportion(logits)
+        } else {
+            self.sampler.apportion(logits)
+        }
+        .map_err(|e| e.to_string())?;
+        Ok(masses.to_vec())
+    }
+
     fn sample_scores(
         &mut self,
         logits: &[f32],
@@ -1930,6 +1965,7 @@ impl FrozenPlayPolicyV1 {
 fn cached_forward_v1(
     model: &NativePolicyValueNetV1,
     scratch: &mut NativePolicyValueForwardScratchV1,
+    rows: &mut crate::native_policy_value_net_v1::ForwardRowCacheV1,
     cache: Option<&crate::inference_cache_v1::PolicyCacheV1>,
     key: &mut Vec<u8>,
     probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
@@ -1963,16 +1999,34 @@ fn cached_forward_v1(
         outcome = CallOutcomeV1::Miss;
     }
     let span_forward = span(Bucket::PolicyForward);
-    let output = match path {
-        ForwardPathV1::TransferV3 => model
-            .forward_feature_transfer_v3_with_scratch_v1(view, scratch, mode)
-            .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?,
-        ForwardPathV1::TransferV4 => model
-            .forward_feature_transfer_v4_with_scratch_v1(view, scratch, mode)
-            .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?,
-        ForwardPathV1::Flat => model
-            .forward_with_scratch_v1(view, scratch, mode)
-            .map_err(|e| format!("frozen scalar inference: {e:?}"))?,
+    // The row cache is exact; MTG_KERNEL_ROW_CACHE=0 turns it off.
+    let output = if row_cache_enabled_v1() {
+        let (config, what) = match path {
+            ForwardPathV1::TransferV3 => (
+                model.feature_transfer_config_v3(),
+                "explicit V3 frozen feature transfer",
+            ),
+            ForwardPathV1::TransferV4 => (
+                model.feature_transfer_config_v4(),
+                "explicit V4 frozen feature transfer",
+            ),
+            ForwardPathV1::Flat => (model.config_v1(), "frozen scalar inference"),
+        };
+        model
+            .forward_rows_cached_with_scratch_v1(view, config, scratch, rows, mode)
+            .map_err(|e| format!("{what}: {e:?}"))?
+    } else {
+        match path {
+            ForwardPathV1::TransferV3 => model
+                .forward_feature_transfer_v3_with_scratch_v1(view, scratch, mode)
+                .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?,
+            ForwardPathV1::TransferV4 => model
+                .forward_feature_transfer_v4_with_scratch_v1(view, scratch, mode)
+                .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?,
+            ForwardPathV1::Flat => model
+                .forward_with_scratch_v1(view, scratch, mode)
+                .map_err(|e| format!("frozen scalar inference: {e:?}"))?,
+        }
     };
     drop(span_forward);
     if let (Some(c), Some(hash)) = (cache, hash) {
@@ -2246,6 +2300,15 @@ impl OwnedScoringV1 {
             &self.action_refs,
         )
     }
+}
+
+/// Whether the exact per-row forward cache is on: only on x86_64, where the
+/// cache tracks the arithmetic environment (MXCSR control, UCRT FMA3), and
+/// unless `MTG_KERNEL_ROW_CACHE=0`.
+fn row_cache_enabled_v1() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    cfg!(target_arch = "x86_64")
+        && *ON.get_or_init(|| std::env::var("MTG_KERNEL_ROW_CACHE").map_or(true, |v| v != "0"))
 }
 
 #[cfg(test)]
@@ -2842,6 +2905,74 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_embeddings
         );
+    }
+
+    /// TP1: the deployed masses are the active sampler's own Hamilton
+    /// apportionment (exactly 2**64 in total) and do not draw: sampling after
+    /// reading them is unchanged.
+    #[test]
+    fn deployed_masses_are_the_samplers_exact_apportionment() {
+        let logits = [0.25_f32, -1.5, 2.0, 0.0];
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3()
+            .fork_for_collection_v3()
+            .unwrap();
+        let masses = policy.deployed_masses_v1(&logits).unwrap();
+        assert_eq!(masses.iter().sum::<u128>(), 1u128 << 64);
+        let mut reference = FastCategoricalScratch::default();
+        let expected = match &mut policy.successor {
+            Some(successor) => successor.sampler.apportion(&logits).unwrap().to_vec(),
+            None => reference.apportion(&logits).unwrap().to_vec(),
+        };
+        assert_eq!(masses, expected);
+        assert!(masses[2] > masses[0] && masses[0] > masses[3] && masses[3] > masses[1]);
+        let mut drawn = FrozenPlayPolicyV1::training_fixture_v3()
+            .fork_for_collection_v3()
+            .unwrap();
+        policy.reset_sampling_v1([3, 4]);
+        drawn.reset_sampling_v1([3, 4]);
+        let _ = drawn.deployed_masses_v1(&logits).unwrap();
+        for _ in 0..16 {
+            assert_eq!(
+                policy.sample_scores(&logits, PlayerSeatV1::P0, 4).unwrap(),
+                drawn.sample_scores(&logits, PlayerSeatV1::P0, 4).unwrap()
+            );
+        }
+    }
+
+    /// TP1: the V4 fixture and a menu wider than the narrow sampler use their
+    /// active sampler's masses; the unclamped collection sampler is refused.
+    #[test]
+    fn deployed_masses_cover_v4_wide_menus_and_refuse_unclamped() {
+        let wide: Vec<f32> = (0..70)
+            .map(|i| ((i * 37) % 11) as f32 * 0.3 - 1.0)
+            .collect();
+        for mut policy in [
+            FrozenPlayPolicyV1::training_fixture_v3()
+                .fork_for_collection_v3()
+                .unwrap(),
+            FrozenPlayPolicyV1::training_fixture_v4()
+                .fork_for_collection_v3()
+                .unwrap(),
+        ] {
+            for logits in [vec![0.5_f32, -0.25, 1.0], wide.clone()] {
+                let masses = policy.deployed_masses_v1(&logits).unwrap();
+                assert_eq!(masses.len(), logits.len());
+                assert_eq!(masses.iter().sum::<u128>(), 1u128 << 64);
+                let expected = if let Some(successor) = &mut policy.successor {
+                    successor.sampler.apportion(&logits).unwrap().to_vec()
+                } else if let Some(fresh) = &mut policy.fresh_successor {
+                    fresh.sampler.apportion(&logits).unwrap().to_vec()
+                } else {
+                    policy.sampler.apportion(&logits).unwrap().to_vec()
+                };
+                assert_eq!(masses, expected);
+            }
+        }
+        let mut unclamped = FrozenPlayPolicyV1::training_fixture_v3()
+            .fork_for_collection_v3()
+            .unwrap();
+        unclamped.enable_unclamped_collection_sampler_v1();
+        assert!(unclamped.deployed_masses_v1(&[0.0, 1.0]).is_err());
     }
 
     /// Proves the reconciliation layer, not just the raw action slice:

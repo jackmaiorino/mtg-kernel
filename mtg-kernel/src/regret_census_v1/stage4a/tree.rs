@@ -52,19 +52,38 @@ struct Handles {
     order: Vec<u64>,
     /// Smallest `zone_change_count` shown per object.
     min_zcc: HashMap<u64, u64>,
-    /// Distinct continuous-effect `timestamp` values (sorted later).
+    /// Each handle's position in `order`.
+    position: HashMap<u64, u64>,
+    /// Distinct continuous-effect `timestamp` values, sorted before `rewrite`.
     stamps: Vec<u64>,
 }
 
 impl Handles {
     fn see(&mut self, id: u64) {
-        if !self.order.contains(&id) {
+        let next = self.order.len() as u64;
+        if let std::collections::hash_map::Entry::Vacant(e) = self.position.entry(id) {
+            e.insert(next);
             self.order.push(id);
         }
     }
 
     fn index(&self, id: u64) -> u64 {
-        self.order.iter().position(|&x| x == id).expect("collected") as u64
+        *self.position.get(&id).expect("collected")
+    }
+
+    /// Sorts and dedups `stamps`, so a timestamp's rank is a binary search.
+    fn finish(&mut self) {
+        self.stamps.sort_unstable();
+        self.stamps.dedup();
+    }
+
+    /// The number of distinct shown timestamps below `t`.
+    fn stamp_rank(&self, t: u64) -> u64 {
+        debug_assert!(
+            self.stamps.windows(2).all(|w| w[0] < w[1]),
+            "finish() first"
+        );
+        self.stamps.partition_point(|&s| s < t) as u64
     }
 }
 
@@ -82,9 +101,7 @@ fn collect_ids(v: &Value, h: &mut Handles) {
                 a.iter().filter_map(Value::as_u64).for_each(|id| h.see(id));
             }
             if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
-                if !h.stamps.contains(&t) {
-                    h.stamps.push(t);
-                }
+                h.stamps.push(t);
             }
             for x in m.values() {
                 collect_ids(x, h);
@@ -117,8 +134,7 @@ fn rewrite(v: &mut Value, h: &Handles) {
                 }
             }
             if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
-                let rank = h.stamps.iter().filter(|&&s| s < t).count() as u64;
-                m.insert("timestamp".into(), Value::from(rank));
+                m.insert("timestamp".into(), Value::from(h.stamp_rank(t)));
             }
             m.remove("zone_change_generation");
             for (k, x) in m.iter_mut() {
@@ -135,23 +151,37 @@ fn rewrite(v: &mut Value, h: &Handles) {
 /// Sort key of an observation element: its JSON with engine handles and
 /// incarnation counters masked.
 pub(crate) fn masked(v: &Value) -> String {
-    fn mask(v: &mut Value) {
-        match v {
-            Value::Object(m) => {
-                for k in ["arena_id", "zone_change_count", "attachments"] {
-                    if m.contains_key(k) {
-                        m.insert(k.into(), Value::Null);
+    /// Serializes as `v` with every `arena_id`, `zone_change_count` and
+    /// `attachments` value replaced by null, without cloning `v`: the same
+    /// bytes as nulling those fields in a copy and calling `to_string`.
+    struct Masked<'a>(&'a Value);
+    impl serde::Serialize for Masked<'_> {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::{SerializeMap, SerializeSeq};
+            match self.0 {
+                Value::Object(m) => {
+                    let mut map = s.serialize_map(Some(m.len()))?;
+                    for (k, x) in m {
+                        if matches!(k.as_str(), "arena_id" | "zone_change_count" | "attachments") {
+                            map.serialize_entry(k, &Value::Null)?;
+                        } else {
+                            map.serialize_entry(k, &Masked(x))?;
+                        }
                     }
+                    map.end()
                 }
-                m.values_mut().for_each(mask);
+                Value::Array(a) => {
+                    let mut seq = s.serialize_seq(Some(a.len()))?;
+                    for x in a {
+                        seq.serialize_element(&Masked(x))?;
+                    }
+                    seq.end()
+                }
+                other => other.serialize(s),
             }
-            Value::Array(a) => a.iter_mut().for_each(mask),
-            _ => {}
         }
     }
-    let mut x = v.clone();
-    mask(&mut x);
-    x.to_string()
+    serde_json::to_string(&Masked(v)).expect("a JSON value serializes")
 }
 
 /// Observation lists whose order carries no game information in this card
@@ -269,7 +299,7 @@ fn rank_counters(v: &mut Value) {
         match v {
             Value::Object(m) => {
                 if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
-                    let rank = all.iter().filter(|&&s| s < t).count() as u64;
+                    let rank = all.partition_point(|&s| s < t) as u64;
                     m.insert("timestamp".into(), Value::from(rank));
                 }
                 m.remove("zone_change_generation");
@@ -360,6 +390,7 @@ pub(crate) fn canon_prepared(
     for x in by_content {
         collect_ids(x, &mut handles);
     }
+    handles.finish();
     rewrite(&mut obs, &handles);
     for x in &mut sem {
         rewrite(x, &handles);
@@ -390,6 +421,389 @@ pub(crate) fn canon_prepared(
         min_zcc,
     };
     Ok((Canon { obs, menu, edges }, mapping))
+}
+
+/// `canon_prepared` for one prepared frame under any number of tie-rank
+/// choices, without copying or rewriting the view. What does not depend on
+/// tie ranks is worked out once: which lists the content sort orders, and
+/// each entry's content key. (An entry's key does not depend on tie ranks:
+/// ranks only order entries whose keys are equal, so an enclosing entry's
+/// masked bytes are the same under every choice.) Each `canon` then orders
+/// those lists for its ranks, collects handles in that order, and writes the
+/// relabeled bytes directly, exactly as `canon_prepared` would produce them
+/// from a copy (`S4A_CANON_CHECK=1` compares the two on every call).
+pub(crate) struct CanonPlan<'a> {
+    obs: &'a Value,
+    menu: &'a [Value],
+    /// Each sorted list's address, mapped to its index in `lists`.
+    ids: HashMap<usize, usize>,
+    /// Sorted lists, innermost first (the order `for_unordered_lists` sorts
+    /// them in).
+    lists: Vec<ListPlan<'a>>,
+    /// Menu entries in content order (the order their handles are indexed).
+    menu_order: Vec<usize>,
+}
+
+/// One list `sort_by_content` orders (two or more entries, all objects).
+struct ListPlan<'a> {
+    list: &'a [Value],
+    /// Entry indices in content-key order, equal keys in input order.
+    base: Vec<usize>,
+    /// Ranges of `base` with two or more equal keys, which tie ranks order.
+    runs: Vec<std::ops::Range<usize>>,
+}
+
+/// Entry order of every sorted list under one tie-rank choice (by list).
+type ListOrders<'p> = Vec<std::borrow::Cow<'p, [usize]>>;
+
+impl<'a> CanonPlan<'a> {
+    pub(crate) fn new(obs: &'a Value, menu: &'a [Value]) -> Self {
+        let mut plan = Self {
+            obs,
+            menu,
+            ids: HashMap::new(),
+            lists: Vec::new(),
+            menu_order: Vec::new(),
+        };
+        plan.plan_lists(obs);
+        let keys: Vec<String> = menu.iter().map(masked).collect();
+        let mut order: Vec<usize> = (0..menu.len()).collect();
+        order.sort_by(|&x, &y| keys[x].cmp(&keys[y]));
+        plan.menu_order = order;
+        plan
+    }
+
+    /// `for_unordered_lists` without mutation: plans every list it would
+    /// sort, innermost first.
+    fn plan_lists(&mut self, v: &'a Value) {
+        match v {
+            Value::Object(m) => {
+                for (k, x) in m {
+                    self.plan_lists(x);
+                    if UNORDERED_LISTS.contains(&k.as_str()) {
+                        if let Value::Array(a) = x {
+                            if a.iter().all(Value::is_array) {
+                                for inner in a {
+                                    if let Value::Array(i) = inner {
+                                        self.plan_list(i);
+                                    }
+                                }
+                            } else {
+                                self.plan_list(a);
+                            }
+                        }
+                    }
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| self.plan_lists(x)),
+            _ => {}
+        }
+    }
+
+    /// `sort_by_content`'s condition and keys, for one list.
+    fn plan_list(&mut self, a: &'a [Value]) {
+        if a.len() > 1 && a.iter().all(Value::is_object) {
+            let keys: Vec<String> = a.iter().map(|x| self.masked(x)).collect();
+            let mut base: Vec<usize> = (0..a.len()).collect();
+            // Stable: equal keys keep input order, as in `sort_by_content`.
+            base.sort_by(|&x, &y| keys[x].cmp(&keys[y]));
+            let mut runs = Vec::new();
+            let mut start = 0;
+            for i in 1..=base.len() {
+                if i == base.len() || keys[base[i]] != keys[base[start]] {
+                    if i - start > 1 {
+                        runs.push(start..i);
+                    }
+                    start = i;
+                }
+            }
+            self.ids.insert(a.as_ptr() as usize, self.lists.len());
+            self.lists.push(ListPlan {
+                list: a,
+                base,
+                runs,
+            });
+        }
+    }
+
+    /// `masked(x)` as `canon_prepared` computes it, after the lists inside
+    /// `x` are sorted: planned lists are written in key order.
+    fn masked(&self, x: &Value) -> String {
+        struct Masked<'p, 'a>(&'p CanonPlan<'a>, &'p Value);
+        impl serde::Serialize for Masked<'_, '_> {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::{SerializeMap, SerializeSeq};
+                match self.1 {
+                    Value::Object(m) => {
+                        let mut map = s.serialize_map(Some(m.len()))?;
+                        for (k, x) in m {
+                            if matches!(
+                                k.as_str(),
+                                "arena_id" | "zone_change_count" | "attachments"
+                            ) {
+                                map.serialize_entry(k, &Value::Null)?;
+                            } else {
+                                map.serialize_entry(k, &Masked(self.0, x))?;
+                            }
+                        }
+                        map.end()
+                    }
+                    Value::Array(a) => {
+                        let mut seq = s.serialize_seq(Some(a.len()))?;
+                        match self.0.list(a) {
+                            Some(l) => {
+                                for &i in &self.0.lists[l].base {
+                                    seq.serialize_element(&Masked(self.0, &a[i]))?;
+                                }
+                            }
+                            None => {
+                                for x in a {
+                                    seq.serialize_element(&Masked(self.0, x))?;
+                                }
+                            }
+                        }
+                        seq.end()
+                    }
+                    other => other.serialize(s),
+                }
+            }
+        }
+        serde_json::to_string(&Masked(self, x)).expect("a JSON value serializes")
+    }
+
+    /// The plan index of a sorted list.
+    fn list(&self, a: &[Value]) -> Option<usize> {
+        if a.len() < 2 {
+            return None;
+        }
+        self.ids.get(&(a.as_ptr() as usize)).copied()
+    }
+
+    /// Each sorted list's order under `ranks`: within a run of equal keys,
+    /// by the rank of each entry's own handle (unranked last), stably.
+    fn orders(&self, ranks: Option<&TieRanks>) -> ListOrders<'_> {
+        let mut orders: ListOrders<'_> = Vec::with_capacity(self.lists.len());
+        for l in &self.lists {
+            let Some(ranks) = ranks.filter(|_| !l.runs.is_empty()) else {
+                orders.push(std::borrow::Cow::Borrowed(&l.base));
+                continue;
+            };
+            let mut order = l.base.clone();
+            for run in &l.runs {
+                // Inner lists come earlier in `lists`, so their orders are
+                // known: `own_handle` reads the entry as sorted.
+                let mut keyed: Vec<(u32, usize)> = order[run.clone()]
+                    .iter()
+                    .map(|&i| {
+                        let r = self
+                            .own_handle(&l.list[i], &orders)
+                            .and_then(|h| ranks.get(&h).copied())
+                            .unwrap_or(u32::MAX);
+                        (r, i)
+                    })
+                    .collect();
+                keyed.sort_by_key(|&(r, _)| r);
+                for (slot, (_, i)) in order[run.clone()].iter_mut().zip(keyed) {
+                    *slot = i;
+                }
+            }
+            orders.push(std::borrow::Cow::Owned(order));
+        }
+        orders
+    }
+
+    /// `own_handle` on an entry whose inner lists are in `orders`.
+    fn own_handle<'v>(&self, v: &'v Value, orders: &ListOrders<'_>) -> Option<u64> {
+        let mut level = vec![v];
+        while !level.is_empty() {
+            let mut next: Vec<&'v Value> = Vec::new();
+            for x in level {
+                match x {
+                    Value::Object(m) => {
+                        if let Some(id) = m.get("arena_id").and_then(Value::as_u64) {
+                            return Some(id);
+                        }
+                        next.extend(m.values());
+                    }
+                    Value::Array(a) => match self.list(a) {
+                        Some(l) => next.extend(orders[l].iter().map(|&i| &a[i])),
+                        None => next.extend(a.iter()),
+                    },
+                    _ => {}
+                }
+            }
+            level = next;
+        }
+        None
+    }
+
+    /// `collect_ids` on `v` with its sorted lists in `orders`.
+    fn collect_ids(&self, v: &Value, h: &mut Handles, orders: &ListOrders<'_>) {
+        match v {
+            Value::Object(m) => {
+                if let Some(id) = m.get("arena_id").and_then(Value::as_u64) {
+                    h.see(id);
+                    if let Some(z) = m.get("zone_change_count").and_then(Value::as_u64) {
+                        let e = h.min_zcc.entry(id).or_insert(z);
+                        *e = (*e).min(z);
+                    }
+                }
+                if let Some(Value::Array(a)) = m.get("attachments") {
+                    a.iter().filter_map(Value::as_u64).for_each(|id| h.see(id));
+                }
+                if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
+                    h.stamps.push(t);
+                }
+                for x in m.values() {
+                    self.collect_ids(x, h, orders);
+                }
+            }
+            Value::Array(a) => match self.list(a) {
+                Some(l) => orders[l]
+                    .iter()
+                    .for_each(|&i| self.collect_ids(&a[i], h, orders)),
+                None => a.iter().for_each(|x| self.collect_ids(x, h, orders)),
+            },
+            _ => {}
+        }
+    }
+
+    /// The bytes `serde_json::to_vec` writes for `v` after `rewrite`
+    /// (`relabel`) and with sorted lists in `orders`. `rewrite` does not
+    /// descend into `attachments`, so their contents are written as they
+    /// are (`relabel` false), lists still sorted.
+    fn write(
+        &self,
+        v: &Value,
+        relabel: bool,
+        h: &Handles,
+        orders: &ListOrders<'_>,
+        out: &mut Vec<u8>,
+    ) {
+        let leaf = |x: &Value, out: &mut Vec<u8>| {
+            serde_json::to_writer(&mut *out, x).expect("a JSON value serializes");
+        };
+        let number = |n: u64, out: &mut Vec<u8>| leaf(&Value::from(n), out);
+        match v {
+            Value::Object(m) => {
+                out.push(b'{');
+                let id = if relabel {
+                    m.get("arena_id").and_then(Value::as_u64)
+                } else {
+                    None
+                };
+                let mut first = true;
+                for (k, x) in m {
+                    if relabel && k == "zone_change_generation" {
+                        continue;
+                    }
+                    if !first {
+                        out.push(b',');
+                    }
+                    first = false;
+                    serde_json::to_writer(&mut *out, k).expect("a JSON key serializes");
+                    out.push(b':');
+                    match (relabel, k.as_str()) {
+                        (true, "arena_id") if id.is_some() => {
+                            number(h.index(id.expect("checked")), out);
+                        }
+                        (true, "zone_change_count") if id.is_some() && x.as_u64().is_some() => {
+                            let z = x.as_u64().expect("checked");
+                            let base = h.min_zcc.get(&id.expect("checked")).copied().unwrap_or(z);
+                            number(z - base, out);
+                        }
+                        (true, "attachments") => match x {
+                            Value::Array(a) => {
+                                out.push(b'[');
+                                for (i, e) in a.iter().enumerate() {
+                                    if i > 0 {
+                                        out.push(b',');
+                                    }
+                                    match e.as_u64() {
+                                        Some(id) => number(h.index(id), out),
+                                        None => self.write(e, false, h, orders, out),
+                                    }
+                                }
+                                out.push(b']');
+                            }
+                            other => self.write(other, false, h, orders, out),
+                        },
+                        (true, "timestamp") if x.as_u64().is_some() => {
+                            number(h.stamp_rank(x.as_u64().expect("checked")), out);
+                        }
+                        _ => self.write(x, relabel, h, orders, out),
+                    }
+                }
+                out.push(b'}');
+            }
+            Value::Array(a) => {
+                out.push(b'[');
+                let item = |n: usize, x: &Value, out: &mut Vec<u8>| {
+                    if n > 0 {
+                        out.push(b',');
+                    }
+                    self.write(x, relabel, h, orders, out);
+                };
+                match self.list(a) {
+                    Some(l) => {
+                        for (n, &i) in orders[l].iter().enumerate() {
+                            item(n, &a[i], out);
+                        }
+                    }
+                    None => {
+                        for (n, x) in a.iter().enumerate() {
+                            item(n, x, out);
+                        }
+                    }
+                }
+                out.push(b']');
+            }
+            other => leaf(other, out),
+        }
+    }
+
+    /// `canon_prepared(obs.clone(), menu.to_vec(), ranks).0`.
+    pub(crate) fn canon(&self, ranks: Option<&TieRanks>) -> Result<Canon, PlayErr> {
+        let orders = self.orders(ranks);
+        let mut handles = Handles::default();
+        self.collect_ids(self.obs, &mut handles, &orders);
+        // Menu lists are never sorted (no menu list is planned).
+        for &i in &self.menu_order {
+            self.collect_ids(&self.menu[i], &mut handles, &orders);
+        }
+        handles.finish();
+        let mut obs = Vec::new();
+        self.write(self.obs, true, &handles, &orders, &mut obs);
+        let mut raw: Vec<Vec<u8>> = Vec::with_capacity(self.menu.len());
+        let mut menu: Vec<Vec<u8>> = Vec::with_capacity(self.menu.len());
+        for x in self.menu {
+            let mut b = Vec::new();
+            self.write(x, true, &handles, &orders, &mut b);
+            let dup = raw.iter().filter(|r| **r == b).count() as u64;
+            raw.push(b.clone());
+            let mut m = b;
+            if dup > 0 {
+                m.push(b'#');
+                m.extend_from_slice(&dup.to_le_bytes());
+            }
+            menu.push(m);
+        }
+        let mut edges = menu.clone();
+        edges.sort();
+        let c = Canon { obs, menu, edges };
+        if canon_check() {
+            let (reference, _) = canon_prepared(self.obs.clone(), self.menu.to_vec(), ranks)?;
+            assert_eq!(c, reference, "CanonPlan differs from canon_prepared");
+        }
+        Ok(c)
+    }
+}
+
+/// Whether `S4A_CANON_CHECK=1` asks `CanonPlan::canon` to compare every
+/// result with `canon_prepared`.
+fn canon_check() -> bool {
+    static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CHECK.get_or_init(|| std::env::var("S4A_CANON_CHECK").is_ok_and(|v| v == "1"))
 }
 
 pub(crate) fn child_key(parent: &Key, edge: &[u8], c: &Canon) -> Key {
@@ -912,6 +1326,224 @@ pub(crate) fn live_index(c: &Canon, edge: &[u8]) -> Result<u32, PlayErr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    /// A random frame for `canon_plan_matches_canon_prepared`: few handles,
+    /// card ids and damage values, so lists hold many entries equal under the
+    /// mask; nested and per-seat unordered lists; attachments holding numbers,
+    /// objects or a non-list; handles and counters that are not integers.
+    fn random_frame(rng: &mut SplitMix64) -> (Value, Vec<Value>) {
+        fn pick(rng: &mut SplitMix64, n: u64) -> u64 {
+            rng.next_u64() % n
+        }
+        fn leaf(rng: &mut SplitMix64) -> Value {
+            match pick(rng, 7) {
+                0 => json!(null),
+                1 => json!(pick(rng, 3) == 0),
+                2 => json!(pick(rng, 4)),
+                3 => json!(["a", "b\"\\\u{1}", "\u{e9}"][pick(rng, 3) as usize]),
+                4 => json!(-(pick(rng, 3) as i64)),
+                5 => json!(0.5),
+                _ => json!({}),
+            }
+        }
+        fn handle(rng: &mut SplitMix64) -> Value {
+            match pick(rng, 12) {
+                0 => json!(null),
+                1 => json!("h"),
+                _ => json!(1 + pick(rng, 7)),
+            }
+        }
+        fn entry(rng: &mut SplitMix64, depth: u32) -> Value {
+            let mut m = serde_json::Map::new();
+            let mut stable = serde_json::Map::new();
+            stable.insert("arena_id".into(), handle(rng));
+            stable.insert("card_db_id".into(), json!(pick(rng, 2)));
+            if pick(rng, 4) > 0 {
+                stable.insert("zone_change_count".into(), json!(pick(rng, 3)));
+            }
+            if pick(rng, 6) == 0 {
+                stable.insert("zone_change_generation".into(), json!(pick(rng, 9)));
+            }
+            m.insert("stable".into(), Value::Object(stable));
+            m.insert("damage".into(), json!(pick(rng, 2)));
+            match pick(rng, 5) {
+                0 => {}
+                1 => {
+                    m.insert("attachments".into(), json!(pick(rng, 3)));
+                }
+                2 if depth > 0 => {
+                    m.insert(
+                        "attachments".into(),
+                        json!([1 + pick(rng, 7), value(rng, depth - 1)]),
+                    );
+                }
+                _ => {
+                    let a: Vec<Value> =
+                        (0..pick(rng, 3)).map(|_| json!(1 + pick(rng, 7))).collect();
+                    m.insert("attachments".into(), Value::Array(a));
+                }
+            }
+            if pick(rng, 3) == 0 {
+                m.insert("timestamp".into(), json!(100 + pick(rng, 4)));
+            }
+            if depth > 0 && pick(rng, 3) == 0 {
+                m.insert("cards".into(), list(rng, depth - 1));
+            }
+            if pick(rng, 5) == 0 {
+                m.insert("x".into(), leaf(rng));
+            }
+            Value::Object(m)
+        }
+        fn list(rng: &mut SplitMix64, depth: u32) -> Value {
+            let n = pick(rng, 5);
+            match pick(rng, 6) {
+                0 => Value::Array((0..n).map(|_| leaf(rng)).collect()),
+                1 => json!([
+                    Value::Array((0..n).map(|_| entry(rng, depth)).collect()),
+                    Value::Array((0..pick(rng, 4)).map(|_| entry(rng, depth)).collect())
+                ]),
+                _ => Value::Array((0..n).map(|_| entry(rng, depth)).collect()),
+            }
+        }
+        fn value(rng: &mut SplitMix64, depth: u32) -> Value {
+            let mut m = serde_json::Map::new();
+            for k in ["battlefield", "exile", "stack", "object_relations", "y"] {
+                if pick(rng, 2) == 0 {
+                    m.insert(k.into(), list(rng, depth));
+                }
+            }
+            if pick(rng, 2) == 0 {
+                m.insert("arena_id".into(), handle(rng));
+                m.insert("zone_change_count".into(), json!(pick(rng, 3)));
+            }
+            if pick(rng, 3) == 0 {
+                m.insert(
+                    "timestamp".into(),
+                    [json!("t"), json!(7), json!(101)][pick(rng, 3) as usize].clone(),
+                );
+            }
+            if pick(rng, 4) == 0 {
+                m.insert("zone_change_generation".into(), json!(1));
+            }
+            Value::Object(m)
+        }
+        let obs = value(rng, 2);
+        let menu = (0..pick(rng, 5))
+            .map(|_| match pick(rng, 4) {
+                0 => json!({"action_kind":"pass"}),
+                1 => json!({"action_kind":"cast","cards":list(rng, 0)}),
+                _ => json!({"action_kind":"attack",
+                    "source":{"arena_id":handle(rng),"zone_change_count":pick(rng, 3)}}),
+            })
+            .collect();
+        (obs, menu)
+    }
+
+    /// `CanonPlan` gives exactly `canon_prepared`'s canonical view, for the
+    /// legacy rule and for arbitrary tie ranks (including ranks for handles
+    /// that are not tied and repeated rank values).
+    #[test]
+    fn canon_plan_matches_canon_prepared() {
+        let mut rng = SplitMix64::seed(20261019);
+        let (mut tied, mut reordered) = (0, 0);
+        for _ in 0..4000 {
+            let (obs, menu) = random_frame(&mut rng);
+            let plan = CanonPlan::new(&obs, &menu);
+            tied += usize::from(plan.lists.iter().any(|l| !l.runs.is_empty()));
+            let reference = |ranks: Option<&TieRanks>| {
+                canon_prepared(obs.clone(), menu.clone(), ranks).unwrap().0
+            };
+            let legacy = plan.canon(None).unwrap();
+            assert_eq!(legacy, reference(None), "{obs} {menu:?}");
+            for _ in 0..3 {
+                let mut ranks = TieRanks::new();
+                for h in 1..=8u64 {
+                    if !rng.next_u64().is_multiple_of(3) {
+                        ranks.insert(h, (rng.next_u64() % 4) as u32);
+                    }
+                }
+                let ranked = plan.canon(Some(&ranks)).unwrap();
+                reordered += usize::from(ranked != legacy);
+                assert_eq!(ranked, reference(Some(&ranks)), "{obs} {menu:?} {ranks:?}");
+            }
+        }
+        // The frames exercise tie runs often, and ranks often change the view.
+        assert!(tied > 500 && reordered > 200, "{tied} {reordered}");
+    }
+
+    /// The clone-and-mask `masked` this module used before the streaming one.
+    fn masked_by_clone(v: &Value) -> String {
+        fn mask(v: &mut Value) {
+            match v {
+                Value::Object(m) => {
+                    for k in ["arena_id", "zone_change_count", "attachments"] {
+                        if m.contains_key(k) {
+                            m.insert(k.into(), Value::Null);
+                        }
+                    }
+                    m.values_mut().for_each(mask);
+                }
+                Value::Array(a) => a.iter_mut().for_each(mask),
+                _ => {}
+            }
+        }
+        let mut x = v.clone();
+        mask(&mut x);
+        x.to_string()
+    }
+
+    #[test]
+    fn streaming_mask_matches_clone_and_mask_bytes() {
+        let cases = [
+            serde_json::json!(null),
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!({"arena_id":7,"zone_change_count":2,"attachments":[3,4],"name":"Bolt"}),
+            serde_json::json!({"a":[{"arena_id":1,"x":{"arena_id":2,"attachments":[{"arena_id":9}]}}],
+                "f":1.5e-7,"g":-0.0,"h":18446744073709551615u64,"i":-9007199254740993i64,
+                "s":"quote \" back \\ tab \t uni \u{e9} ctl \u{1}","t":true,"n":null,
+                "zone_change_count":{"arena_id":3},"zz":[[{"zone_change_count":1}],[]]}),
+        ];
+        for v in &cases {
+            assert_eq!(masked(v), masked_by_clone(v), "{v}");
+            let mut w = v.clone();
+            sort_object_lists(&mut w);
+            assert_eq!(masked(&w), masked_by_clone(&w));
+        }
+    }
+
+    #[test]
+    fn stamp_ranks_count_distinct_smaller_timestamps() {
+        let v = serde_json::json!({"e":[{"timestamp":700},{"timestamp":40},{"timestamp":700},
+            {"timestamp":41},{"x":{"timestamp":5}}]});
+        let mut h = Handles::default();
+        collect_ids(&v, &mut h);
+        h.finish();
+        let distinct = [5u64, 40, 41, 700];
+        for t in [0u64, 5, 6, 40, 41, 699, 700, 701] {
+            let expected = distinct.iter().filter(|&&s| s < t).count() as u64;
+            assert_eq!(h.stamp_rank(t), expected, "{t}");
+        }
+        let mut r = v.clone();
+        rank_counters(&mut r);
+        assert_eq!(r["e"][0]["timestamp"], 3);
+        assert_eq!(r["e"][1]["timestamp"], 1);
+        assert_eq!(r["e"][3]["timestamp"], 2);
+        assert_eq!(r["e"][4]["x"]["timestamp"], 0);
+    }
+
+    #[test]
+    fn handle_positions_are_first_appearance() {
+        let mut h = Handles::default();
+        for id in [9u64, 3, 9, 7, 3, 1] {
+            h.see(id);
+        }
+        assert_eq!(h.order, vec![9, 3, 7, 1]);
+        for (i, id) in h.order.iter().enumerate() {
+            assert_eq!(h.index(*id), i as u64);
+        }
+    }
 
     fn node(k: usize) -> Node {
         let seeds = RootSeeds {
@@ -1153,6 +1785,7 @@ mod tests {
             "b":[{"arena_id":12,"zone_change_count":3},{"arena_id":90,"zone_change_count":9}]});
         let mut h = Handles::default();
         collect_ids(&v, &mut h);
+        h.finish();
         rewrite(&mut v, &h);
         assert_eq!(v["a"]["arena_id"], 0);
         assert_eq!(v["a"]["zone_change_count"], 0);
@@ -1165,6 +1798,7 @@ mod tests {
             "p":{"object":{"arena_id":9},"zone_change_generation":31}});
         let mut h = Handles::default();
         collect_ids(&w, &mut h);
+        h.finish();
         rewrite(&mut w, &h);
         assert_eq!(w["c"]["attachments"], serde_json::json!([1, 0]));
         assert_eq!(

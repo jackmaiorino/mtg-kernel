@@ -63,7 +63,21 @@ REPLICATES = (1, 2, 3)
 SD1_NS = "sd1"
 SD1_REPLICATES = tuple(range(1, 8))
 SD1_CELL = re.compile(r"^SD1-T-s([0-7])$")
-NAMESPACES = {RETENTION_NS: REPLICATES, SD1_NS: SD1_REPLICATES}
+# SQ1 (collab LANES/soft-q-teaching-20261018, design section 3): four
+# replicate seeds per lineage, every arm from the parent.
+SQ1_NS = "sq1-20261018"
+SQ1_REPLICATES = (1, 2, 3, 4)
+# TP1 Stage B (collab LANES/teacher-price-20261019, STAGE-B.md): eight
+# replicate seeds in r2, every arm from the parent.
+TP1B_NS = "tp1b-20261019"
+TP1B_REPLICATES = tuple(range(1, 9))
+# TP1 Stage B2 (STAGE-B2.md section 3): production seeds 1 to 8, and the
+# calibration namespace's seeds 101 (K1) and 102 (K2, O102).
+TP1B2_NS = "tp1b2-20261020"
+TP1B2_CAL_NS = "tp1b2-cal-20261020"
+NAMESPACES = {RETENTION_NS: REPLICATES, SD1_NS: SD1_REPLICATES, SQ1_NS: SQ1_REPLICATES,
+              TP1B_NS: TP1B_REPLICATES, TP1B2_NS: TP1B_REPLICATES, TP1B2_CAL_NS: (101, 102)}
+FROM_PARENT_NAMESPACES = (SD1_NS, SQ1_NS, TP1B_NS, TP1B2_NS, TP1B2_CAL_NS)
 SPY_LEARNER_EPISODES = pilot.DECKS * pilot.REPEATS * 2
 
 
@@ -181,8 +195,14 @@ def config(lineage: str, o_config: dict, source: dict | None, workers: int, outp
                     "a U collapse diagnostic cell's checkpoint does not start phase 2")
         value["initial_source"] = source
     require(namespace != SD1_NS or not drop_spy_learner, "SD1's phase 2 keeps every unit")
+    require(namespace != SQ1_NS or (source is None and replicate >= 1 and not drop_spy_learner),
+            "SQ1 runs start from the parent on replicate seeds 1 to 4 with every unit")
+    require(namespace != TP1B_NS or (source is None and replicate >= 1 and not drop_spy_learner),
+            "TP1 Stage B runs start from the parent on replicate seeds 1 to 8 with every unit")
+    require(namespace not in (TP1B2_NS, TP1B2_CAL_NS) or (source is None and replicate >= 1 and not drop_spy_learner),
+            "TP1 Stage B2 runs start from the parent on their replicate seeds with every unit")
     if replicate or drop_spy_learner:
-        require(source is not None or namespace == SD1_NS,
+        require(source is not None or namespace in FROM_PARENT_NAMESPACES,
                 "the retention options apply to phase 2, not to O's reproduction")
         value["iterations"] = retention_iterations(lineage, value["iterations"], replicate, drop_spy_learner,
                                                    namespace)
@@ -254,7 +274,7 @@ def main(argv=None) -> int:
         ap.error(f"argument --replicate: {a.replicate} is not a replicate of namespace {a.namespace}")
     if a.op == "config":
         require(not a.reproduce or a.replicate == 0, "O's reproduction keeps O's own seeds")
-        require(not a.from_parent or (a.namespace == SD1_NS and a.replicate >= 1 and not a.drop_spy_learner),
+        require(not a.from_parent or (a.namespace in FROM_PARENT_NAMESPACES and a.replicate >= 1 and not a.drop_spy_learner),
                 "--from-parent writes SD1's O-k: --namespace sd1 with --replicate 1 to 7")
         start = None if a.reproduce or a.from_parent else read_json(a.source)
         value = config(a.lineage, read_json(a.o_config), start, a.workers, a.output_directory,

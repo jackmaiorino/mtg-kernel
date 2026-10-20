@@ -21,6 +21,8 @@
 //! 0/2/3 for this bin, so I/O failure is folded into 3 alongside content
 //! rejection rather than adding an undocumented fourth code.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::native_population_refresh_builder_cycle4_v1::{
     build_cycle4_genesis_refresh_v1, build_cycle4_next_refresh_v1,
     cycle4_chain_manifest_filename_v1, cycle4_chain_panel_filename_v1, Cycle4ChainLinkV1,

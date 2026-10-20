@@ -21,6 +21,29 @@
 //! - Strict single-session JSONL reset/step boundary; parallelism and batching
 //!   are orchestrated outside the Rust process.
 
+/// The global allocator binaries in this crate install with
+/// [`fast_global_allocator!`]. It changes cost, not results: no result depends
+/// on where an allocation lands. Work bounded by time rather than by a fixed
+/// amount of work (a CPU-second search budget, as in the allocation
+/// experiment) is timing-dependent, as it is under host load, so a faster
+/// allocator can fit more into it. Provenance hashes over source files change
+/// with this commit as with any other.
+pub use mimalloc::MiMalloc as FastAllocatorV1;
+
+/// Installs [`FastAllocatorV1`] as the binary's global allocator. Call it
+/// once at the top level of each binary's main file. Not installed in: the
+/// limited env servers v3, v4 and v5, whose own source is part of the
+/// `producer_sha256` they report; `viewer_capture_v1`, whose output depends on
+/// how much fits in a wall-clock limit; and examples and tests that count
+/// allocations with their own allocator.
+#[macro_export]
+macro_rules! fast_global_allocator {
+    () => {
+        #[global_allocator]
+        static GLOBAL_ALLOCATOR: $crate::FastAllocatorV1 = $crate::FastAllocatorV1;
+    };
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
@@ -54,6 +77,7 @@ pub mod bounded_staleness_async_v1;
 pub mod card_def;
 pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
+pub(crate) mod continuous_source_frame_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
 pub mod creature_types_v60;
@@ -88,6 +112,7 @@ pub mod panda_public_v47;
 pub mod phoenix_public_v56;
 pub mod planeswalker_v1;
 pub(crate) mod progenitus_v1;
+pub(crate) mod retained_world_parse_v1;
 pub mod rules_meaning_elenda_v52;
 pub mod rules_meaning_embercleave_v65;
 pub mod rules_meaning_fake_your_own_death_v50;
@@ -280,6 +305,7 @@ pub(crate) mod deterministic_math_v1;
 // The run-wide choice between the platform libm and portable, bit-defined
 // tanh/exp/ln for training (collection forwards, replay checks, learner).
 pub(crate) mod training_math_v1;
+pub(crate) mod vector_tanh_v1;
 // Auditable CPU inference reference for Python kernel-policy-value-net-8;
 // deliberately not a production or performance backend.
 #[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]

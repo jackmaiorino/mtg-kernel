@@ -397,28 +397,49 @@ pub(crate) fn controlled_boost(state: &GameState, recipient: ObjectId) -> (i128,
     }
     let mut power = 0;
     let mut toughness = 0;
-    for (source, object) in state.objects.iter() {
+    let mut add = |source: ObjectId, object: &GameObject| {
         if object.zone != Zone::Battlefield
             || object.controller != target.controller
             || !owns_definition(object.card_def)
             || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
         {
-            continue;
+            return;
         }
         let Ok(color) = authenticated_color(state, source) else {
-            continue;
+            return;
         };
         if crate::engine::object_color_mask(state, recipient)
             & crate::card_def::mana_color_mask(color)
             == 0
         {
-            continue;
+            return;
         }
         let boost = CARD_DEFS[object.card_def as usize]
             .chosen_color_creature_boost_v1
             .unwrap();
         power += i128::from(boost.power);
         toughness += i128::from(boost.toughness);
+    };
+    // Objects of any other definition are refused by the first test above.
+    if let Some(sources) = crate::continuous_source_frame_v1::sources(
+        state,
+        crate::continuous_source_frame_v1::SourceKindV1::ChosenColorCreatureBoost,
+        || {
+            state
+                .objects
+                .iter()
+                .filter(|(_, object)| owns_definition(object.card_def))
+                .map(|(source, _)| source)
+                .collect()
+        },
+    ) {
+        for &source in sources.iter() {
+            add(source, state.objects.get(source));
+        }
+    } else {
+        for (source, object) in state.objects.iter() {
+            add(source, object);
+        }
     }
     (power, toughness)
 }

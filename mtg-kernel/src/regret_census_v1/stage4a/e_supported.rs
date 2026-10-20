@@ -38,7 +38,7 @@ pub(crate) fn visible_frame(
 }
 /// E's public deck prior at a root: the registered decks conditioned on every
 /// actor-visible frame of the prefix and on the root's own view.
-pub(super) fn public_prior(
+pub(crate) fn public_prior(
     session: &FastActorSessionV1,
     d: FastActorDecisionV1,
     history: &[VisibleFrame],

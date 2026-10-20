@@ -707,6 +707,23 @@ impl FastActorSessionV1 {
         ),
         FlatActionDecisionSliceErrorV1,
     > {
+        crate::continuous_source_frame_v1::with_frame(&self.state, || {
+            self.ravenous_current_decision_input_v51_unframed(expected, human_seat)
+        })
+    }
+    // The body of the function above, run inside its source-list frame.
+    fn ravenous_current_decision_input_v51_unframed(
+        &self,
+        expected: FastActorDecisionV1,
+        human_seat: PlayerSeatV1,
+    ) -> Result<
+        (
+            RavenousObservationV51,
+            Vec<ActionSemanticV1>,
+            RavenousDecisionBindingV51,
+        ),
+        FlatActionDecisionSliceErrorV1,
+    > {
         if self.flat_action_contract_mode != FlatActionContractModeV1::RavenousV51 {
             return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
         }

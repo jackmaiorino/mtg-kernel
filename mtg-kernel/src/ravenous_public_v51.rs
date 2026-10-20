@@ -322,6 +322,10 @@ pub fn validate(state: &GameState, value: &FactsV51) -> Result<(), RlContractErr
 }
 
 pub fn battlefield(state: &GameState) -> Result<BattlefieldV51, RlContractError> {
+    crate::continuous_source_frame_v1::with_frame(state, || battlefield_unframed(state))
+}
+// The body of the function above, run inside its source-list frame.
+fn battlefield_unframed(state: &GameState) -> Result<BattlefieldV51, RlContractError> {
     let facts = capture(state)?;
     let mut cards: [Vec<CardV51>; 2] = [Vec::new(), Vec::new()];
     let mut seen = Vec::new();
@@ -376,6 +380,14 @@ pub(crate) fn battlefield_complete_scope(
             "wrong complete counter compatibility scope".into(),
         ));
     }
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        battlefield_complete_scope_unframed(state, scope)
+    })
+}
+fn battlefield_complete_scope_unframed(
+    state: &GameState,
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<BattlefieldV51, RlContractError> {
     let facts = capture(state)?;
     let mut cards: [Vec<CardV51>; 2] = [Vec::new(), Vec::new()];
     let mut seen = Vec::new();

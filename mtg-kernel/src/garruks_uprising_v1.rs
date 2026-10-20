@@ -37,17 +37,38 @@ pub(crate) fn grants_trample(state: &GameState, creature: ObjectId) -> bool {
     let Some(live) = state.objects.try_get(creature) else {
         return false;
     };
+    let grants = |source: ObjectId, observer: &GameObject| {
+        observer.controller == live.controller
+            && active(state, source)
+            && crate::continuous_characteristics_v1::grant_survives(
+                state,
+                creature,
+                observer.v4.layer_timestamp.unwrap_or(0),
+            )
+    };
     live.zone == Zone::Battlefield
         && crate::engine::object_has_type(state, creature, CardType::Creature)
-        && state.objects.iter().any(|(source, observer)| {
-            observer.controller == live.controller
-                && active(state, source)
-                && crate::continuous_characteristics_v1::grant_survives(
-                    state,
-                    creature,
-                    observer.v4.layer_timestamp.unwrap_or(0),
-                )
-        })
+        && match crate::continuous_source_frame_v1::sources(
+            state,
+            crate::continuous_source_frame_v1::SourceKindV1::GarruksUprising,
+            || {
+                // `active` refuses every object of another definition.
+                state
+                    .objects
+                    .iter()
+                    .filter(|(_, observer)| selected_definition(observer.card_def))
+                    .map(|(source, _)| source)
+                    .collect()
+            },
+        ) {
+            Some(sources) => sources
+                .iter()
+                .any(|&source| grants(source, state.objects.get(source))),
+            None => state
+                .objects
+                .iter()
+                .any(|(source, observer)| grants(source, observer)),
+        }
 }
 
 pub(crate) fn grants_keyword(state: &GameState, creature: ObjectId, keyword: Keywords) -> bool {

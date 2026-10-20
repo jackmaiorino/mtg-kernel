@@ -9947,6 +9947,16 @@ fn public_card_v2(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPublicV2> {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        public_card_v2_unframed(state, id, text_mode)
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn public_card_v2_unframed(
+    state: &GameState,
+    id: ObjectId,
+    text_mode: ObservationTextModeV2,
+) -> Result<CardPublicV2> {
     let object = state
         .objects
         .try_get(id)
@@ -10353,6 +10363,16 @@ fn public_cards_v2(
     ids: &[ObjectId],
     text_mode: ObservationTextModeV2,
 ) -> Result<Vec<CardPublicV2>> {
+    crate::continuous_source_frame_v1::with_frame(state, || {
+        public_cards_v2_unframed(state, ids, text_mode)
+    })
+}
+// The body of the function above, run inside its source-list frame.
+fn public_cards_v2_unframed(
+    state: &GameState,
+    ids: &[ObjectId],
+    text_mode: ObservationTextModeV2,
+) -> Result<Vec<CardPublicV2>> {
     ids.iter()
         .map(|&id| public_card_v2(state, id, text_mode))
         .collect()
@@ -10527,6 +10547,31 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
     let base_power = engine::effective_base_power(state, id);
     let base_toughness = engine::effective_base_toughness(state, id);
     let has_pt = base_power.is_some() || base_toughness.is_some();
+    // One query for the fourteen keyword flags below.
+    let keywords = engine::effective_keywords(
+        state,
+        id,
+        Keywords(
+            [
+                Keywords::FLYING,
+                Keywords::REACH,
+                Keywords::HASTE,
+                Keywords::VIGILANCE,
+                Keywords::TRAMPLE,
+                Keywords::FIRST_STRIKE,
+                Keywords::DOUBLE_STRIKE,
+                Keywords::DEATHTOUCH,
+                Keywords::MENACE,
+                Keywords::DEFENDER,
+                Keywords::LIFELINK,
+                Keywords::HEXPROOF,
+                Keywords::INDESTRUCTIBLE,
+                Keywords::PROTECTION_FROM_MONOCOLORED,
+            ]
+            .iter()
+            .fold(0, |all, k| all | k.0),
+        ),
+    );
     CardCharacteristicsV2 {
         effective_identity: card_effective_identity_v1(state, id),
         legend_rules: crate::standard_legends_v1::characteristics(state, id),
@@ -10564,24 +10609,20 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
         effective_color_mask: engine::object_color_mask(state, id),
         effective_subtype_ids: engine::effective_subtype_ids(state, id),
         effective_keywords: KeywordFlagsV2 {
-            flying: engine::has_effective_keyword(state, id, Keywords::FLYING),
-            reach: engine::has_effective_keyword(state, id, Keywords::REACH),
-            haste: engine::has_effective_keyword(state, id, Keywords::HASTE),
-            vigilance: engine::has_effective_keyword(state, id, Keywords::VIGILANCE),
-            trample: engine::has_effective_keyword(state, id, Keywords::TRAMPLE),
-            first_strike: engine::has_effective_keyword(state, id, Keywords::FIRST_STRIKE),
-            double_strike: engine::has_effective_keyword(state, id, Keywords::DOUBLE_STRIKE),
-            deathtouch: engine::has_effective_keyword(state, id, Keywords::DEATHTOUCH),
-            menace: engine::has_effective_keyword(state, id, Keywords::MENACE),
-            defender: engine::has_effective_keyword(state, id, Keywords::DEFENDER),
-            lifelink: engine::has_effective_keyword(state, id, Keywords::LIFELINK),
-            hexproof: engine::has_effective_keyword(state, id, Keywords::HEXPROOF),
-            indestructible: engine::has_effective_keyword(state, id, Keywords::INDESTRUCTIBLE),
-            protection_from_monocolored: engine::has_effective_keyword(
-                state,
-                id,
-                Keywords::PROTECTION_FROM_MONOCOLORED,
-            ),
+            flying: keywords.has(Keywords::FLYING),
+            reach: keywords.has(Keywords::REACH),
+            haste: keywords.has(Keywords::HASTE),
+            vigilance: keywords.has(Keywords::VIGILANCE),
+            trample: keywords.has(Keywords::TRAMPLE),
+            first_strike: keywords.has(Keywords::FIRST_STRIKE),
+            double_strike: keywords.has(Keywords::DOUBLE_STRIKE),
+            deathtouch: keywords.has(Keywords::DEATHTOUCH),
+            menace: keywords.has(Keywords::MENACE),
+            defender: keywords.has(Keywords::DEFENDER),
+            lifelink: keywords.has(Keywords::LIFELINK),
+            hexproof: keywords.has(Keywords::HEXPROOF),
+            indestructible: keywords.has(Keywords::INDESTRUCTIBLE),
+            protection_from_monocolored: keywords.has(Keywords::PROTECTION_FROM_MONOCOLORED),
             ward_generic: if object.v4.face_down_v1.is_some_and(|face| face.disguised)
                 && crate::continuous_characteristics_v1::removal_timestamp(state, id).is_none()
             {

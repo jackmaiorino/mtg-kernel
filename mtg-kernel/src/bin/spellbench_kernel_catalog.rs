@@ -1,5 +1,7 @@
 //! Export public catalog metadata from the exact compiled Pauper registry.
 //! This command performs no game, scoring, training or hidden-state access.
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::card_def::{CardDef, Keywords, CARD_DEFS, KERNEL_CARDDB_HASH};
 use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::runtime_decks::RUNTIME_DECKS;
