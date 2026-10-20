@@ -3238,9 +3238,11 @@ mod tests {
     }
 }
 
-/// Whether the exact per-row forward cache is on (`MTG_KERNEL_ROW_CACHE=0`
-/// turns it off).
+/// Whether the exact per-row forward cache is on: only on x86_64, where the
+/// cache tracks the arithmetic environment (MXCSR control, UCRT FMA3), and
+/// unless `MTG_KERNEL_ROW_CACHE=0`.
 fn row_cache_enabled_v1() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("MTG_KERNEL_ROW_CACHE").map_or(true, |v| v != "0"))
+    cfg!(target_arch = "x86_64")
+        && *ON.get_or_init(|| std::env::var("MTG_KERNEL_ROW_CACHE").map_or(true, |v| v != "0"))
 }
