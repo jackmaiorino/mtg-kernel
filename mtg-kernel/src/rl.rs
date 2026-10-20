@@ -15093,7 +15093,12 @@ fn neutral_face_down_projection_does_not_select_hidden_tutelage_or_aberration() 
             assert!(
                 !crate::continuous_characteristics_v1::printed_abilities_active(&state, object)
             );
-            crate::optional_trigger_public_v1::validate_state(&state).unwrap();
+            crate::optional_trigger_public_v1::validate_state_for_consumer(
+                &state,
+                false,
+                crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+            )
+            .unwrap();
             let rows = (
                 public_card(&state, object).unwrap(),
                 public_card_v2(&state, object, ObservationTextModeV2::FullArtifact).unwrap(),
@@ -15106,7 +15111,14 @@ fn neutral_face_down_projection_does_not_select_hidden_tutelage_or_aberration() 
             state.objects.get_mut(object).v4.face_down_v1 = None;
             if name != "Flourishing Bloom-Kin" {
                 assert!(require_legacy_public_counter_schema(&state, object).is_err());
-                assert!(crate::optional_trigger_public_v1::validate_state(&state).is_err());
+                assert!(
+                    crate::optional_trigger_public_v1::validate_state_for_consumer(
+                        &state,
+                        false,
+                        crate::optional_trigger_public_v1::ConsumerV1::Legacy
+                    )
+                    .is_err()
+                );
             }
         }
     }

@@ -726,7 +726,14 @@ fn paid_capture_direct_api_and_readonly_history_row_forgeries_both_seats() {
         assert!(event::lathril_damage_v1(&isolated, fake_capture).is_err());
         assert_eq!(tokens(&isolated, actor), 0);
         assert_eq!(state, before);
-        assert!(crate::optional_trigger_public_v1::validate_state(&state).is_err());
+        assert!(
+            crate::optional_trigger_public_v1::validate_state_for_consumer(
+                &state,
+                false,
+                crate::optional_trigger_public_v1::ConsumerV1::Legacy
+            )
+            .is_err()
+        );
         let restored = restore(&state);
         assert_eq!(state, restored);
     }

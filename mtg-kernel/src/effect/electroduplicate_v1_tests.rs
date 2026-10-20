@@ -1067,7 +1067,14 @@ fn native_nightmare_entry_primitive_paid_copy_of_copy_and_season_keep_copiable_t
             s.objects.get(electro_copy).v4.copied_end_step_sacrifices_v1,
             1
         );
-        assert!(crate::optional_trigger_public_v1::validate_state(&s).is_err());
+        assert!(
+            crate::optional_trigger_public_v1::validate_state_for_consumer(
+                &s,
+                false,
+                crate::optional_trigger_public_v1::ConsumerV1::Legacy
+            )
+            .is_err()
+        );
     }
 }
 
