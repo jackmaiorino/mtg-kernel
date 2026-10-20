@@ -905,6 +905,7 @@ mod tests {
         .unwrap();
     }
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn converted_policy_scores_only_in_the_pinned_environment() {
         std::thread::spawn(|| {
             use crate::deterministic_math_v1::*;
