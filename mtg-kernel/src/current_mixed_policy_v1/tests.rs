@@ -1412,7 +1412,7 @@ mod paid {
                 }
                 5 => changed.equipment.as_mut().unwrap().job_select = true,
                 6 => changed.equipment = None,
-                7 => changed.ward_cost = Some(crate::mana::Cost::zero()),
+                7 => changed.ward_cost = Some(crate::card_def::WardCostDef::Generic(1)),
                 8 => changed.enters_battlefield_tapped = true,
                 _ => changed.capability = crate::card_def::CardCapability::Partial,
             }
