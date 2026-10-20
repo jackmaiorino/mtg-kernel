@@ -163,7 +163,7 @@ impl SearchTargetsRunOptionsV1 {
             denominator: self.denominator,
             allocation: self.allocation.clone(),
             expected: json!({"run":self.run,"arm":self.arm,"seed":self.seed,
-                "update":self.update_offset + index}),
+                "update":self.update_offset + index,"allocation":self.allocation}),
         }
     }
 
@@ -1060,6 +1060,7 @@ fn validate_search_targets_update(
         "search-target update read another packet path",
     )?;
     read_pin_bounded(&packet_pin, ARTIFACT_CAP)?;
+    crate::expanded_deck_training_v1::search_targets_v1::revalidate_packet_v1(&packet_pin)?;
     let checkpoint = read_pin_bounded(&parse_pin(document, "checkpoint")?, ARTIFACT_CAP)?;
     let expected = options.options_v1(index, packet_pin.clone());
     check(
@@ -1271,6 +1272,12 @@ pub fn run_native_expanded_training_v1(
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
         let complete_path = directory.join("complete.json");
+        if let Some(options) = &config.search_targets {
+            check(
+                complete_path.exists() || !options.packets_directory.join("STOP").exists(),
+                "search-target run stopped before its next iteration",
+            )?;
+        }
         let episodes = resolve_episodes(config, index, &current, &history)?;
         let episode_digest = identity(&episodes)?;
         let e_options = config

@@ -3627,6 +3627,9 @@ fn execute_update_inner_v1(
                     == identity.get("continuation"),
                 "search-target continuation must preserve method, inputs, coefficient and denominator",
             )?;
+            let packet: PinnedFileV1 =
+                serde_json::from_value(identity["packet"].clone()).map_err(err)?;
+            search_targets_v1::revalidate_packet_v1(&packet)?;
         }
         if let Some(identity) = &saved.soft_q {
             ensure(

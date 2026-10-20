@@ -99,6 +99,23 @@ struct PacketV1 {
     rows: Vec<PacketRowV1>,
 }
 
+fn expected_allocation(expected: &Value) -> Result<Value, String> {
+    expected
+        .get("allocation")
+        .cloned()
+        .ok_or_else(|| "search-target expectation lacks the run's allocation".into())
+}
+
+/// A retained packet and its searched game, still byte-identical to their pins
+/// (continuation and recovery checks).
+pub(crate) fn revalidate_packet_v1(packet: &PinnedFileV1) -> Result<(), String> {
+    let bytes = read_pinned_bytes(packet)?;
+    let document: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    let game: PinnedFileV1 =
+        serde_json::from_value(document["binding"]["game"].clone()).map_err(err)?;
+    read_pinned_bytes(&game).map(|_| ())
+}
+
 /// The packet belongs to this update: its run, arm, seed and global update
 /// equal the run's, its start checkpoint is the update's own source, and
 /// every row names the binding's searched case.
@@ -117,6 +134,10 @@ fn check_binding_v1(
     ensure(
         binding.get("start_checkpoint") == Some(&json!(source.checkpoint)),
         "search-target packet was built from another start checkpoint",
+    )?;
+    ensure(
+        binding.get("allocation") == Some(&expected_allocation(expected)?),
+        "search-target packet allocation differs from the run's",
     )?;
     let game: PinnedFileV1 = serde_json::from_value(
         binding
@@ -223,17 +244,12 @@ pub(super) fn teach(
             Vec::new(),
         ));
     }
-    let searches = packet
-        .rows
-        .iter()
-        .map(|row| serde_json::from_slice::<Value>(&read_pinned_bytes(&row.search)?).map_err(err))
-        .collect::<Result<Vec<_>, _>>()?;
+    // Every row names the bound game (checked above): parse it once.
     let roots: Vec<_> = packet
         .rows
         .iter()
-        .zip(&searches)
-        .map(|(row, search)| SearchedRootT {
-            search,
+        .map(|row| SearchedRootT {
+            search: &record,
             case: &row.case,
             step: row.root.step,
             physical_decision_id: row.root.physical_decision_id,
@@ -245,12 +261,12 @@ pub(super) fn teach(
     let parameters = model.parameter_snapshot_v1();
     let mut taught = Vec::with_capacity(packet.rows.len());
     let mut census = Vec::with_capacity(packet.rows.len());
-    for (search, row) in searches.iter().zip(&packet.rows) {
-        ensure(
-            search.get("allocation") == Some(&options.allocation),
-            "the searched game's allocation differs from the run's",
-        )?;
-        let recorded = search["game"]["decisions"]
+    ensure(
+        record.get("allocation") == Some(&options.allocation),
+        "the searched game's allocation differs from the run's",
+    )?;
+    for row in &packet.rows {
+        let recorded = record["game"]["decisions"]
             .as_array()
             .and_then(|decisions| {
                 decisions

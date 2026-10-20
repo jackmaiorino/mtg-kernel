@@ -279,14 +279,12 @@ pub(crate) fn validate_searched_game_v1(
     let (sh, binding) = searched_context_v1(bank_spec_bytes, labels, opponents, focal)?;
     let src: SourceSpec = serde_json::from_value(case.clone()).map_err(|e| e.to_string())?;
     validate_case(&src, &sh)?;
-    if search["schema"] != "search-total-budget-v1/game"
-        || search["kind"] != "budget_game"
-        || search["id"] != case["id"]
-        || search["allocation"] != *allocation
-        || search["game"]["valid"] != true
-        || search["bank_binding_sha256"] != binding
-    {
-        return Err("searched game envelope, case, allocation or binding differs".into());
+    // The same envelope and every case field `s4a-root-actions` checks
+    // (schema, search arm, lineage, bank binding, deck pair, seat, opponent,
+    // seeds, starting player, search namespace).
+    row_actions(search, &src, &sh.spec.lineage, &binding, false)?;
+    if search["allocation"] != *allocation || search["game"]["valid"] != true {
+        return Err("searched game allocation or validity differs".into());
     }
     Ok(())
 }
