@@ -1626,7 +1626,9 @@ impl FrozenPlayPolicyV1 {
             panic!("terminal");
         };
         let mode = self.forward_mode_v1();
+        let state_digest = self.input_contract.is_none();
         let successor = self.successor.as_mut().expect("V3 policy");
+        successor.tensorizer.set_state_digest_v1(state_digest);
         let t0 = Instant::now();
         let encoded = session
             .encode_current_flat_scoring_decision_owned_v3(
