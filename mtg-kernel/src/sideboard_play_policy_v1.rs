@@ -1874,6 +1874,13 @@ impl FrozenPlayPolicyV1 {
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
         use crate::inference_cache_v1::ForwardPathV1;
+        if self.input_contract.is_some() {
+            // Zeroed and removed digest columns agree only in the pinned
+            // environment (round to nearest, no flush-to-zero, no
+            // denormals-are-zero), so check it before any forward or cache.
+            crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
+                .map_err(|e| format!("no-state-digest contract: {e:?}"))?;
+        }
         let mode = self.forward_mode_v1();
         let state_digest = self.input_contract.is_none();
         let (path, view) = if let Some(successor) = &mut self.successor {
