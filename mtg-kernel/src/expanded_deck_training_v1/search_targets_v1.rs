@@ -145,6 +145,22 @@ impl SearchTargetsOptionsV1 {
     }
 }
 
+/// Stage B2's runs (a centered win-frequency target or a cap).
+pub fn stage_b2_v1(options: &SearchTargetsOptionsV1) -> bool {
+    options.b2_identity_v1().is_some()
+}
+
+/// A checkpoint's saved search-target identity must equal this run's.
+pub(super) fn check_continuation_v1(
+    saved: &Value,
+    options: Option<&SearchTargetsOptionsV1>,
+) -> Result<(), String> {
+    ensure(
+        options.map(continuation_identity).as_ref() == saved.get("continuation"),
+        "search-target continuation must preserve method, inputs, coefficient and denominator",
+    )
+}
+
 /// The run-level identity a continuation must preserve.
 pub fn continuation_identity(options: &SearchTargetsOptionsV1) -> Value {
     let mut identity = json!({"method":SEARCH_TARGETS_METHOD_V1,"bank_spec":options.bank_spec,
@@ -260,6 +276,35 @@ fn check_binding_v1(
 pub(super) struct TaughtRowV1 {
     pub(super) tensor: NativeFlatDecisionTensorV2,
     pub(super) target: LineBSoftmaxV1,
+}
+
+/// The row's permutation, which must equal its arm's (identity for M, the
+/// seeded shuffle for S).
+fn checked_perm_v1(
+    expected: &Value,
+    step: u64,
+    substep: u32,
+    support: &[usize],
+    perm: &[u32],
+) -> Result<Vec<usize>, String> {
+    let required = m_target_v1::expected_perm_v1(
+        expected["arm"].as_str().unwrap_or(""),
+        expected["seed"]
+            .as_u64()
+            .ok_or("the run's seed is missing")?,
+        expected["update"]
+            .as_u64()
+            .ok_or("the run's update is missing")?,
+        step,
+        substep,
+        support,
+    )?;
+    let perm: Vec<usize> = perm.iter().map(|&a| a as usize).collect();
+    ensure(
+        perm == required,
+        "an m-kind row's permutation differs from its arm's",
+    )?;
+    Ok(perm)
 }
 
 /// SD1's kept-set target: the binary64 softmax of the logits over the kept
@@ -409,18 +454,12 @@ pub(super) fn teach(
                 let counts =
                     m_target_v1::live_counts_v1(&recorded["node_stats"], row.logit_bits.len())?;
                 let support = m_target_v1::support_v1(&counts);
-                let expected = m_target_v1::expected_perm_v1(
-                    options.expected["arm"].as_str().unwrap_or(""),
-                    options.expected["seed"].as_u64().unwrap_or(0),
-                    options.expected["update"].as_u64().unwrap_or(0),
+                let perm = checked_perm_v1(
+                    &options.expected,
                     row.root.step,
                     row.root.substep,
                     &support,
-                )?;
-                let perm: Vec<usize> = target.perm.iter().map(|&a| a as usize).collect();
-                ensure(
-                    perm == expected,
-                    "an m-kind row's permutation differs from its arm's",
+                    &target.perm,
                 )?;
                 let q = m_target_v1::m_target_v1(&row.logit_bits, &counts, &perm)?;
                 census.push(
@@ -551,6 +590,75 @@ pub(super) fn auxiliary_input_v1<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Valid permutations of the support that are wrong for the arm are
+    /// refused through the enforcement path; the arm's own pass.
+    #[test]
+    fn m_rows_with_a_valid_but_wrong_permutation_are_refused() {
+        let support = [0_usize, 2, 3, 4];
+        let m = json!({"arm":"M","seed":3,"update":7});
+        assert_eq!(
+            checked_perm_v1(&m, 2, 2, &support, &[0, 2, 3, 4]).unwrap(),
+            support
+        );
+        assert!(checked_perm_v1(&m, 2, 2, &support, &[3, 2, 4, 0]).is_err());
+        let s = json!({"arm":"S","seed":3,"update":7});
+        // Seed 3, update 7, step 2, substep 2 is a three-cycle (the fixture).
+        assert_eq!(
+            checked_perm_v1(&s, 2, 2, &support, &[3, 2, 4, 0]).unwrap(),
+            vec![3, 2, 4, 0]
+        );
+        assert!(checked_perm_v1(&s, 2, 2, &support, &[0, 2, 3, 4]).is_err());
+        assert!(checked_perm_v1(&s, 2, 2, &support, &[2, 3, 4, 0]).is_err());
+    }
+
+    /// A checkpoint saved under one cap, kappa or coefficient refuses to
+    /// continue under another; the same options continue.
+    #[test]
+    fn stage_b2_continuations_refuse_a_changed_cap_or_coefficient() {
+        let pin = PinnedFileV1 {
+            path: PathBuf::from("unused"),
+            sha256: String::new(),
+        };
+        let e4 = json!({"initial":32000,"refresh":16000,"total":512000});
+        let saved_options = SearchTargetsOptionsV1 {
+            packet: pin.clone(),
+            bank_spec: pin,
+            opponents: Vec::new(),
+            coefficient: 2.5,
+            denominator: 32,
+            allocation: e4.clone(),
+            expected: json!({"run":"r","arm":"M","seed":1,"update":0,"allocation":e4}),
+            target: SearchTargetKindV1::CenteredWinFrequency,
+            cap: SearchTargetCapV1::Ratio { kappa: 1.0 },
+        };
+        let saved = json!({"continuation":continuation_identity(&saved_options)});
+        assert!(check_continuation_v1(&saved, Some(&saved_options)).is_ok());
+        let changed = [
+            SearchTargetsOptionsV1 {
+                cap: SearchTargetCapV1::Ratio { kappa: 2.0 },
+                ..saved_options.clone()
+            },
+            SearchTargetsOptionsV1 {
+                cap: SearchTargetCapV1::Off,
+                ..saved_options.clone()
+            },
+            SearchTargetsOptionsV1 {
+                coefficient: 2.0,
+                ..saved_options.clone()
+            },
+            SearchTargetsOptionsV1 {
+                target: SearchTargetKindV1::KeptSet,
+                ..saved_options.clone()
+            },
+        ];
+        for options in &changed {
+            assert!(check_continuation_v1(&saved, Some(options))
+                .unwrap_err()
+                .contains("continuation must preserve"));
+        }
+        assert!(check_continuation_v1(&saved, None).is_err());
+    }
 
     /// STAGE-B2.md section 4 item 4: m-kind targets equal the mirrored Python
     /// reference (collab LANES/teacher-price-20261019/tools/tp1b2_mref.py,

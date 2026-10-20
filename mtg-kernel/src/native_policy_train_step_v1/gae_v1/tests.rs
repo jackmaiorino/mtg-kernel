@@ -1462,7 +1462,11 @@ fn gae_external_cap_matches_the_uncapped_update_and_a_reference_adam_step() {
     assert_eq!(free.gradients, plain.gradients);
     assert_eq!(free.scorer_bias_gauge, plain.scorer_bias_gauge);
     assert_eq!(free_aux.cap.as_ref().unwrap()["binding"], false);
-    assert!(plain_aux.cap.is_none());
+    let off = plain_aux.cap.as_ref().unwrap();
+    assert_eq!(
+        (off["mode"].as_str(), off["scale"].as_f64()),
+        (Some("off"), Some(1.0))
+    );
     let steps_receipt = free_aux.adam_steps.as_ref().unwrap();
     assert!(steps_receipt["difference_l2"].as_f64().unwrap() > 0.0);
     // Binding, against a reference Adam step.
@@ -1483,8 +1487,18 @@ fn gae_external_cap_matches_the_uncapped_update_and_a_reference_adam_step() {
         config,
     )
     .unwrap();
-    let single = scale as f32;
     let auxiliary = terms.gradients_for_test_v1();
+    let ordinary_values: Vec<Vec<f32>> = ordinary
+        .gradients
+        .iter()
+        .map(|g| g.values.clone())
+        .collect();
+    let (a, b) = (
+        line_b_auxiliary_v1::projected_l2_v1(auxiliary),
+        line_b_auxiliary_v1::projected_l2_v1(&ordinary_values),
+    );
+    assert_eq!(scale.to_bits(), (kappa * b / a).min(1.0).to_bits());
+    let single = scale as f32;
     let residual = ordinary.scorer_bias_gauge.raw_gradient_residual
         + auxiliary[SCORER_SECOND_BIAS][0] * single;
     assert_eq!(
@@ -1523,4 +1537,78 @@ fn gae_external_cap_matches_the_uncapped_update_and_a_reference_adam_step() {
     assert_eq!(capped_state.first_moments, first_m);
     assert_eq!(capped_state.second_moments, second_m);
     assert_eq!(capped_state.adam_step, inherited.adam_step + 1);
+}
+
+/// STAGE-B2.md section 4 item 4: a Stage B2 update with no rows (an empty or
+/// all-ineligible packet) is the ordinary update bit for bit, from inherited
+/// moments, and still records its receipt and Adam-step telemetry; off mode
+/// records a receipt with scale 1.
+#[test]
+fn gae_stage_b2_empty_packets_are_the_ordinary_update_with_receipts() {
+    use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+    let model = model();
+    let first = Fixture::capture(&model);
+    let first_steps = first.substeps();
+    let first_groups = groups(&first_steps);
+    let step_once = || {
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        state
+            .train_step_gae_feature_transfer_v3(
+                &first_groups,
+                &LINE_B_TARGETS,
+                &LINE_B_ADVANTAGES,
+                VC,
+                LR,
+            )
+            .unwrap();
+        state
+    };
+    let inherited = step_once();
+    let fixture = Fixture::capture(&inherited.model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    for cap in [Some(1.0), None] {
+        let external = archive_distillation_v1::ExternalAuxiliaryInputV1 {
+            direction: LineBDivergenceV1::Forward,
+            coefficient: 0.7,
+            denominator: 32,
+            cap,
+            step_telemetry: true,
+            rows: Vec::new(),
+        };
+        let mut state = step_once();
+        let (result, auxiliary) = state
+            .train_step_gae_external_auxiliary_v1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups,
+                &LINE_B_TARGETS,
+                &LINE_B_ADVANTAGES,
+                VC,
+                LR,
+                None,
+                &external,
+            )
+            .unwrap();
+        let mut ordinary = step_once();
+        let expected = ordinary
+            .train_step_gae_feature_transfer_v3(
+                &groups,
+                &LINE_B_TARGETS,
+                &LINE_B_ADVANTAGES,
+                VC,
+                LR,
+            )
+            .unwrap();
+        assert_eq!(result.gradients, expected.gradients);
+        assert_eq!(result.scorer_bias_gauge, expected.scorer_bias_gauge);
+        assert_eq!(state_bits(&state), state_bits(&ordinary));
+        let receipt = auxiliary.cap.unwrap();
+        assert_eq!(receipt["mode"], if cap.is_some() { "ratio" } else { "off" });
+        assert_eq!(receipt["scale"].as_f64(), Some(1.0));
+        assert_eq!(receipt["raw_ratio"].as_f64(), Some(0.0));
+        assert_eq!(
+            auxiliary.adam_steps.unwrap()["difference_l2"].as_f64(),
+            Some(0.0)
+        );
+    }
 }

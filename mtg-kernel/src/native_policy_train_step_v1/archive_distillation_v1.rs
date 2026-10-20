@@ -127,7 +127,12 @@ pub(super) fn external_auxiliary_terms_v1(
     input_major: Option<&InputMajorWeightsV1>,
     config: NativePolicyValueModelConfigV1,
 ) -> Result<LineBAuxiliaryTermsV1, NativePolicyTrainErrorV1> {
-    if input.rows.is_empty() || input.denominator < input.rows.len() {
+    // A Stage B2 update with no rows still takes this path, inactive, so its
+    // receipt and Adam-step telemetry exist; the update is the ordinary one.
+    if (input.rows.is_empty() && !input.step_telemetry)
+        || input.denominator < input.rows.len()
+        || input.denominator == 0
+    {
         return Err(invalid("external-auxiliary-denominator"));
     }
     if !(input.coefficient.is_finite() && input.coefficient >= 0.0) {
@@ -175,7 +180,7 @@ pub(super) fn external_auxiliary_terms_v1(
         rows.push((d_logits, exact));
     }
     Ok(LineBAuxiliaryTermsV1::from_parts_v1(
-        input.coefficient > 0.0,
+        input.coefficient > 0.0 && !input.rows.is_empty(),
         gradients,
         rows,
         divergences,
