@@ -1339,6 +1339,14 @@ impl FrozenPlayPolicyV1 {
         for row in weight.values.chunks_exact_mut(width) {
             row[columns.clone()].fill(0.0);
         }
+        let bias = parameters
+            .iter()
+            .find(|parameter| parameter.name == "state_encoder.0.bias")
+            .ok_or("state encoder bias is missing")?;
+        require(
+            bias.values.len() == rows && no_negative_zero_v1(&bias.values),
+            "a state encoder bias of -0.0 has no exact no-state-digest conversion",
+        )?;
         let unconverted = check.then(|| Box::new(self.model.clone()));
         self.model
             .replace_parameter_snapshot_v1(&parameters)
@@ -1398,6 +1406,10 @@ impl FrozenPlayPolicyV1 {
             self.successor.is_some(),
             "training requires explicit successor features",
         )?;
+        require(
+            self.input_contract.is_none(),
+            "stored tensors are not scored under the no-state-digest contract",
+        )?;
         let output = self
             .model
             .forward_feature_transfer_v3_mode(
@@ -1419,6 +1431,10 @@ impl FrozenPlayPolicyV1 {
         require(
             self.fresh_successor.is_some(),
             "training requires explicit V4 successor features",
+        )?;
+        require(
+            self.input_contract.is_none(),
+            "stored tensors are not scored under the no-state-digest contract",
         )?;
         let output = self
             .model
@@ -1699,6 +1715,10 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         tensor: &NativeFlatDecisionTensorV4,
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        require(
+            self.input_contract.is_none(),
+            "diagnostic forwards are not defined under the no-state-digest contract",
+        )?;
         let output = self
             .model
             .forward_feature_transfer_v4_mode(
@@ -1911,16 +1931,7 @@ impl FrozenPlayPolicyV1 {
                 mode,
                 view,
             )?;
-            require(
-                reference.logits.len() == scores.logits.len()
-                    && reference
-                        .logits
-                        .iter()
-                        .zip(&scores.logits)
-                        .all(|(a, b)| a.to_bits() == b.to_bits())
-                    && reference.value.to_bits() == scores.value.to_bits(),
-                "no-state-digest check: converted forward differs from the unconverted one",
-            )?;
+            check_converted_scores_v1(&reference, &scores)?;
         }
         require(
             scores.logits.len() == self.owned.actions.len()
@@ -2065,6 +2076,33 @@ impl FrozenPlayPolicyV1 {
         .map_err(|e| e.to_string())?;
         u32::try_from(selected).map_err(|e| e.to_string())
     }
+}
+
+/// Whether no value is -0.0. The forward starts each first-layer sum at its
+/// bias and adds the inputs in order; a sum can only be -0.0 if it starts at
+/// -0.0 (an exact cancellation rounds to +0.0), and adding the zeroed
+/// columns' +0.0 would turn it into +0.0 where removing them would not.
+/// With no -0.0 bias the zeroed and the removed columns agree bit for bit.
+pub(crate) fn no_negative_zero_v1(values: &[f32]) -> bool {
+    values.iter().all(|value| value.to_bits() != 0x8000_0000)
+}
+
+/// `MTG_KERNEL_NO_STATE_DIGEST_CHECK`: the converted scores must equal the
+/// unconverted model's on the same input, bit for bit.
+fn check_converted_scores_v1(
+    reference: &FrozenPlayDecisionScoresV1,
+    scores: &FrozenPlayDecisionScoresV1,
+) -> Result<(), String> {
+    require(
+        reference.logits.len() == scores.logits.len()
+            && reference
+                .logits
+                .iter()
+                .zip(&scores.logits)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+            && reference.value.to_bits() == scores.value.to_bits(),
+        "no-state-digest check: converted forward differs from the unconverted one",
+    )
 }
 
 /// One forward of `model` on `view` with no cache of any kind.

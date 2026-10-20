@@ -60,7 +60,9 @@ impl<'a> V4SearchLeafEvaluatorV1<'a> {
             .map_err(|e| format!("V4 search leaf encoding: {e:?}"))?;
         owned.globals = encoded.globals;
         let mut tensor = NativeFlatDecisionTensorV4::default();
-        NativeFlatTensorizerV4::default()
+        let mut tensorizer = NativeFlatTensorizerV4::default();
+        tensorizer.set_state_digest_v1(self.policy.input_contract.is_none());
+        tensorizer
             .fill(
                 FlatScoringDecisionViewV4::new(owned.view(), &encoded.extensions),
                 &mut tensor,
@@ -87,6 +89,18 @@ impl ModelGuidedSearchLeafEvaluatorV1 for V4SearchLeafEvaluatorV1<'_> {
             .policy
             .model
             .forward_search_feature_transfer_v4(encoded_decision_view_v4(&tensor))?;
+        if let Some(unconverted) = &self.policy.no_digest_check {
+            let reference = unconverted
+                .forward_search_feature_transfer_v4(encoded_decision_view_v4(&tensor))?;
+            let scores = |o: &crate::native_policy_value_net_v1::NativePolicyValueOutputV1| {
+                super::FrozenPlayDecisionScoresV1 {
+                    logits: o.logits.clone(),
+                    value: o.value,
+                }
+            };
+            super::check_converted_scores_v1(&scores(&reference), &scores(&output))
+                .map_err(ModelGuidedSearchCoreErrorV1::Tensorize)?;
+        }
         if output.logits.len() != legal_action_count as usize
             || output.logits.is_empty()
             || !output.value.is_finite()

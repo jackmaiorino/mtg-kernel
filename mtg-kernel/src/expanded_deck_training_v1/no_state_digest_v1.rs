@@ -17,8 +17,8 @@
 //! the unconverted model and compares every forward with it, bit for bit.
 
 use super::{
-    ensure, err, load_expanded_inference_any_math_v1, read_pinned, read_pinned_bytes, sha,
-    ExpandedInferenceIdentityV1, ExpandedModelSourceV1, PinnedFileV1,
+    ensure, err, load_expanded_inference_any_math_v1, publish_json_bytes_v1, read_pinned,
+    read_pinned_bytes, sha, ExpandedInferenceIdentityV1, ExpandedModelSourceV1, PinnedFileV1,
 };
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use serde::{Deserialize, Serialize};
@@ -163,15 +163,11 @@ pub struct NoStateDigestOutputsV1 {
     pub record: NoStateDigestConversionV1,
 }
 
+/// Durable publication that never replaces an existing file, read back
+/// through the bounded pinned reader.
 fn write_pinned_v1(directory: &Path, name: &str, bytes: &[u8]) -> Result<PinnedFileV1, String> {
-    let path = directory.join(name);
-    ensure(!path.exists(), "conversion output already exists")?;
-    fs::write(&path, bytes).map_err(err)?;
-    let pin = PinnedFileV1 {
-        path,
-        sha256: sha(bytes),
-    };
-    // Read back through the bounded pinned reader.
+    let pin = publish_json_bytes_v1(directory, name, bytes)?;
+    ensure(pin.sha256 == sha(bytes), "published bytes differ")?;
     read_pinned_bytes(&pin)?;
     Ok(pin)
 }
@@ -363,4 +359,68 @@ pub fn convert_no_state_digest_v1(
         converted_checkpoint,
         record,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::sideboard_play_policy_v1::no_negative_zero_v1;
+
+    /// The native first-layer order: start at the bias, add inputs in order.
+    fn first_layer(bias: f32, weights: &[f32], inputs: &[f32]) -> f32 {
+        weights
+            .iter()
+            .zip(inputs)
+            .fold(bias, |sum, (w, x)| sum + x * w)
+    }
+
+    #[test]
+    fn zeroed_columns_equal_removed_columns_unless_the_bias_is_negative_zero() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let (kept_head, digest, kept_tail) = (5, 4, 6);
+        for case in 0..20_000 {
+            let mut value = |zero_odds: u64| {
+                let r = next();
+                if r % zero_odds == 0 {
+                    if r & 1 == 0 {
+                        0.0
+                    } else {
+                        -0.0
+                    }
+                } else {
+                    (r >> 11) as f32 / (1u64 << 53) as f32 * 2.0 - 1.0
+                }
+            };
+            let bias = if case % 3 == 0 { 0.0 } else { value(4) };
+            let mut weights: Vec<f32> = (0..kept_head + digest + kept_tail)
+                .map(|_| value(4))
+                .collect();
+            let mut inputs: Vec<f32> = (0..weights.len()).map(|_| value(2)).collect();
+            inputs[kept_head..kept_head + digest].fill(0.0);
+            let old = first_layer(bias, &weights, &inputs);
+            let removed = first_layer(
+                bias,
+                &[&weights[..kept_head], &weights[kept_head + digest..]].concat(),
+                &[&inputs[..kept_head], &inputs[kept_head + digest..]].concat(),
+            );
+            weights[kept_head..kept_head + digest].fill(0.0);
+            let zeroed = first_layer(bias, &weights, &inputs);
+            if no_negative_zero_v1(&[bias]) {
+                assert_eq!(zeroed.to_bits(), removed.to_bits(), "case {case}");
+                assert_eq!(zeroed.to_bits(), old.to_bits(), "case {case}");
+            }
+        }
+        // The excluded case: a -0.0 bias with nothing else nonzero.
+        // -0.0 + (-1.0 * 0.0) stays -0.0; adding the zeroed column's +0.0
+        // turns it into +0.0.
+        let removed = first_layer(-0.0, &[-1.0], &[0.0]);
+        let zeroed = first_layer(-0.0, &[-1.0, 0.0], &[0.0, 0.0]);
+        assert_ne!(zeroed.to_bits(), removed.to_bits());
+        assert!(!no_negative_zero_v1(&[-0.0]));
+    }
 }
