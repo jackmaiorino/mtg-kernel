@@ -451,7 +451,9 @@ const ROW_CACHE_ROWS_V1: usize = 2048;
 /// clears the cache. Only `FrozenPlayPolicyV1` uses it.
 #[derive(Default)]
 pub(crate) struct ForwardRowCacheV1 {
-    mode: Option<ForwardActivationModeV1>,
+    /// The activation mode and arithmetic environment the stored rows were
+    /// computed in.
+    environment: Option<(ForwardActivationModeV1, u64)>,
     layers: [RowLayerCacheV1; 5],
     gather: Vec<f32>,
     miss_rows: Vec<usize>,
@@ -459,10 +461,23 @@ pub(crate) struct ForwardRowCacheV1 {
 }
 
 impl ForwardRowCacheV1 {
+    /// Clears the cache unless its rows were computed in the same mode and
+    /// arithmetic environment: the MXCSR control field (flush-to-zero,
+    /// denormals-are-zero, rounding, exception masks) and the platform
+    /// `tanhf`'s state (UCRT's FMA3 switch), which every layer's arithmetic
+    /// depends on beyond its inputs and weights.
     fn bind_mode(&mut self, mode: ForwardActivationModeV1) {
-        if self.mode != Some(mode) {
+        #[cfg(target_arch = "x86_64")]
+        let control = u64::from(crate::deterministic_math_v1::read_mxcsr_v1() & 0xffc0);
+        #[cfg(not(target_arch = "x86_64"))]
+        let control = 0u64;
+        let environment = (
+            mode,
+            control | (u64::from(crate::vector_tanh_v1::libm_environment_token_v1()) << 32),
+        );
+        if self.environment != Some(environment) {
             self.layers = Default::default();
-            self.mode = Some(mode);
+            self.environment = Some(environment);
         }
     }
 
