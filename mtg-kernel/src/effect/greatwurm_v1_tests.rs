@@ -343,7 +343,7 @@ fn genuine_paid_cast_accepts_every_native_counter_kind_without_narrowing_both_se
                 let original = raw.clone();
                 assert!(crate::fishing_pole_v39::lifecycle::validate_state(&raw).is_err());
                 assert_eq!(raw, original);
-                crate::standard_creatures_v1::apply_counter_transfer(
+                crate::standard_creatures_v1::place_counters_checked_v1(
                     &mut s,
                     donor,
                     p,
@@ -765,7 +765,7 @@ fn mixed_counter_units_pay_one_atomic_cost_and_hidden_worlds_do_not_change_menu_
             c.fellowship = 1;
             // Keep the six distinct units, with bait entering through its real
             // native transfer journal rather than an unauthenticated assignment.
-            crate::standard_creatures_v1::apply_counter_transfer(
+            crate::standard_creatures_v1::place_counters_checked_v1(
                 s,
                 da,
                 p,
