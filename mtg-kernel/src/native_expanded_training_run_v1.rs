@@ -6,6 +6,10 @@ use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
     ESupportedTeacherOptionsV1,
 };
+use crate::expanded_deck_training_v1::search_targets_v1::{
+    continuation_identity as search_targets_continuation_identity_v1, SearchTargetsOpponentV1,
+    SearchTargetsOptionsV1,
+};
 use crate::expanded_deck_training_v1::soft_q_teacher_v1::{
     continuation_identity as soft_q_continuation_identity_v1, SoftQArmV1, SoftQTeacherOptionsV1,
 };
@@ -123,6 +127,68 @@ impl SoftQRunOptionsV1 {
     }
 }
 
+/// TP1 Stage B searched-game targets (collab LANES/teacher-price-20261019,
+/// STAGE-B.md). Before update `index`, the run waits for the lane
+/// orchestrator's packet `{packets_directory}/u{update_offset + index:06}.json`
+/// (built from this update's start checkpoint), pins it and trains on it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchTargetsRunOptionsV1 {
+    pub packets_directory: PathBuf,
+    pub bank_spec: PinnedFileV1,
+    pub opponents: Vec<SearchTargetsOpponentV1>,
+    pub coefficient: f64,
+    pub denominator: usize,
+    pub run: String,
+    pub arm: String,
+    pub seed: u64,
+    pub update_offset: usize,
+    pub wait_seconds: u64,
+    /// The search allocation every searched game must record (E4).
+    pub allocation: Value,
+}
+
+impl SearchTargetsRunOptionsV1 {
+    fn packet_path_v1(&self, index: usize) -> PathBuf {
+        self.packets_directory
+            .join(format!("u{:06}.json", self.update_offset + index))
+    }
+
+    fn options_v1(&self, index: usize, packet: PinnedFileV1) -> SearchTargetsOptionsV1 {
+        SearchTargetsOptionsV1 {
+            packet,
+            bank_spec: self.bank_spec.clone(),
+            opponents: self.opponents.clone(),
+            coefficient: self.coefficient,
+            denominator: self.denominator,
+            allocation: self.allocation.clone(),
+            expected: json!({"run":self.run,"arm":self.arm,"seed":self.seed,
+                "update":self.update_offset + index,"allocation":self.allocation}),
+        }
+    }
+
+    /// Waits for the packet (one-second polls, `STOP` in the packets
+    /// directory or the timeout ends the wait with an error) and pins it.
+    fn wait_for_packet_v1(&self, index: usize) -> Result<PinnedFileV1, String> {
+        let path = self.packet_path_v1(index);
+        let started = Instant::now();
+        loop {
+            check(
+                !self.packets_directory.join("STOP").exists(),
+                "search-target packet wait stopped",
+            )?;
+            if path.exists() {
+                return pin(&path);
+            }
+            check(
+                started.elapsed().as_secs() < self.wait_seconds,
+                "search-target packet did not arrive in time",
+            )?;
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeExpandedTrainingRunV1 {
@@ -198,6 +264,14 @@ pub struct NativeExpandedTrainingRunV1 {
     /// config and run identity is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub soft_q: Option<SoftQRunOptionsV1>,
+    /// TP1 Stage B searched-game targets; omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_targets: Option<SearchTargetsRunOptionsV1>,
+    /// TP1 Stage B's CPU ledger: each iteration receipt records this driver
+    /// process's CPU seconds at the iteration boundary. Off by default, so
+    /// every existing config and receipt is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub record_process_cpu: bool,
     pub output_directory: PathBuf,
 }
 
@@ -260,6 +334,7 @@ impl NativeExpandedTrainingRunV1 {
                     && self.line_b.is_none()
                     && self.e_supported.is_none()
                     && self.soft_q.is_none()
+                    && self.search_targets.is_none()
                     && !matches!(
                         self.loss_selection,
                         ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { .. }
@@ -334,6 +409,31 @@ impl NativeExpandedTrainingRunV1 {
                     )?;
                 }
             }
+        }
+        if let Some(options) = &self.search_targets {
+            check(
+                self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.update_backend.is_cpu()
+                    && self.update_backward_execution.is_sequential()
+                    && self.preparation_workers == 1
+                    && self.collection_sampler.is_legacy()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    ),
+                "search targets require ordinary sequential CPU GAE, serial preparation and the legacy sampler",
+            )?;
+            check(
+                (1..=172_800).contains(&options.wait_seconds)
+                    && !options.run.is_empty()
+                    && !options.arm.is_empty(),
+                "search-target wait, run or arm invalid",
+            )?;
+            options
+                .options_v1(0, options.bank_spec.clone())
+                .validate_v1()?;
         }
         if let Some(options) = &self.soft_q {
             // The SQ1 command is the sequential CPU GAE update with full Adam,
@@ -830,11 +930,13 @@ fn validate_update(
     line_b_frozen_sha256: Option<&str>,
     e_supported: Option<&ESupportedTeacherOptionsV1>,
     soft_q: Option<&SoftQTeacherOptionsV1>,
+    search_targets: Option<(&SearchTargetsRunOptionsV1, usize)>,
     training_math: TrainingMathV1,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     validate_e_supported_update(&document, e_supported)?;
     validate_soft_q_update(&document, soft_q)?;
+    validate_search_targets_update(&document, search_targets)?;
     check(
         document.get("training_math").and_then(Value::as_str) == training_math.identity_v1(),
         "update training math differs from the run config",
@@ -933,6 +1035,40 @@ fn validate_soft_q_update(
             && packet["options"] == value(options)?
             && receipt["scheduled"] == packet["scheduled"],
         "SQ1 update does not bind this run's teacher options and packet",
+    )
+}
+
+/// A search-target run's update must carry the packet at this update's
+/// expected path, unchanged since, bound into the checkpoint with this run's
+/// continuation identity; any other run's update must not.
+fn validate_search_targets_update(
+    document: &Value,
+    search_targets: Option<(&SearchTargetsRunOptionsV1, usize)>,
+) -> Result<(), String> {
+    let Some((options, index)) = search_targets else {
+        return check(
+            document.get("search_targets").is_none(),
+            "a run without search targets recovered a search-target update",
+        );
+    };
+    let receipt = document
+        .get("search_targets")
+        .ok_or("search-target run update lacks its receipt")?;
+    let packet_pin = parse_pin(receipt, "packet")?;
+    check(
+        Path::new(&packet_pin.path) == options.packet_path_v1(index),
+        "search-target update read another packet path",
+    )?;
+    read_pin_bounded(&packet_pin, ARTIFACT_CAP)?;
+    crate::expanded_deck_training_v1::search_targets_v1::revalidate_packet_v1(&packet_pin)?;
+    let checkpoint = read_pin_bounded(&parse_pin(document, "checkpoint")?, ARTIFACT_CAP)?;
+    let expected = options.options_v1(index, packet_pin.clone());
+    check(
+        checkpoint["search_targets"]["continuation"]
+            == search_targets_continuation_identity_v1(&expected)
+            && checkpoint["search_targets"]["packet"] == value(&packet_pin)?
+            && receipt["packet"] == value(&packet_pin)?,
+        "search-target update does not bind this run's packet and options",
     )
 }
 
@@ -1136,6 +1272,12 @@ pub fn run_native_expanded_training_v1(
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
         let complete_path = directory.join("complete.json");
+        if let Some(options) = &config.search_targets {
+            check(
+                complete_path.exists() || !options.packets_directory.join("STOP").exists(),
+                "search-target run stopped before its next iteration",
+            )?;
+        }
         let episodes = resolve_episodes(config, index, &current, &history)?;
         let episode_digest = identity(&episodes)?;
         let e_options = config
@@ -1177,6 +1319,7 @@ pub fn run_native_expanded_training_v1(
                 line_b_frozen_sha256.as_deref(),
                 e_options.as_ref(),
                 sq_options.as_ref(),
+                config.search_targets.as_ref().map(|o| (o, index)),
                 config.training_math,
             )?;
             check(
@@ -1282,6 +1425,7 @@ pub fn run_native_expanded_training_v1(
                     line_b_frozen_sha256.as_deref(),
                     e_options.as_ref(),
                     sq_options.as_ref(),
+                    config.search_targets.as_ref().map(|o| (o, index)),
                     config.training_math,
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
@@ -1332,13 +1476,24 @@ pub fn run_native_expanded_training_v1(
                 "update-input.json",
                 &json!({"collection":collection}),
             )?;
-            let update_command = update_command(
-                config,
-                index,
-                &current,
-                trajectories,
-                attempt.join("update"),
-            );
+            let update_command = match &config.search_targets {
+                Some(options) => ExpandedTrainingCommandV1::SearchTargetsUpdate {
+                    source: current.clone(),
+                    trajectories,
+                    learning_rate: config.learning_rate,
+                    value_coefficient: config.value_coefficient,
+                    loss_selection: config.loss_selection,
+                    targets: options.options_v1(index, options.wait_for_packet_v1(index)?),
+                    output_directory: attempt.join("update"),
+                },
+                None => update_command(
+                    config,
+                    index,
+                    &current,
+                    trajectories,
+                    attempt.join("update"),
+                ),
+            };
             publish(&attempt, "update-command.json", &update_command)?;
             let started = Instant::now();
             execute_v1(update_command)?;
@@ -1378,12 +1533,17 @@ pub fn run_native_expanded_training_v1(
             line_b_frozen_sha256.as_deref(),
             e_options.as_ref(),
             sq_options.as_ref(),
+            config.search_targets.as_ref().map(|o| (o, index)),
             config.training_math,
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
             "output_identity":after});
+        if config.record_process_cpu {
+            receipt["driver_process_cpu_seconds"] =
+                json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
+        }
         if let Some(ledger_pin) = collection_non_natural_ledger_pin(&collection)? {
             receipt["non_natural_ledger"] = value(&ledger_pin)?;
         }
@@ -1597,6 +1757,8 @@ mod tests {
             line_b: None,
             e_supported: None,
             soft_q: None,
+            search_targets: None,
+            record_process_cpu: false,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -2309,6 +2471,8 @@ mod tests {
             line_b: None,
             e_supported: None,
             soft_q: None,
+            search_targets: None,
+            record_process_cpu: false,
             output_directory: root.join("run"),
         }
     }
@@ -2453,6 +2617,141 @@ mod tests {
             engineering_zero_treatment: false,
         });
         config
+    }
+
+    /// TP1 Stage B: a stand-in orchestrator writes each update's packet, bound
+    /// to that update's start checkpoint, once the previous iteration ends.
+    fn spawn_packet_writer_v1(
+        config: &NativeExpandedTrainingRunV1,
+        updates: usize,
+        tamper_update: Option<usize>,
+    ) -> std::thread::JoinHandle<()> {
+        let options = config.search_targets.clone().unwrap();
+        let run = config.output_directory.clone();
+        let initial = config.initial_source.checkpoint.clone();
+        std::thread::spawn(move || {
+            std::fs::create_dir_all(&options.packets_directory).unwrap();
+            for u in 0..updates {
+                let start = if u == 0 {
+                    json!(initial)
+                } else {
+                    let complete = run
+                        .join("iterations")
+                        .join(format!("{:06}", u - 1))
+                        .join("complete.json");
+                    while !complete.exists() {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    let receipt = read_json(&complete, SMALL_CAP).unwrap();
+                    let update = read_pin(&parse_pin(&receipt, "update").unwrap()).unwrap();
+                    update["checkpoint"].clone()
+                };
+                let bound = if tamper_update == Some(u) { u + 7 } else { u };
+                let game = options.packets_directory.join(format!("game-{u}.jsonl"));
+                std::fs::write(
+                    &game,
+                    format!(
+                        "{{\"game\":{u}}}
+"
+                    ),
+                )
+                .unwrap();
+                let packet = json!({"schema":"tp1b-search-targets/v1","binding":{
+                    "run":options.run,"arm":options.arm,"seed":options.seed,"update":bound,
+                    "start_checkpoint":start,"case":null,"game":pin(&game).unwrap(),
+                    "allocation":{"initial":32000,"refresh":16000,"total":512000}},"rows":[]});
+                std::fs::write(
+                    options.packet_path_v1(u),
+                    serde_json::to_vec(&packet).unwrap(),
+                )
+                .unwrap();
+            }
+        })
+    }
+
+    fn search_targets_run_config_v1(label: &str) -> NativeExpandedTrainingRunV1 {
+        let mut config = soft_q_run_config_v1(label, SoftQArmV1::Treatment, 2);
+        config.soft_q = None;
+        let packets = config.output_directory.with_extension("packets");
+        let _ = std::fs::remove_dir_all(&packets);
+        std::fs::create_dir_all(&packets).unwrap();
+        let spec = packets.with_extension("spec.json");
+        std::fs::write(&spec, b"{}").unwrap();
+        config.search_targets = Some(SearchTargetsRunOptionsV1 {
+            packets_directory: packets,
+            bank_spec: pin(&spec).unwrap(),
+            opponents: vec![SearchTargetsOpponentV1 {
+                label: "T1".into(),
+                source: config.initial_source.clone(),
+            }],
+            coefficient: 1.0,
+            denominator: 32,
+            run: label.into(),
+            arm: "T".into(),
+            seed: 1,
+            update_offset: 0,
+            wait_seconds: 600,
+            allocation: json!({"initial":32000,"refresh":16000,"total":512000}),
+        });
+        config
+    }
+
+    /// TP1 Stage B: a packet is refused before its update when its searched
+    /// game is not an authenticated record of its case (even with no rows),
+    /// when it is bound to another update, or when STOP exists, even if the
+    /// packet is already there.
+    #[test]
+    fn search_target_runs_refuse_unbound_packets_and_honor_stop() {
+        let config = search_targets_run_config_v1("st-run-fake-game");
+        config.validate_v1().unwrap();
+        let writer = spawn_packet_writer_v1(&config, 1, None);
+        let error = run_native_expanded_training_v1(&config, None).unwrap_err();
+        writer.join().unwrap();
+        assert!(!error.is_empty());
+        assert!(!config
+            .output_directory
+            .join("iterations/000000/complete.json")
+            .exists());
+        let tampered = search_targets_run_config_v1("st-run-tampered");
+        let writer = spawn_packet_writer_v1(&tampered, 1, Some(0));
+        let error = run_native_expanded_training_v1(&tampered, None).unwrap_err();
+        writer.join().unwrap();
+        assert!(
+            error.contains("another run, arm, seed or update"),
+            "{error}"
+        );
+        let stopped = search_targets_run_config_v1("st-run-stopped");
+        let writer = spawn_packet_writer_v1(&stopped, 1, None);
+        writer.join().unwrap();
+        let options = stopped.search_targets.as_ref().unwrap();
+        std::fs::write(options.packets_directory.join("STOP"), b"").unwrap();
+        let error = run_native_expanded_training_v1(&stopped, None).unwrap_err();
+        assert!(error.contains("stopped"), "{error}");
+    }
+
+    /// TP1 Stage B's ledger: with `record_process_cpu`, every iteration
+    /// receipt records the driver's own process CPU at its boundary,
+    /// nondecreasing; without it receipts are unchanged.
+    #[test]
+    fn record_process_cpu_marks_every_iteration_boundary() {
+        let mut config = soft_q_run_config_v1("cpu-marks", SoftQArmV1::Treatment, 1);
+        config.soft_q = None;
+        config.record_process_cpu = true;
+        let result = run_native_expanded_training_v1(&config, None).unwrap();
+        let marks: Vec<f64> = (0..2)
+            .map(|i| {
+                iteration_receipt_v1(&result, i)["driver_process_cpu_seconds"]
+                    .as_f64()
+                    .unwrap()
+            })
+            .collect();
+        assert!(marks[0] > 0.0 && marks[1] >= marks[0], "{marks:?}");
+        let mut plain = soft_q_run_config_v1("cpu-marks-off", SoftQArmV1::Treatment, 1);
+        plain.soft_q = None;
+        let result = run_native_expanded_training_v1(&plain, None).unwrap();
+        assert!(iteration_receipt_v1(&result, 0)
+            .get("driver_process_cpu_seconds")
+            .is_none());
     }
 
     /// Design section 6.2: with the whole teacher run but no target applied,

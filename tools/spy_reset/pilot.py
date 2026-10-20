@@ -47,7 +47,9 @@ PANEL_NS = f"{NS}/eval"
 SD1_PANEL_NS = "sd1-panel-v1"
 # SQ1's fresh panel (collab LANES/soft-q-teaching-20261018, design section 7).
 SQ1_PANEL_NS = "sq1-panel-v1-20261018"
-PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS)
+# TP1 Stage B (collab LANES/teacher-price-20261019, STAGE-B.md section 3).
+TP1B_PANEL_NS = "tp1b-panel-20261019"
+PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS)
 
 
 def key(parts: list) -> bytes:

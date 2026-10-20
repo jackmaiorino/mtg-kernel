@@ -2969,6 +2969,8 @@ fn retention_run_config_v1(
         line_b: None,
         e_supported: None,
         soft_q: None,
+        search_targets: None,
+        record_process_cpu: false,
         output_directory: root.join("run"),
     }
 }

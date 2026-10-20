@@ -191,6 +191,104 @@ fn authenticate(
     })
 }
 
+/// One searched-game root a training update teaches (collab
+/// LANES/teacher-price-20261019, STAGE-B.md): the game's exact `s4a-budget`
+/// row, its case and the root's coordinates.
+pub(crate) struct SearchedRootV1<'a> {
+    pub(crate) search: &'a Value,
+    pub(crate) case: &'a Value,
+    pub(crate) step: u64,
+    pub(crate) physical_decision_id: u64,
+    pub(crate) substep: u32,
+}
+
+/// TP1 Stage B: authenticate searched-game roots for a training update, as
+/// `s4a-root-actions` does, from explicit inputs instead of the runner's
+/// environment. The bank binding is recomputed with this build's identity, the
+/// given focal policy and opponents (in game-setup order), all registered
+/// decks and the formal limits, which is how `s4a-budget` played the game.
+/// Returns each root's session, chooser and decision identity, in order.
+pub(crate) fn authenticated_roots_v1(
+    bank_spec_bytes: &[u8],
+    labels: Vec<String>,
+    opponents: Vec<FrozenPlayPolicyV1>,
+    focal: &FrozenPlayPolicyV1,
+    roots: &[SearchedRootV1<'_>],
+) -> Result<Vec<(FastActorSessionV1, Value, Value)>, String> {
+    let (sh, binding) = searched_context_v1(bank_spec_bytes, labels, opponents, focal)?;
+    roots
+        .iter()
+        .map(|root| {
+            let case: SourceSpec =
+                serde_json::from_value(root.case.clone()).map_err(|e| e.to_string())?;
+            validate_case(&case, &sh)?;
+            let at = Coordinates {
+                step: root.step,
+                physical_decision_id: root.physical_decision_id,
+                substep: root.substep,
+            };
+            let authenticated = authenticate(&case, &at, &sh.spec, root.search, &binding, &mut 0)?;
+            Ok((
+                authenticated.session,
+                authenticated.chooser,
+                authenticated.identity,
+            ))
+        })
+        .collect()
+}
+
+/// The context `s4a-budget` played a searched game in, and the bank binding
+/// its row must carry: this build, the focal policy, the opponents in
+/// game-setup order, all registered decks and the formal limits.
+fn searched_context_v1(
+    bank_spec_bytes: &[u8],
+    labels: Vec<String>,
+    opponents: Vec<FrozenPlayPolicyV1>,
+    focal: &FrozenPlayPolicyV1,
+) -> Result<(BankShared, String), String> {
+    let spec: bank::BankSpec =
+        serde_json::from_slice(bank_spec_bytes).map_err(|e| e.to_string())?;
+    let decks: Vec<usize> = (0..crate::runtime_decks::RUNTIME_DECKS.len()).collect();
+    if spec.decks.len() != decks.len() {
+        return Err("searched roots need a bank spec over all registered decks".into());
+    }
+    let sh = BankShared {
+        spec,
+        labels,
+        opponents,
+        prior: super::super::world::DeckPrior::new(&decks),
+        limits: super::super::arms::Limits::FORMAL,
+    };
+    sh.spec.validate()?;
+    let binding = bank::bank_binding(focal, &sh)?;
+    Ok((sh, binding))
+}
+
+/// TP1 Stage B: a searched game's envelope, whatever its rows: a valid
+/// `s4a-budget` search game of `case`, under `allocation`, whose bank binding
+/// is the one this build computes for `focal` and the opponents.
+pub(crate) fn validate_searched_game_v1(
+    bank_spec_bytes: &[u8],
+    labels: Vec<String>,
+    opponents: Vec<FrozenPlayPolicyV1>,
+    focal: &FrozenPlayPolicyV1,
+    search: &Value,
+    case: &Value,
+    allocation: &Value,
+) -> Result<(), String> {
+    let (sh, binding) = searched_context_v1(bank_spec_bytes, labels, opponents, focal)?;
+    let src: SourceSpec = serde_json::from_value(case.clone()).map_err(|e| e.to_string())?;
+    validate_case(&src, &sh)?;
+    // The same envelope and every case field `s4a-root-actions` checks
+    // (schema, search arm, lineage, bank binding, deck pair, seat, opponent,
+    // seeds, starting player, search namespace).
+    row_actions(search, &src, &sh.spec.lineage, &binding, false)?;
+    if search["allocation"] != *allocation || search["game"]["valid"] != true {
+        return Err("searched game allocation or validity differs".into());
+    }
+    Ok(())
+}
+
 /// The originating search's step and index of a reused root (None otherwise).
 fn reused_origin(search: &Value, step: u64) -> Result<Option<(u64, u64)>, String> {
     let records = search["game"]["decisions"]
