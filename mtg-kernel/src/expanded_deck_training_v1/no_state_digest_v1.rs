@@ -122,7 +122,10 @@ fn install_v1(
     )
 }
 
-/// The loader branch for a [`NoStateDigestImportV1`] `play_import`.
+/// The loader branch for a [`NoStateDigestImportV1`] `play_import`. Never
+/// inlined: its policy locals must not enlarge the ordinary loader's frame
+/// (the loader runs on the 1 MiB main thread).
+#[inline(never)]
 pub(super) fn load_v1(
     source: &ExpandedModelSourceV1,
     bytes: &[u8],
