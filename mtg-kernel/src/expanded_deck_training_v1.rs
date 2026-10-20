@@ -4131,6 +4131,14 @@ fn execute_update_inner_v1(
                         "auxiliary_head_l2":auxiliary.auxiliary_head_l2,
                         "ordinary_head_l2":auxiliary.ordinary_head_l2,
                         "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual}));
+                    if let Some(exposure) = st_auxiliary.as_mut() {
+                        if let Some(cap) = auxiliary.cap {
+                            exposure["cap"] = cap;
+                        }
+                        if let Some(steps) = auxiliary.adam_steps {
+                            exposure["adam_steps"] = steps;
+                        }
+                    }
                     result
                 }
                 (ExpandedUpdateBackendV1::Cpu, _) if sq_teacher.is_some() => {

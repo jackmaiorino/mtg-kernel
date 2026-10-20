@@ -55,6 +55,11 @@ pub(crate) struct ExternalAuxiliaryInputV1<'a> {
     pub(crate) direction: LineBDivergenceV1,
     pub(crate) coefficient: f64,
     pub(crate) denominator: usize,
+    /// STAGE-B2.md section 4 item 2: `Some(kappa)` caps the auxiliary
+    /// whole-network gradient L2 at `kappa` times the ordinary one.
+    pub(crate) cap: Option<f64>,
+    /// Record the Adam steps of the ordinary and combined gradients.
+    pub(crate) step_telemetry: bool,
     pub(crate) rows: Vec<ExternalAuxiliaryRowV1<'a>>,
 }
 
@@ -175,7 +180,8 @@ pub(super) fn external_auxiliary_terms_v1(
         rows,
         divergences,
         loss,
-    ))
+    )
+    .with_cap_v1(input.cap, input.step_telemetry))
 }
 
 impl NativePolicyValueTrainStateV1 {

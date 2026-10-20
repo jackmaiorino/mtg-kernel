@@ -39,6 +39,11 @@ pub(crate) struct LineBAuxiliaryResultV1 {
     pub(crate) ordinary_head_l2: f64,
     /// The auxiliary term's own scorer-bias gradient (its gauge residual).
     pub(crate) auxiliary_bias_residual: f32,
+    /// STAGE-B2.md section 4 item 2's cap receipt, when a cap is configured.
+    pub(crate) cap: Option<serde_json::Value>,
+    /// The Adam step norms of the ordinary and combined gradients, when
+    /// requested (filled by the update after its Adam step).
+    pub(crate) adam_steps: Option<serde_json::Value>,
 }
 
 pub(super) struct LineBAuxiliaryTermsV1 {
@@ -49,9 +54,26 @@ pub(super) struct LineBAuxiliaryTermsV1 {
     rows: Vec<(Vec<f32>, Vec<f64>)>,
     divergences: Vec<Option<f64>>,
     loss: f64,
+    cap: Option<f64>,
+    step_telemetry: bool,
 }
 
 impl LineBAuxiliaryTermsV1 {
+    pub(super) fn with_cap_v1(mut self, cap: Option<f64>, step_telemetry: bool) -> Self {
+        self.cap = cap;
+        self.step_telemetry = step_telemetry;
+        self
+    }
+
+    pub(super) fn step_telemetry_v1(&self) -> bool {
+        self.step_telemetry
+    }
+
+    #[cfg(test)]
+    pub(super) fn gradients_for_test_v1(&self) -> &[Vec<f32>] {
+        &self.gradients
+    }
+
     /// Terms another auxiliary source (archive distillation's off-batch rows)
     /// built with the same reverse pass, so they combine exactly as these do.
     pub(super) fn from_parts_v1(
@@ -67,6 +89,8 @@ impl LineBAuxiliaryTermsV1 {
             rows,
             divergences,
             loss,
+            cap: None,
+            step_telemetry: false,
         }
     }
 }
@@ -143,6 +167,8 @@ pub(super) fn line_b_auxiliary_terms_v1(
         rows,
         divergences,
         loss,
+        cap: None,
+        step_telemetry: false,
     })
 }
 
@@ -150,7 +176,7 @@ impl LineBAuxiliaryTermsV1 {
     /// Telemetry norms, then the auxiliary gradients join the ordinary ones
     /// and the gauge accumulator gains the auxiliary rows.
     pub(super) fn combine_v1(
-        self,
+        mut self,
         parameters: &[NativeNamedParameterV1],
         gradients: &mut [Vec<f32>],
         gauge: &mut ScorerBiasGaugeAccumulatorV1,
@@ -200,6 +226,11 @@ impl LineBAuxiliaryTermsV1 {
         };
         let gradient_components = serde_json::json!({"all":component("all"),
             "policy":component("policy"),"shared":component("shared"),"value":component("value")});
+        let cap = match self.cap {
+            Some(kappa) if self.active => Some(self.apply_cap_v1(kappa, gradients)?),
+            Some(kappa) => Some(serde_json::json!({"mode":"ratio","kappa":kappa,"active":false})),
+            None => None,
+        };
         if self.active {
             for (destination, source) in gradients.iter_mut().zip(&self.gradients) {
                 for (value, auxiliary) in destination.iter_mut().zip(source) {
@@ -217,7 +248,64 @@ impl LineBAuxiliaryTermsV1 {
             auxiliary_head_l2,
             ordinary_head_l2,
             auxiliary_bias_residual,
+            cap,
+            adam_steps: None,
         })
+    }
+
+    /// STAGE-B2.md section 4 item 2: `a` and `b` are the whole-network L2
+    /// norms of the auxiliary and ordinary gradients (the tensors
+    /// `gradient_components.all` measures); `s = 1` when `a = 0`, `0` when
+    /// `b = 0 < a`, else `min(1, kappa b / a)`. A scale below 1 multiplies the
+    /// auxiliary gradients and the gauge rows (logit gradients and their exact
+    /// values) before they join. Ratios are null when `b = 0`.
+    fn apply_cap_v1(
+        &mut self,
+        kappa: f64,
+        ordinary: &[Vec<f32>],
+    ) -> Result<serde_json::Value, NativePolicyTrainErrorV1> {
+        let l2 = |values: &[Vec<f32>]| {
+            let mut sum = 0.0_f64;
+            for tensor in values {
+                for &value in tensor {
+                    sum += f64::from(value) * f64::from(value);
+                }
+            }
+            sum.sqrt()
+        };
+        let (a, b) = (l2(&self.gradients), l2(ordinary));
+        if !(a.is_finite() && b.is_finite() && kappa.is_finite() && kappa > 0.0) {
+            return Err(invalid("search-target-cap-nonfinite"));
+        }
+        let scale = if a == 0.0 {
+            1.0
+        } else if b == 0.0 {
+            0.0
+        } else {
+            (kappa * b / a).min(1.0)
+        };
+        if scale < 1.0 {
+            let single = scale as f32;
+            for tensor in &mut self.gradients {
+                for value in tensor.iter_mut() {
+                    *value *= single;
+                }
+            }
+            for (d_logits, exact) in &mut self.rows {
+                for value in d_logits.iter_mut() {
+                    *value *= single;
+                }
+                for value in exact.iter_mut() {
+                    *value *= scale;
+                }
+            }
+        }
+        let ratio = (b > 0.0).then(|| a / b);
+        Ok(
+            serde_json::json!({"mode":"ratio","kappa":kappa,"active":true,
+            "auxiliary_l2":a,"ordinary_l2":b,"scale":scale,"suppressed":a > 0.0 && b == 0.0,
+            "binding":scale < 1.0,"raw_ratio":ratio,"applied_ratio":ratio.map(|r| scale * r)}),
+        )
     }
 }
 
@@ -294,4 +382,63 @@ pub(crate) fn line_b_permuted_input_v1(
         },
         kinds,
     )
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    fn terms(gradients: Vec<Vec<f32>>) -> LineBAuxiliaryTermsV1 {
+        LineBAuxiliaryTermsV1::from_parts_v1(
+            true,
+            gradients,
+            vec![(vec![0.5, -0.5], vec![0.5, -0.5])],
+            vec![Some(0.1)],
+            0.1,
+        )
+        .with_cap_v1(Some(1.0), false)
+    }
+
+    /// STAGE-B2.md section 4 item 2: the scale and its receipt in each case.
+    #[test]
+    fn cap_scales_suppresses_and_refuses_as_specified() {
+        // Binding: a = 5, b = 1, kappa = 1 gives s = 0.2, applied ratio 1.
+        let mut binding = terms(vec![vec![3.0, 4.0]]);
+        let receipt = binding.apply_cap_v1(1.0, &[vec![0.6, 0.8]]).unwrap();
+        let scale = receipt["scale"].as_f64().unwrap();
+        assert!((scale - 0.2).abs() < 1e-6); // f32 inputs: b is 1 to rounding
+        assert_eq!(receipt["binding"], true);
+        assert!((receipt["raw_ratio"].as_f64().unwrap() - 5.0).abs() < 1e-6);
+        assert!((receipt["applied_ratio"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+        let single = scale as f32;
+        assert_eq!(binding.gradients, vec![vec![3.0 * single, 4.0 * single]]);
+        assert_eq!(binding.rows[0].0, vec![0.5 * single, -0.5 * single]);
+        assert_eq!(binding.rows[0].1, vec![0.5 * scale, -0.5 * scale]);
+        // Not binding: s = 1 and nothing changes.
+        let mut free = terms(vec![vec![0.3, 0.4]]);
+        let receipt = free.apply_cap_v1(1.0, &[vec![0.6, 0.8]]).unwrap();
+        assert_eq!(receipt["scale"].as_f64(), Some(1.0));
+        assert_eq!(receipt["binding"], false);
+        assert_eq!(free.gradients, vec![vec![0.3, 0.4]]);
+        // b = 0 < a: suppressed, ratios null.
+        let mut suppressed = terms(vec![vec![3.0, 4.0]]);
+        let receipt = suppressed.apply_cap_v1(1.0, &[vec![0.0, 0.0]]).unwrap();
+        assert_eq!(receipt["scale"].as_f64(), Some(0.0));
+        assert_eq!(receipt["suppressed"], true);
+        assert!(receipt["raw_ratio"].is_null() && receipt["applied_ratio"].is_null());
+        assert_eq!(suppressed.gradients, vec![vec![0.0, 0.0]]);
+        // a = b = 0: s = 1, ratios null.
+        let mut both = terms(vec![vec![0.0, 0.0]]);
+        let receipt = both.apply_cap_v1(1.0, &[vec![0.0, 0.0]]).unwrap();
+        assert_eq!(receipt["scale"].as_f64(), Some(1.0));
+        assert!(receipt["raw_ratio"].is_null() && receipt["applied_ratio"].is_null());
+        // a = 0 < b: s = 1, ratio 0.
+        let mut quiet = terms(vec![vec![0.0, 0.0]]);
+        let receipt = quiet.apply_cap_v1(1.0, &[vec![0.6, 0.8]]).unwrap();
+        assert_eq!(receipt["scale"].as_f64(), Some(1.0));
+        assert_eq!(receipt["raw_ratio"].as_f64(), Some(0.0));
+        // Nonfinite norms refuse the update.
+        let mut bad = terms(vec![vec![f32::INFINITY, 0.0]]);
+        assert!(bad.apply_cap_v1(1.0, &[vec![0.6, 0.8]]).is_err());
+    }
 }
