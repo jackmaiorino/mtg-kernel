@@ -200,15 +200,15 @@ fn paid_controlled_death_returns_physical_owner_with_entry_replacements_and_char
         // The replacement belongs to the physical owner, who controls the
         // returned permanent even though the creature dies under the Call
         // controller's temporary control. Employment resolves on the Call
-        // controller's own main phase, then the opponent uses Murder as an
+        // controller's own main phase, then the opponent uses Hero's Downfall as an
         // instant before that turn ends, while the effect still controls it.
         let employment = put(&mut state, actor, "Involuntary Employment", Zone::Hand);
         paid_cast(&mut state, actor, employment, Some(creature));
         assert_eq!(state.objects.get(creature).owner, opponent);
         assert_eq!(state.objects.get(creature).controller, actor);
 
-        let murder = put(&mut state, opponent, "Murder", Zone::Hand);
-        cast_until_call_trigger(&mut state, opponent, murder, creature, call);
+        let removal = put(&mut state, opponent, "Hero's Downfall", Zone::Hand);
+        cast_until_call_trigger(&mut state, opponent, removal, creature, call);
         assert_effect_only_call_tampering_is_rejected(&state, call);
         assert_eq!(state.objects.get(creature).zone, Zone::Graveyard);
         let expected_graveyard_generation = state.objects.get(creature).zone_change_count;

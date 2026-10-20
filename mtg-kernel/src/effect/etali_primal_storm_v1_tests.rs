@@ -369,7 +369,8 @@ fn paid_attack_public_begin_unknown_context_and_direct_resume_refuse_native_row_
 }
 
 #[test]
-fn paid_attack_real_murder_response_preserves_original_controller_and_departed_source_both_seats() {
+fn paid_attack_real_removal_response_preserves_original_controller_and_departed_source_both_seats()
+{
     for p in [PlayerId::P0, PlayerId::P1] {
         let (mut s, source) = paid(
             p,
@@ -391,17 +392,17 @@ fn paid_attack_real_murder_response_preserves_original_controller_and_departed_s
             }
             quiet(&mut s, d);
         }
-        let murder = put(&mut s, p.opponent(), "Murder", Zone::Hand);
+        let removal = put(&mut s, p.opponent(), "Hero's Downfall", Zone::Hand);
         assert!(
-            matches!(next(&mut s),Decision::CastSpellOrPass{ref castable_spells,..}if castable_spells.contains(&murder))
+            matches!(next(&mut s),Decision::CastSpellOrPass{ref castable_spells,..}if castable_spells.contains(&removal))
         );
-        answer(&mut s, Action::CastSpell(murder));
+        answer(&mut s, Action::CastSpell(removal));
         assert!(
             matches!(next(&mut s),Decision::ChooseTargets{ref legal_targets,..}if legal_targets.contains(&Target::Object(source)))
         );
         answer(&mut s, Action::ChooseTarget(Target::Object(source)));
         let row = s.stack.last().unwrap();
-        assert_eq!(row.source, murder);
+        assert_eq!(row.source, removal);
         assert_eq!(s.players[p.opponent().index()].mana_pool, [0; 6]);
         for _ in 0..32 {
             let d = next(&mut s);

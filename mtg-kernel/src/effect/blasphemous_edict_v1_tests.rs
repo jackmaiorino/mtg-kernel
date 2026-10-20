@@ -475,7 +475,7 @@ fn genuine_paid_response_removes_thirteenth_creature_without_refunding_alternati
         cast(
             &mut s,
             actor.opponent(),
-            "Murder",
+            "Hero's Downfall",
             CastMode::Normal,
             Some(Target::Object(a[0])),
             3,

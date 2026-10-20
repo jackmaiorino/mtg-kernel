@@ -158,7 +158,7 @@ mod tests {
     use super::*;
     use crate::{
         card_def,
-        engine::{self, Action, CastMode, Decision},
+        engine::{self, Action, Decision},
         event::{self, ProposedEvent},
         policy_observation_v6::tests::put,
     };
@@ -266,50 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn genuinely_paid_concealed_cast_publishes_no_private_printing_both_seats() {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = crate::call_observation_v62::tests::ready(actor, "Forest");
-            let spell = put(&mut state, actor, "Flourishing Bloom-Kin", Zone::Hand);
-            state.players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()] = 3;
-            assert!(matches!(
-                engine::advance_until_decision(&mut state),
-                Decision::CastSpellOrPass { player, .. } if player == actor
-            ));
-            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
-            assert!(matches!(
-                engine::advance_until_decision(&mut state),
-                Decision::ChooseCastMode { .. }
-            ));
-            engine::step(&mut state, Action::ChooseCastMode(CastMode::Alternative)).unwrap();
-            assert!(matches!(
-                engine::advance_until_decision(&mut state),
-                Decision::CastSpellOrPass { player, .. } if player == actor
-            ));
-            assert!(state.objects.get(spell).v4.face_down_v1.is_some());
-            let (_, receipt) = receipt_for(&state, spell);
-            assert_eq!(
-                receipt.public_identity,
-                PublicIdentityV1::Concealed { disguised: true }
-            );
-            let published = serde_json::to_string(&receipt).unwrap();
-            assert!(!published.contains("Flourishing Bloom-Kin"));
-            assert!(!published.contains("card_def"));
-            assert!(!unsupported_public_history(&state, |id| id >= 460).unwrap());
-            let restored: GameState =
-                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            assert_eq!(receipt_for(&restored, spell).1, receipt);
-            // The historical reader cannot select its result by the current
-            // private face-down printing in an independently sampled world.
-            let mut other_hidden = restored;
-            other_hidden.objects.get_mut(spell).card_def =
-                card_def::card_id_by_name("Fiend Artisan").unwrap();
-            let before = other_hidden.clone();
-            assert!(!unsupported_public_history(&other_hidden, |id| id >= 460).unwrap());
-            assert_eq!(other_hidden, before);
-        }
-    }
-
-    #[test]
     fn cast_receipt_loss_relink_and_suffix_forgery_refuse_readonly_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (original, spell, at, receipt) = paid_then_rehidden(actor);
@@ -348,3 +304,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, feature = "standard-magezero-fixtures"))]
+#[path = "cast_identity_v1/standard_tests.rs"]
+mod standard_tests;

@@ -194,7 +194,7 @@ fn genuine_colorless_and_automatic_chosen_creature_payment_counter_response_rest
         let mut s = ready(actor);
         let source = land(&mut s, actor, CreatureTypeV60::Elf);
         let bolt = put(&mut s, actor, "Lightning Bolt", Zone::Hand);
-        let goblin = put(&mut s, actor, "Goblin Arsonist", Zone::Hand);
+        let goblin = put(&mut s, actor, "Goblin Bushwhacker", Zone::Hand);
         let Decision::CastSpellOrPass {
             castable_spells, ..
         } = engine::advance_until_decision(&mut s)

@@ -281,8 +281,8 @@ fn paid_foreign_physical_owner_season_return_and_explicit_stale_zone_primitive_b
         assert!(facts.deaths[0].collection_completed);
         assert_eq!(facts.returns[0].stage, StageV62::Held);
         restore(&uncollected);
-        let murder = put(&mut state, owner, "Murder", Zone::Hand);
-        announce(&mut state, owner, murder, Some(elf));
+        let removal = put(&mut state, owner, "Hero's Downfall", Zone::Hand);
+        announce(&mut state, owner, removal, Some(elf));
         published(&mut state, 1);
         let facts = capture(&state, actor).unwrap();
         assert_eq!(facts.deaths[0].source.original_source.object, call.0);
@@ -314,7 +314,7 @@ fn paid_foreign_physical_owner_season_return_and_explicit_stale_zone_primitive_b
         assert_eq!(row.card.controller, owner.into());
         assert!(row.form.subtype_ids.contains(&(Subtype::Angel as u16)));
         // Now an Angel, its next genuine death must not create a new Call row.
-        paid(&mut state, actor, "Murder", Some(elf));
+        paid(&mut state, actor, "Hero's Downfall", Some(elf));
         let facts = capture(&state, actor).unwrap();
         assert_eq!(facts.deaths.len(), 1);
         assert!(facts.returns.is_empty());
@@ -361,8 +361,8 @@ fn paid_replication_creates_real_call_copy_and_distinct_original_sources_both_se
         let copied = copies[0].card.object;
         assert_ne!(copied, call.0);
         assert!(copies[0].form.printed_abilities_active);
-        let murder = put(&mut state, actor.opponent(), "Murder", Zone::Hand);
-        announce(&mut state, actor.opponent(), murder, Some(elf));
+        let removal = put(&mut state, actor.opponent(), "Hero's Downfall", Zone::Hand);
+        announce(&mut state, actor.opponent(), removal, Some(elf));
         published(&mut state, 2);
         let facts = capture(&state, actor).unwrap();
         let sources = facts
@@ -391,7 +391,7 @@ fn paid_original_call_spell_countered_before_entry_has_no_death_observer_both_se
         assert_eq!(state.objects.get(call).zone, Zone::Graveyard);
         assert!(capture(&state, actor).unwrap().casts.is_empty());
         let elf = paid(&mut state, actor, "Llanowar Elves", None);
-        paid(&mut state, actor.opponent(), "Murder", Some(elf));
+        paid(&mut state, actor.opponent(), "Hero's Downfall", Some(elf));
         let facts = capture(&state, actor).unwrap();
         assert!(facts.deaths.is_empty() && facts.returns.is_empty());
         restore(&state);

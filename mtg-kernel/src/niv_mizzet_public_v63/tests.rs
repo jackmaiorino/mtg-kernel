@@ -163,7 +163,7 @@ fn pass_until_archer_trigger_returns(
     panic!("response did not leave the original Archer trigger on top");
 }
 
-fn murder_archer_before_its_trigger_damage(
+fn remove_archer_before_its_trigger_damage(
     actor: PlayerId,
     archer: ObjectId,
     state: &mut GameState,
@@ -175,11 +175,11 @@ fn murder_archer_before_its_trigger_damage(
         engine::advance_until_decision(state),
         Decision::CastSpellOrPass { player, .. } if player == responder
     ));
-    let murder = put(state, responder, "Murder", Zone::Hand);
-    engine::step(state, Action::CastSpell(murder)).unwrap();
+    let removal = put(state, responder, "Hero's Downfall", Zone::Hand);
+    engine::step(state, Action::CastSpell(removal)).unwrap();
     assert!(matches!(
         engine::advance_until_decision(state),
-        Decision::ChooseTargets { spell, .. } if spell == murder
+        Decision::ChooseTargets { spell, .. } if spell == removal
     ));
     engine::step(state, Action::ChooseTarget(Target::Object(archer))).unwrap();
     pass_until_archer_trigger_returns(state, &archer_trigger);
@@ -421,7 +421,7 @@ fn genuine_paid_departed_damage_source_uses_exact_lki_without_later_identity_bot
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, _, archer, _) = cast_niv(actor);
         let generation = state.objects.get(archer).zone_change_count;
-        murder_archer_before_its_trigger_damage(actor, archer, &mut state);
+        remove_archer_before_its_trigger_damage(actor, archer, &mut state);
         let facts = capture(&state, actor).unwrap();
         let row = facts
             .damage_draws

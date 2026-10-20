@@ -179,7 +179,7 @@ mod tests {
         panic!("response did not leave the original Archer trigger on top");
     }
 
-    fn murder_archer_before_its_trigger_damage(
+    fn remove_archer_before_its_trigger_damage(
         actor: PlayerId,
         archer: ObjectId,
         state: &mut GameState,
@@ -191,11 +191,11 @@ mod tests {
             engine::advance_until_decision(state),
             Decision::CastSpellOrPass { player, .. } if player == responder
         ));
-        let murder = put(state, responder, "Murder", Zone::Hand);
-        engine::step(state, Action::CastSpell(murder)).unwrap();
+        let removal = put(state, responder, "Hero's Downfall", Zone::Hand);
+        engine::step(state, Action::CastSpell(removal)).unwrap();
         assert!(matches!(
             engine::advance_until_decision(state),
-            Decision::ChooseTargets { spell, .. } if spell == murder
+            Decision::ChooseTargets { spell, .. } if spell == removal
         ));
         engine::step(state, Action::ChooseTarget(Target::Object(archer))).unwrap();
         pass_until_archer_trigger_returns(state, &archer_trigger);
@@ -449,11 +449,11 @@ mod tests {
             engine::advance_until_decision(&mut state),
             Decision::CastSpellOrPass { player, .. } if player == responder
         ));
-        let murder = put(&mut state, responder, "Murder", Zone::Hand);
-        engine::step(&mut state, Action::CastSpell(murder)).unwrap();
+        let removal = put(&mut state, responder, "Hero's Downfall", Zone::Hand);
+        engine::step(&mut state, Action::CastSpell(removal)).unwrap();
         assert!(matches!(
             engine::advance_until_decision(&mut state),
-            Decision::ChooseTargets { spell, .. } if spell == murder
+            Decision::ChooseTargets { spell, .. } if spell == removal
         ));
         engine::step(&mut state, Action::ChooseTarget(Target::Object(archer))).unwrap();
         pass_until_archer_trigger_returns(&mut state, &archer_trigger);
@@ -479,10 +479,10 @@ mod tests {
     }
 
     #[test]
-    fn paid_archer_damage_after_murder_uses_departure_controller_both_seats() {
+    fn paid_archer_damage_after_removal_uses_departure_controller_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut state, _niv, archer, _fae) = cast_niv(actor);
-            murder_archer_before_its_trigger_damage(actor, archer, &mut state);
+            remove_archer_before_its_trigger_damage(actor, archer, &mut state);
         }
     }
 
