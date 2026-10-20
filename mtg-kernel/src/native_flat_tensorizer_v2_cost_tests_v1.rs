@@ -469,7 +469,9 @@ fn tensorize_cost_breakdown_v1() {
             let start = std::time::Instant::now();
             for (index, (owned, value)) in chunk.iter().zip(prepared).enumerate() {
                 let blocks = &digests.blocks[offsets[index]..offsets[index + 1]];
-                std::hint::black_box(finish_full_decision_v2(owned.view(), value, blocks).unwrap());
+                std::hint::black_box(
+                    finish_full_decision_v2(owned.view(), value, blocks, false).unwrap(),
+                );
             }
             finish_ns += nanos(start);
         }

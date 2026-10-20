@@ -49,6 +49,9 @@ fn digest_memo_matches_unmemoized_digests() {
                         action_scratch: Vec::new(),
                         action_json: source.action_json.clone(),
                         action_ranges: source.action_ranges.clone(),
+                        // Both contracts, so the memoized and plain paths
+                        // must also agree with the state digest off.
+                        state_digest_off: next(&mut rng) % 4 == 0,
                     }
                 })
                 .collect();

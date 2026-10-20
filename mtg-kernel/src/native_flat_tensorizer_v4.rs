@@ -36,6 +36,11 @@ pub(crate) struct NativeFlatTensorizerV4 {
 }
 
 impl NativeFlatTensorizerV4 {
+    /// See `NativeFlatTensorizerV2::set_state_digest_v1`.
+    pub(crate) fn set_state_digest_v1(&mut self, on: bool) {
+        self.scratch.set_state_digest_v1(on);
+    }
+
     pub(crate) fn fill(
         &mut self,
         decision: FlatScoringDecisionViewV4<'_>,
