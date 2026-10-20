@@ -144,6 +144,8 @@ pub struct SearchTargetsRunOptionsV1 {
     pub seed: u64,
     pub update_offset: usize,
     pub wait_seconds: u64,
+    /// The search allocation every searched game must record (E4).
+    pub allocation: Value,
 }
 
 impl SearchTargetsRunOptionsV1 {
@@ -159,6 +161,7 @@ impl SearchTargetsRunOptionsV1 {
             opponents: self.opponents.clone(),
             coefficient: self.coefficient,
             denominator: self.denominator,
+            allocation: self.allocation.clone(),
             expected: json!({"run":self.run,"arm":self.arm,"seed":self.seed,
                 "update":self.update_offset + index}),
         }
@@ -170,13 +173,13 @@ impl SearchTargetsRunOptionsV1 {
         let path = self.packet_path_v1(index);
         let started = Instant::now();
         loop {
-            if path.exists() {
-                return pin(&path);
-            }
             check(
                 !self.packets_directory.join("STOP").exists(),
                 "search-target packet wait stopped",
             )?;
+            if path.exists() {
+                return pin(&path);
+            }
             check(
                 started.elapsed().as_secs() < self.wait_seconds,
                 "search-target packet did not arrive in time",
@@ -264,6 +267,11 @@ pub struct NativeExpandedTrainingRunV1 {
     /// TP1 Stage B searched-game targets; omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search_targets: Option<SearchTargetsRunOptionsV1>,
+    /// TP1 Stage B's CPU ledger: each iteration receipt records this driver
+    /// process's CPU seconds at the iteration boundary. Off by default, so
+    /// every existing config and receipt is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub record_process_cpu: bool,
     pub output_directory: PathBuf,
 }
 
@@ -1525,6 +1533,10 @@ pub fn run_native_expanded_training_v1(
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
             "output_identity":after});
+        if config.record_process_cpu {
+            receipt["driver_process_cpu_seconds"] =
+                json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
+        }
         if let Some(ledger_pin) = collection_non_natural_ledger_pin(&collection)? {
             receipt["non_natural_ledger"] = value(&ledger_pin)?;
         }
@@ -1739,6 +1751,7 @@ mod tests {
             e_supported: None,
             soft_q: None,
             search_targets: None,
+            record_process_cpu: false,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -2452,6 +2465,7 @@ mod tests {
             e_supported: None,
             soft_q: None,
             search_targets: None,
+            record_process_cpu: false,
             output_directory: root.join("run"),
         }
     }
@@ -2670,64 +2684,67 @@ mod tests {
             seed: 1,
             update_offset: 0,
             wait_seconds: 600,
+            allocation: json!({"initial":32000,"refresh":16000,"total":512000}),
         });
         config
     }
 
-    /// TP1 Stage B: packets with no rows give the ordinary run bit for bit;
-    /// receipts and checkpoints bind each packet; a resume revalidates them;
-    /// a packet bound to another update stops the run before its update.
+    /// TP1 Stage B: a packet is refused before its update when its searched
+    /// game is not an authenticated record of its case (even with no rows),
+    /// when it is bound to another update, or when STOP exists, even if the
+    /// packet is already there.
     #[test]
-    fn search_target_runs_with_empty_packets_equal_the_ordinary_run() {
-        let config = search_targets_run_config_v1("st-run-empty");
+    fn search_target_runs_refuse_unbound_packets_and_honor_stop() {
+        let config = search_targets_run_config_v1("st-run-fake-game");
         config.validate_v1().unwrap();
-        let writer = spawn_packet_writer_v1(&config, 2, None);
-        let st = run_native_expanded_training_v1(&config, None).unwrap();
+        let writer = spawn_packet_writer_v1(&config, 1, None);
+        let error = run_native_expanded_training_v1(&config, None).unwrap_err();
         writer.join().unwrap();
-        let mut ordinary = config.clone();
-        ordinary.search_targets = None;
-        ordinary.output_directory = config.output_directory.with_extension("ordinary");
-        let o = run_native_expanded_training_v1(&ordinary, None).unwrap();
-        for index in 0..2 {
-            let d = |r: &Value| {
-                read_pin(
-                    &serde_json::from_value(iteration_receipt_v1(r, index)["update"].clone())
-                        .unwrap(),
-                )
-                .unwrap()
-            };
-            let (a, b) = (d(&st), d(&o));
-            assert_eq!(a["after_state_sha256"], b["after_state_sha256"]);
-            assert_eq!(a["adam_step"], b["adam_step"]);
-            assert_eq!(a["search_targets"]["rows"], 0);
-            assert!(a["search_targets"]["gradient_exposure"].is_null());
-            let packet = parse_pin(&a["search_targets"], "packet").unwrap();
-            assert_eq!(
-                Path::new(&packet.path),
-                config
-                    .search_targets
-                    .as_ref()
-                    .unwrap()
-                    .packet_path_v1(index)
-            );
-        }
-        // A resume revalidates every bound packet.
-        run_native_expanded_training_v1(&config, None).unwrap();
-        // A changed packet fails the resume.
-        let path = config.search_targets.as_ref().unwrap().packet_path_v1(1);
-        let mut bytes = std::fs::read(&path).unwrap();
-        bytes.push(b' ');
-        std::fs::write(&path, bytes).unwrap();
-        assert!(run_native_expanded_training_v1(&config, None).is_err());
-        // A packet bound to another update stops the run at that update.
+        assert!(!error.is_empty());
+        assert!(!config
+            .output_directory
+            .join("iterations/000000/complete.json")
+            .exists());
         let tampered = search_targets_run_config_v1("st-run-tampered");
-        let writer = spawn_packet_writer_v1(&tampered, 2, Some(1));
+        let writer = spawn_packet_writer_v1(&tampered, 1, Some(0));
         let error = run_native_expanded_training_v1(&tampered, None).unwrap_err();
         writer.join().unwrap();
         assert!(
             error.contains("another run, arm, seed or update"),
             "{error}"
         );
+        let stopped = search_targets_run_config_v1("st-run-stopped");
+        let writer = spawn_packet_writer_v1(&stopped, 1, None);
+        writer.join().unwrap();
+        let options = stopped.search_targets.as_ref().unwrap();
+        std::fs::write(options.packets_directory.join("STOP"), b"").unwrap();
+        let error = run_native_expanded_training_v1(&stopped, None).unwrap_err();
+        assert!(error.contains("stopped"), "{error}");
+    }
+
+    /// TP1 Stage B's ledger: with `record_process_cpu`, every iteration
+    /// receipt records the driver's own process CPU at its boundary,
+    /// nondecreasing; without it receipts are unchanged.
+    #[test]
+    fn record_process_cpu_marks_every_iteration_boundary() {
+        let mut config = soft_q_run_config_v1("cpu-marks", SoftQArmV1::Treatment, 1);
+        config.soft_q = None;
+        config.record_process_cpu = true;
+        let result = run_native_expanded_training_v1(&config, None).unwrap();
+        let marks: Vec<f64> = (0..2)
+            .map(|i| {
+                iteration_receipt_v1(&result, i)["driver_process_cpu_seconds"]
+                    .as_f64()
+                    .unwrap()
+            })
+            .collect();
+        assert!(marks[0] > 0.0 && marks[1] >= marks[0], "{marks:?}");
+        let mut plain = soft_q_run_config_v1("cpu-marks-off", SoftQArmV1::Treatment, 1);
+        plain.soft_q = None;
+        let result = run_native_expanded_training_v1(&plain, None).unwrap();
+        assert!(iteration_receipt_v1(&result, 0)
+            .get("driver_process_cpu_seconds")
+            .is_none());
     }
 
     /// Design section 6.2: with the whole teacher run but no target applied,

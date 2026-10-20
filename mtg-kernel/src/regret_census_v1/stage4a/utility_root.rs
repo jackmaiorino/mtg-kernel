@@ -52,7 +52,7 @@ mod inspect;
 #[cfg(feature = "gameplay-decision-trace-v1")]
 mod root_actions;
 #[cfg(feature = "gameplay-decision-trace-v1")]
-pub(crate) use root_actions::{authenticated_roots_v1, SearchedRootV1};
+pub(crate) use root_actions::{authenticated_roots_v1, validate_searched_game_v1, SearchedRootV1};
 
 pub(super) fn run_inspect(
     cfg: &CensusConfigV1,

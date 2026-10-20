@@ -215,21 +215,7 @@ pub(crate) fn authenticated_roots_v1(
     focal: &FrozenPlayPolicyV1,
     roots: &[SearchedRootV1<'_>],
 ) -> Result<Vec<(FastActorSessionV1, Value, Value)>, String> {
-    let spec: bank::BankSpec =
-        serde_json::from_slice(bank_spec_bytes).map_err(|e| e.to_string())?;
-    let decks: Vec<usize> = (0..crate::runtime_decks::RUNTIME_DECKS.len()).collect();
-    if spec.decks.len() != decks.len() {
-        return Err("searched roots need a bank spec over all registered decks".into());
-    }
-    let sh = BankShared {
-        spec,
-        labels,
-        opponents,
-        prior: super::super::world::DeckPrior::new(&decks),
-        limits: super::super::arms::Limits::FORMAL,
-    };
-    sh.spec.validate()?;
-    let binding = bank::bank_binding(focal, &sh)?;
+    let (sh, binding) = searched_context_v1(bank_spec_bytes, labels, opponents, focal)?;
     roots
         .iter()
         .map(|root| {
@@ -249,6 +235,60 @@ pub(crate) fn authenticated_roots_v1(
             ))
         })
         .collect()
+}
+
+/// The context `s4a-budget` played a searched game in, and the bank binding
+/// its row must carry: this build, the focal policy, the opponents in
+/// game-setup order, all registered decks and the formal limits.
+fn searched_context_v1(
+    bank_spec_bytes: &[u8],
+    labels: Vec<String>,
+    opponents: Vec<FrozenPlayPolicyV1>,
+    focal: &FrozenPlayPolicyV1,
+) -> Result<(BankShared, String), String> {
+    let spec: bank::BankSpec =
+        serde_json::from_slice(bank_spec_bytes).map_err(|e| e.to_string())?;
+    let decks: Vec<usize> = (0..crate::runtime_decks::RUNTIME_DECKS.len()).collect();
+    if spec.decks.len() != decks.len() {
+        return Err("searched roots need a bank spec over all registered decks".into());
+    }
+    let sh = BankShared {
+        spec,
+        labels,
+        opponents,
+        prior: super::super::world::DeckPrior::new(&decks),
+        limits: super::super::arms::Limits::FORMAL,
+    };
+    sh.spec.validate()?;
+    let binding = bank::bank_binding(focal, &sh)?;
+    Ok((sh, binding))
+}
+
+/// TP1 Stage B: a searched game's envelope, whatever its rows: a valid
+/// `s4a-budget` search game of `case`, under `allocation`, whose bank binding
+/// is the one this build computes for `focal` and the opponents.
+pub(crate) fn validate_searched_game_v1(
+    bank_spec_bytes: &[u8],
+    labels: Vec<String>,
+    opponents: Vec<FrozenPlayPolicyV1>,
+    focal: &FrozenPlayPolicyV1,
+    search: &Value,
+    case: &Value,
+    allocation: &Value,
+) -> Result<(), String> {
+    let (sh, binding) = searched_context_v1(bank_spec_bytes, labels, opponents, focal)?;
+    let src: SourceSpec = serde_json::from_value(case.clone()).map_err(|e| e.to_string())?;
+    validate_case(&src, &sh)?;
+    if search["schema"] != "search-total-budget-v1/game"
+        || search["kind"] != "budget_game"
+        || search["id"] != case["id"]
+        || search["allocation"] != *allocation
+        || search["game"]["valid"] != true
+        || search["bank_binding_sha256"] != binding
+    {
+        return Err("searched game envelope, case, allocation or binding differs".into());
+    }
+    Ok(())
 }
 
 /// The originating search's step and index of a reused root (None otherwise).

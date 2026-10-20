@@ -40,6 +40,8 @@ pub struct SearchTargetsOptionsV1 {
     pub coefficient: f64,
     /// R0: the fixed denominator, at least the packet's row count.
     pub denominator: usize,
+    /// The search allocation every searched game must record (E4), from the run.
+    pub allocation: Value,
     /// This update's identity as its run sees it ({"run","arm","seed","update"});
     /// the packet's binding must carry the same values and the update's own
     /// start checkpoint.
@@ -67,7 +69,7 @@ impl SearchTargetsOptionsV1 {
 pub fn continuation_identity(options: &SearchTargetsOptionsV1) -> Value {
     json!({"method":SEARCH_TARGETS_METHOD_V1,"bank_spec":options.bank_spec,
         "opponents":options.opponents,"coefficient_bits":options.coefficient.to_bits(),
-        "denominator":options.denominator})
+        "denominator":options.denominator,"allocation":options.allocation})
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,12 +195,8 @@ pub(super) fn teach(
         packet.rows.len() <= options.denominator,
         "search-target packet has more rows than its denominator",
     )?;
-    if packet.rows.is_empty() {
-        return Ok((
-            json!({"rows":0,"denominator":options.denominator,"binding":packet.binding}),
-            Vec::new(),
-        ));
-    }
+    // The searched game itself, rows or none: its envelope, case, the run's
+    // required allocation and the bank binding of this student and opponents.
     let (student, _) = load_expanded_inference_v1(source)?;
     let generation = student.feature_identity_v1().generation;
     let mut labels = Vec::new();
@@ -208,6 +206,23 @@ pub(super) fn teach(
         opponents.push(load_expanded_inference_v1(&opponent.source)?.0);
     }
     let spec = read_pinned_bytes(&options.bank_spec)?;
+    let game: PinnedFileV1 = serde_json::from_value(packet.binding["game"].clone()).map_err(err)?;
+    let record: Value = serde_json::from_slice(&read_pinned_bytes(&game)?).map_err(err)?;
+    validate_game_v1(
+        &spec,
+        labels.clone(),
+        opponents_clone(&options.opponents)?,
+        &student,
+        &record,
+        &packet.binding["case"],
+        &options.allocation,
+    )?;
+    if packet.rows.is_empty() {
+        return Ok((
+            json!({"rows":0,"denominator":options.denominator,"binding":packet.binding}),
+            Vec::new(),
+        ));
+    }
     let searches = packet
         .rows
         .iter()
@@ -230,11 +245,10 @@ pub(super) fn teach(
     let parameters = model.parameter_snapshot_v1();
     let mut taught = Vec::with_capacity(packet.rows.len());
     let mut census = Vec::with_capacity(packet.rows.len());
-    let allocation = packet.binding.get("allocation");
     for (search, row) in searches.iter().zip(&packet.rows) {
         ensure(
-            allocation.is_some() && search.get("allocation") == allocation,
-            "the searched game's allocation differs from its packet binding",
+            search.get("allocation") == Some(&options.allocation),
+            "the searched game's allocation differs from the run's",
         )?;
         let recorded = search["game"]["decisions"]
             .as_array()
@@ -276,6 +290,43 @@ pub(super) fn teach(
             "census":census}),
         taught,
     ))
+}
+
+fn opponents_clone(
+    opponents: &[SearchTargetsOpponentV1],
+) -> Result<Vec<FrozenPlayPolicyV1>, String> {
+    opponents
+        .iter()
+        .map(|o| load_expanded_inference_v1(&o.source).map(|(p, _)| p))
+        .collect()
+}
+
+#[cfg(feature = "gameplay-decision-trace-v1")]
+fn validate_game_v1(
+    spec: &[u8],
+    labels: Vec<String>,
+    opponents: Vec<FrozenPlayPolicyV1>,
+    student: &FrozenPlayPolicyV1,
+    search: &Value,
+    case: &Value,
+    allocation: &Value,
+) -> Result<(), String> {
+    crate::regret_census_v1::stage4a::validate_searched_game_v1(
+        spec, labels, opponents, student, search, case, allocation,
+    )
+}
+
+#[cfg(not(feature = "gameplay-decision-trace-v1"))]
+fn validate_game_v1(
+    _spec: &[u8],
+    _labels: Vec<String>,
+    _opponents: Vec<FrozenPlayPolicyV1>,
+    _student: &FrozenPlayPolicyV1,
+    _search: &Value,
+    _case: &Value,
+    _allocation: &Value,
+) -> Result<(), String> {
+    Err("search targets require gameplay-decision-trace-v1".into())
 }
 
 #[cfg(feature = "gameplay-decision-trace-v1")]
