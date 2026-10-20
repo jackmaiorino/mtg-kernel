@@ -679,6 +679,13 @@ pub(crate) fn capture_kaito_compat_v75(state: &GameState) -> Result<FactsV53, Rl
         crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
     )
 }
+pub(crate) fn capture_chandra_compat_v74(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_for_consumer(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
+        crate::optional_trigger_public_v1::ConsumerV1::ChandraV74,
+    )
+}
 fn capture_scoped(
     state: &GameState,
     scope: crate::optional_trigger_public_v1::CounterScopeV61,

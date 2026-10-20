@@ -28120,6 +28120,16 @@ pub(crate) fn require_no_copied_token_abilities_kaito_v75(state: &GameState) -> 
     require_no_copied_token_added_abilities_v1(state)
 }
 
+/// V74 carries Chandra but still refuses Kaito's later mechanics.
+pub(crate) fn require_no_copied_token_abilities_chandra_v74(
+    state: &GameState,
+) -> Result<(), String> {
+    chandra_flameshaper_v1::validate_state(state)?;
+    chandra_flameshaper_v1::validate_pending(state)?;
+    kaito_cunning_v75::require_legacy(state, None)?;
+    require_no_copied_token_added_abilities_v1(state)
+}
+
 fn require_no_copied_token_added_abilities_v1(state: &GameState) -> Result<(), String> {
     standard_exile::refuse_top_batch_legacy(state)?;
     crate::leyline_axe_v1::require_legacy_absence(state)?;

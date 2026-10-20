@@ -129,6 +129,7 @@ fn paid_kaito_optional_target_actual_draw_private_discard_and_restore_match_nati
             // The complete V75 envelope may carry these inherited prefixes;
             // their standalone V72 entrypoints still cannot represent Kaito.
             assert!(crate::drake_public_v53::capture_tinybones_compat_v72(&s).is_err());
+            assert!(crate::drake_public_v53::capture_chandra_compat_v74(&s).is_err());
             assert!(crate::spinner_public_v54::capture_tinybones_compat_v72(&s).is_err());
             for viewer in [PlayerId::P0, PlayerId::P1] {
                 assert!(

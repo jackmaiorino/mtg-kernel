@@ -285,12 +285,14 @@ pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
 #[derive(Clone, Copy)]
 pub(crate) enum ConsumerV1 {
     Legacy,
+    ChandraV74,
     KaitoV75,
 }
 impl ConsumerV1 {
     pub(crate) fn validate_copy_prefix(self, state: &GameState) -> Result<(), String> {
         match self {
             Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
+            Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
             Self::KaitoV75 => crate::effect::require_no_copied_token_abilities_kaito_v75(state),
         }
     }

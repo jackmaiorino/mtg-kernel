@@ -67,6 +67,24 @@ This is an explicit remaining runtime prerequisite, not a passed check or a
 consumer/Full qualification. Internal kind indices use u16; events, event
 history serialization/Hash and all earlier kind indices retain their shape.
 
+As of 2026-10-20, 50 of these 76 kinds have retained genuine sample candidates:
+43 from Native213 and seven from passing Native220 cases at
+`b3b1e28b69b099335c76e02a1713580b3ae9965f`. The seven are
+`GreatwurmCounterInputV1`, `GreatwurmCounterPaymentV1`, `HarvesterResolvedV1`,
+`NightmareCopyEnteredV1`, `NightmareCopyLayerV1`, `OrdinaryCleanupStageV1` and
+`PublishedCastIdentityV1`. Greatwurm's actual graveyard cast pays six counters;
+its counter placement is labelled setup. Paid Harvester creates the Nightmare;
+the later Aegis copy layer uses an explicitly labelled native primitive with
+registered stand-ins, not a printed Aegis ability. Ordinary turn progression
+and paid spell finalization supply the cleanup and cast-identity samples.
+
+The original outputs and per-case samples are retained on C: and E: under
+`fdn110-native220-focused-cases-root-retention-receipt.json`; reviewed sample
+hashes and producer cases are in
+`fdn110-native220-reviewed-new-event-provenance.json`. There are 26 kinds still
+to collect. The committed sample array remains at 237 rows until the complete
+ordered addition is ready; its completeness assertion is not yet qualified.
+
 ```text
 AleshaPowerLkiV1
 NivMizzetVisionaryDamageV1

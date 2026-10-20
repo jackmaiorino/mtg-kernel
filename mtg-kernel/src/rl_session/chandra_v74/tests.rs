@@ -112,6 +112,25 @@ fn paid_chandra_all_roots_complete_packets_original_indices_and_restore_match_na
     for p in [PlayerId::P0, PlayerId::P1] {
         for index in [0, 1, 2] {
             let (s, id, ours, _) = owning_ready(p, index == 1, "Island");
+            // Only the enclosing complete V74 consumer carries Chandra.
+            assert!(crate::drake_public_v53::capture_tinybones_compat_v72(&s).is_err());
+            assert!(crate::spinner_public_v54::capture_tinybones_compat_v72(&s).is_err());
+            for viewer in [PlayerId::P0, PlayerId::P1] {
+                assert!(
+                    crate::quandary_public_v55::capture_tinybones_compat_v72(&s, viewer).is_err()
+                );
+                assert!(
+                    crate::next_five_public_v59::capture_tinybones_compat_v72(&s, viewer).is_err()
+                );
+                assert!(
+                    crate::graveyard_return_public_v61::capture_tinybones_compat_v72(&s, viewer)
+                        .is_err()
+                );
+                assert!(
+                    crate::valkyries_call_public_v62::capture_tinybones_compat_v72(&s, viewer)
+                        .is_err()
+                );
+            }
             let mut pair = Pair::new(s);
             let before = crate::planeswalker_v1::loyalty(pair.own.fixture_state_v74(), id).unwrap();
             pair.activate(id, index);
