@@ -1302,6 +1302,120 @@ mod paid {
     }
 
     #[test]
+    fn goldvein_printing_keeps_equip_bonus_and_original_controller_treasure_trigger() {
+        use crate::effect::{EffectOp, ObjectRef, PlayerRef};
+        let id = crate::card_def::card_id_by_name("Goldvein Pick").unwrap();
+        let value = roots::baseline(id).unwrap();
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"]["generic"],
+            2
+        );
+        assert_eq!(printing["ordered_static_roots"][0]["power_delta"], 1);
+        assert_eq!(printing["ordered_static_roots"][0]["toughness_delta"], 1);
+        assert_eq!(
+            printing["ordered_static_roots"][0]["controller_turn_only"],
+            false
+        );
+        let equip = &printing["ordered_activation_roots"][0];
+        assert_eq!(equip["ordered_costs"][0]["PrintedMana"]["generic"], 1);
+        assert_eq!(equip["target_filter"], "ControlledCreature");
+        assert_eq!(
+            equip["ordered_resolution"],
+            json!([EffectOp::AttachSourceToTarget {
+                object: ObjectRef::Target(0)
+            }])
+        );
+        let trigger = &printing["ordered_trigger_roots"][0];
+        assert_eq!(
+            trigger["condition"],
+            "EquippedCreatureDealsCombatDamageToPlayer"
+        );
+        assert_eq!(trigger["captured_actor"], "EquipmentController");
+        assert_eq!(
+            trigger["resolution_does_not_require_source_or_attachment_to_remain"],
+            true
+        );
+        let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+        assert_eq!(
+            trigger["ordered_resolution"],
+            json!([EffectOp::CreateToken {
+                token_def: treasure,
+                controller: PlayerRef::Controller
+            }])
+        );
+        assert_eq!(
+            trigger["created_token_printing"],
+            roots::baseline(treasure).unwrap()
+        );
+        let encoded = NumericTree::encode(&value).unwrap();
+        for path in [
+            "ordered_static_roots",
+            "ordered_activation_roots",
+            "ordered_trigger_roots",
+        ] {
+            let mut erased = value.clone();
+            erased["primitive_printing"]
+                .as_object_mut()
+                .unwrap()
+                .remove(path);
+            assert_ne!(encoded, NumericTree::encode(&erased).unwrap(), "{path}");
+        }
+
+        let fixture = || {
+            let mut d = ordinary_recipe(id);
+            d.equipment = crate::card_def::CARD_DEFS[usize::from(id)].equipment;
+            d
+        };
+        assert_eq!(roots::baseline_recipe(id, &fixture()).unwrap(), value);
+        for mode in 0..10 {
+            let mut changed = fixture();
+            match mode {
+                0 => changed.cost.generic = 3,
+                1 => changed.equipment.as_mut().unwrap().power_delta = 2,
+                2 => changed.equipment.as_mut().unwrap().toughness_delta = 2,
+                3 => changed.equipment.as_mut().unwrap().pt_controller_turn_only = true,
+                4 => {
+                    changed.equipment.as_mut().unwrap().controller_turn_keywords =
+                        crate::card_def::Keywords::FLYING
+                }
+                5 => changed.equipment.as_mut().unwrap().job_select = true,
+                6 => changed.equipment = None,
+                7 => changed.ward_cost = Some(crate::mana::Cost::zero()),
+                8 => changed.enters_battlefield_tapped = true,
+                _ => changed.capability = crate::card_def::CardCapability::Partial,
+            }
+            assert!(
+                matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(card)) if card == id),
+                "field mode {mode}"
+            );
+        }
+        for mode in 0..7 {
+            let mut changed = fixture();
+            let mut ability = changed.activated_abilities[0];
+            match mode {
+                0 => ability.cost = &[],
+                1 => ability.sorcery_speed_only = false,
+                2 => ability.activation_zone = Zone::Hand,
+                3 => ability.target_spec = crate::card_def::TargetSpec::Creature,
+                4 => ability.max_activations_per_turn = Some(1),
+                5 => ability.face = Some(1),
+                _ => {
+                    ability.effect = || EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    }
+                }
+            }
+            changed.activated_abilities = Box::leak(vec![ability].into_boxed_slice());
+            assert!(
+                matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(card)) if card == id),
+                "ability mode {mode}"
+            );
+        }
+    }
+
+    #[test]
     fn rallier_bloom_exact_closed_printings_keep_private_selection_and_dynamic_mana_meaning() {
         use crate::{
             card_def::{ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef},

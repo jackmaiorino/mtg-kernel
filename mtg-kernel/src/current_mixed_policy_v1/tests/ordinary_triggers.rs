@@ -653,6 +653,105 @@ fn faebloom_paid_instant_reflexive_season_restore_privacy_ravenous_both_seats() 
     paid_faebloom::<RavenousSession>();
 }
 
+fn paid_goldvein<O: Owner>() {
+    use crate::state::ObjectLinkV4;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut raw = crate::extra_turn_v1::tests::ready(actor);
+        // Declared lands and vanilla host are initial setup. Pick and equip
+        // are paid through actual native actions; combat is declared below.
+        let pick = put(&mut raw, actor, "Goldvein Pick", Zone::Hand);
+        let host = put(&mut raw, actor, "Savannah Lions", Zone::Battlefield);
+        let forests: Vec<_> = (0..3)
+            .map(|_| put(&mut raw, actor, "Forest", Zone::Battlefield))
+            .collect();
+        let mut s = O::own(raw);
+        entry_attack::pay_cast(&mut s, actor, pick, &forests[..2]);
+        entry_attack::finish_entry(&mut s, pick);
+        assert_eq!(
+            crate::engine::checked_effective_pt(s.world(), host).unwrap(),
+            (2, 1)
+        );
+        entry_attack::tap(&mut s, forests[2]);
+        let saved = s.snapshot();
+        let mut result = None;
+        for replay in 0..2 {
+            if replay != 0 {
+                s.restore(&saved).unwrap();
+            }
+            step(
+                &mut s,
+                |a| matches!(a,ActionSemanticV1::ActivateAbility{source,ability_index:0,..}if source.arena_id==pick.0),
+            );
+            step(&mut s, |a| target(a, host));
+            drain(&mut s);
+            assert_eq!(
+                s.world().objects.get(pick).v4.attached_to,
+                Some(ObjectLinkV4 {
+                    object: host,
+                    zone_change_count: s.world().objects.get(host).zone_change_count
+                })
+            );
+            assert_eq!(
+                crate::engine::checked_effective_pt(s.world(), host).unwrap(),
+                (3, 2)
+            );
+            assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);
+            assert!(forests.iter().all(|id| s.world().objects.get(*id).tapped));
+            let life = s.world().players[actor.opponent().index()].life;
+            let mut declared = false;
+            for _ in 0..256 {
+                if s.world().active_player == actor
+                    && s.actions().iter().any(|a| attack_choice(a, host))
+                {
+                    step(&mut s, |a| attack_choice(a, host));
+                    finish_attack_declaration(&mut s, host);
+                    declared = true;
+                    break;
+                }
+                pass(&mut s);
+            }
+            assert!(declared, "paid Goldvein host did not attack");
+            let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+            for _ in 0..64 {
+                if s.world().players[actor.index()]
+                    .battlefield
+                    .iter()
+                    .any(|id| s.world().objects.get(*id).card_def == treasure)
+                {
+                    break;
+                }
+                pass(&mut s);
+            }
+            let tokens = s
+                .world()
+                .objects
+                .iter()
+                .filter(|(_, o)| o.zone == Zone::Battlefield && o.card_def == treasure)
+                .collect::<Vec<_>>();
+            assert_eq!(tokens.len(), 1);
+            assert_eq!((tokens[0].1.owner, tokens[0].1.controller), (actor, actor));
+            assert_eq!(s.world().players[actor.opponent().index()].life, life - 3);
+            assert!(s.world().engine.event_history.iter().any(|e|matches!(e,crate::event::CommittedEvent::CombatDamageToPlayer{source,amount:3,..}if *source==host)));
+            let output = (gameplay(&s), O::packet(&s.encode()).clone());
+            if let Some(expected) = &result {
+                assert_eq!(&output, expected);
+            } else {
+                result = Some(output);
+            }
+        }
+    }
+}
+
+#[test]
+fn goldvein_paid_cast_equip_real_combat_treasure_and_numeric_restore_fake_both_seats() {
+    paid_goldvein::<FakeSession>();
+}
+
+#[test]
+fn goldvein_paid_cast_equip_real_combat_treasure_and_numeric_restore_ravenous_both_seats() {
+    paid_goldvein::<RavenousSession>();
+}
+
 pub(in crate::current_mixed_policy_v1) fn paid_kellan<O: Owner>() {
     kellan::paid::<O>();
     kellan::privacy::<O>();

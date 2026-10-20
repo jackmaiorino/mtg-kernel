@@ -318,6 +318,10 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    baseline_recipe(id, d)
+}
+
+pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     if d.name == "Divine Resilience" {
         return divine_printing::baseline(id, d);
     }
@@ -360,6 +364,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
+    let goldvein = goldvein_printing(id, d)?;
     let think_twice = d.name == "Think Twice"
         && !d.is_token
         && !d.is_land
@@ -417,7 +422,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
             });
     if !(d.capability == CardCapability::Full
         && d.object_name == d.name
-        && d.activated_abilities.is_empty()
+        && (d.activated_abilities.is_empty() || goldvein.is_some())
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
         && (d.mode2.is_none() || (ordinary_removal.is_some() && d.name == "Abrade"))
@@ -427,7 +432,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.kicker_cost.is_none()
         && d.additional_cost.is_none()
         && d.optional_additional_cost.is_none()
-        && d.equipment.is_none()
+        && (d.equipment.is_none() || goldvein.is_some())
         && d.attachment.is_none()
         && d.starting_loyalty.is_none()
         && d.enters_with_plus_one_counters.is_none()
@@ -470,9 +475,12 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
         && (d.other_controlled_nontoken_death_v1.is_none() && d.creature_type_entry_v1.is_none())
-        && crate::trigger::triggers_for(id).is_empty())
+        && (crate::trigger::triggers_for(id).is_empty() || goldvein.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    if let Some(printing) = goldvein {
+        return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
         return Ok(json!({"card_id":id,"primitive_printing":{
@@ -581,6 +589,132 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         "ordered_instructions":[instruction],
         "mana_ability":mana.map(|colors|json!({"cost":"TapSelf","recipient":"Controller","colors":colors,"amount":1}))
     }}))
+}
+
+/// Exact ordinary Equipment recipe. These roots describe the existing native
+/// cast, attachment and triggered programs; they grant no action permission.
+fn goldvein_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{ActivationTargetFilter, CostComponent, Keywords, Subtype};
+    use crate::mana::Cost;
+    if d.name != "Goldvein Pick" {
+        return Ok(None);
+    }
+    let cost = Cost {
+        generic: 2,
+        pips: &[],
+        x_count: 0,
+    };
+    let equip_cost = Cost {
+        generic: 1,
+        pips: &[],
+        x_count: 0,
+    };
+    let Some(equipment) = d.equipment else {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    };
+    let [ability] = d.activated_abilities else {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    };
+    let [trigger] = crate::trigger::triggers_for(id) else {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    };
+    let treasure = crate::card_def::card_id_by_name("Treasure Token")
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let equip_program = EffectOp::AttachSourceToTarget {
+        object: ObjectRef::Target(0),
+    };
+    let trigger_program = EffectOp::CreateToken {
+        token_def: treasure,
+        controller: PlayerRef::Controller,
+    };
+    if crate::card_def::card_id_by_name("Goldvein Pick") != Some(id)
+        || d.cost != cost
+        || d.mana_value != 2
+        || d.types != [CardType::Artifact]
+        || d.subtypes != [Subtype::Equipment]
+        || !d.supertypes.is_empty()
+        || !d.colors.is_empty()
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.target_spec != TargetSpec::None
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || equipment.power_delta != 1
+        || equipment.toughness_delta != 1
+        || equipment.pt_controller_turn_only
+        || equipment.add_subtype.is_some()
+        || equipment.controller_turn_keywords != Keywords::NONE
+        || equipment.other_turn_keywords != Keywords::NONE
+        || equipment.noncreature_spell_damage_to_each_opponent != 0
+        || equipment.job_select
+        || equipment.granted_activated_ability.is_some()
+        || ability.cost != [CostComponent::Mana(equip_cost)]
+        || ability.target_spec != TargetSpec::ControlledCreature
+        || (ability.effect)() != equip_program
+        || ability.activation_zone != Zone::Battlefield
+        || !ability.sorcery_speed_only
+        || ability.activation_target_filter != ActivationTargetFilter::TargetSpecOnly
+        || ability.max_activations_per_turn.is_some()
+        || ability.face.is_some()
+        || !matches!(
+            trigger.condition,
+            crate::trigger::TriggerCondition::EquippedCreatureDealsCombatDamageToPlayer
+        )
+        || trigger.home_zone != Zone::Battlefield
+        || trigger.face_index != 0
+        || trigger.intervening_if_kicked
+        || trigger.intervening_if_controls_another_source_card
+        || (trigger.effect)() != trigger_program
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(Some(json!({"card_id":id,"primitive_printing":{
+        "cost":cost,"types":[CardType::Artifact],"subtypes":[Subtype::Equipment],
+        "supertypes":[],"colors":[],"power":null,"toughness":null,
+        "keywords":0,"mana_value":2,"token":false,
+        "ordered_cast_roots":[OrdinaryPermanentCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,
+            ordinary_origin:Zone::Hand,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets:PermanentTargets::None,
+            ordered_costs:[BaselineManaCost::PrintedMana(cost)],
+            ordered_resolution:[PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority:true,
+            zone_replacements_still_apply:true,
+        }],
+        "ordered_static_roots":[{
+            "recipient":"CurrentExactAttachedCreature","power_delta":1,"toughness_delta":1,
+            "controller_turn_only":false,"requires_active_printed_abilities":true
+        }],
+        "ordered_activation_roots":[{
+            "ability_index":0,"activation_zone":Zone::Battlefield,
+            "timing":"ControllerMainPhaseEmptyStackWithPriority",
+            "ordered_costs":[BaselineManaCost::PrintedMana(equip_cost)],
+            "target_slot":0,"target_filter":"ControlledCreature",
+            "requires_exact_source_and_target_incarnations":true,
+            "ordered_resolution":[equip_program],"uses_stack":true,
+            "countered_or_illegal_target_does_not_refund_cost":true
+        }],
+        "ordered_trigger_roots":[{
+            "home_zone":Zone::Battlefield,"face_index":0,
+            "condition":"EquippedCreatureDealsCombatDamageToPlayer",
+            "requires_actual_combat_damage_marker_and_exact_current_host":true,
+            "captured_actor":"EquipmentController",
+            "resolution_does_not_require_source_or_attachment_to_remain":true,
+            "ordered_resolution":[trigger_program],"created_token_printing":baseline(treasure)?
+        }]
+    }})))
 }
 
 #[derive(serde::Serialize)]
