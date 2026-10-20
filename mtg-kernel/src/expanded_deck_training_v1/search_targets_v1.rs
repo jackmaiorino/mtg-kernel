@@ -50,6 +50,12 @@ pub struct SearchTargetsOptionsV1 {
 
 impl SearchTargetsOptionsV1 {
     pub fn validate_v1(&self) -> Result<(), String> {
+        // One allocation throughout: the packet binding is checked against the
+        // expectation, the searched game against `allocation`.
+        ensure(
+            self.expected.get("allocation") == Some(&self.allocation),
+            "search-target expectation and allocation differ",
+        )?;
         ensure(
             self.coefficient.is_finite() && self.coefficient > 0.0,
             "search-target coefficient must be positive and finite",
@@ -416,6 +422,33 @@ pub(super) fn auxiliary_input_v1<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn options_refuse_contradictory_allocations() {
+        let pin = PinnedFileV1 {
+            path: PathBuf::from("unused"),
+            sha256: String::new(),
+        };
+        let e4 = json!({"initial":32000,"refresh":16000,"total":512000});
+        let mut options = SearchTargetsOptionsV1 {
+            packet: pin.clone(),
+            bank_spec: pin,
+            opponents: Vec::new(),
+            coefficient: 1.0,
+            denominator: 32,
+            allocation: e4.clone(),
+            expected: json!({"run":"r","arm":"T","seed":1,"update":0,
+                "allocation":{"initial":8000,"refresh":4000,"total":128000}}),
+        };
+        let error = options.validate_v1().unwrap_err();
+        assert!(
+            error.contains("expectation and allocation differ"),
+            "{error}"
+        );
+        options.expected["allocation"] = e4;
+        let error = options.validate_v1().unwrap_err();
+        assert!(error.contains("opponents"), "{error}");
+    }
 
     #[test]
     fn kept_targets_renormalize_the_logits_over_the_keep_set() {
