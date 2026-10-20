@@ -1,19 +1,4 @@
 {
  "issue": "https://github.com/jackmaiorino/mtg-kernel/issues/332",
- "cases": [
-  "ashroot_dispatch_v2::tests::genuine_exact_id_counter_and_manufactured_closure_refuse_both_seats",
-  "engine::ashroot_declaration_boundary_tests::actual_pre_collection_attack_marker_erasure_refuses_and_public_checkpoint_matches_both_seats",
-  "engine::sower_of_chaos_v1_tests::exact_rule_restriction_blocks_real_declaration_and_replays_without_becoming_a_keyword",
-  "fdn_raid_v1::printed_entry_predicate_tests::registered_raid_entry_predicates_refuse_disabled_printed_abilities_and_restore",
-  "librarian_activation_v1::tests::genuine_counter_primitive_closes_paid_ability_once_without_upgrading_or_drawing_both_seats",
-  "raid_entry_custody_v1::tests::actual_declared_raid_entry_fresh_queue_erasure_and_ineligible_entry_restore_both_seats",
-  "raid_entry_custody_v1::tests::genuine_gorehorn_prospective_target_placement_then_mandatory_live_publication_both_seats",
-  "raid_entry_custody_v1::tests::real_gutless_unstarted_publication_counter_primitive_closes_once_and_restores_both_seats",
-  "raid_entry_custody_v1::tests::real_legend_suspension_keeps_exact_raid_waiting_owner_and_refuses_erasure_both_seats",
-  "raid_entry_custody_v1::tests::unstarted_published_raid_owner_erasure_refuses_advance_before_mutation_both_seats",
-  "rl_session::akroma_v40::mixed_tests::actual_memorial_and_employment_control_grants_full_union_and_legacy_refusal_both_seats",
-  "rl_session::ashroot_v27::tests::genuine_pending_occurrence_erasure_invalidates_existing_v27_binding_readonly",
-  "rl_session::variable_cast_v1::tests::actual_divine_stale_capture_count_kicker_and_contract_forgery_refusals_are_readonly",
-  "rl_session::variable_cast_v1::tests::actual_registered_divine_zero_true_only_and_three_hundred_with_restored_finish"
- ]
+ "cases": []
 }

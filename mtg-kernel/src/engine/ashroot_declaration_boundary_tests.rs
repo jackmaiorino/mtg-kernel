@@ -1,14 +1,12 @@
 //! Genuine private declaration stage, before its mandatory collection checkpoint.
 use super::*;
 use crate::ashroot_dispatch_v2::JournalV2;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 
 #[test]
 fn actual_pre_collection_attack_marker_erasure_refuses_and_public_checkpoint_matches_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         state.step = Step::DeclareAttackers;
         let source = put(&mut state, actor, "Ashroot Animist", Zone::Battlefield);
         put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);

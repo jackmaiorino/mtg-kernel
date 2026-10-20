@@ -508,9 +508,7 @@ mod tests {
         not(feature = "standard-magezero-fixtures")
     ))]
     fn divine(actor: PlayerId, count: usize) -> VariableCastSessionV1 {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         state.players[actor.index()].mana_pool[crate::mana::ManaColor::W.pool_index()] = 4;
         put(&mut state, actor, "Divine Resilience", Zone::Hand);
         for _ in 0..count {

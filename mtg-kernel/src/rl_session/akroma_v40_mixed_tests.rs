@@ -62,7 +62,28 @@ fn input(
     FastActorDecisionV1,
     AkromaDecisionBindingV40,
 ) {
-    let session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+    held_input(FastActorSessionV1::from_akroma_v40_fixture_state(state))
+}
+/// The caster's own priority window over its held spell: the session surface
+/// passes it automatically, so this uses the engine's priority windows.
+fn caster_input(
+    state: GameState,
+) -> (
+    FastActorSessionV1,
+    FastActorDecisionV1,
+    AkromaDecisionBindingV40,
+) {
+    held_input(FastActorSessionV1::from_akroma_v40_engine_priority_fixture(
+        state,
+    ))
+}
+fn held_input(
+    session: FastActorSessionV1,
+) -> (
+    FastActorSessionV1,
+    FastActorDecisionV1,
+    AkromaDecisionBindingV40,
+) {
     let FastActorResponseV1::Decision(expected) = session.current_response() else {
         panic!("genuine held decision");
     };
@@ -229,7 +250,7 @@ fn actual_memorial_and_employment_control_grants_full_union_and_legacy_refusal_b
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
         state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
         cast_target(&mut state, actor, spell, target);
-        let (session, expected, held) = input(state.clone());
+        let (session, expected, held) = caster_input(state.clone());
         assert!(held.observation.grants[0]
             .recipients
             .iter()
