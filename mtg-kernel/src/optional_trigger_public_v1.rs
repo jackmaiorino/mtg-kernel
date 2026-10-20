@@ -274,9 +274,6 @@ pub(crate) fn held(state: &GameState) -> Vec<&crate::trigger::PendingTrigger> {
         )
         .collect()
 }
-pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
-    validate_state_with_pt(state, false)
-}
 /// Keep all native root/pending checks while using the current engine's checked
 /// final PT envelope. Existing predecessor validators keep the frozen prefix.
 pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
