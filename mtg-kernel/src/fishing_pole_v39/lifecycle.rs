@@ -1232,6 +1232,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     balance = after;
                 }
             }
+            if let Some((before, after)) = crate::engine::greatwurm_cast_v1::bait_cost_balance(
+                state,
+                at,
+                object,
+                live.zone_change_count,
+            )? {
+                if before != balance {
+                    return Err("Greatwurm bait cost rewrote original balance".into());
+                }
+                balance = after;
+            }
         }
         if live.counters.bait != balance {
             return Err("Fishing current bait differs from actual operations".into());
