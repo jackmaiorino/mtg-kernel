@@ -55,6 +55,11 @@ pub(crate) struct ExternalAuxiliaryInputV1<'a> {
     pub(crate) direction: LineBDivergenceV1,
     pub(crate) coefficient: f64,
     pub(crate) denominator: usize,
+    /// STAGE-B2.md section 4 item 2: `Some(kappa)` caps the auxiliary
+    /// whole-network gradient L2 at `kappa` times the ordinary one.
+    pub(crate) cap: Option<f64>,
+    /// Record the Adam steps of the ordinary and combined gradients.
+    pub(crate) step_telemetry: bool,
     pub(crate) rows: Vec<ExternalAuxiliaryRowV1<'a>>,
 }
 
@@ -122,7 +127,12 @@ pub(super) fn external_auxiliary_terms_v1(
     input_major: Option<&InputMajorWeightsV1>,
     config: NativePolicyValueModelConfigV1,
 ) -> Result<LineBAuxiliaryTermsV1, NativePolicyTrainErrorV1> {
-    if input.rows.is_empty() || input.denominator < input.rows.len() {
+    // A Stage B2 update with no rows still takes this path, inactive, so its
+    // receipt and Adam-step telemetry exist; the update is the ordinary one.
+    if (input.rows.is_empty() && !input.step_telemetry)
+        || input.denominator < input.rows.len()
+        || input.denominator == 0
+    {
         return Err(invalid("external-auxiliary-denominator"));
     }
     if !(input.coefficient.is_finite() && input.coefficient >= 0.0) {
@@ -170,12 +180,13 @@ pub(super) fn external_auxiliary_terms_v1(
         rows.push((d_logits, exact));
     }
     Ok(LineBAuxiliaryTermsV1::from_parts_v1(
-        input.coefficient > 0.0,
+        input.coefficient > 0.0 && !input.rows.is_empty(),
         gradients,
         rows,
         divergences,
         loss,
-    ))
+    )
+    .with_cap_v1(input.cap, input.step_telemetry))
 }
 
 impl NativePolicyValueTrainStateV1 {

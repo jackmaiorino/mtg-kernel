@@ -146,6 +146,12 @@ pub struct SearchTargetsRunOptionsV1 {
     pub wait_seconds: u64,
     /// The search allocation every searched game must record (E4).
     pub allocation: Value,
+    /// STAGE-B2.md: the target family and the per-update cap (defaults:
+    /// Stage B's kept set, no cap).
+    #[serde(default)]
+    pub target: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetKindV1,
+    #[serde(default)]
+    pub cap: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1,
 }
 
 impl SearchTargetsRunOptionsV1 {
@@ -164,6 +170,8 @@ impl SearchTargetsRunOptionsV1 {
             allocation: self.allocation.clone(),
             expected: json!({"run":self.run,"arm":self.arm,"seed":self.seed,
                 "update":self.update_offset + index,"allocation":self.allocation}),
+            target: self.target,
+            cap: self.cap,
         }
     }
 
@@ -2692,6 +2700,8 @@ mod tests {
             update_offset: 0,
             wait_seconds: 600,
             allocation: json!({"initial":32000,"refresh":16000,"total":512000}),
+            target: Default::default(),
+            cap: Default::default(),
         });
         config
     }

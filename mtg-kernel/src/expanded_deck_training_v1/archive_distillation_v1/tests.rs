@@ -1526,6 +1526,8 @@ fn anchor_input<'a>(
         direction: LineBDivergenceV1::Forward,
         coefficient: ANCHOR_COEFFICIENT,
         denominator: rows.len(),
+        cap: None,
+        step_telemetry: false,
         rows: rows
             .iter()
             .zip(targets)
