@@ -282,7 +282,27 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
     validate_state_with_pt(state, true)
 }
+#[derive(Clone, Copy)]
+pub(crate) enum ConsumerV1 {
+    Legacy,
+    KaitoV75,
+}
+impl ConsumerV1 {
+    pub(crate) fn validate_copy_prefix(self, state: &GameState) -> Result<(), String> {
+        match self {
+            Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
+            Self::KaitoV75 => crate::effect::require_no_copied_token_abilities_kaito_v75(state),
+        }
+    }
+}
 fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String> {
+    validate_state_for_consumer(state, checked, ConsumerV1::Legacy)
+}
+pub(crate) fn validate_state_for_consumer(
+    state: &GameState,
+    checked: bool,
+    consumer: ConsumerV1,
+) -> Result<(), String> {
     crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
     crate::effect::curator_v1::refuse_legacy(state)?;
     crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
@@ -291,7 +311,7 @@ fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String
     crate::effect::greatwurm_v1::refuse_legacy(state)?;
     crate::effect::kykar_v1::refuse_legacy(state)?;
     crate::effect::loot_v1::refuse_legacy(state)?;
-    crate::effect::require_no_copied_token_abilities_v1(state)?;
+    consumer.validate_copy_prefix(state)?;
     if state.objects.iter().any(|(_, o)| {
         matches!(o.zone, Zone::Battlefield | Zone::Stack)
             && o.v4.face_down_v1.is_none()

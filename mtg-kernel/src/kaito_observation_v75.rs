@@ -208,14 +208,14 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
     )?;
     crate::elenda_public_v52::capture(state).map_err(|e| e.0)?;
-    crate::drake_public_v53::capture_tinybones_compat_v72(state).map_err(|e| e.0)?;
-    crate::spinner_public_v54::capture_tinybones_compat_v72(state)?;
+    crate::drake_public_v53::capture_kaito_compat_v75(state).map_err(|e| e.0)?;
+    crate::spinner_public_v54::capture_kaito_compat_v75(state)?;
     crate::phoenix_public_v56::capture(state).map_err(|e| e.0)?;
     for viewer in [PlayerId::P0, PlayerId::P1] {
-        crate::quandary_public_v55::capture_tinybones_compat_v72(state, viewer)?;
-        crate::next_five_public_v59::capture_tinybones_compat_v72(state, viewer)?;
-        crate::graveyard_return_public_v61::capture_tinybones_compat_v72(state, viewer)?;
-        crate::valkyries_call_public_v62::capture_tinybones_compat_v72(state, viewer)?;
+        crate::quandary_public_v55::capture_kaito_compat_v75(state, viewer)?;
+        crate::next_five_public_v59::capture_kaito_compat_v75(state, viewer)?;
+        crate::graveyard_return_public_v61::capture_kaito_compat_v75(state, viewer)?;
+        crate::valkyries_call_public_v62::capture_kaito_compat_v75(state, viewer)?;
     }
     Ok(())
 }
@@ -505,30 +505,21 @@ pub(crate) fn observe_parts_v75(
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),
         common,
-        drake: crate::drake_public_v53::capture_tinybones_compat_v72(state)?,
-        spinner: crate::spinner_public_v54::capture_tinybones_compat_v72(state)
+        drake: crate::drake_public_v53::capture_kaito_compat_v75(state)?,
+        spinner: crate::spinner_public_v54::capture_kaito_compat_v75(state)
             .map_err(RlContractError)?,
-        quandary: crate::quandary_public_v55::capture_tinybones_compat_v72(
-            state,
-            actor_and_origin.0,
-        )
-        .map_err(RlContractError)?,
+        quandary: crate::quandary_public_v55::capture_kaito_compat_v75(state, actor_and_origin.0)
+            .map_err(RlContractError)?,
         phoenix: crate::phoenix_public_v56::capture(state)?,
-        next_five: crate::next_five_public_v59::capture_tinybones_compat_v72(
+        next_five: crate::next_five_public_v59::capture_kaito_compat_v75(state, actor_and_origin.0)
+            .map_err(RlContractError)?,
+        graveyard_return: crate::graveyard_return_public_v61::capture_kaito_compat_v75(
             state,
             actor_and_origin.0,
         )
         .map_err(RlContractError)?,
-        graveyard_return: crate::graveyard_return_public_v61::capture_tinybones_compat_v72(
-            state,
-            actor_and_origin.0,
-        )
-        .map_err(RlContractError)?,
-        call: crate::valkyries_call_public_v62::capture_tinybones_compat_v72(
-            state,
-            actor_and_origin.0,
-        )
-        .map_err(RlContractError)?,
+        call: crate::valkyries_call_public_v62::capture_kaito_compat_v75(state, actor_and_origin.0)
+            .map_err(RlContractError)?,
         end_turn: crate::time_stop_public_v68::capture_tinybones_v72(state, actor_and_origin.0)
             .map_err(RlContractError)?,
         genesis_wave: crate::genesis_wave_public_v69::capture(state, actor_and_origin.0)

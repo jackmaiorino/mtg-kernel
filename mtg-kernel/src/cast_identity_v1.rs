@@ -158,9 +158,7 @@ mod tests {
     use super::*;
     use crate::{
         card_def,
-        engine::{self, Action, Decision},
         event::{self, ProposedEvent},
-        policy_observation_v6::tests::put,
     };
 
     fn receipt_for(state: &GameState, spell: ObjectId) -> (usize, ReceiptV1) {

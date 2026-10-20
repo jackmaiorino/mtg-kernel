@@ -672,11 +672,29 @@ pub(crate) fn capture_tinybones_compat_v72(state: &GameState) -> Result<FactsV53
         crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
     )
 }
+pub(crate) fn capture_kaito_compat_v75(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_for_consumer(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
+        crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+    )
+}
 fn capture_scoped(
     state: &GameState,
     scope: crate::optional_trigger_public_v1::CounterScopeV61,
 ) -> Result<FactsV53, RlContractError> {
-    crate::effect::require_no_copied_token_abilities_v1(state).map_err(error)?;
+    capture_for_consumer(
+        state,
+        scope,
+        crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+    )
+}
+fn capture_for_consumer(
+    state: &GameState,
+    scope: crate::optional_trigger_public_v1::CounterScopeV61,
+    consumer: crate::optional_trigger_public_v1::ConsumerV1,
+) -> Result<FactsV53, RlContractError> {
+    consumer.validate_copy_prefix(state).map_err(error)?;
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| error(format!("native PT envelope exceeded for {id:?}")))?;
     if crate::linked_aura_operation_v1::locally_owned(state) {

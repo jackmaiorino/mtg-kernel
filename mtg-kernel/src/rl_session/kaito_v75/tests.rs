@@ -126,6 +126,26 @@ fn paid_kaito_optional_target_actual_draw_private_discard_and_restore_match_nati
     for p in [PlayerId::P0, PlayerId::P1] {
         for selected in [false, true] {
             let (s, k, c) = owning_ready(p, false, "Island");
+            // The complete V75 envelope may carry these inherited prefixes;
+            // their standalone V72 entrypoints still cannot represent Kaito.
+            assert!(crate::drake_public_v53::capture_tinybones_compat_v72(&s).is_err());
+            assert!(crate::spinner_public_v54::capture_tinybones_compat_v72(&s).is_err());
+            for viewer in [PlayerId::P0, PlayerId::P1] {
+                assert!(
+                    crate::quandary_public_v55::capture_tinybones_compat_v72(&s, viewer).is_err()
+                );
+                assert!(
+                    crate::next_five_public_v59::capture_tinybones_compat_v72(&s, viewer).is_err()
+                );
+                assert!(
+                    crate::graveyard_return_public_v61::capture_tinybones_compat_v72(&s, viewer)
+                        .is_err()
+                );
+                assert!(
+                    crate::valkyries_call_public_v62::capture_tinybones_compat_v72(&s, viewer)
+                        .is_err()
+                );
+            }
             let mut pair = Pair::new(s);
             pair.activate(k, 0);
             if selected {

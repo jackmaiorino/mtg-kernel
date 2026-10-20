@@ -87,15 +87,39 @@ pub(crate) fn capture_tinybones_compat_v72(
 ) -> Result<FactsV55, String> {
     capture_scoped(state, viewer, public::CounterScopeV61::TinybonesV72)
 }
+pub(crate) fn capture_kaito_compat_v75(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV55, String> {
+    capture_for_consumer(
+        state,
+        viewer,
+        public::CounterScopeV61::TinybonesV72,
+        crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+    )
+}
 fn capture_scoped(
     state: &GameState,
     viewer: PlayerId,
     scope: public::CounterScopeV61,
 ) -> Result<FactsV55, String> {
+    capture_for_consumer(
+        state,
+        viewer,
+        scope,
+        crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+    )
+}
+fn capture_for_consumer(
+    state: &GameState,
+    viewer: PlayerId,
+    scope: public::CounterScopeV61,
+    consumer: crate::optional_trigger_public_v1::ConsumerV1,
+) -> Result<FactsV55, String> {
     let id =
         crate::card_def::card_id_by_name("Painful Quandary").ok_or("Quandary printing absent")?;
     let meaning = meaning::printed_meaning(id)?;
-    public::validate_state(state)?;
+    public::validate_state_for_consumer(state, false, consumer)?;
     let mut held = Vec::new();
     for p in public::held(state) {
         if let Some(source) = p.source_contract.filter(|s| s.card_def == id) {

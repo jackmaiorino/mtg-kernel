@@ -704,10 +704,34 @@ pub(crate) fn capture_tinybones_compat_v72(
 ) -> Result<FactsV61, String> {
     capture_scoped(state, viewer, public::CounterScopeV61::TinybonesV72)
 }
+pub(crate) fn capture_kaito_compat_v75(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV61, String> {
+    capture_for_consumer(
+        state,
+        viewer,
+        public::CounterScopeV61::TinybonesV72,
+        crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+    )
+}
 fn capture_scoped(
     state: &GameState,
     viewer: PlayerId,
     scope: public::CounterScopeV61,
+) -> Result<FactsV61, String> {
+    capture_for_consumer(
+        state,
+        viewer,
+        scope,
+        crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+    )
+}
+fn capture_for_consumer(
+    state: &GameState,
+    viewer: PlayerId,
+    scope: public::CounterScopeV61,
+    consumer: crate::optional_trigger_public_v1::ConsumerV1,
 ) -> Result<FactsV61, String> {
     let call = matches!(
         scope,
@@ -717,7 +741,7 @@ fn capture_scoped(
         .into_iter()
         .map(|f| Ok((f, meaning::selected_id(f)?)))
         .collect::<Result<Vec<_>, String>>()?;
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
     if let Some(pending) = &state.engine.pending_cast {
         crate::engine::validate_pending_cast(state, pending)?;
     }

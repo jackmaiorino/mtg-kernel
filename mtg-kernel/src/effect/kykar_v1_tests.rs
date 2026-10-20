@@ -1208,6 +1208,9 @@ fn paid_off_turn_madness_resolution_priority_with_and_without_kykar_restore_both
             // turns, discard and the resulting native Madness offer.
             put(&mut s, p.opponent(), "Swamp", Zone::Battlefield);
             let temper = put(&mut s, p, "Fiery Temper", Zone::Hand);
+            // Two cards keep Burglar Rat's discard a genuine player choice.
+            // A one-card hand is discarded automatically by the native engine.
+            put(&mut s, p, "Forest", Zone::Hand);
             let generation = s.objects.get(temper).zone_change_count;
             let kykar = with_kykar.then(|| paid(&mut s, p));
             for _ in 0..180 {
