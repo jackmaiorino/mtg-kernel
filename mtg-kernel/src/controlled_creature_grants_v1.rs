@@ -98,6 +98,29 @@ pub(crate) fn grants_keyword(state: &GameState, recipient: ObjectId, keyword: Ke
         .iter()
         .any(|(source, live)| grants(source, live))
 }
+/// Every keyword `grants_keyword` reports for `recipient`, as one set: a
+/// keyword is granted exactly when some applying source's grant holds it.
+pub(crate) fn granted_keywords(state: &GameState, recipient: ObjectId) -> Keywords {
+    if !enabled() {
+        return Keywords::NONE;
+    }
+    let granted = |source: ObjectId, live: &crate::state::GameObject| {
+        grant_of(live)
+            .filter(|grant| grant.keywords != Keywords::NONE && applies(state, source, recipient))
+            .map_or(Keywords::NONE, |grant| grant.keywords)
+    };
+    if let Some(sources) = grant_sources(state) {
+        return sources.iter().fold(Keywords::NONE, |all, &source| {
+            all | granted(source, state.objects.get(source))
+        });
+    }
+    state
+        .objects
+        .iter()
+        .fold(Keywords::NONE, |all, (source, live)| {
+            all | granted(source, live)
+        })
+}
 pub(crate) fn color_protection(state: &GameState, recipient: ObjectId) -> u8 {
     if !enabled() {
         return 0;
