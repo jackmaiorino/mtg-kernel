@@ -1005,6 +1005,58 @@ fn live_equipment_damage_source(state: &GameState, item: &StackItem) -> bool {
         })
     })
 }
+/// A cast snapshot predates this module's native resolution-start sidecar.
+/// Every other row field remains exact; only the genuine initial boundary may
+/// explain the difference. This does not validate a later answer or grant a
+/// new execution owner.
+pub(crate) fn spell_cast_snapshot_matches(
+    state: &GameState,
+    item: &StackItem,
+    saved: &StackItem,
+) -> bool {
+    if item == saved {
+        return true;
+    }
+    if item.kind != crate::state::StackItemKind::Spell
+        || item.inline_effect.is_some()
+        || !saved.v4.crystal_prevention_started_v1.is_empty()
+    {
+        return false;
+    }
+    let Some(index) = item.v4.crystal_prevention_started_v1.0 else {
+        return false;
+    };
+    let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary }) =
+        state.engine.event_history.get(index as usize)
+    else {
+        return false;
+    };
+    let mut original = item.clone();
+    original.v4.crystal_prevention_started_v1 = CrystalPreventionStartedV1::default();
+    if original != *saved {
+        return false;
+    }
+    let mut initial = probe_with_niv_damage_origin(
+        item,
+        crate::event::niv_damage_origin_for_saved_item_v1(state, item),
+    );
+    let Ok(root) = validated_definition_owned_root_effect(state, &initial) else {
+        return false;
+    };
+    if !supported(&root) || !has_damage(&root) {
+        return false;
+    }
+    initial.frames.push(EffectFrame::Program {
+        op: (*root).clone(),
+        path: Vec::new(),
+    });
+    boundary.history_index == index
+        && boundary.previous.is_none()
+        && boundary.answer.is_none()
+        && *boundary.item == *item
+        && boundary.root == *root
+        && boundary.pending.as_deref() == Some(&initial)
+}
 /// Source-power payment authority remains byte-exact except for this module's
 /// independently published start marker. This is not a generic stack rewrite.
 pub(crate) fn source_power_payment_matches(

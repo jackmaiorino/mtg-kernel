@@ -1941,7 +1941,7 @@ fn genuine_paid_nightmare_native_aegis_layer_save_restore_and_paid_copy_values_b
         // A real paid copy while the layer is active sees Cavalry, without the
         // saved Nightmare exception. This is not a hand-authored token blueprint.
         let before_copy = s.players[p.index()].battlefield.clone();
-        cast(&mut s, p, "Self-Reflection", &[Target::Object(original)], 6);
+        let layered_copy_spell = cast(&mut s, p, "Self-Reflection", &[Target::Object(original)], 6);
         hv_finish_pair(&mut s);
         let plain = *s.players[p.index()]
             .battlefield
@@ -1987,6 +1987,43 @@ fn genuine_paid_nightmare_native_aegis_layer_save_restore_and_paid_copy_values_b
         }
         assert_eq!(s, replay);
         assert_eq!(s.state_hash(), replay.state_hash());
+        let frozen_copy = s
+            .engine
+            .event_history
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::ThousandYearStormV1 {
+                    journal: thousand_year_storm_v1::JournalV1::Cast { spell, .. },
+                } if spell.source == layered_copy_spell => Some(spell.as_ref().clone()),
+                _ => None,
+            })
+            .unwrap();
+        // The actual copy spell targeted the Cavalry layer. Restoring the
+        // same host to its saved Elf values cannot rewrite that frozen target.
+        assert!(matches!(frozen_copy.v4.target_contracts[0],
+            crate::state::StackTargetContractV4::Object { card_def, .. }
+            if card_def == id("Axgard Cavalry")));
+        engine::validate_copy_snapshot(&s, &frozen_copy).unwrap();
+        for forged in 0..3 {
+            let mut bad = frozen_copy.clone();
+            let crate::state::StackTargetContractV4::Object {
+                card_def,
+                owner,
+                zone_change_count,
+                ..
+            } = &mut bad.v4.target_contracts[0]
+            else {
+                unreachable!()
+            };
+            match forged {
+                0 => *card_def = id("Swamp"),
+                1 => *owner = p.opponent(),
+                _ => *zone_change_count = host.zone_change_count + 1,
+            }
+            let before = s.clone();
+            assert!(engine::validate_copy_snapshot(&s, &bad).is_err());
+            assert_eq!(s, before);
+        }
         let layers: Vec<_> = s
             .engine
             .event_history

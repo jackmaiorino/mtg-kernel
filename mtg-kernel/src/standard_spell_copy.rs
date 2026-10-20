@@ -49,7 +49,7 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         .iter()
         .find(|item| item.v4.stack_item_id == spell.v4.stack_item_id)
     {
-        if current != spell {
+        if !effect::crystal_prevention_v1::spell_cast_snapshot_matches(state, current, spell) {
             return Err("copy snapshot differs from its original spell".into());
         }
     }
@@ -129,6 +129,11 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         .zip(&spell.v4.target_contracts)
         .enumerate()
     {
+        let contract = if crate::self_reflection_v1::owns_spell(state, spell) {
+            crate::self_reflection_v1::normalize_historical_target(state, contract)
+        } else {
+            contract
+        };
         if !stack_target_contract_is_structurally_valid(state, spec, index, target, contract) {
             return Err("copy snapshot target contract is structurally malformed".into());
         }

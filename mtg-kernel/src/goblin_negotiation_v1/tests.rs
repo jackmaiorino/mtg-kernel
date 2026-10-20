@@ -509,6 +509,60 @@ fn actual_numeric_prevention_and_doubling_orders_have_different_excess_both_seat
             shield_primitive(&mut s, tyrant, target, 1);
             let spell = announce(&mut s, actor, target, 3);
             wait_ordering(&mut s, actor.opponent());
+            let frozen_cast = s
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::ThousandYearStormV1 {
+                        journal:
+                            crate::effect::thousand_year_storm_v1::JournalV1::Cast {
+                                spell: row, ..
+                            },
+                    } if row.source == spell => Some(row.as_ref().clone()),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(frozen_cast.v4.crystal_prevention_started_v1.is_empty());
+            engine::validate_copy_snapshot(&s, &frozen_cast).unwrap();
+            let start = s
+                .stack
+                .iter()
+                .find(|row| row.source == spell)
+                .unwrap()
+                .v4
+                .crystal_prevention_started_v1
+                .0
+                .unwrap();
+            for forged in 0..4 {
+                let mut bad = restore(&s);
+                if forged < 2 {
+                    let row = bad
+                        .stack
+                        .iter_mut()
+                        .find(|row| row.source == spell)
+                        .unwrap();
+                    if forged == 0 {
+                        row.v4.crystal_prevention_started_v1.0 = Some(start + 1);
+                    } else {
+                        row.v4.x_value += 1;
+                    }
+                } else {
+                    let CommittedEvent::CrystalPreventionBoundaryV1 { boundary } =
+                        &mut bad.engine.event_history[start as usize]
+                    else {
+                        panic!("native initial Crystal boundary")
+                    };
+                    if forged == 2 {
+                        boundary.root = crate::effect::EffectOp::Sequence(Vec::new());
+                    } else {
+                        boundary.pending = None;
+                    }
+                }
+                let before = bad.clone();
+                assert!(engine::validate_copy_snapshot(&bad, &frozen_cast).is_err());
+                assert_eq!(bad, before);
+            }
             ordered_finish_with_restores(&mut s, first);
             assert_eq!(damage(&s, spell, target), dealt);
             assert_eq!(goblins(&s, actor).len(), tokens);
