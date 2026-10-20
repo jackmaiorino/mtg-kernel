@@ -1302,6 +1302,37 @@ mod paid {
     }
 
     #[test]
+    fn diregraf_printing_preserves_mandatory_tapped_entry_and_rejects_a_vanilla_replacement() {
+        let id = crate::card_def::card_id_by_name("Diregraf Ghoul").unwrap();
+        let value = roots::baseline(id).unwrap();
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["cost"],
+            json!({"generic":0,"pips":[{"Colored":"B"}],"x_count":0})
+        );
+        assert_eq!(printing["power"], 2);
+        assert_eq!(printing["toughness"], 2);
+        assert_eq!(
+            printing["ordered_instructions"],
+            json!([{"operation":"EnterBattlefield","controller":"Caster","enters_battlefield_tapped":true}])
+        );
+        for mode in 0..5 {
+            let mut changed = ordinary_recipe(id);
+            match mode {
+                0 => changed.enters_battlefield_tapped = false,
+                1 => changed.cost.generic = 1,
+                2 => changed.power = Some(3),
+                3 => changed.subtypes = &[],
+                _ => changed.colors = &[],
+            }
+            assert!(
+                matches!(roots::baseline_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(card))if card==id),
+                "field mode {mode}"
+            );
+        }
+    }
+
+    #[test]
     fn goldvein_printing_keeps_equip_bonus_and_original_controller_treasure_trigger() {
         use crate::effect::{EffectOp, ObjectRef, PlayerRef};
         let id = crate::card_def::card_id_by_name("Goldvein Pick").unwrap();

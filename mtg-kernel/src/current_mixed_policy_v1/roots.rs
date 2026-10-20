@@ -365,6 +365,38 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     // familiar name alone never admits a different cost, program or cast form.
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
+    let diregraf = d.name == "Diregraf Ghoul";
+    if diregraf
+        && (crate::card_def::card_id_by_name("Diregraf Ghoul") != Some(id)
+            || d.cost
+                != crate::mana::Cost {
+                    generic: 0,
+                    pips: &[crate::mana::Pip::Colored(crate::mana::ManaColor::B)],
+                    x_count: 0,
+                }
+            || d.mana_value != 1
+            || d.types != [CardType::Creature]
+            || d.subtypes != [crate::card_def::Subtype::Zombie]
+            || !d.supertypes.is_empty()
+            || d.colors != [crate::mana::ManaColor::B]
+            || d.power != Some(2)
+            || d.toughness != Some(2)
+            || d.keywords != crate::card_def::Keywords::NONE
+            || d.is_land
+            || d.is_token
+            || d.target_spec != TargetSpec::None
+            || !d.enters_battlefield_tapped
+            || !d.produces_mana.is_empty()
+            || !d.mana_ability_choices.is_empty()
+            || (d.mana_ability)().is_some()
+            || (d.spell_effect)()
+                != Some(EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                }))
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
     let think_twice = d.name == "Think Twice"
         && !d.is_token
         && !d.is_land
@@ -446,7 +478,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.madness_cost.is_none()
         && d.kicked_target_spec.is_none()
         && d.escape.is_none()
-        && !d.enters_battlefield_tapped
+        && (!d.enters_battlefield_tapped || diregraf)
         && (d.mana_ability_def.is_none() || treasure)
         && d.minimum_blockers == 1
         && d.omen.is_none()
@@ -562,7 +594,11 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             && d.toughness.is_some()
             && (mana.is_none() || d.name == "Llanowar Elves") =>
         {
-            json!({"operation":"EnterBattlefield","controller":"Caster"})
+            if diregraf {
+                json!({"operation":"EnterBattlefield","controller":"Caster","enters_battlefield_tapped":true})
+            } else {
+                json!({"operation":"EnterBattlefield","controller":"Caster"})
+            }
         }
         Some(EffectOp::DealDamage {
             target: crate::effect::TargetRef::Target(0),

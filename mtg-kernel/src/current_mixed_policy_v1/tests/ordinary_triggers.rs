@@ -653,6 +653,52 @@ fn faebloom_paid_instant_reflexive_season_restore_privacy_ravenous_both_seats() 
     paid_faebloom::<RavenousSession>();
 }
 
+fn paid_diregraf<O: Owner>() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut raw = crate::extra_turn_v1::tests::ready(actor);
+        let ghoul = put(&mut raw, actor, "Diregraf Ghoul", Zone::Hand);
+        let swamp = put(&mut raw, actor, "Swamp", Zone::Battlefield);
+        let mut s = O::own(raw);
+        let saved = s.snapshot();
+        let mut result = None;
+        for replay in 0..2 {
+            if replay != 0 {
+                s.restore(&saved).unwrap();
+            }
+            entry_attack::pay_cast(&mut s, actor, ghoul, &[swamp]);
+            entry_attack::finish_entry(&mut s, ghoul);
+            let live = s.world().objects.get(ghoul);
+            assert_eq!(
+                (live.zone, live.owner, live.controller),
+                (Zone::Battlefield, actor, actor)
+            );
+            assert!(live.tapped && live.summoning_sick);
+            assert_eq!(
+                crate::engine::checked_effective_pt(s.world(), ghoul).unwrap(),
+                (2, 2)
+            );
+            assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);
+            assert!(s.world().objects.get(swamp).tapped);
+            let output = (gameplay(&s), O::packet(&s.encode()).clone());
+            if let Some(expected) = &result {
+                assert_eq!(&output, expected);
+            } else {
+                result = Some(output);
+            }
+        }
+    }
+}
+
+#[test]
+fn diregraf_paid_black_cost_tapped_entry_and_numeric_restore_fake_both_seats() {
+    paid_diregraf::<FakeSession>();
+}
+
+#[test]
+fn diregraf_paid_black_cost_tapped_entry_and_numeric_restore_ravenous_both_seats() {
+    paid_diregraf::<RavenousSession>();
+}
+
 fn paid_goldvein<O: Owner>() {
     use crate::state::ObjectLinkV4;
     for actor in [PlayerId::P0, PlayerId::P1] {
