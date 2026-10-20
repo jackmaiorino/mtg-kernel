@@ -51,7 +51,7 @@ fn digest_memo_matches_unmemoized_digests() {
                         action_ranges: source.action_ranges.clone(),
                         // Both contracts, so the memoized and plain paths
                         // must also agree with the state digest off.
-                        state_digest_off: next(&mut rng) % 4 == 0,
+                        state_digest_off: next(&mut rng).is_multiple_of(4),
                     }
                 })
                 .collect();

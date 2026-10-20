@@ -2067,11 +2067,6 @@ impl FrozenPlayPolicyV1 {
     }
 }
 
-/// One forward through the worker's prediction cache when one is attached:
-/// a hit returns the stored owned output of an identical input; a miss runs
-/// the declared forward and stores its output. Without a cache this is the
-/// plain forward.
-#[allow(clippy::too_many_arguments)]
 /// One forward of `model` on `view` with no cache of any kind.
 fn uncached_forward_v1(
     model: &NativePolicyValueNetV1,
@@ -2098,6 +2093,11 @@ fn uncached_forward_v1(
     })
 }
 
+/// One forward through the worker's prediction cache when one is attached:
+/// a hit returns the stored owned output of an identical input; a miss runs
+/// the declared forward and stores its output. Without a cache this is the
+/// plain forward.
+#[allow(clippy::too_many_arguments)]
 fn cached_forward_v1(
     model: &NativePolicyValueNetV1,
     scratch: &mut NativePolicyValueForwardScratchV1,
