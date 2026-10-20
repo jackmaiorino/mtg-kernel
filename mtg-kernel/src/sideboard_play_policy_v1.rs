@@ -185,9 +185,10 @@ pub struct FrozenPlayDecisionScoresV1 {
 pub struct FrozenPlayPolicyV1 {
     model: NativePolicyValueNetV1,
     forward_scratch: NativePolicyValueForwardScratchV1,
-    /// Exact per-row forward cache for `model`; cleared when its parameters
-    /// are replaced.
-    row_cache: crate::native_policy_value_net_v1::ForwardRowCacheV1,
+    /// Exact per-row forward cache for `model`, made on first use (boxed: it
+    /// must not grow this struct, which moves by value) and dropped when the
+    /// parameters are replaced.
+    row_cache: Option<Box<crate::native_policy_value_net_v1::ForwardRowCacheV1>>,
     embeddings: Vec<f32>,
     identity: PlayPolicyOriginV1,
     encoder: FlatDecisionEncoderV2,
@@ -1803,7 +1804,7 @@ impl FrozenPlayPolicyV1 {
         let scores = cached_forward_v1(
             &self.model,
             &mut self.forward_scratch,
-            &mut self.row_cache,
+            self.row_cache.get_or_insert_with(Default::default),
             self.inference_cache.as_ref(),
             &mut self.inference_key,
             self.inference_probe.as_mut(),
