@@ -60,7 +60,9 @@ fn control_row(state: &GameState) -> UntilEndOfTurnEffect {
         .clone()
 }
 fn cleanup(state: &mut GameState) {
-    state.step = crate::state::Step::End;
+    // Native advancement must publish the End-step entry used by cleanup.
+    state.step = crate::state::Step::Main2;
+    state.engine.priority_passes = [false; 2];
     for _ in 0..12 {
         let decision = crate::engine::advance_until_decision(state);
         assert!(
@@ -209,7 +211,7 @@ pub(super) fn later_cleanup_priority(actor: PlayerId) -> (GameState, ObjectId, O
     }
     let temper = put(&mut state, actor, "Fiery Temper", Zone::Hand);
     assert_eq!(state.players[actor.index()].hand.len(), 9);
-    state.step = crate::state::Step::End;
+    state.step = crate::state::Step::Main2;
     state.engine.priority_passes = [false; 2];
     for _ in 0..32 {
         let decision = crate::engine::advance_until_decision(&mut state);
