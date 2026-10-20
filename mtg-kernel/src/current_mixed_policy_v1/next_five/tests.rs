@@ -515,7 +515,7 @@ fn paid_axgard_tap_haste_opposing_target_incarnation_and_numeric_restore_both_se
             let target = put(
                 &mut raw,
                 actor.opponent(),
-                "Runeclaw Bear",
+                "Savannah Lions",
                 Zone::Battlefield,
             );
             let mut owner = own(raw);
