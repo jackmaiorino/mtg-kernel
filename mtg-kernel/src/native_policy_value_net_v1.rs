@@ -3141,7 +3141,7 @@ mod tests {
         // object value every step (rows are evicted).
         for step in 0..5000usize {
             let case = &mut fixture.cases[step % cases];
-            let value = if step >= 1000 || rng.next_u64() % 4 == 0 {
+            let value = if step >= 1000 || rng.next_u64().is_multiple_of(4) {
                 step as f32 * 1e-3
             } else {
                 picks[(rng.next_u64() % 4) as usize]

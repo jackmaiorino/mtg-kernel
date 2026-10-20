@@ -1962,7 +1962,6 @@ impl FrozenPlayPolicyV1 {
 /// the declared forward and stores its output. Without a cache this is the
 /// plain forward.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments, reason = "the forward plus its two caches")]
 fn cached_forward_v1(
     model: &NativePolicyValueNetV1,
     scratch: &mut NativePolicyValueForwardScratchV1,
@@ -2301,6 +2300,15 @@ impl OwnedScoringV1 {
             &self.action_refs,
         )
     }
+}
+
+/// Whether the exact per-row forward cache is on: only on x86_64, where the
+/// cache tracks the arithmetic environment (MXCSR control, UCRT FMA3), and
+/// unless `MTG_KERNEL_ROW_CACHE=0`.
+fn row_cache_enabled_v1() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    cfg!(target_arch = "x86_64")
+        && *ON.get_or_init(|| std::env::var("MTG_KERNEL_ROW_CACHE").map_or(true, |v| v != "0"))
 }
 
 #[cfg(test)]
@@ -3237,13 +3245,4 @@ mod tests {
         tampered.expected_metadata_sha256 = "0".repeat(64);
         assert!(FrozenPlayPolicyV1::load_v1(&tampered).is_err());
     }
-}
-
-/// Whether the exact per-row forward cache is on: only on x86_64, where the
-/// cache tracks the arithmetic environment (MXCSR control, UCRT FMA3), and
-/// unless `MTG_KERNEL_ROW_CACHE=0`.
-fn row_cache_enabled_v1() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    cfg!(target_arch = "x86_64")
-        && *ON.get_or_init(|| std::env::var("MTG_KERNEL_ROW_CACHE").map_or(true, |v| v != "0"))
 }

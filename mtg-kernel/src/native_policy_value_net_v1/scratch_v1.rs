@@ -327,7 +327,7 @@ impl NativePolicyValueNetV1 {
             mode,
             &mut scratch.hidden,
             &mut scratch.action_hidden,
-            rows.as_deref_mut(),
+            rows,
             4,
         );
         clear_for(&mut scratch.state_prefix, self.scorer_first.output_dim);
