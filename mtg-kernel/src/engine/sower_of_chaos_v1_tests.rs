@@ -6,9 +6,7 @@ use crate::sower_of_chaos_v1;
 use crate::state::{AbilitySourceContractV4, StackTargetContractV4};
 
 fn physical(actor: PlayerId) -> (GameState, ObjectId, ObjectId, ObjectId, ExecCtx) {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     let source = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
     let attacker = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
     let target = put(

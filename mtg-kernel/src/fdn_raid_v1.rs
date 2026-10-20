@@ -68,16 +68,15 @@ mod printed_entry_predicate_tests {
     use crate::engine::{self, Action};
     use crate::event::CommittedEvent;
     use crate::ids::PlayerId;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
     use crate::state::{ObjectLinkV4, Step};
 
     #[test]
     fn registered_raid_entry_predicates_refuse_disabled_printed_abilities_and_restore() {
         for player in [PlayerId::P0, PlayerId::P1] {
             for name in ["Skyship Buccaneer", "Goblin Boarders"] {
-                let mut state = ready_state();
-                state.active_player = player;
-                state.priority_player = player;
+                let mut state =
+                    crate::policy_observation_v6::tests::ready_state_with_turn_authority(player);
                 state.step = Step::DeclareAttackers;
                 let attacker = put(&mut state, player, "Guttersnipe", Zone::Battlefield);
                 engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
