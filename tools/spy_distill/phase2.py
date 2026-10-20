@@ -67,8 +67,13 @@ SD1_CELL = re.compile(r"^SD1-T-s([0-7])$")
 # replicate seeds per lineage, every arm from the parent.
 SQ1_NS = "sq1-20261018"
 SQ1_REPLICATES = (1, 2, 3, 4)
-NAMESPACES = {RETENTION_NS: REPLICATES, SD1_NS: SD1_REPLICATES, SQ1_NS: SQ1_REPLICATES}
-FROM_PARENT_NAMESPACES = (SD1_NS, SQ1_NS)
+# TP1 Stage B (collab LANES/teacher-price-20261019, STAGE-B.md): eight
+# replicate seeds in r2, every arm from the parent.
+TP1B_NS = "tp1b-20261019"
+TP1B_REPLICATES = tuple(range(1, 9))
+NAMESPACES = {RETENTION_NS: REPLICATES, SD1_NS: SD1_REPLICATES, SQ1_NS: SQ1_REPLICATES,
+              TP1B_NS: TP1B_REPLICATES}
+FROM_PARENT_NAMESPACES = (SD1_NS, SQ1_NS, TP1B_NS)
 SPY_LEARNER_EPISODES = pilot.DECKS * pilot.REPEATS * 2
 
 
@@ -188,6 +193,8 @@ def config(lineage: str, o_config: dict, source: dict | None, workers: int, outp
     require(namespace != SD1_NS or not drop_spy_learner, "SD1's phase 2 keeps every unit")
     require(namespace != SQ1_NS or (source is None and replicate >= 1 and not drop_spy_learner),
             "SQ1 runs start from the parent on replicate seeds 1 to 4 with every unit")
+    require(namespace != TP1B_NS or (source is None and replicate >= 1 and not drop_spy_learner),
+            "TP1 Stage B runs start from the parent on replicate seeds 1 to 8 with every unit")
     if replicate or drop_spy_learner:
         require(source is not None or namespace in FROM_PARENT_NAMESPACES,
                 "the retention options apply to phase 2, not to O's reproduction")

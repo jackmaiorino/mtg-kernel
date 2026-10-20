@@ -76,6 +76,8 @@ mod seeds;
 mod sharing;
 mod tree;
 mod utility_root;
+#[cfg(feature = "gameplay-decision-trace-v1")]
+pub(crate) use utility_root::{authenticated_roots_v1, SearchedRootV1};
 #[cfg(feature = "viewer-recording-v1")]
 pub(super) mod viewer_replay;
 #[cfg(feature = "viewer-recording-v1")]

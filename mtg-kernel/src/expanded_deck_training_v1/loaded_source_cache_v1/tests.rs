@@ -98,6 +98,7 @@ fn write_checkpoint(
         state_sha256: hex(&snapshot.state_sha256_v1().unwrap()),
         e_supported: None,
         soft_q: None,
+        search_targets: None,
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: as_bits(&snapshot.parameters),

@@ -866,7 +866,7 @@ fn line_flags_v1(
 
 /// The parent's scores and training input at the live decision, from a
 /// fresh collection fork with sampling reset to `[0, 0]` (E's adapter call).
-fn capture_v1(
+pub(super) fn capture_v1(
     parent: &FrozenPlayPolicyV1,
     session: &FastActorSessionV1,
 ) -> Result<(FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV2), String> {
@@ -1396,7 +1396,7 @@ fn offers_v1(trajectory: &ExpandedTrajectoryV1) -> Result<Vec<OfferRowV1>, Strin
     Ok(offers)
 }
 
-fn view_v1(
+pub(super) fn view_v1(
     tensor: &NativeFlatDecisionTensorV2,
     generation: FreshLineageGenerationV1,
 ) -> crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_> {

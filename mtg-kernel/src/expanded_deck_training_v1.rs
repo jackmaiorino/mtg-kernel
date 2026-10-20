@@ -7,8 +7,10 @@ pub mod e_supported_teacher_v1;
 pub mod exploration_probe_v1;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub mod own_registration;
+pub mod search_targets_v1;
 pub mod soft_q_teacher_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
+use search_targets_v1::SearchTargetsOptionsV1;
 use soft_q_teacher_v1::{SoftQDiagnosticCaseV1, SoftQTeacherOptionsV1};
 
 use crate::card_def::KERNEL_CARDDB_HASH;
@@ -1289,6 +1291,9 @@ pub(crate) struct ExpandedCheckpointV1 {
     /// SQ1's continuation identity and packet pin; absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     soft_q: Option<Value>,
+    /// TP1 Stage B's continuation identity and packet pin; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_targets: Option<Value>,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
     parameters: Vec<ParameterBitsV1>,
@@ -1356,6 +1361,8 @@ struct CheckpointESupportedProbeV1 {
     e_supported: Option<Value>,
     #[serde(default, deserialize_with = "present_value_v1")]
     soft_q: Option<Value>,
+    #[serde(default, deserialize_with = "present_value_v1")]
+    search_targets: Option<Value>,
 }
 
 fn present_value_v1<'de, D: serde::Deserializer<'de>>(
@@ -2870,6 +2877,18 @@ pub enum ExpandedTrainingCommandV1 {
         teacher: SoftQTeacherOptionsV1,
         output_directory: PathBuf,
     },
+    /// TP1 Stage B searched-game targets (collab
+    /// LANES/teacher-price-20261019, STAGE-B.md): ordinary CPU GAE with full
+    /// Adam plus off-batch forward-KL rows from one packet.
+    SearchTargetsUpdate {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        loss_selection: ExpandedLossSelectionV1,
+        targets: SearchTargetsOptionsV1,
+        output_directory: PathBuf,
+    },
     /// SQ1's target diagnostic (design section 6.1): construction and
     /// independent assessment censuses at each case's root.
     SoftQDiagnostic {
@@ -3024,6 +3043,31 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             None,
             None,
             Some(teacher),
+            TrainingMathV1::PlatformLibm,
+        ),
+        ExpandedTrainingCommandV1::SearchTargetsUpdate {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            loss_selection,
+            targets,
+            output_directory,
+        } => execute_update_inner_v1(
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            ExpandedUpdateBackendV1::Cpu,
+            UpdateBackwardExecutionV1::Sequential,
+            loss_selection,
+            output_directory,
+            None,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            None,
+            None,
+            None,
+            Some(targets),
             TrainingMathV1::PlatformLibm,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
@@ -3464,6 +3508,46 @@ fn execute_update_v1(
     soft_q: Option<SoftQTeacherOptionsV1>,
     training_math: TrainingMathV1,
 ) -> Result<Value, String> {
+    execute_update_inner_v1(
+        source,
+        trajectories,
+        learning_rate,
+        value_coefficient,
+        update_backend,
+        backward_execution,
+        loss_selection,
+        output_directory,
+        preparation_workers,
+        max_prepared_tensor_mebibytes,
+        line_b,
+        e_supported,
+        soft_q,
+        None,
+        training_math,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the versioned update contract plus TP1 Stage B's search targets"
+)]
+fn execute_update_inner_v1(
+    source: ExpandedModelSourceV1,
+    trajectories: Vec<PinnedFileV1>,
+    learning_rate: f32,
+    value_coefficient: f32,
+    update_backend: ExpandedUpdateBackendV1,
+    backward_execution: UpdateBackwardExecutionV1,
+    loss_selection: ExpandedLossSelectionV1,
+    output_directory: PathBuf,
+    preparation_workers: Option<usize>,
+    max_prepared_tensor_mebibytes: usize,
+    line_b: Option<LineBUpdateOptionsV1>,
+    e_supported: Option<ESupportedTeacherOptionsV1>,
+    soft_q: Option<SoftQTeacherOptionsV1>,
+    search_targets: Option<SearchTargetsOptionsV1>,
+    training_math: TrainingMathV1,
+) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
     loss_selection.validate_v1()?;
@@ -3472,8 +3556,23 @@ fn execute_update_v1(
         update_backend,
         &loss_selection,
         line_b.is_some(),
-        e_supported.is_some() || soft_q.is_some(),
+        e_supported.is_some() || soft_q.is_some() || search_targets.is_some(),
     )?;
+    if let Some(options) = &search_targets {
+        options.validate_v1()?;
+        ensure(
+            line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && backward_execution.is_sequential(),
+            "search targets require ordinary sequential CPU GAE with full Adam",
+        )?;
+    }
     if let Some(options) = &soft_q {
         options.validate_v1()?;
         ensure(
@@ -3518,6 +3617,16 @@ fn execute_update_v1(
             let packet: PinnedFileV1 =
                 serde_json::from_value(identity["packet"].clone()).map_err(err)?;
             read_pinned_bytes(&packet)?;
+        }
+        if let Some(identity) = &saved.search_targets {
+            ensure(
+                search_targets
+                    .as_ref()
+                    .map(search_targets_v1::continuation_identity)
+                    .as_ref()
+                    == identity.get("continuation"),
+                "search-target continuation must preserve method, inputs, coefficient and denominator",
+            )?;
         }
         if let Some(identity) = &saved.soft_q {
             ensure(
@@ -3778,6 +3887,11 @@ fn execute_update_v1(
         })
         .transpose()?;
     let mut sq_auxiliary = None;
+    let st_teacher = search_targets
+        .as_ref()
+        .map(|options| search_targets_v1::teach(&source, &state, options))
+        .transpose()?;
+    let mut st_auxiliary = None;
     let teacher_seconds = teacher_started.elapsed().as_secs_f64();
     // Each trajectory's learner list, for the receipt's census by list
     // (review change 10).
@@ -3985,6 +4099,37 @@ fn execute_update_v1(
                 .as_ref()
                 .expect("computed above whenever loss_selection is gae_advantage_value/v1");
             match (update_backend, generation) {
+                (ExpandedUpdateBackendV1::Cpu, _)
+                    if st_teacher
+                        .as_ref()
+                        .is_some_and(|(_, rows)| !rows.is_empty()) =>
+                {
+                    let (_, rows) = st_teacher.as_ref().expect("guarded");
+                    let options = search_targets.as_ref().expect("teacher implies options");
+                    let input = search_targets_v1::auxiliary_input_v1(rows, options, generation);
+                    let (result, auxiliary) = state
+                        .train_step_gae_external_auxiliary_v1(
+                            generation,
+                            &groups,
+                            &gae.value_targets,
+                            &gae.advantages,
+                            value_coefficient,
+                            learning_rate,
+                            None,
+                            &input,
+                        )
+                        .map_err(err)?;
+                    st_auxiliary = Some(json!({"rows":rows.len(),
+                        "denominator":options.denominator,"coefficient":options.coefficient,
+                        "kl_before":auxiliary.divergences_before,
+                        "auxiliary_loss":auxiliary.auxiliary_loss,
+                        "total_loss":f64::from(result.loss) + auxiliary.auxiliary_loss,
+                        "gradient_components":auxiliary.gradient_components,
+                        "auxiliary_head_l2":auxiliary.auxiliary_head_l2,
+                        "ordinary_head_l2":auxiliary.ordinary_head_l2,
+                        "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual}));
+                    result
+                }
                 (ExpandedUpdateBackendV1::Cpu, _) if sq_teacher.is_some() => {
                     let (_, input) = sq_teacher.as_ref().expect("guarded");
                     let (result, auxiliary) = state
@@ -4260,6 +4405,10 @@ fn execute_update_v1(
         .as_ref()
         .map(|(packet, _)| publish_json(&output_directory, "soft-q-teacher.json", packet))
         .transpose()?;
+    let st_census_pin = st_teacher
+        .as_ref()
+        .map(|(census, _)| publish_json(&output_directory, "search-targets.json", census))
+        .transpose()?;
     let checkpoint = ExpandedCheckpointV1 {
         schema: match &transfer {
             Some(context) if context.is_fresh_v1() => {
@@ -4282,6 +4431,9 @@ fn execute_update_v1(
             "continuation":e_supported_teacher_v1::continuation_identity(options),"packet":e_packet_pin})),
         soft_q:soft_q.as_ref().map(|options|json!({
             "continuation":soft_q_teacher_v1::continuation_identity(options),"packet":sq_packet_pin})),
+        search_targets:search_targets.as_ref().map(|options|json!({
+            "continuation":search_targets_v1::continuation_identity(options),
+            "packet":options.packet,"census":st_census_pin})),
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: snapshot
@@ -4443,6 +4595,13 @@ fn execute_update_v1(
         result["soft_q"] = json!({"method":soft_q_teacher_v1::SOFT_Q_METHOD_V1,
             "packet":pin,"scheduled":packet["scheduled"],"available":packet["available"],
             "gradient_exposure":sq_auxiliary,"movement":sq_movement,"teacher_seconds":teacher_seconds});
+    }
+    if let Some((census, _)) = &st_teacher {
+        let options = search_targets.as_ref().expect("teacher implies options");
+        result["search_targets"] = json!({"method":search_targets_v1::SEARCH_TARGETS_METHOD_V1,
+            "packet":options.packet,"census":st_census_pin,"rows":census["rows"],
+            "denominator":options.denominator,"coefficient_bits":options.coefficient.to_bits(),
+            "gradient_exposure":st_auxiliary,"teacher_seconds":teacher_seconds});
     }
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
@@ -5397,6 +5556,7 @@ pub(crate) mod tests {
             state_sha256: hex(&snapshot.state_sha256_v1().unwrap()),
             e_supported: None,
             soft_q: None,
+            search_targets: None,
             adam_step: snapshot.adam_step,
             scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
             parameters: snapshot

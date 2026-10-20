@@ -1265,3 +1265,128 @@ fn input_major_forward_preserves_every_tape_bit() {
         assert_eq!(actual.usize_arena, expected.usize_arena);
     }
 }
+
+/// TP1 Stage B: off-batch rows give the complete update (result, gauge
+/// record, auxiliary telemetry and state) bit for bit that the same rows
+/// give as in-batch line (b) roots: they add only their auxiliary term and
+/// leave GAE's own terms and group mean alone.
+#[test]
+fn gae_with_external_rows_equals_gae_with_the_same_in_batch_roots() {
+    use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+    let model = model();
+    let fixture = Fixture::capture(&model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let target = line_b_target(&fixture);
+    let input = line_b_input(
+        LineBDivergenceV1::Forward,
+        0.7,
+        [Some(target.clone()), Some(target.clone())],
+    );
+    let (in_batch_state, in_batch, in_batch_auxiliary) =
+        line_b_step(&model, &groups, &input).unwrap();
+    let external = archive_distillation_v1::ExternalAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Forward,
+        coefficient: 0.7,
+        denominator: 2,
+        rows: (0..2)
+            .map(|_| archive_distillation_v1::ExternalAuxiliaryRowV1 {
+                encoded: encoded_decision_view_v3(&fixture.tensors[1]),
+                target: &target,
+            })
+            .collect(),
+    };
+    let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+    let (result, auxiliary) = state
+        .train_step_gae_external_auxiliary_v1(
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            &external,
+        )
+        .unwrap();
+    assert_eq!(result.gradients, in_batch.gradients);
+    assert_eq!(result.scorer_bias_gauge, in_batch.scorer_bias_gauge);
+    assert_eq!(result.loss.to_bits(), in_batch.loss.to_bits());
+    assert_eq!(auxiliary, in_batch_auxiliary);
+    assert_eq!(state_bits(&state), state_bits(&in_batch_state));
+    assert!(auxiliary.auxiliary_loss > 0.0 && auxiliary.auxiliary_head_l2 > 0.0);
+    // And the ordinary update differs: the rows did train.
+    let mut ordinary = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+    ordinary
+        .train_step_gae_feature_transfer_v3(&groups, &LINE_B_TARGETS, &LINE_B_ADVANTAGES, VC, LR)
+        .unwrap();
+    assert_ne!(state_bits(&state), state_bits(&ordinary));
+}
+
+/// TP1 Stage B: populated off-batch rows at coefficient 0 give the ordinary
+/// update bit for bit (parameters, both moments, Adam step, gradients and
+/// gauge record) from inherited Adam moments, and the step still advances
+/// Adam exactly once.
+#[test]
+fn gae_with_external_rows_at_zero_coefficient_is_the_ordinary_update() {
+    use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+    let model = model();
+    let first = Fixture::capture(&model);
+    let first_steps = first.substeps();
+    let first_groups = groups(&first_steps);
+    // Both states take the same ordinary step first, so moments are inherited.
+    let step_once = || {
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        state
+            .train_step_gae_feature_transfer_v3(
+                &first_groups,
+                &LINE_B_TARGETS,
+                &LINE_B_ADVANTAGES,
+                VC,
+                LR,
+            )
+            .unwrap();
+        state
+    };
+    let mut state = step_once();
+    let mut ordinary = step_once();
+    assert!(state.first_moments.iter().flatten().any(|m| *m != 0.0));
+    assert_eq!(state_bits(&state), state_bits(&ordinary));
+    let fixture = Fixture::capture(&state.model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let target = line_b_target(&fixture);
+    let external = archive_distillation_v1::ExternalAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Forward,
+        coefficient: 0.0,
+        denominator: 32,
+        rows: (0..3)
+            .map(|_| archive_distillation_v1::ExternalAuxiliaryRowV1 {
+                encoded: encoded_decision_view_v3(&fixture.tensors[1]),
+                target: &target,
+            })
+            .collect(),
+    };
+    let before = state.adam_step;
+    let (result, auxiliary) = state
+        .train_step_gae_external_auxiliary_v1(
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            &external,
+        )
+        .unwrap();
+    let expected = ordinary
+        .train_step_gae_feature_transfer_v3(&groups, &LINE_B_TARGETS, &LINE_B_ADVANTAGES, VC, LR)
+        .unwrap();
+    assert_eq!(result.gradients, expected.gradients);
+    assert_eq!(result.scorer_bias_gauge, expected.scorer_bias_gauge);
+    assert_eq!(state_bits(&state), state_bits(&ordinary));
+    assert_eq!(state.adam_step, before + 1);
+    assert_eq!(auxiliary.auxiliary_loss, 0.0);
+    assert_eq!(auxiliary.auxiliary_head_l2, 0.0);
+}
