@@ -27,6 +27,20 @@
 //! the same; MXCSR status flags need not be (lanes a branch discards can
 //! raise the sticky inexact flag where `tanhf` does not).
 
+/// A token for the state the platform `tanhf` (and so every activation)
+/// depends on beyond its input: UCRT's FMA3 switch on Windows x86_64. Equal
+/// tokens mean equal `tanhf` results for equal inputs.
+pub(crate) fn libm_environment_token_v1() -> u32 {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        u32::from(windows::fma3_enabled())
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        0
+    }
+}
+
 /// `*v = v.tanh()` for every value, with the same bits.
 pub(crate) fn libm_tanh_in_place_v1(values: &mut [f32]) {
     #[cfg(all(windows, target_arch = "x86_64"))]

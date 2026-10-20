@@ -15,9 +15,9 @@ pub(crate) mod public_inputs_v1;
 mod scratch_v1;
 pub(crate) mod stack_inputs_v1;
 
-pub(crate) use scratch_v1::NativePolicyValueForwardScratchV1;
 #[cfg(test)]
 use scratch_v1::NativePolicyValueOutputViewV1;
+pub(crate) use scratch_v1::{ForwardRowCacheV1, NativePolicyValueForwardScratchV1};
 
 /// Selects which `tanh` implementation the forward pass's activation
 /// primitive (`tanh_in_place_v1`, below) uses. `LibmTanh` is today's
@@ -3121,6 +3121,74 @@ mod tests {
             }
         }
     }
+
+    /// The row-cached forward gives the owned forward's bits on thousands of
+    /// decisions that share most rows with earlier ones, with enough distinct
+    /// rows to evict from every store, across an activation-mode change.
+    #[test]
+    fn row_cached_forward_matches_uncached_bits() {
+        let mut fixture = fixture();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut scratch = NativePolicyValueForwardScratchV1::default();
+        let mut rows = ForwardRowCacheV1::default();
+        let mut rng = crate::state::SplitMix64::seed(20261020);
+        let picks = [0.0f32, 0.25, -0.5, 1.0];
+        let cases = fixture.cases.len();
+        // Steps below 1,000 switch modes and mostly reuse a small set of
+        // values (rows recur); later steps keep one mode and write a new
+        // object value every step (rows are evicted).
+        for step in 0..5000usize {
+            let case = &mut fixture.cases[step % cases];
+            let value = if step >= 1000 || rng.next_u64().is_multiple_of(4) {
+                step as f32 * 1e-3
+            } else {
+                picks[(rng.next_u64() % 4) as usize]
+            };
+            let pick = rng.next_u64();
+            let target = match if step >= 1000 { 0 } else { pick % 3 } {
+                0 => &mut case.object_features,
+                1 => &mut case.edge_features,
+                _ => &mut case.action_features,
+            };
+            if !target.is_empty() {
+                let i = (pick >> 8) as usize % target.len();
+                target[i] = value;
+            }
+            let mode = if step >= 1000 || step % 500 < 250 {
+                ForwardActivationModeV1::LibmTanh
+            } else {
+                ForwardActivationModeV1::FastSearchTanh
+            };
+            let encoded = view(case);
+            let expected = model.forward_v1_mode(encoded, mode).unwrap();
+            assert_scratch_output_bits(
+                model
+                    .forward_rows_cached_with_scratch_v1(
+                        encoded,
+                        model.config_v1(),
+                        &mut scratch,
+                        &mut rows,
+                        mode,
+                    )
+                    .unwrap(),
+                &expected,
+            );
+        }
+        // Since the last mode change: object and node rows were both served
+        // and evicted, and action rows were served.
+        let counts = rows.counts_v1();
+        for layer in [0, 2] {
+            assert!(
+                counts[layer].0 > 1000 && counts[layer].1 > ROW_CACHE_TEST_CAPACITY_V1 as u64,
+                "{counts:?}"
+            );
+        }
+        assert!(counts[4].0 > 1000, "{counts:?}");
+    }
+
+    const ROW_CACHE_TEST_CAPACITY_V1: usize = 2048;
 
     #[test]
     fn scratch_forward_preserves_failures_and_recovers_after_parameter_changes() {
