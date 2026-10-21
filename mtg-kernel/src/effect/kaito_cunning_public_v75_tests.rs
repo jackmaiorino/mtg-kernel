@@ -40,7 +40,6 @@ fn genuine_paid_optional_target_draw_private_discard_full_counters_and_restore_b
             o.counters.oil = 4;
             o.counters.charge = i32::MAX;
             o.counters.net = 5;
-            o.counters.bait = 6;
             o.counters.soul = 7;
             o.counters.incubation = 8;
             o.counters.revival = 9;
@@ -55,6 +54,20 @@ fn genuine_paid_optional_target_draw_private_discard_full_counters_and_restore_b
                 .creature_upgrade
                 .get_or_insert_with(Default::default)
                 .finality = u16::MAX;
+            // Bait storage is authenticated against native placement operations.
+            crate::standard_creatures_v1::place_counters_checked_v1(
+                &mut s,
+                c,
+                p,
+                crate::standard_creatures_v1::CounterTransferV1 {
+                    counters: crate::state::Counters {
+                        bait: 6,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap();
             crate::planeswalker_v1::add_loyalty_counters_checked_v1(&mut s, k, u32::MAX - 4)
                 .unwrap();
             let row = activate(&mut s, p, k, 0, selected.then_some(c));
@@ -73,6 +86,7 @@ fn genuine_paid_optional_target_draw_private_discard_full_counters_and_restore_b
                 18
             );
             assert_eq!(b.counters.charge, i32::MAX);
+            assert_eq!(b.counters.bait, 6);
             assert_eq!(b.counters.stash, 11);
             assert_eq!(b.counters.time, u8::MAX);
             assert_eq!(b.counters.finality, u16::MAX);
