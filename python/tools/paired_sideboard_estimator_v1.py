@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 
 
@@ -26,11 +27,14 @@ def splitmix64(seed: int):
     return next_u64
 
 
-def paired_bootstrap_ci(deltas: list[int], resample_count: int, seed: int, sidedness: str) -> dict:
+def paired_bootstrap_ci(deltas: list[int], resample_count: int, seed: int, sidedness: str,
+                        alpha: float = 0.05) -> dict:
     if not deltas:
         raise ValueError("bootstrap is undefined over zero deltas")
     if resample_count <= 0:
         raise ValueError("resample_count must be positive")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must lie strictly inside (0, 1)")
     mean = sum(deltas) / len(deltas)
     next_u64 = splitmix64(seed)
     resample_means = []
@@ -43,12 +47,12 @@ def paired_bootstrap_ci(deltas: list[int], resample_count: int, seed: int, sided
         resample_means.append(total / n)
     resample_means.sort()
     if sidedness == "one_sided_lower":
-        alpha_index = min(int(resample_count * 0.05), resample_count - 1)
+        alpha_index = min(math.floor(resample_count * alpha), resample_count - 1)
         lower = resample_means[alpha_index]
         upper = float("inf")
     elif sidedness == "two_sided":
-        lower_index = min(int(resample_count * 0.025), resample_count - 1)
-        upper_index = min(int(resample_count * 0.975), resample_count - 1)
+        lower_index = min(math.floor(resample_count * (alpha / 2.0)), resample_count - 1)
+        upper_index = min(math.floor(resample_count * (1.0 - alpha / 2.0)), resample_count - 1)
         lower = resample_means[lower_index]
         upper = resample_means[upper_index]
     else:
@@ -60,6 +64,7 @@ def paired_bootstrap_ci(deltas: list[int], resample_count: int, seed: int, sided
         "resample_count": resample_count,
         "seed": seed,
         "sidedness": sidedness,
+        "alpha": alpha,
     }
 
 
@@ -69,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resample-count", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--sidedness", choices=["one_sided_lower", "two_sided"], required=True)
+    parser.add_argument("--alpha", type=float, default=0.05)
     args = parser.parse_args(argv)
 
     deltas = []
@@ -79,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             deltas.append(int(json.loads(line)["delta"]))
 
-    report = paired_bootstrap_ci(deltas, args.resample_count, args.seed, args.sidedness)
+    report = paired_bootstrap_ci(deltas, args.resample_count, args.seed, args.sidedness, args.alpha)
     json.dump(report, sys.stdout)
     return 0
 
