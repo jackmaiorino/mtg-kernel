@@ -1256,6 +1256,38 @@ fn solve_pips_with_mana_policy_v72(
     source_choices: Option<&SpellSourceChoicesV1>,
     policy: PipManaPolicyV72,
 ) -> bool {
+    if idx == 0 {
+        if let Some(generic) = generic_needed {
+            // Reject an impossible total before permuting interchangeable pip
+            // sources. Wide X probes otherwise enumerate every GGG assignment
+            // before discovering that the remaining Forests cannot pay X.
+            // Phyrexian pips may use life. Counting every unused source at its
+            // full yield, including Convoke aliases, overestimates capacity.
+            // A feasible branch therefore retains its exact original order.
+            let minimum_mana = pips.iter().fold(u64::from(generic), |total, pip| {
+                total.saturating_add(u64::from(!matches!(
+                    pip,
+                    Pip::Phyrexian(_) | Pip::PhyrexianAnyColor(_)
+                )))
+            });
+            let capacity = sources.iter().zip(used.iter()).fold(
+                pool_remaining
+                    .iter()
+                    .map(|&amount| u64::from(amount))
+                    .sum::<u64>(),
+                |total, (source, &used)| {
+                    total.saturating_add(if used {
+                        0
+                    } else {
+                        u64::from(source.yield_per_tap.max(1))
+                    })
+                },
+            );
+            if minimum_mana > capacity {
+                return false;
+            }
+        }
+    }
     let Some(pip) = pips.get(idx) else {
         let Some(generic) = generic_needed else {
             return true;
@@ -1622,6 +1654,66 @@ mod tests {
             id: ObjectId(id),
             choices: choices.to_vec(),
             yield_per_tap: 1,
+        }
+    }
+
+    #[test]
+    fn wide_x_total_rejects_impossible_forest_payments_and_preserves_exact_paid_plan() {
+        use crate::{policy_observation_v6::tests::put, state::Zone};
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[forest; 4],
+                &[forest; 4],
+                crate::rl::card_name,
+                110_299,
+                player,
+            );
+            let sources = (0..259)
+                .map(|_| put(&mut state, player, "Forest", Zone::Battlefield))
+                .collect::<Vec<_>>();
+            let before = state.clone();
+            let pips = [Pip::Colored(ManaColor::G); 3];
+            let paid = plan_spell_mana_total_v1(&pips, 256, player, &state, false, &[], 0).unwrap();
+            assert_eq!(
+                paid.taps,
+                sources
+                    .iter()
+                    .map(|&id| (id, ManaColor::G))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(paid.pool_used, [0; 6]);
+            assert_eq!(paid.surplus, [0; 6]);
+            assert_eq!(paid.life_paid, 0);
+            for x in [257, 258, 259, 32768, 65535, u32::MAX] {
+                assert!(
+                    plan_spell_mana_total_v1(&pips, x, player, &state, false, &[], 0).is_none(),
+                    "X={x}"
+                );
+            }
+            // A Phyrexian pip can use life while all259 Forests pay generic.
+            // Treating every pip as a mana requirement would reject this.
+            let paid = plan_spell_mana_total_v1(
+                &[Pip::Phyrexian(ManaColor::G)],
+                259,
+                player,
+                &state,
+                false,
+                &[],
+                0,
+            )
+            .unwrap();
+            assert_eq!(
+                paid.taps,
+                sources
+                    .iter()
+                    .map(|&id| (id, ManaColor::G))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(paid.life_paid, 2);
+            assert_eq!(paid.pool_used, [0; 6]);
+            assert_eq!(paid.surplus, [0; 6]);
+            assert_eq!(state, before);
         }
     }
 
