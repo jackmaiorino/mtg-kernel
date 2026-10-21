@@ -534,8 +534,11 @@ fn genuine_paid_original_graveyard_permutation_and_all_empty_pile_choices_restor
             let ordered = finish(&mut s);
             assert_eq!(finish(&mut copy), ordered);
             assert_eq!(s, copy);
-            assert_eq!(ordered, prefix.iter().rev().copied().collect::<Vec<_>>());
-            assert_eq!(s.players[actor.index()].graveyard, ordered);
+            let expected = prefix.iter().rev().copied().collect::<Vec<_>>();
+            // The final singleton is committed automatically, without an
+            // invented fifth ordering decision. Keep the complete native order.
+            assert_eq!(ordered, expected[..expected.len() - 1]);
+            assert_eq!(s.players[actor.index()].graveyard, expected);
             assert!(s.players[actor.index()].hand.is_empty());
         }
     }

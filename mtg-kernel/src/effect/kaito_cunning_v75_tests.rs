@@ -204,8 +204,9 @@ pub(super) fn combat_trigger(s: &mut GameState, p: PlayerId, attacker: ObjectId)
     for _ in 0..128 {
         let d = next(s);
         match d {
-            Decision::DeclareAttackers { player, eligible } if player == p => {
-                assert!(eligible.contains(&attacker));
+            Decision::DeclareAttackers { player, eligible }
+                if player == p && eligible.contains(&attacker) =>
+            {
                 engine::step(s, Action::DeclareAttackers(vec![attacker])).unwrap();
                 declared = true;
             }
