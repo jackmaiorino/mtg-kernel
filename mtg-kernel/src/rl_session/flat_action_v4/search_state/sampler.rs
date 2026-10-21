@@ -15,6 +15,13 @@ enum SamplingScopeV68 {
     Chandra,
     Kaito,
 }
+fn diagnose_refusal<T>(stage: &'static str, value: T) -> T {
+    #[cfg(test)]
+    eprintln!("hidden-slot sampling refused at {stage}");
+    #[cfg(not(test))]
+    let _ = stage;
+    value
+}
 fn conflicts(
     state: &GameState,
     pool: &[ObjectId],
@@ -48,16 +55,16 @@ fn conflicts_in_scope(
     if crate::bloodthirsty_conqueror_v49::has_history(state)
         || crate::soul_counters_v1::has_history(state)
     {
-        return true;
+        return diagnose_refusal("references.soul_or_conqueror", true);
     }
     if crate::ajani_full_v42::lifecycle::requires_successor(state) {
-        return true;
+        return diagnose_refusal("references.ajani", true);
     }
     if crate::fishing_pole_v39::lifecycle::requires_successor(state) {
-        return true;
+        return diagnose_refusal("references.fishing", true);
     }
     if crate::krenko_v1::requires_successor(state) {
-        return true;
+        return diagnose_refusal("references.krenko", true);
     }
     // Every ordinary entry has both observation records, even without an
     // observer. Validate those passive records; the reference walk below
@@ -67,7 +74,7 @@ fn conflicts_in_scope(
         || crate::arahbo_v1::requires_successor(state)
         || crate::garruks_uprising_v1::requires_successor(state)
     {
-        return true;
+        return diagnose_refusal("references.entry_observers", true);
     }
     // Retained linked duration and attack ownership need their qualified sampler.
     if crate::banishing_light_v1::requires_successor(state)
@@ -78,7 +85,7 @@ fn conflicts_in_scope(
             )
         }) && !pool.is_empty())
     {
-        return true;
+        return diagnose_refusal("references.banishing_or_ashroot_dispatch", true);
     }
     // The source's old definition and power remain authoritative after it returns
     // to a hidden zone. This lane does not admit a historical resampling scheme.
@@ -87,7 +94,7 @@ fn conflicts_in_scope(
         crate::event::CommittedEvent::AshrootPowerBeforeDepartureV1 { source, .. }
             if pool.contains(&source.object))
     }) {
-        return true;
+        return diagnose_refusal("references.ashroot_departure", true);
     }
     // Receipt-owned references remain binding through legend/deferred stages
     // and after the physical source or recipient returns to a hidden zone.
@@ -123,7 +130,7 @@ fn conflicts_in_scope(
         SamplingScopeV68::Chandra => super::effect_refs::conflicts_chandra_v74(state, pool, plan),
         SamplingScopeV68::Kaito => super::effect_refs::conflicts_kaito_v75(state, pool, plan),
     } {
-        return true;
+        return diagnose_refusal("references.effect_walk", true);
     }
     let same = |id: ObjectId, generation: u32| {
         pool.contains(&id) && state.objects.get(id).zone_change_count == generation
@@ -231,7 +238,7 @@ fn conflicts_in_scope(
             .any(|r| same(r.object, r.zone_change_generation))
         || e.pending_kicked_source.is_some_and(|id| pool.contains(&id))
     {
-        return true;
+        return diagnose_refusal("references.current_native_binding", true);
     }
     // New committed authority must not be relabeled by hidden pool resampling,
     // including after Cleanup removed the active shield. Predecessor histories
@@ -397,11 +404,23 @@ pub(super) fn redeterminize_muldrotha_v71(
         .map_err(|_| Error::HiddenStateContract)?;
     // Entry checkpoints retain whole original worlds. V69's replay derivation
     // cannot authenticate a V71 world, so this scope preserves that refusal.
-    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some()
-        || crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true)
-        || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true)
-    {
-        return Err(Error::HiddenReferenceConflict);
+    if crate::linked_aura_operation_v1::pending_original_operation(state).is_some() {
+        return Err(diagnose_refusal(
+            "v71.entry_checkpoint",
+            Error::HiddenReferenceConflict,
+        ));
+    }
+    if crate::engine::time_stop_v1::sampler_conflicts_v68(state, &[]).unwrap_or(true) {
+        return Err(diagnose_refusal(
+            "v71.time_stop",
+            Error::HiddenReferenceConflict,
+        ));
+    }
+    if crate::engine::muldrotha_v1::sampler_conflicts_v71(state, &[]).unwrap_or(true) {
+        return Err(diagnose_refusal(
+            "v71.permission_history",
+            Error::HiddenReferenceConflict,
+        ));
     }
     redeterminize_with_library_plan_inner(
         state,
@@ -411,6 +430,7 @@ pub(super) fn redeterminize_muldrotha_v71(
         true,
         SamplingScopeV68::Muldrotha,
     )
+    .map_err(|error| diagnose_refusal("v71.current_slots", error))
 }
 pub(super) fn redeterminize_tinybones_v72(
     state: &mut GameState,

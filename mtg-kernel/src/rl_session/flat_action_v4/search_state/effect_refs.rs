@@ -1736,7 +1736,7 @@ fn conflicts_in_scope(
     }
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
-        match event {
+        let conflict = match event {
             // Future native owning histories are not sampler permissions.
             // Refuse them until their complete retained-reference walk exists.
             LathrilCombatDamageV1 { .. }
@@ -2088,7 +2088,12 @@ fn conflicts_in_scope(
                 | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. }
                 | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. } | ConquerorObserverInputV59 { .. } | ConquerorLossBatchV59 { .. } | ConquerorCapturedV59 { .. } | ConquerorCollectedV59 { .. } | ConquerorJournalV59 { .. } | FiendishPandaWideGainCaptureV59 { .. }
                 | SoulCounterInputV1 { .. } | RavenousPaymentV1 { .. } | RavenousRemovedV1 { .. } | RavenousCompletedV1 { .. } => true,
+        };
+        #[cfg(test)]
+        if conflict {
+            eprintln!("hidden-slot sampling refused mutable dispatch kind {:?}", event.kind_v1());
         }
+        conflict
     })
 }
 
