@@ -198,9 +198,22 @@ fn genuine_paid_vivien_wire_emblem_and_full_u32_loyalty_are_distinct_native_fact
         let before = crate::planeswalker_v1::loyalty(&s, v).unwrap(); /* Native counter-placement primitive, not paid loyalty. */
         crate::planeswalker_v1::add_loyalty_counters_checked_v1(&mut s, v, u32::MAX - before)
             .unwrap();
+        let facts = crate::vivien_public_v70::capture(&s, p).unwrap();
+        let current = facts
+            .current
+            .iter()
+            .find(|row| row.card.object == v.0)
+            .unwrap();
+        assert_eq!(current.counters.loyalty, u32::MAX);
+        assert!(facts.emblems.is_empty());
         let (mut wire, _) = fixture(s);
         let mut seq = 0;
         let reply = send(&mut wire, &mut seq, json!({"request_type":"current"}));
+        assert_eq!(
+            reply["state"]["state_type"], "decision",
+            "full-width native Vivien facts passed; wire rejected with response={} code={}",
+            reply["response_type"], reply["state"]["code"]
+        );
         assert_eq!(
             reply["state"]["decision"]["state"]["vivien"]["current"][0]["counters"]["loyalty"],
             u32::MAX
