@@ -602,6 +602,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         if !roots::is_gain_land(*id)
             && !roots::is_simple_trigger_permanent(*id)
             && !roots::is_ordinary_equipment(*id)
+            && !roots::is_ordinary_aura(*id)
             && !roots::is_mandatory_ordinary_spell(*id)
         {
             meanings.push(roots::baseline(*id)?);

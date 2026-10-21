@@ -25,6 +25,8 @@ pub(super) mod kellan_printing;
 mod legendary_printing;
 #[path = "observer_trigger_printing.rs"]
 mod observer_trigger_printing;
+#[path = "ordinary_aura_printing.rs"]
+mod ordinary_aura_printing;
 #[path = "ordinary_equipment_printing.rs"]
 mod ordinary_equipment_printing;
 #[path = "ordinary_removal_printing.rs"]
@@ -376,6 +378,11 @@ pub(super) fn is_ordinary_equipment(id: u16) -> bool {
         .get(usize::from(id))
         .is_some_and(|d| ordinary_equipment_printing::handles(d.name))
 }
+pub(super) fn is_ordinary_aura(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| ordinary_aura_printing::handles(d.name))
+}
 
 pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     if d.name == "Divine Resilience" {
@@ -424,6 +431,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
+    let ordinary_aura = ordinary_aura_printing::printing(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
     let hart = burnished_hart_printing(id, d)?;
     let growth_or_druid = growth_or_druid_printing(id, d)?;
@@ -566,7 +574,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.additional_cost.is_none()
         && d.optional_additional_cost.is_none()
         && (d.equipment.is_none() || goldvein.is_some() || ordinary_equipment.is_some())
-        && d.attachment.is_none()
+        && (d.attachment.is_none() || ordinary_aura.is_some())
         && d.starting_loyalty.is_none()
         && d.enters_with_plus_one_counters.is_none()
         && d.controlled_creature_grant.is_none()
@@ -652,6 +660,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = ordinary_equipment {
+        return Ok(printing);
+    }
+    if let Some(printing) = ordinary_aura {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
@@ -1237,7 +1248,11 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
-    if is_gain_land(id) || is_simple_trigger_permanent(id) || is_ordinary_equipment(id) {
+    if is_gain_land(id)
+        || is_simple_trigger_permanent(id)
+        || is_ordinary_equipment(id)
+        || is_ordinary_aura(id)
+    {
         return baseline_recipe(id, d).map(Some);
     }
     let keywords = match d.name {
