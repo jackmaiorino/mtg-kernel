@@ -166,13 +166,30 @@ pub fn producer_sha256() -> String {
 }
 
 pub fn commitment(value: &LilianaCandidatesV73) -> Result<String, RlContractError> {
-    let mut value = value.clone();
-    value.projection_sha256.clear();
-    let bytes = serde_json::to_vec(&value).map_err(error)?;
-    Ok(Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    struct Uncommitted<'a>(&'a LilianaCandidatesV73);
+    impl Serialize for Uncommitted<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeStruct;
+            let value = self.0;
+            let mut out = serializer.serialize_struct("LilianaCandidatesV73", 7)?;
+            macro_rules! fields {
+                ($($field:ident),* $(,)?) => {
+                    $(out.serialize_field(stringify!($field), &value.$field)?;)*
+                };
+            }
+            fields!(
+                schema,
+                producer_sha256,
+                observation,
+                candidates,
+                alesha_optional_resolution_supported,
+                owning_consumer_admitted
+            );
+            out.serialize_field("projection_sha256", "")?;
+            out.end()
+        }
+    }
+    observation::streamed_commitment(&Uncommitted(value))
 }
 fn error(e: impl std::fmt::Display) -> RlContractError {
     RlContractError(e.to_string())

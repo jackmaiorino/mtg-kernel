@@ -4,6 +4,58 @@ use crate::{
     effect::liliana_dreadhorde_v1::tests::owner_v73_tests::owning_ready, ids::PlayerId,
     liliana_public_v73::ActivationStageV73, rl::ActionSemanticV1 as A,
 };
+#[test]
+fn streamed_projection_commitments_preserve_original_exact_json_and_nested_hashes_both_seats() {
+    use sha2::{Digest, Sha256};
+    fn original_hash(value: &impl serde::Serialize) -> String {
+        Sha256::digest(serde_json::to_vec(value).unwrap())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    }
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (s, _) = owning_ready(p, false, "Island");
+        let own =
+            LilianaSession::from_session(FastActorSessionV1::from_liliana_v73_fixture_state(s))
+                .unwrap();
+        let FastActorResponseV1::Decision(h) = own.current_response() else {
+            panic!()
+        };
+        let d = own.encode(h).unwrap();
+        let mut candidates = d.backend.candidates_v73().clone();
+        candidates.projection_sha256.clear();
+        assert_eq!(
+            crate::liliana_candidates_v73::commitment(&candidates).unwrap(),
+            original_hash(&candidates)
+        );
+        let mut observation = candidates.observation.clone();
+        observation.projection_sha256.clear();
+        assert_eq!(
+            crate::liliana_observation_v73::commitment(&observation).unwrap(),
+            original_hash(&observation)
+        );
+        let prior = original_hash(&observation);
+        observation.common.projection_sha256.push('0');
+        assert_ne!(
+            crate::liliana_observation_v73::commitment(&observation).unwrap(),
+            prior
+        );
+        assert_eq!(
+            crate::liliana_observation_v73::commitment(&observation).unwrap(),
+            original_hash(&observation)
+        );
+        let prior = original_hash(&candidates);
+        candidates.observation.projection_sha256.push('0');
+        assert_ne!(
+            crate::liliana_candidates_v73::commitment(&candidates).unwrap(),
+            prior
+        );
+        assert_eq!(
+            crate::liliana_candidates_v73::commitment(&candidates).unwrap(),
+            original_hash(&candidates)
+        );
+    }
+}
 fn act(own: &mut LilianaSession, native: &mut FastActorSessionV1, choose: impl Fn(&A) -> bool) {
     let FastActorResponseV1::Decision(h) = own.current_response() else {
         panic!("numeric V73 ended")

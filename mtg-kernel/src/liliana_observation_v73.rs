@@ -149,10 +149,63 @@ pub fn producer_sha256() -> String {
     .clone()
 }
 pub fn commitment(value: &LilianaObservationV73) -> Result<String, RlContractError> {
-    let mut value = value.clone();
-    value.projection_sha256.clear();
-    let bytes = serde_json::to_vec(&value).map_err(|e| RlContractError(e.to_string()))?;
-    Ok(Sha256::digest(bytes)
+    // Borrow every field in the original serialization order. Only this
+    // envelope's commitment is cleared; all nested commitments stay bound.
+    struct Uncommitted<'a>(&'a LilianaObservationV73);
+    impl Serialize for Uncommitted<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeStruct;
+            let value = self.0;
+            let mut out = serializer.serialize_struct("LilianaObservationV73", 19)?;
+            macro_rules! fields {
+                ($($field:ident),* $(,)?) => {
+                    $(out.serialize_field(stringify!($field), &value.$field)?;)*
+                };
+            }
+            fields!(
+                schema,
+                producer_sha256,
+                common,
+                drake,
+                spinner,
+                quandary,
+                phoenix,
+                next_five,
+                graveyard_return,
+                call,
+                end_turn,
+                genesis_wave,
+                vivien,
+                muldrotha,
+                tinybones,
+                liliana,
+                complete_ordinary_observation,
+                owning_consumer_admitted,
+            );
+            out.serialize_field("projection_sha256", "")?;
+            out.end()
+        }
+    }
+    streamed_commitment(&Uncommitted(value))
+}
+/// Hash the exact JSON byte stream without retaining a second complete byte
+/// buffer. The borrowed envelope above also avoids cloning the full roster.
+pub(crate) fn streamed_commitment(value: &impl Serialize) -> Result<String, RlContractError> {
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(&mut writer, value).map_err(|e| RlContractError(e.to_string()))?;
+    Ok(writer
+        .0
+        .finalize()
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect())
