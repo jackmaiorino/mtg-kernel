@@ -207,13 +207,11 @@ fn discard_count(state: &GameState) -> usize {
     }
 }
 fn last_end_step(state: &GameState) -> Option<usize> {
-    let index = state
-        .engine
-        .event_history
-        .iter()
-        .enumerate()
-        .rfind(|(index, _)| is_end_origin(state, *index, state.active_player))?
-        .0;
+    let index = state.engine.event_history.iter().rposition(|event| {
+        matches!(event, CommittedEvent::BeginningEndStep { .. })
+            || matches!(event, CommittedEvent::OrdinaryCleanupStageV1 { stage }
+                    if stage.phase == PhaseV1::EndCompleted)
+    })?;
     if !is_end_origin(state, index, state.active_player)
         || state
             .engine
