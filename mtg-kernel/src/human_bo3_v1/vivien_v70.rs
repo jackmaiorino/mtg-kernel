@@ -307,6 +307,30 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let ActionSemanticV1::CastSpell { source, .. } = a {
+        if source.card_db_id == obs.vivien.meaning.card_id {
+            return Ok(Some(format!(
+                "Cast {}: pay {{3}}{{G}}{{G}}; enter with five loyalty counters",
+                h.name(source)?
+            )));
+        }
+    }
+    if let Some(cost) = crate::vivien_public_v70::activation_cost(&obs.vivien, a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        let instruction = match cost.ability_index {
+            0 => "pay +1 loyalty; look at the top four cards, optionally reveal one creature or land and put it into your hand, then put the rest on the bottom in random order",
+            1 => "pay -3 loyalty; destroy target artifact, enchantment, or creature with flying",
+            2 => "pay -8 loyalty; get an emblem giving creatures you control +2/+2, vigilance, trample, and indestructible",
+            _ => return Err(Error::InvalidVisibleReference),
+        };
+        return Ok(Some(format!(
+            "Activate {}: {instruction} (loyalty {} to {}; paid before publication)",
+            h.name(&cost.source)?,
+            cost.before,
+            cost.after
+        )));
+    }
     match a {
         ActionSemanticV1::CastSpell{source,..} if source.card_db_id==487=>return Ok(Some(format!("Cast {}: pay X and {{G}}{{G}}{{G}}; reveal X and choose permanent cards with mana value at most X",h.name(source)?))),
         ActionSemanticV1::ChooseEffectOption{source,option_index,..} if source.card_db_id==487=>return Ok(Some(format!("Genesis Wave: choose X={option_index}"))),

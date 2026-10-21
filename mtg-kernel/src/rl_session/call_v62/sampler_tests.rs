@@ -179,7 +179,10 @@ fn paid_archived_alesha_suffix_forgery_refuses_readonly_both_seats() {
                 _ => unreachable!(),
             }
             let before = state.clone();
-            assert!(crate::controlled_creature_grants_v1::validate_color_history(&state).is_err());
+            assert!(
+                crate::controlled_creature_grants_v1::validate_color_history(&state).is_err(),
+                "forged departure color mutation={mutation} was accepted"
+            );
             assert!(
                 super::super::flat_action_v4::redeterminize_call_v62(&mut state, actor, 8172)
                     .is_err()

@@ -186,6 +186,54 @@ fn genuine_paid_vivien_wire_independent_hidden_worlds_and_closed_private_fields_
     }
 }
 #[test]
+fn genuine_paid_vivien_wire_cast_and_loyalty_cost_labels_keep_native_actions_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for ability_index in [0, 1] {
+            let (state, vivien, _) = ready(p, "Island");
+            let (mut wire, mut native) = fixture(state);
+            let mut seq = 0;
+            step(
+                &mut wire,
+                &mut native,
+                &mut seq,
+                |a| matches!(a, A::CastSpell { source, .. } if source.arena_id == vivien.0),
+            );
+            for _ in 0..16 {
+                if world(&wire).objects.get(vivien).zone == crate::state::Zone::Battlefield {
+                    break;
+                }
+                step(&mut wire, &mut native, &mut seq, |a| {
+                    matches!(a, A::Pass { .. })
+                });
+            }
+            assert_eq!(
+                world(&wire).objects.get(vivien).zone,
+                crate::state::Zone::Battlefield
+            );
+            assert_eq!(
+                crate::planeswalker_v1::loyalty(world(&wire), vivien),
+                Some(5)
+            );
+            step(&mut wire, &mut native, &mut seq, |a| {
+                matches!(a, A::ActivateAbility { source, ability_index: index, .. }
+                    if source.arena_id == vivien.0 && *index == ability_index)
+            });
+            if ability_index == 1 {
+                step(&mut wire, &mut native, &mut seq, |a| {
+                    matches!(a, A::ChooseTarget { .. })
+                });
+            }
+            assert_eq!(
+                crate::planeswalker_v1::loyalty(world(&wire), vivien),
+                Some(if ability_index == 0 { 6 } else { 2 })
+            );
+            assert!(world(&wire).stack.iter().any(|item| item.source == vivien
+                && item.kind == crate::state::StackItemKind::ActivatedAbility));
+        }
+    }
+}
+
+#[test]
 fn genuine_paid_vivien_wire_emblem_and_full_u32_loyalty_are_distinct_native_facts_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = crate::effect::vivien_reid_v1::tests::ready(

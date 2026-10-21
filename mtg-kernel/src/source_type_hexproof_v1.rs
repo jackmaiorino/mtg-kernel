@@ -265,6 +265,9 @@ fn validate_snapshot_types_full(
     if snapshot.source_types_v1.0 != Some(expected) {
         return Err("source type projection differs from original prebatch inputs".into());
     }
+    if snapshot.color_mask != crate::engine::object_color_mask(&replay, snapshot.source.source) {
+        return Err("source color projection differs from original prebatch inputs".into());
+    }
     Ok(())
 }
 

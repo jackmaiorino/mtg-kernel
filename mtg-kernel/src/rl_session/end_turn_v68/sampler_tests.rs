@@ -126,8 +126,11 @@ fn genuine_paid_sampling_preserves_archives_discard_restore_and_second_stop_both
         assert!(sampled.inner.state.engine.pending_discard.is_none());
         let mut second = sampled.inner.state.clone();
         native::end_turn(&mut second);
-        native::cast(&mut second, p, "Time Stop", &[], 6);
-        native::end_turn(&mut second);
+        let second_stop = native::cast(&mut second, p, "Time Stop", &[], 6);
+        native::until(&mut second, |state| {
+            state.objects.get(second_stop).zone == Zone::Exile
+                && state.engine.time_stop_v1.is_empty()
+        });
         assert_eq!(
             crate::time_stop_public_v68::capture(&second, p)
                 .unwrap()
