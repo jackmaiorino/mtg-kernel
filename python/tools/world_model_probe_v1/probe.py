@@ -13,6 +13,7 @@ chosen action; the last decision's successor is the final (terminal) state.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import time
@@ -36,6 +37,11 @@ FULL_BLOCK = "opp_hand"  # hidden from the focal player; only in the disclosed f
 PUBLIC_OPP_KINDS = {"cast_spell", "play_land", "activate_ability", "activate_mana_ability",
                     "choose_attacker_inclusion", "choose_blocker_inclusion", "choose_target",
                     "choose_cost_target", "discard"}
+# Action input: role-specific card blocks plus hashed choice tokens (include or
+# decline, target player, mode, indices), so distinct choices stay distinct.
+ROLES = ["source", "target", "attacker", "blocker", "other"]
+N_TOKENS = 512
+A_DIM = len(ROLES) * C + N_TOKENS
 HORIZONS = [1, 2, 3, 5, 10]
 DESCRIPTIVE_HORIZONS = [20, 40]
 
@@ -99,6 +105,51 @@ def featurize(facts, focal, lay: Layout):
     return v
 
 
+def action_features(sem, me_actor, focal):
+    """Sparse action input from the full semantic, with the focal player's
+    visibility: an opponent's card in hand or library stays anonymous unless
+    the action itself reveals it."""
+    kind = sem["action_kind"]
+    reveal = me_actor or kind in PUBLIC_OPP_KINDS
+    idx = set()
+
+    def rel(seat):
+        return "me" if seat == f"p{focal}" else "opp"
+
+    def tok(t):
+        idx.add(len(ROLES) * C + int(hashlib.md5(t.encode()).hexdigest()[:8], 16) % N_TOKENS)
+
+    def walk(v, path, role):
+        if isinstance(v, dict):
+            if "card_db_id" in v:
+                zone = str(v.get("zone", "")).lower()
+                tok(f"{path}:zone={zone}")
+                tok(f"{path}:controller={rel(v.get('controller'))}")
+                if not reveal and zone in ("hand", "library"):
+                    tok(f"{path}:hidden")
+                else:
+                    idx.add(ROLES.index(role) * C + v["card_db_id"])
+                return
+            for k, x in v.items():
+                if k in ("action_kind", "actor") or k.endswith("_id"):
+                    continue
+                r = role if role is not None else (k.rstrip("s") if k.rstrip("s") in ROLES[:-1] else "other")
+                walk(x, f"{path}.{k}" if path else k, r)
+        elif isinstance(v, list):
+            tok(f"{path}:len={min(len(v), 8)}")
+            for x in v:
+                walk(x, path, role)
+        else:
+            if isinstance(v, str) and v in ("p0", "p1"):
+                v = rel(v)
+            elif isinstance(v, int) and not isinstance(v, bool):
+                v = max(-50, min(50, v))
+            tok(f"{path}={v}")
+
+    walk(sem, "", None)
+    return sorted(idx)
+
+
 def build(args):
     manifest = json.loads(Path(args.manifest).read_text())
     held = [sorted(p) for p in manifest["held_out_pairs"]["pairs"]]
@@ -145,12 +196,11 @@ def build(args):
                 me = s["actor"] == focal
                 a_kind.append(kind_ix.get(s["action"]["kind"], len(kinds)))
                 a_me.append(int(me))
-                cards = s["action"]["cards"] if (me or s["action"]["kind"] in PUBLIC_OPP_KINDS) else []
-                a_idx.extend(sorted(set(cards)))
+                a_idx.extend(action_features(s["action"]["semantic"], me, focal))
                 a_ptr.append(len(a_idx))
             g_off.append(len(s_ptr) - 1)
             g_ids.append(r["game"])
-        assert (not s_idx or max(s_idx) < lay.dim) and (not a_idx or max(a_idx) < C)
+        assert (not s_idx or max(s_idx) < lay.dim) and (not a_idx or max(a_idx) < A_DIM)
         np.savez_compressed(out / f"{name}.npz", s_ptr=np.array(s_ptr, np.int64), s_idx=np.array(s_idx, np.int32),
                             s_val=np.array(s_val, np.int16), a_ptr=np.array(a_ptr, np.int64),
                             a_idx=np.array(a_idx, np.int16), a_kind=np.array(a_kind, np.int16),
@@ -179,9 +229,9 @@ class Split:
         self._state = st.to(device)
         m = len(z["a_kind"])
         arows = np.repeat(np.arange(m), np.diff(z["a_ptr"]))
-        ac = torch.zeros(m, C, dtype=torch.float32)
+        ac = torch.zeros(m, A_DIM, dtype=torch.float16)
         ac[torch.from_numpy(arows), torch.from_numpy(z["a_idx"].astype(np.int64))] = 1.0
-        self.a_cards = ac.to(device)
+        self.a_cards_h = ac.to(device)
         self.a_kind = torch.from_numpy(z["a_kind"].astype(np.int64)).to(device)
         self.a_me = torch.from_numpy(z["a_me"].astype(np.float32)).to(device)
         self.legal = torch.from_numpy(z["legal"].astype(np.float32)).to(device)
@@ -218,7 +268,7 @@ class Net(nn.Module):
         self.n_card = lay.n_reg - N_SCALAR
         self.register_buffer("scale", torch.from_numpy(lay.scale))
         self.kind = nn.Embedding(n_kinds, 32)
-        d_in = lay.dim + 32 + 1 + C
+        d_in = lay.dim + 32 + 1 + A_DIM
         self.inp = nn.Linear(d_in, hidden)
         self.blocks = nn.ModuleList([nn.Sequential(nn.LayerNorm(hidden), nn.Linear(hidden, hidden), nn.GELU(),
                                                    nn.Linear(hidden, hidden)) for _ in range(3)])
@@ -299,7 +349,7 @@ def train(args):
             cur = tr.state(t)
             loss = 0.0
             for j in range(args.unroll):
-                out = net(cur, tr.a_kind[a + j], tr.a_me[a + j], tr.a_cards[a + j])
+                out = net(cur, tr.a_kind[a + j], tr.a_me[a + j], tr.a_cards_h[a + j].float())
                 nxt = t + j + 1
                 loss = loss + step_loss(lay, cur, out, tr.state(nxt), tr.over[nxt], tr.win_me[nxt], tr.legal[nxt],
                                         scalar_weight)
@@ -333,7 +383,7 @@ def rollout_eval(net, sp: Split, k, persistence):
         done = torch.zeros(len(t), dtype=torch.bool, device=cur.device)
         if not persistence:
             for j in range(k):
-                out = net(cur, sp.a_kind[a + j], sp.a_me[a + j], sp.a_cards[a + j])
+                out = net(cur, sp.a_kind[a + j], sp.a_me[a + j], sp.a_cards_h[a + j].float())
                 nxt = assemble(lay, cur, out)
                 cur = torch.where(done[:, None], cur, nxt)
                 done = done | (out["over"] > 0)
@@ -385,7 +435,8 @@ def evaluate(args):
         for arm, persist in (("model", False), ("persistence", True)):
             r = rollout_eval(net, sp, k, persist)
             ch = r["changed"]
-            entry[arm] = dict(windows=int(len(r["primary"])), primary=float(r["primary"].mean()),
+            entry[arm] = dict(windows=int(len(r["primary"])), successes=int(r["primary"].sum()),
+                              primary=float(r["primary"].mean()),
                               primary_ci=boot_ci(r["primary"], r["game"]),
                               primary_when_changed=float(r["primary"][ch].mean()) if ch.any() else None,
                               changed_share=float(ch.mean()),

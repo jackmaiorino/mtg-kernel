@@ -34,7 +34,10 @@ for split in ('validation', 'test'):
 passing = []
 for k in HORIZONS:
     h = reports['test']['horizons'][str(k)]
-    if h['model']['primary'] >= 0.80 and h['model']['primary'] - h['persistence']['primary'] >= 0.10:
+    # Frozen thresholds in exact integer form: M/N >= 0.80 and (M - P)/N >= 0.10.
+    M, P, N = h['model']['successes'], h['persistence']['successes'], h['model']['windows']
+    assert N == h['persistence']['windows']
+    if 5 * M >= 4 * N and 10 * (M - P) >= N:
         passing.append(k)
 H = max(passing) if passing else 0
 prefix = 0
