@@ -265,7 +265,10 @@ fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
 
             state = expected.unwrap();
             for _ in 0..64 {
+                // Observe the new phase before passing its first priority.
+                next(&mut state);
                 if state.step == Step::Main2 {
+                    assert_eq!(state.priority_player, actor);
                     break;
                 }
                 quiet(&mut state);

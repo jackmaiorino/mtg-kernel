@@ -314,7 +314,10 @@ fn genuine_paid_flash_attach_equip_and_restore_both_seats() {
 
             state = expected.unwrap();
             for _ in 0..64 {
+                // Observe the new phase before passing its first priority.
+                next(&mut state);
                 if state.step == Step::Main2 {
+                    assert_eq!(state.priority_player, actor);
                     break;
                 }
                 quiet(&mut state);
@@ -551,7 +554,7 @@ fn genuine_paid_entry_responses_preserve_captured_controller_and_target_incarnat
                     &mut state,
                     actor.opponent(),
                     if mode == 0 {
-                        "Murder"
+                        "Hero's Downfall"
                     } else {
                         "Involuntary Employment"
                     },
