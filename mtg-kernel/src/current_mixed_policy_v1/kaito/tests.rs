@@ -5,6 +5,7 @@ use crate::{
     kaito_public_v75::StageV75, rl::ActionSemanticV1 as A,
 };
 mod observer_triggers;
+mod ordinary_equipment;
 mod simple_triggers;
 
 /// Full-pool opening-hand coverage is distinct from paid branch qualification.

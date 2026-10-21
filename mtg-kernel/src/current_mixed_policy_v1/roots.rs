@@ -25,6 +25,8 @@ pub(super) mod kellan_printing;
 mod legendary_printing;
 #[path = "observer_trigger_printing.rs"]
 mod observer_trigger_printing;
+#[path = "ordinary_equipment_printing.rs"]
+mod ordinary_equipment_printing;
 #[path = "ordinary_removal_printing.rs"]
 mod ordinary_removal_printing;
 #[path = "rallier_bloom_printing.rs"]
@@ -369,6 +371,11 @@ pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
         simple_trigger_printing::handles(d.name) || observer_trigger_printing::handles(d.name)
     })
 }
+pub(super) fn is_ordinary_equipment(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| ordinary_equipment_printing::handles(d.name))
+}
 
 pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     if d.name == "Divine Resilience" {
@@ -416,6 +423,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let targeted_spell = targeted_spell_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
+    let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
     let hart = burnished_hart_printing(id, d)?;
     let growth_or_druid = growth_or_druid_printing(id, d)?;
@@ -544,7 +552,10 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             });
     if !(d.capability == CardCapability::Full
         && d.object_name == d.name
-        && (d.activated_abilities.is_empty() || goldvein.is_some() || hart.is_some())
+        && (d.activated_abilities.is_empty()
+            || goldvein.is_some()
+            || hart.is_some()
+            || ordinary_equipment.is_some())
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
         && (d.mode2.is_none() || (ordinary_removal.is_some() && d.name == "Abrade"))
@@ -554,7 +565,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.kicker_cost.is_none()
         && d.additional_cost.is_none()
         && d.optional_additional_cost.is_none()
-        && (d.equipment.is_none() || goldvein.is_some())
+        && (d.equipment.is_none() || goldvein.is_some() || ordinary_equipment.is_some())
         && d.attachment.is_none()
         && d.starting_loyalty.is_none()
         && d.enters_with_plus_one_counters.is_none()
@@ -638,6 +649,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = observer_trigger {
+        return Ok(printing);
+    }
+    if let Some(printing) = ordinary_equipment {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
@@ -1223,7 +1237,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
-    if is_gain_land(id) || is_simple_trigger_permanent(id) {
+    if is_gain_land(id) || is_simple_trigger_permanent(id) || is_ordinary_equipment(id) {
         return baseline_recipe(id, d).map(Some);
     }
     let keywords = match d.name {

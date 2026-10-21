@@ -601,6 +601,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         // supplements below, even if a catalog family already covered an ID.
         if !roots::is_gain_land(*id)
             && !roots::is_simple_trigger_permanent(*id)
+            && !roots::is_ordinary_equipment(*id)
             && !roots::is_mandatory_ordinary_spell(*id)
         {
             meanings.push(roots::baseline(*id)?);
