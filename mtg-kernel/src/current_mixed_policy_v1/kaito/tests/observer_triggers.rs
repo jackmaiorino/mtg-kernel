@@ -46,6 +46,10 @@ fn paid_cyclops_noncreature_cast_temporary_boost_source_departure_and_restore_bo
     paid_observer("Crackling Cyclops");
 }
 #[test]
+fn paid_elfsworn_landfall_token_source_departure_and_restore_both_seats() {
+    paid_observer("Elfsworn Giant");
+}
+#[test]
 fn paid_beast_kin_other_creature_temporary_boost_source_departure_and_restore_both_seats() {
     paid_observer("Beast-Kin Ranger");
 }
@@ -93,7 +97,7 @@ fn paid_observer(name: &str) {
         let entering_name = match name {
             "Dazzling Angel" | "Beast-Kin Ranger" => Some("Llanowar Elves"),
             "Youthful Valkyrie" => Some("Dazzling Angel"),
-            "Spitfire Lagac" | "Tatyova, Benthic Druid" => Some("Forest"),
+            "Spitfire Lagac" | "Tatyova, Benthic Druid" | "Elfsworn Giant" => Some("Forest"),
             _ => None,
         };
         let entering = entering_name.map(|card| put(&mut state, p, card, Zone::Hand));
@@ -197,7 +201,10 @@ fn paid_observer(name: &str) {
             );
         } else {
             let entering = entering.unwrap();
-            if matches!(name, "Spitfire Lagac" | "Tatyova, Benthic Druid") {
+            if matches!(
+                name,
+                "Spitfire Lagac" | "Tatyova, Benthic Druid" | "Elfsworn Giant"
+            ) {
                 act(
                     &mut own,
                     &mut native,
@@ -297,6 +304,23 @@ fn paid_observer(name: &str) {
                     20
                 };
                 assert_eq!(state.players[p.index()].life, own_life);
+                if name == "Elfsworn Giant" {
+                    let token = crate::card_def::card_id_by_name("Elf Warrior Token").unwrap();
+                    let created = state.players[p.index()]
+                        .battlefield
+                        .iter()
+                        .copied()
+                        .filter(|&id| state.objects.get(id).card_def == token)
+                        .collect::<Vec<_>>();
+                    assert_eq!(created.len(), 1);
+                    let object = state.objects.get(created[0]);
+                    assert!(object.v4.is_token && object.summoning_sick && !object.tapped);
+                    assert_eq!((object.owner, object.controller), (p, p));
+                    assert_eq!(
+                        crate::engine::checked_effective_pt(state, created[0]).unwrap(),
+                        (1, 1)
+                    );
+                }
                 let other_life = if life_observer { 23 } else { 20 }
                     - i32::from(matches!(
                         name,

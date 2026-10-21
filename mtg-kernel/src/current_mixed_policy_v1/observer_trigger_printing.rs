@@ -23,6 +23,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Beast-Kin Ranger"
             | "Firebrand Archer"
             | "Crackling Cyclops"
+            | "Elfsworn Giant"
     )
 }
 
@@ -30,6 +31,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Elfsworn Giant" => (
+            3,
+            &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::G)][..],
+            &[ManaColor::G][..],
+            &[Subtype::Giant][..],
+            5,
+            3,
+            Keywords::REACH,
+        ),
         "Firebrand Archer" => (
             1,
             &[Pip::Colored(ManaColor::R)][..],
@@ -271,7 +281,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 vec![counter_meaning()]
             },
         ),
-        "Spitfire Lagac" | "Tatyova, Benthic Druid" => (
+        "Spitfire Lagac" | "Tatyova, Benthic Druid" | "Elfsworn Giant" => (
             TriggerCondition::ControlledLandEnters,
             json!({"event":"LandEntersUnderObserverControl","requires_land_play":false,
                 "tokens_count":true,"current_effective_entry_characteristics":true,"trigger_count_per_entering_land":1}),
@@ -279,6 +289,12 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 EffectOp::DealDamage {
                     target: TargetRef::Opponent,
                     amount: 1,
+                }
+            } else if d.name == "Elfsworn Giant" {
+                EffectOp::CreateToken {
+                    token_def: crate::card_def::card_id_by_name("Elf Warrior Token")
+                        .ok_or(Error::UnsupportedPrintedRoot(id))?,
+                    controller: PlayerRef::Controller,
                 }
             } else {
                 EffectOp::Sequence(vec![
@@ -294,6 +310,12 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                     json!({"operation":"DealDamage","recipient":"OpponentOfCapturedTriggerController","amount":1,
                     "source":"OriginalTriggerSource","damage_class":"Noncombat",
                     "normal_damage_replacements_and_prevention_apply":true}),
+                ]
+            } else if d.name == "Elfsworn Giant" {
+                vec![
+                    json!({"operation":"CreateToken","controller":"CapturedTriggerController","count":1,
+                    "token_definition":super::baseline(crate::card_def::card_id_by_name("Elf Warrior Token").ok_or(Error::UnsupportedPrintedRoot(id))?)?,
+                    "normal_token_replacements_and_entry_triggers_apply":true}),
                 ]
             } else {
                 vec![
