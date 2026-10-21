@@ -2669,6 +2669,14 @@ mod next_five_native_label_tests {
             ));
             assert!(state.engine.pending_cast.is_none());
             assert_eq!(state.objects.get(spell).zone, Zone::Stack);
+            // Payment has completed, but resolution can tap unrelated permanents
+            // (Bind the Monster taps its host). Count the paid sources now.
+            let after_payment = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            assert_eq!(after_payment - before, usize::from(mana_value));
 
             for _ in 0..48 {
                 let decision = engine::advance_until_decision(state);
@@ -2679,12 +2687,6 @@ mod next_five_native_label_tests {
                     && state.engine.pending_triggers.is_empty()
                     && matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
                 {
-                    let after = state.players[actor.index()]
-                        .battlefield
-                        .iter()
-                        .filter(|id| state.objects.get(**id).tapped)
-                        .count();
-                    assert_eq!(after - before, usize::from(mana_value));
                     return;
                 }
                 quiet_actual_step(state, decision);
