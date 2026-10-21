@@ -290,8 +290,7 @@ fn paid_sealed_owner_foreign_stale_forged_complete_packet_and_callback_failures_
             .clear();
         assert!(pair.own.step_v73(&erased, 0).is_err());
         let mut changed = d.clone();
-        changed
-            .binding
+        std::sync::Arc::make_mut(&mut changed.binding)
             .projection
             .observation
             .liliana
