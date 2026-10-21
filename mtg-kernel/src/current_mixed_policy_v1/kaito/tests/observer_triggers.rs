@@ -38,6 +38,14 @@ fn paid_elementalist_flash_prowess_source_departure_and_restore_both_seats() {
     paid_observer("Elementalist Adept");
 }
 #[test]
+fn paid_archer_noncreature_cast_damage_source_departure_and_restore_both_seats() {
+    paid_observer("Firebrand Archer");
+}
+#[test]
+fn paid_cyclops_noncreature_cast_temporary_boost_source_departure_and_restore_both_seats() {
+    paid_observer("Crackling Cyclops");
+}
+#[test]
 fn paid_beast_kin_other_creature_temporary_boost_source_departure_and_restore_both_seats() {
     paid_observer("Beast-Kin Ranger");
 }
@@ -50,6 +58,8 @@ fn paid_observer(name: &str) {
         "Ajani's Pridemate" | "Youthful Valkyrie" | "Brineborn Cutthroat"
     );
     let offturn_cast = matches!(name, "Brineborn Cutthroat" | "Elementalist Adept");
+    let spell_cast_observer =
+        offturn_cast || matches!(name, "Firebrand Archer" | "Crackling Cyclops");
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut state = GameState::new_from_libraries_with_starting_player_v1(
             &[forest; 40],
@@ -69,14 +79,17 @@ fn paid_observer(name: &str) {
         }
         let removal = put(&mut state, p.opponent(), "Hero's Downfall", Zone::Hand);
         let source = put(&mut state, p, name, Zone::Hand);
-        let bolt = offturn_cast.then(|| put(&mut state, p, "Lightning Bolt", Zone::Hand));
+        let bolt = spell_cast_observer.then(|| put(&mut state, p, "Lightning Bolt", Zone::Hand));
         // Explicit initial Food tokens are support operands. Both life events
         // below use the native paid mana/tap/sacrifice activation and real stack.
         let own_food = life_observer.then(|| put(&mut state, p, "Food Token", Zone::Battlefield));
         let other_food =
             life_observer.then(|| put(&mut state, p.opponent(), "Food Token", Zone::Battlefield));
-        let non_angel =
-            (name == "Youthful Valkyrie").then(|| put(&mut state, p, "Llanowar Elves", Zone::Hand));
+        let non_angel = matches!(
+            name,
+            "Youthful Valkyrie" | "Firebrand Archer" | "Crackling Cyclops"
+        )
+        .then(|| put(&mut state, p, "Llanowar Elves", Zone::Hand));
         let entering_name = match name {
             "Dazzling Angel" | "Beast-Kin Ranger" => Some("Llanowar Elves"),
             "Youthful Valkyrie" => Some("Dazzling Angel"),
@@ -163,8 +176,10 @@ fn paid_observer(name: &str) {
             );
         }
         if let Some(bolt) = bolt {
-            assert_eq!(own.fixture_state().priority_player, p.opponent());
-            act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
+            if offturn_cast {
+                assert_eq!(own.fixture_state().priority_player, p.opponent());
+                act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
+            }
             act(
                 &mut own,
                 &mut native,
@@ -258,8 +273,11 @@ fn paid_observer(name: &str) {
                 );
                 if !removed {
                     let def = &crate::card_def::CARD_DEFS[usize::from(id)];
-                    let boost_power =
-                        i32::from(matches!(name, "Elementalist Adept" | "Beast-Kin Ranger"));
+                    let boost_power = if name == "Crackling Cyclops" {
+                        3
+                    } else {
+                        i32::from(matches!(name, "Elementalist Adept" | "Beast-Kin Ranger"))
+                    };
                     let boost_toughness = i32::from(name == "Elementalist Adept");
                     assert_eq!(
                         crate::engine::checked_effective_pt(state, source).unwrap(),
@@ -280,8 +298,11 @@ fn paid_observer(name: &str) {
                 };
                 assert_eq!(state.players[p.index()].life, own_life);
                 let other_life = if life_observer { 23 } else { 20 }
-                    - i32::from(matches!(name, "Marauding Blight-Priest" | "Spitfire Lagac"))
-                    - if offturn_cast { 3 } else { 0 };
+                    - i32::from(matches!(
+                        name,
+                        "Marauding Blight-Priest" | "Spitfire Lagac" | "Firebrand Archer"
+                    ))
+                    - if spell_cast_observer { 3 } else { 0 };
                 assert_eq!(state.players[p.opponent().index()].life, other_life);
                 assert_eq!(
                     state.players[p.index()].library.len(),
@@ -299,7 +320,7 @@ fn paid_observer(name: &str) {
                         .filter(|event| matches!(event,
                     CommittedEvent::Damage { source: actual, amount: 1, .. } if *actual == source))
                         .count(),
-                    usize::from(name == "Spitfire Lagac")
+                    usize::from(matches!(name, "Spitfire Lagac" | "Firebrand Archer"))
                 );
                 if let Some(expected) = &expected {
                     assert_eq!(state, expected);

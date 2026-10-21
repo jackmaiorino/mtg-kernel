@@ -21,6 +21,8 @@ pub(super) fn handles(name: &str) -> bool {
             | "Brineborn Cutthroat"
             | "Elementalist Adept"
             | "Beast-Kin Ranger"
+            | "Firebrand Archer"
+            | "Crackling Cyclops"
     )
 }
 
@@ -28,6 +30,24 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Firebrand Archer" => (
+            1,
+            &[Pip::Colored(ManaColor::R)][..],
+            &[ManaColor::R][..],
+            &[Subtype::Human, Subtype::Archer][..],
+            2,
+            1,
+            Keywords::NONE,
+        ),
+        "Crackling Cyclops" => (
+            2,
+            &[Pip::Colored(ManaColor::R)][..],
+            &[ManaColor::R][..],
+            &[Subtype::Cyclops, Subtype::Wizard][..],
+            0,
+            4,
+            Keywords::NONE,
+        ),
         "Ajani's Pridemate" => (
             1,
             &[Pip::Colored(ManaColor::W)][..],
@@ -82,7 +102,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             1,
             Keywords::FLASH,
         ),
-        "Elementalist Adept" => (
+        "Elementalist Adept" | "Crackling Cyclops" => (
             1,
             &[Pip::Colored(ManaColor::U)][..],
             &[ManaColor::U][..],
@@ -178,10 +198,28 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             json!({"event":"ObserverControllerCastsNoncreatureSpell","copies_without_cast_do_not_count":true,
                 "current_spell_characteristics":true,"trigger_count_per_cast":1}),
             EffectOp::BindTemporaryBoostToTriggerSource {
-                power: 1,
-                toughness: 1,
+                power: if d.name == "Crackling Cyclops" { 3 } else { 1 },
+                toughness: if d.name == "Crackling Cyclops" { 0 } else { 1 },
             },
-            vec![boost_meaning(1, 1)],
+            vec![if d.name == "Crackling Cyclops" {
+                boost_meaning(3, 0)
+            } else {
+                boost_meaning(1, 1)
+            }],
+        ),
+        "Firebrand Archer" => (
+            TriggerCondition::CastNoncreatureSpell,
+            json!({"event":"ObserverControllerCastsNoncreatureSpell","copies_without_cast_do_not_count":true,
+                "current_spell_characteristics":true,"trigger_count_per_cast":1}),
+            EffectOp::DealDamage {
+                target: TargetRef::Opponent,
+                amount: 1,
+            },
+            vec![
+                json!({"operation":"DealDamage","recipient":"OpponentOfCapturedTriggerController","amount":1,
+                "source":"OriginalTriggerSource","damage_class":"Noncombat",
+                "normal_damage_replacements_and_prevention_apply":true}),
+            ],
         ),
         "Ajani's Pridemate" | "Marauding Blight-Priest" => (
             TriggerCondition::ControllerGainsLife,
