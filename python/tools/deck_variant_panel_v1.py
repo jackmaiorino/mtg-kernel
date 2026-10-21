@@ -912,6 +912,7 @@ def main(argv: list[str] | None = None) -> int:
     add("--footprint-roots", default=""); add("--max-files", type=int, default=20000)
     add("--max-bytes", type=int, default=int(1.5 * 2**30)); add("--final", action="store_true")
     add("--archive-dirs", default=""); add("--interactive-threshold", type=float, default=0.0)
+    add("--max-workers", type=int)
     a = sub.parse_args(args.rest)
     if args.op == "eligible":
         pilots = dict(part.split("=") for part in a.pilot_checkpoints.split(","))
@@ -948,7 +949,8 @@ def main(argv: list[str] | None = None) -> int:
         check_pins(plan["sources"])
         ledger = Ledger(a.ledger, a.cap_cpu_seconds, receipt["cpu_seconds_per_match"])
         roots = [Path(p) for p in a.footprint_roots.split(";") if p]
-        outcome = dispatch(a.plan, a.executable, receipt["selected_workers"], ledger, a.slots_tool, a.stop_file,
+        workers = min(receipt["selected_workers"], a.max_workers or receipt["selected_workers"])
+        outcome = dispatch(a.plan, a.executable, workers, ledger, a.slots_tool, a.stop_file,
                            roots, a.footprint_limit, interactive_threshold=a.interactive_threshold,
                            archive_dir=a.archive_dir, max_files=a.max_files, max_bytes=a.max_bytes,
                            raw_root=a.raw_root)
