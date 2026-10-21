@@ -592,7 +592,7 @@ fn check_targeted_printings(names: &[&str]) {
                             })
                             .collect();
                         assert_eq!(foods.len(), 1);
-                        assert!(state.objects.get(foods[0]).is_token);
+                        assert!(state.objects.get(foods[0]).v4.is_token);
                         assert_eq!(state.objects.get(foods[0]).controller, p);
                     }
                     "Joust Through" => {
