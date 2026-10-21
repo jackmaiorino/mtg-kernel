@@ -221,8 +221,22 @@ fn genuine_paid_call_cast_death_opposing_source_removal_and_return_keep_full_nat
         let state = pair.own.fixture_state_v62();
         assert_eq!(state.objects.get(elf).zone, Zone::Battlefield);
         assert_eq!(state.objects.get(elf).counters.plus1_plus1, 1);
-        assert!(crate::standard_creatures_v1::creature_types(state, elf)
-            .is_some_and(|(types, _)| types.contains(&(card_def::Subtype::Angel as u16))));
+        // Call adds a subtype to this incarnation. The standard-creature
+        // replacement helper does not include additive subtype grants.
+        assert!(crate::engine::has_effective_subtype(
+            state,
+            elf,
+            card_def::Subtype::Angel
+        ));
+        assert_eq!(
+            state
+                .objects
+                .get(elf)
+                .v4
+                .added_subtype_v1
+                .map(|(subtype, _)| subtype),
+            Some(card_def::Subtype::Angel)
+        );
         assert!(crate::engine::has_effective_keyword(
             state,
             elf,

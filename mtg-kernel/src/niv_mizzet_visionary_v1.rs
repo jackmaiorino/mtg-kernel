@@ -159,14 +159,19 @@ mod tests {
         archer_trigger: &crate::state::StackItem,
     ) {
         for _ in 0..48 {
+            // Resolve the response before inspecting its newly exposed stack
+            // item, then stop before passing the active player's new priority.
+            let decision = engine::advance_until_decision(state);
             if state
                 .stack
                 .last()
                 .is_some_and(|item| item.v4.stack_item_id == archer_trigger.v4.stack_item_id)
             {
+                assert!(matches!(decision, Decision::CastSpellOrPass { player, .. }
+                    if player == state.active_player));
                 return;
             }
-            match engine::advance_until_decision(state) {
+            match decision {
                 Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
                 Decision::OrderTriggers { pending, .. } => engine::step(
                     state,

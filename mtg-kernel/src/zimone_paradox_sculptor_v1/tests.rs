@@ -651,11 +651,16 @@ fn paid_current_effective_type_loss_skips_original_slot_without_reassigning_seco
         // Explicit native face-down/face-up characteristic primitives, not a
         // claim that this printing supplies a paid turn-face-up ability.
         state.objects.get_mut(face).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-            disguised: false,
+            disguised: true,
             lookers: 1 << actor.index(),
             hidden_by: None,
             hidden_by_source: None,
         });
+        assert!(engine::object_has_type(
+            &state,
+            face,
+            card_def::CardType::Creature
+        ));
         let artifact = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
         for target in [face, artifact] {
             crate::standard_creatures_v1::place_counters_checked_v1(

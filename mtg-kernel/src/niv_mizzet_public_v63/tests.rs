@@ -115,19 +115,22 @@ fn archer_trigger_on_stack(
         Action::ChooseTarget(Target::Player(actor.opponent())),
     )
     .unwrap();
-    let pending = match engine::advance_until_decision(state) {
-        Decision::OrderTriggers { pending, .. } => pending,
+    match engine::advance_until_decision(state) {
+        Decision::OrderTriggers { pending, .. } => {
+            let archer_index = pending
+                .iter()
+                .position(|trigger| trigger.source == archer)
+                .expect("Firebrand Archer cast trigger");
+            let mut order: Vec<_> = (0..pending.len())
+                .filter(|index| *index != archer_index)
+                .collect();
+            order.push(archer_index);
+            engine::step(state, Action::OrderTriggers(order)).unwrap();
+        }
+        // Native APNAP publication places a singleton without an order choice.
+        Decision::CastSpellOrPass { player, .. } if player == actor => {}
         decision => panic!("expected Archer cast trigger ordering, got {decision:?}"),
-    };
-    let archer_index = pending
-        .iter()
-        .position(|trigger| trigger.source == archer)
-        .expect("Firebrand Archer cast trigger");
-    let mut order: Vec<_> = (0..pending.len())
-        .filter(|index| *index != archer_index)
-        .collect();
-    order.push(archer_index);
-    engine::step(state, Action::OrderTriggers(order)).unwrap();
+    }
     assert!(matches!(
         engine::advance_until_decision(state),
         Decision::CastSpellOrPass { player, .. } if player == actor
@@ -143,14 +146,17 @@ fn pass_until_archer_trigger_returns(
     archer_trigger: &crate::state::StackItem,
 ) {
     for _ in 0..48 {
+        let decision = engine::advance_until_decision(state);
         if state
             .stack
             .last()
             .is_some_and(|item| item.v4.stack_item_id == archer_trigger.v4.stack_item_id)
         {
+            assert!(matches!(decision, Decision::CastSpellOrPass { player, .. }
+                if player == state.active_player));
             return;
         }
-        match engine::advance_until_decision(state) {
+        match decision {
             Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
             Decision::OrderTriggers { pending, .. } => engine::step(
                 state,
