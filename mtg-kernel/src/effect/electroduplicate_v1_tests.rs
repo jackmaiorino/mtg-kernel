@@ -1044,10 +1044,9 @@ fn nightmare_copy_primitive(s: &mut GameState, p: PlayerId, name: &str) -> Objec
 fn native_nightmare_entry_primitive_paid_copy_of_copy_and_season_keep_copiable_type_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(actor);
-        // Initial blue resources cover the generic payments before the final U.
-        for _ in 0..3 {
-            put(&mut s, actor, "Island", Zone::Battlefield);
-        }
+        // Season and Reflection's generic payments consume the first eight
+        // Mountains. Preserve the real R payment for the final Electroduplicate.
+        put(&mut s, actor, "Mountain", Zone::Battlefield);
         let original = nightmare_copy_primitive(&mut s, actor, "Homunculus Horde");
         paid(&mut s, actor, "Doubling Season", 5);
         let reflection = cast(
