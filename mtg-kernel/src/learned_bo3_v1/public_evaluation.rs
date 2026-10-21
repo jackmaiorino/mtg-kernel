@@ -874,6 +874,38 @@ mod tests {
         assert_eq!(trace.rows.len(), 8);
         assert_eq!(trace.diagnostic_repairs, [0; 2]);
         assert_eq!(session.current_response(), response);
+        let plain_rows = std::mem::take(&mut trace.rows);
+        drop(trace);
+        // Opt-in visible capture: same selections and rows, plus bytes that hash to visible_sha256.
+        let mut v4 = FrozenPlayPolicyV1::training_fixture_v4();
+        let mut trace = Trace {
+            base: &mut v4,
+            capture: true,
+            visible: true,
+            spell_adapter: [false; 2],
+            generations: [PlayPolicyGenerationV1::V4; 2],
+            diagnostic_repairs: [0; 2],
+            resets: vec![],
+            rows: vec![],
+            decisions: 0,
+            terminal_audit: false,
+            terminal_counts: Default::default(),
+            terminal_roots: vec![],
+            terminal_branches: 0,
+        };
+        trace.reset_for_game_v1([123, 456]).unwrap();
+        for _ in 0..8 {
+            trace
+                .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                .unwrap();
+        }
+        for (mut row, plain) in trace.rows.drain(..).zip(&plain_rows) {
+            let bytes = row["visible_json"].as_str().unwrap().as_bytes().to_vec();
+            assert_eq!(row["visible_sha256"], json!(hash(&bytes)));
+            row.as_object_mut().unwrap().remove("visible_json");
+            assert_eq!(&row, plain);
+        }
+        assert_eq!(session.current_response(), response);
     }
 
     #[test]
