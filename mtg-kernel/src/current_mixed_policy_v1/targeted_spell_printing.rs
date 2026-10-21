@@ -15,6 +15,7 @@ pub(super) fn handles(name: &str) -> bool {
         "Stab"
             | "Fleeting Flight"
             | "Bake into a Pie"
+            | "Joust Through"
             | "Fleeting Distraction"
             | "Sure Strike"
             | "Snakeskin Veil"
@@ -122,6 +123,31 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 ],
             )
         }
+        "Joust Through" => (
+            ManaColor::W,
+            0,
+            &[Pip::Colored(ManaColor::W)][..],
+            CardType::Instant,
+            TargetSpec::AttackingOrBlockingCreature,
+            json!({"type":"Creature","current_combat_role_any_of":["Attacking","Blocking"]}),
+            EffectOp::Sequence(vec![
+                EffectOp::DealDamage {
+                    target: TargetRef::Target(0),
+                    amount: 3,
+                },
+                EffectOp::GainLife {
+                    player: PlayerRef::Controller,
+                    amount: 1,
+                },
+            ]),
+            vec![
+                json!({"operation":"DealDamage","target_slot":0,"amount":3,
+                    "damage_class":"Noncombat","source":"ResolvingSpell",
+                    "normal_damage_replacements_and_prevention_apply":true}),
+                json!({"operation":"GainLife","recipient":"SpellController","amount":1,
+                    "does_not_require_positive_damage_dealt":true,"normal_life_gain_replacements_apply":true}),
+            ],
+        ),
         "Fleeting Distraction" => (
             ManaColor::U,
             0,

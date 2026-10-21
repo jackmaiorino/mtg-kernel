@@ -409,6 +409,11 @@ fn flight_and_pie_paid_target_payment_complete_resolution_and_pending_restore_bo
     check_targeted_printings(&["Fleeting Flight", "Bake into a Pie"]);
 }
 
+#[test]
+fn joust_paid_actual_attacker_target_filter_damage_life_and_pending_restore_both_seats() {
+    check_targeted_printings(&["Joust Through"]);
+}
+
 fn check_targeted_printings(names: &[&str]) {
     use crate::{
         engine,
@@ -423,14 +428,18 @@ fn check_targeted_printings(names: &[&str]) {
                 &[forest; 40],
                 crate::rl::card_name,
                 110_288,
-                p,
+                if name == "Joust Through" {
+                    p.opponent()
+                } else {
+                    p
+                },
             );
             s.step = Step::Main1;
             let land = match name {
                 "Stab" | "Hero's Downfall" | "Zombify" | "Bake into a Pie" => "Swamp",
                 "Fleeting Distraction" => "Island",
                 "Sure Strike" => "Mountain",
-                "Make Your Move" | "Fleeting Flight" => "Plains",
+                "Make Your Move" | "Fleeting Flight" | "Joust Through" => "Plains",
                 _ => "Forest",
             };
             for _ in 0..5 {
@@ -447,6 +456,18 @@ fn check_targeted_printings(names: &[&str]) {
             };
             let spell = put(&mut s, p, name, Zone::Hand);
             let library_before = s.players[p.index()].library.len();
+            if name == "Joust Through" {
+                s.step = Step::DeclareAttackers;
+                assert!(matches!(engine::advance_until_decision(&mut s),
+                    engine::Decision::DeclareAttackers { player, ref eligible }
+                    if player == p.opponent() && eligible.contains(&opposing)));
+                engine::step(&mut s, engine::Action::DeclareAttackers(vec![opposing])).unwrap();
+                assert!(matches!(engine::advance_until_decision(&mut s),
+                    engine::Decision::CastSpellOrPass { player, .. } if player == p.opponent()));
+                engine::step(&mut s, engine::Action::Pass).unwrap();
+                assert!(matches!(engine::advance_until_decision(&mut s),
+                    engine::Decision::CastSpellOrPass { player, .. } if player == p));
+            }
             let mut native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
             let mut own =
                 KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(s))
@@ -470,6 +491,15 @@ fn check_targeted_printings(names: &[&str]) {
                     };
                     let d = own.encode(h).unwrap();
                     assert!(!d.backend.actions().iter().any(|a|matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.arena_id==opposing.0)));
+                }
+                if name == "Joust Through" {
+                    let FastActorResponseV1::Decision(h) = own.current_response() else {
+                        panic!()
+                    };
+                    let d = own.encode(h).unwrap();
+                    assert!(!d.backend.actions().iter().any(|a| matches!(a,
+                        A::ChooseTarget { target: crate::rl::TargetRefV1::Object { object }, .. }
+                        if object.arena_id == friendly.0)));
                 }
                 act(
                     &mut own,
@@ -565,6 +595,17 @@ fn check_targeted_printings(names: &[&str]) {
                         assert!(state.objects.get(foods[0]).is_token);
                         assert_eq!(state.objects.get(foods[0]).controller, p);
                     }
+                    "Joust Through" => {
+                        assert_eq!(
+                            own.fixture_state().objects.get(target).zone,
+                            Zone::Graveyard
+                        );
+                        assert_eq!(own.fixture_state().players[p.index()].life, 21);
+                        assert_eq!(
+                            own.fixture_state().objects.get(friendly).zone,
+                            Zone::Battlefield
+                        );
+                    }
                     "Zombify" => {
                         assert_eq!(
                             own.fixture_state().objects.get(target).zone,
@@ -595,6 +636,11 @@ fn paid_pie_skips_food_after_real_stab_removes_its_only_target_both_seats() {
     check_target_departure_skips_secondary_resolution("Bake into a Pie");
 }
 
+#[test]
+fn paid_joust_skips_life_after_real_stab_removes_its_only_attacking_target_both_seats() {
+    check_target_departure_skips_secondary_resolution("Joust Through");
+}
+
 fn check_target_departure_skips_secondary_resolution(name: &str) {
     use crate::{
         policy_observation_v6::tests::put,
@@ -607,15 +653,19 @@ fn check_target_departure_skips_secondary_resolution(name: &str) {
             &[forest; 40],
             crate::rl::card_name,
             110_289,
-            p,
+            if name == "Joust Through" {
+                p.opponent()
+            } else {
+                p
+            },
         );
         s.step = Step::Main1;
-        let land = if name == "Fleeting Distraction" {
-            "Island"
-        } else {
-            "Swamp"
+        let land = match name {
+            "Fleeting Distraction" => "Island",
+            "Joust Through" => "Plains",
+            _ => "Swamp",
         };
-        let cost = if name == "Fleeting Distraction" { 1 } else { 4 };
+        let cost = if name == "Bake into a Pie" { 4 } else { 1 };
         for _ in 0..cost {
             put(&mut s, p, land, Zone::Battlefield);
         }
@@ -623,6 +673,21 @@ fn check_target_departure_skips_secondary_resolution(name: &str) {
         let target = put(&mut s, p.opponent(), "Llanowar Elves", Zone::Battlefield);
         let spell = put(&mut s, p, name, Zone::Hand);
         let response = put(&mut s, p.opponent(), "Stab", Zone::Hand);
+        if name == "Joust Through" {
+            s.step = Step::DeclareAttackers;
+            assert!(matches!(crate::engine::advance_until_decision(&mut s),
+                crate::engine::Decision::DeclareAttackers { ref eligible, .. } if eligible.contains(&target)));
+            crate::engine::step(
+                &mut s,
+                crate::engine::Action::DeclareAttackers(vec![target]),
+            )
+            .unwrap();
+            assert!(matches!(crate::engine::advance_until_decision(&mut s),
+                crate::engine::Decision::CastSpellOrPass { player, .. } if player == p.opponent()));
+            crate::engine::step(&mut s, crate::engine::Action::Pass).unwrap();
+            assert!(matches!(crate::engine::advance_until_decision(&mut s),
+                crate::engine::Decision::CastSpellOrPass { player, .. } if player == p));
+        }
         let mut native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
         let mut own =
             KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(s))
@@ -650,6 +715,7 @@ fn check_target_departure_skips_secondary_resolution(name: &str) {
             Zone::Graveyard
         );
         assert_eq!(own.fixture_state().players[p.index()].library.len(), 40);
+        assert_eq!(own.fixture_state().players[p.index()].life, 20);
         assert!(!own.fixture_state().players[p.index()]
             .battlefield
             .iter()
