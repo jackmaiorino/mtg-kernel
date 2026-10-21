@@ -5,6 +5,38 @@ use crate::{
     liliana_public_v73::ActivationStageV73, rl::ActionSemanticV1 as A,
 };
 #[test]
+fn split_numeric_inputs_retain_every_original_observation_and_candidate_field_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (s, _) = owning_ready(p, false, "Island");
+        let own =
+            LilianaSession::from_session(FastActorSessionV1::from_liliana_v73_fixture_state(s))
+                .unwrap();
+        let FastActorResponseV1::Decision(h) = own.current_response() else {
+            panic!()
+        };
+        let d = own.encode(h).unwrap();
+        let original = d.backend.candidates_v73();
+        let (mut state, actions) = packet_inputs(original, d.backend.actions()).unwrap();
+        let fields = state.as_object_mut().unwrap();
+        assert_eq!(
+            fields.remove("candidate_count").unwrap(),
+            original.candidates.len()
+        );
+        assert!(!fields.contains_key("candidates"));
+        fields.insert("candidates".into(), Value::Array(actions));
+        // Reconstruct the complete original typed envelope, including every
+        // action annotation, in native candidate order. No field may vanish
+        // when moving the per-action portion out of the state tree.
+        assert_eq!(state, serde_json::to_value(original).unwrap());
+        assert!(NativeModel::deterministic_fixture()
+            .unwrap()
+            .forward(d.packet())
+            .unwrap()
+            .iter()
+            .all(|value| value.is_finite()));
+    }
+}
+#[test]
 fn streamed_projection_commitments_preserve_original_exact_json_and_nested_hashes_both_seats() {
     use sha2::{Digest, Sha256};
     fn original_hash(value: &impl serde::Serialize) -> String {

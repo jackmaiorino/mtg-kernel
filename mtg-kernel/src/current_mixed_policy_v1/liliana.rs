@@ -33,10 +33,10 @@ impl LilianaDecision {
 }
 // Pure normalization of the exact freshly validated backend input. This
 // function cannot capture another decision or acquire executable authority.
-fn packet_from_current(
+fn packet_inputs(
     candidates: &crate::liliana_candidates_v73::LilianaCandidatesV73,
     actions: &[crate::rl::ActionSemanticV1],
-) -> Result<Packet> {
+) -> Result<(Value, Vec<Value>)> {
     crate::liliana_candidates_v73::validate_artifact(candidates)
         .map_err(|e| Error::Projection(e.to_string()))?;
     if candidates.candidates.len() != actions.len()
@@ -48,15 +48,32 @@ fn packet_from_current(
     {
         return Err(Error::StaleBinding);
     }
-    // The complete observation and every typed per-action program/counter/LKI
-    // annotation remain present. Raw executable pairs and index maps are never encoded.
-    let state = serde_json::to_value(candidates).map_err(|e| Error::Projection(e.to_string()))?;
+    // Keep the entire observation and envelope here, and every candidate in
+    // its original action tree below. Serializing all candidates into state
+    // as well duplicated every per-action program, counter and LKI context.
+    // No executable pair or private index map enters either numeric input.
+    let state = serde_json::json!({
+        "schema": &candidates.schema,
+        "producer_sha256": &candidates.producer_sha256,
+        "observation": &candidates.observation,
+        "candidate_count": candidates.candidates.len(),
+        "alesha_optional_resolution_supported": candidates.alesha_optional_resolution_supported,
+        "owning_consumer_admitted": candidates.owning_consumer_admitted,
+        "projection_sha256": &candidates.projection_sha256,
+    });
     let actions = candidates
         .candidates
         .iter()
         .map(serde_json::to_value)
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| Error::Projection(e.to_string()))?;
+    Ok((state, actions))
+}
+fn packet_from_current(
+    candidates: &crate::liliana_candidates_v73::LilianaCandidatesV73,
+    actions: &[crate::rl::ActionSemanticV1],
+) -> Result<Packet> {
+    let (state, actions) = packet_inputs(candidates, actions)?;
     normalize::encode(Source::LilianaV73, state, actions)
 }
 impl LilianaSession {
