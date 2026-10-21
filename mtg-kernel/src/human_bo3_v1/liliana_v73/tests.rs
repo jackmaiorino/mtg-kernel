@@ -260,6 +260,15 @@ fn independently_paid_human_hidden_world_equality_and_exact_eighteen_counter_pre
             );
         }
         assert_eq!(projected[0], projected[1]);
+        let hart = projected[0]
+            .actions
+            .iter()
+            .filter(|row| row.label.starts_with("Activate Burnished Hart"))
+            .collect::<Vec<_>>();
+        assert_eq!(hart.len(), 1);
+        assert!(hart[0].label.contains("pay {3}; sacrifice Burnished Hart"));
+        assert!(hart[0].label.contains("up to two basic land cards"));
+        assert!(hart[0].label.contains("battlefield tapped, then shuffle"));
         let (s, id) = owning_ready(p, false, "Island");
         let mut wide = vec![];
         for count in [i32::MAX - 1, i32::MAX] {

@@ -225,6 +225,66 @@ pub(super) fn label_printed_equip_v40(
     )))
 }
 
+/// Ordinary search activation available to the complete V40 union. Frozen
+/// predecessor effect descriptions still refuse this later native operation.
+pub(super) fn label_printed_hart_v40(
+    action: &A,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<Option<String>, Error> {
+    let A::ActivateAbility {
+        actor,
+        source,
+        ability_index: 0,
+        granted_ability: None,
+        ..
+    } = action
+    else {
+        return Ok(None);
+    };
+    if card_def::card_id_by_name("Burnished Hart") != Some(source.card_db_id) {
+        return Ok(None);
+    }
+    let def = definition(source)?;
+    let [ability] = def.activated_abilities else {
+        return Err(Error::UnsupportedPrompt);
+    };
+    if def.capability != card_def::CardCapability::Full
+        || source.zone != Zone::Battlefield
+        || ability.activation_zone != Zone::Battlefield
+        || ability.cost
+            != [
+                CostComponent::Mana(Cost {
+                    generic: 3,
+                    pips: &[],
+                    x_count: 0,
+                }),
+                CostComponent::SacrificeSelf,
+            ]
+        || ability.target_spec != card_def::TargetSpec::None
+        || ability.activation_target_filter != card_def::ActivationTargetFilter::TargetSpecOnly
+        || ability.sorcery_speed_only
+        || ability.face.is_some()
+        || ability.max_activations_per_turn.is_some()
+        || (ability.effect)()
+            != (EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: crate::effect::LibraryCardFilter::BasicLand,
+                max_targets: 2,
+                destination: crate::effect::LibrarySearchDestinationV1::Battlefield {
+                    tapped: true,
+                },
+            })
+    {
+        return Err(Error::UnsupportedPrompt);
+    }
+    if *actor != human {
+        return Err(Error::NotHumanTurn);
+    }
+    let name = handles.name(source)?;
+    Ok(Some(format!("Activate {name}: pay {{3}}; sacrifice {name}; search your library for up to two basic land cards, put them onto the battlefield tapped, then shuffle")))
+}
+
 // Definition programs contain no runtime objects or hidden card identities.
 // Unsupported operations deliberately have no Debug/string fallback.
 fn effect_player(player: PlayerRef) -> Result<&'static str, Error> {
