@@ -45,6 +45,22 @@ fn paid_archived_source(actor: PlayerId, reverse_private_library: bool) -> GameS
     assert!(state.engine.event_log.is_empty());
     assert_eq!(state.objects.get(source).zone, Zone::Library);
     assert!(state.players[actor.index()].library.contains(&source));
+    let departure = state
+        .engine
+        .event_history
+        .iter()
+        .find_map(|event| match event {
+            CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. }
+                if snapshot.source.source == source
+                    && snapshot.source.zone == Zone::Battlefield =>
+            {
+                Some(snapshot)
+            }
+            _ => None,
+        })
+        .expect("genuine paid Alesha departure retained its independent color/type receipt");
+    assert!(departure.source.zone_change_count < state.objects.get(source).zone_change_count);
+    crate::controlled_creature_grants_v1::validate_color_history(&state).unwrap();
     crate::call_observation_v62::validate_state(&state).unwrap();
     state
 }
@@ -70,6 +86,7 @@ fn paid_archived_alesha_current_slot_sampling_is_history_independent_both_seats(
         let replay = a.sampled_clone_v62(&da, 8172).unwrap();
         let independent = b.sampled_clone_v62(&db, 8172).unwrap();
         assert_eq!(sampled.inner.state, replay.inner.state);
+        crate::controlled_creature_grants_v1::validate_color_history(&sampled.inner.state).unwrap();
         assert_eq!(
             sampled.inner.state.engine.event_history,
             a.inner.state.engine.event_history
@@ -133,6 +150,36 @@ fn paid_archived_alesha_suffix_forgery_refuses_readonly_both_seats() {
             state.engine.event_history.push(forged);
             let before = state.clone();
             assert!(crate::call_observation_v62::validate_state(&state).is_err());
+            assert!(
+                super::super::flat_action_v4::redeterminize_call_v62(&mut state, actor, 8172)
+                    .is_err()
+            );
+            assert_eq!(state, before);
+        }
+        let color_at = original
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(event, CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. }
+                if snapshot.source.zone == Zone::Battlefield)
+            })
+            .unwrap();
+        for mutation in 0..3 {
+            let mut state = original.clone();
+            let CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } =
+                &mut state.engine.event_history[color_at]
+            else {
+                unreachable!()
+            };
+            match mutation {
+                0 => snapshot.color_mask ^= 1,
+                1 => snapshot.source.zone_change_count += 1,
+                2 => snapshot.private_snapshot_json.push(' '),
+                _ => unreachable!(),
+            }
+            let before = state.clone();
+            assert!(crate::controlled_creature_grants_v1::validate_color_history(&state).is_err());
             assert!(
                 super::super::flat_action_v4::redeterminize_call_v62(&mut state, actor, 8172)
                     .is_err()

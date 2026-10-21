@@ -91,7 +91,18 @@ impl Scan<'_> {
         else {
             return true;
         };
-        self.historical_ability(&snapshot.source)
+        // The owning scopes validate the complete departure history before
+        // this walk. Its immutable old source is not the later hidden
+        // incarnation being permuted. Preserve all dependent-reference checks
+        // and the frozen legacy sampler's original physical-ID refusal.
+        (if self.scope == ReferenceScopeV68::Legacy {
+            self.raw(snapshot.source.source)
+        } else {
+            self.same(snapshot.source.source, snapshot.source.zone_change_count)
+        }) || snapshot
+            .source
+            .attached_to
+            .is_some_and(|link| self.raw(link.object))
             || self.historical_object(&object)
             || snapshot
                 .source_type_input_v1
