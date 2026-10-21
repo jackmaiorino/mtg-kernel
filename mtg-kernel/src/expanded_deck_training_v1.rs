@@ -5,6 +5,7 @@
 pub mod archive_distillation_v1;
 pub mod e_supported_teacher_v1;
 pub mod exploration_probe_v1;
+pub mod no_state_digest_v1;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub mod own_registration;
 pub mod search_targets_v1;
@@ -456,6 +457,9 @@ fn load_expanded_inference_any_math_v1(
     // and update dispatch keep rejecting its descriptor/checkpoint schemas.
     let bytes = read_pinned_bytes(&source.play_import)?;
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    if probe.get("schema").and_then(Value::as_str) == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
+        return no_state_digest_v1::load_v1(source, &bytes);
+    }
     if probe.get("schema").and_then(Value::as_str)
         == Some(crate::phase1_bo3_learning_v1::BO3_GAMEPLAY_SOURCE_SCHEMA_V1)
     {

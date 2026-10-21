@@ -9,7 +9,9 @@ seed namespace (``spy-reset-pilot-v1/eval``) and the common runtime profile
 (resolution-boundary-v1) on every game. Search is never used. ``--seed-namespace
 sd1-panel-v1`` builds the same panel on search-evidence distillation's fresh
 seeds (collab LANES/search-evidence-distillation-20261016 section 6); the plan
-then records its namespace. Without it every plan is as before.
+then records its namespace. Without it every plan is as before. ``--capture-all``
+captures decisions in every shard, not only the Spy-own ones (the no-state-digest
+panel compares every case's game-one actions); the plan then records it.
 
 Spy-own cases (216 per checkpoint and opponent) run in their own shards with
 captured decisions, so ``labels`` can replay their game one through the
@@ -21,7 +23,7 @@ reservation).
 
 CLI:
   build   --id ID --candidate SRC.json --opponent-name T1|H --opponent OPP.json --decks DECKS --out DIR --shards N
-          [--seed-namespace sd1-panel-v1]
+          [--seed-namespace sd1-panel-v1] [--capture-all]
   jobs    --plan DIR/plan.json --out JOBS.jsonl     label-replay jobs for Spy-own cases
 """
 from __future__ import annotations
@@ -60,7 +62,7 @@ def wrap(source: dict) -> dict:
 
 
 def build(checkpoint_id: str, candidate: dict, opponent_name: str, opponent: dict, decks: list[dict],
-          out: Path, shards: int, namespace: str = pilot.PANEL_NS) -> dict:
+          out: Path, shards: int, namespace: str = pilot.PANEL_NS, capture_all: bool = False) -> dict:
     out = Path(out)
     all_cases = cases(namespace)
     requests = []
@@ -77,7 +79,7 @@ def build(checkpoint_id: str, candidate: dict, opponent_name: str, opponent: dic
                 sources = [wrap(candidate), opponent] if seat == 0 else [opponent, wrap(candidate)]
                 name = f"seat{seat}-{'spy' if spy else 'main'}{index:02d}"
                 request = {"sources": sources, "matches": [case_match(c, decks) for c in part],
-                           "cross_generation_evaluation": True, "capture_decisions": spy,
+                           "cross_generation_evaluation": True, "capture_decisions": spy or capture_all,
                            "output_directory": str(out / "native" / name).replace("\\", "/")}
                 requests.append({"name": name, "seat": seat, "cases": part,
                                  "request": npp.write_json(out / "requests" / f"{name}.json", request)})
@@ -89,6 +91,8 @@ def build(checkpoint_id: str, candidate: dict, opponent_name: str, opponent: dic
                  "runtime_rules": pilot.RUNTIME_RULES}, sort_keys=True).encode())}
     if namespace != pilot.PANEL_NS:
         plan["seed_namespace"] = namespace
+    if capture_all:
+        plan["capture_all"] = True
     npp.write_json(out / "plan.json", plan)
     return plan
 
@@ -142,13 +146,14 @@ def main(argv=None) -> int:
         b.add_argument(name, type=Path, required=True)
     b.add_argument("--shards", type=int, required=True)
     b.add_argument("--seed-namespace", choices=pilot.PANEL_NAMESPACES, default=pilot.PANEL_NS)
+    b.add_argument("--capture-all", action="store_true")
     j = sub.add_parser("jobs")
     j.add_argument("--plan", type=Path, required=True)
     j.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     if a.op == "build":
         plan = build(a.id, json.loads(a.candidate.read_text()), a.opponent_name, json.loads(a.opponent.read_text()),
-                     json.loads(a.decks.read_text()), a.out, a.shards, a.seed_namespace)
+                     json.loads(a.decks.read_text()), a.out, a.shards, a.seed_namespace, a.capture_all)
         print(json.dumps({"requests": len(plan["requests"]), "cases": plan["cases"]}))
     else:
         jobs = label_jobs(a.plan)

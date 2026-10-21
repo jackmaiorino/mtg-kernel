@@ -405,6 +405,11 @@ def run_requests(executable: str, requests: list[Path], workers: int, tolerate: 
     return time.monotonic() - started
 
 
+# Native errors that are engineering stops, never technical terminations: the
+# no-state-digest contract's per-forward bitwise check and its MXCSR check.
+ENGINEERING_STOP_MARKERS = ("no-state-digest check:", "no-state-digest contract:")
+
+
 def recover(executable: str, request_path: Path, guard=None) -> dict:
     """A failed request stops at its first failing match: the match files before it are valid and the
     rest never ran. Record that match as a technical termination (incomplete, never dropped) and continue
@@ -440,6 +445,8 @@ def recover(executable: str, request_path: Path, guard=None) -> dict:
             raise RuntimeError(f"evaluator failed on {current} without a failure record")
         index = start + done
         error = json.loads(failure.read_text(encoding="utf-8"))["error"]
+        if any(marker in error for marker in ENGINEERING_STOP_MARKERS):
+            raise RuntimeError(f"engineering stop, not a technical termination: {failure}: {error}")
         seed = matches[index]["config"]["seed"]
         if f"match seed {seed}," not in error:
             raise RuntimeError(f"{failure} does not name match {index} (seed {seed})")

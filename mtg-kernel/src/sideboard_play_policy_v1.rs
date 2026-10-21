@@ -237,6 +237,14 @@ pub struct FrozenPlayPolicyV1 {
     inference_key: Vec<u8>,
     /// Passive call probe for viewer captures; never shared by forks.
     inference_probe: Option<crate::inference_cache_v1::ProbeV1>,
+    /// The no-state-digest input contract (`no_state_digest_v1`): the
+    /// converted feature contract digest, or None for the original inputs.
+    /// Forks keep it.
+    input_contract: Option<String>,
+    /// `MTG_KERNEL_NO_STATE_DIGEST_CHECK=1`: the unconverted model. Every
+    /// forward is compared, bit for bit, with its forward on the same
+    /// (zero-digest) inputs. Forks keep it.
+    no_digest_check: Option<Box<NativePolicyValueNetV1>>,
 }
 
 #[derive(Default)]
@@ -488,6 +496,8 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            input_contract: None,
+            no_digest_check: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -537,6 +547,8 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            input_contract: None,
+            no_digest_check: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -621,6 +633,8 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            input_contract: None,
+            no_digest_check: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -687,6 +701,8 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            input_contract: None,
+            no_digest_check: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -753,6 +769,8 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            input_contract: None,
+            no_digest_check: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -831,6 +849,8 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            input_contract: None,
+            no_digest_check: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1014,6 +1034,8 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            input_contract: None,
+            no_digest_check: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1088,6 +1110,8 @@ impl FrozenPlayPolicyV1 {
                 .as_ref()
                 .map(|_| UnclampedSoftmaxScratchV1::default()),
             fast_search_forward: self.fast_search_forward,
+            input_contract: self.input_contract.clone(),
+            no_digest_check: self.no_digest_check.clone(),
             training_math: self.training_math,
             inference_cache: self.inference_cache.clone(),
             inference_key: Vec::new(),
@@ -1259,7 +1283,10 @@ impl FrozenPlayPolicyV1 {
             weights_sha256: format!("{:x}", weights.finalize()),
             model_parameter_sha256: self.model.parameter_manifest_sha256_v1(),
             embedding_table_sha256: format!("{:x}", embeddings.finalize()),
-            feature_contract_digest: self.identity.feature_contract_digest_v1().to_owned(),
+            feature_contract_digest: self
+                .input_contract
+                .clone()
+                .unwrap_or_else(|| self.identity.feature_contract_digest_v1().to_owned()),
             feature_encoding_digest: self.identity.feature_encoding_digest_v1().to_owned(),
             card_db_hash: self.identity.destination_card_db_hash_v1().to_owned(),
         }
@@ -1277,6 +1304,68 @@ impl FrozenPlayPolicyV1 {
         self.model.parameter_snapshot_v1()
     }
 
+    /// Installs the no-state-digest input contract (`no_state_digest_v1`):
+    /// the state-digest `columns` of `state_encoder.0.weight` (whose input
+    /// width must be `input_width`) become zero, and the tensorizers stop
+    /// hashing the state and give zero digest features. `contract_digest`
+    /// becomes the model's feature contract digest. With `check`, the
+    /// unconverted model is kept and every forward is compared with it.
+    pub(crate) fn apply_no_state_digest_v1(
+        &mut self,
+        contract_digest: String,
+        columns: std::ops::Range<usize>,
+        input_width: usize,
+        check: bool,
+    ) -> Result<(), String> {
+        require(
+            self.input_contract.is_none(),
+            "the no-state-digest contract is already installed",
+        )?;
+        let mut parameters = self.model.parameter_snapshot_v1();
+        let weight = parameters
+            .iter_mut()
+            .find(|parameter| parameter.name == "state_encoder.0.weight")
+            .ok_or("state encoder weight is missing")?;
+        let &[rows, width] = weight.shape.as_slice() else {
+            return Err("state encoder weight is not a matrix".into());
+        };
+        require(
+            width == input_width
+                && columns.start < columns.end
+                && columns.end <= width
+                && weight.values.len() == rows * width,
+            "state encoder weight shape differs",
+        )?;
+        for row in weight.values.chunks_exact_mut(width) {
+            row[columns.clone()].fill(0.0);
+        }
+        let bias = parameters
+            .iter()
+            .find(|parameter| parameter.name == "state_encoder.0.bias")
+            .ok_or("state encoder bias is missing")?;
+        require(
+            bias.values.len() == rows && no_negative_zero_v1(&bias.values),
+            "a state encoder bias of -0.0 has no exact no-state-digest conversion",
+        )?;
+        let unconverted = check.then(|| Box::new(self.model.clone()));
+        self.model
+            .replace_parameter_snapshot_v1(&parameters)
+            .map_err(|e| e.to_string())?;
+        // Cached predictions and rows belong to the old parameters.
+        self.inference_cache = None;
+        self.inference_probe = None;
+        self.row_cache = Default::default();
+        self.input_contract = Some(contract_digest);
+        self.no_digest_check = unconverted;
+        Ok(())
+    }
+
+    /// The converted feature contract digest when the no-state-digest
+    /// contract is installed.
+    pub(crate) fn input_contract_v1(&self) -> Option<&str> {
+        self.input_contract.as_deref()
+    }
+
     pub(crate) fn replace_training_parameters_v3(
         &mut self,
         parameters: &[NativeNamedParameterV1],
@@ -1284,6 +1373,10 @@ impl FrozenPlayPolicyV1 {
         require(
             self.successor.is_some() || self.fresh_successor.is_some(),
             "training requires explicit successor features",
+        )?;
+        require(
+            self.input_contract.is_none(),
+            "training under the no-state-digest contract is not defined",
         )?;
         self.model
             .replace_parameter_snapshot_v1(parameters)
@@ -1313,6 +1406,10 @@ impl FrozenPlayPolicyV1 {
             self.successor.is_some(),
             "training requires explicit successor features",
         )?;
+        require(
+            self.input_contract.is_none(),
+            "stored tensors are not scored under the no-state-digest contract",
+        )?;
         let output = self
             .model
             .forward_feature_transfer_v3_mode(
@@ -1334,6 +1431,10 @@ impl FrozenPlayPolicyV1 {
         require(
             self.fresh_successor.is_some(),
             "training requires explicit V4 successor features",
+        )?;
+        require(
+            self.input_contract.is_none(),
+            "stored tensors are not scored under the no-state-digest contract",
         )?;
         let output = self
             .model
@@ -1541,7 +1642,9 @@ impl FrozenPlayPolicyV1 {
             panic!("terminal");
         };
         let mode = self.forward_mode_v1();
+        let state_digest = self.input_contract.is_none();
         let successor = self.successor.as_mut().expect("V3 policy");
+        successor.tensorizer.set_state_digest_v1(state_digest);
         let t0 = Instant::now();
         let encoded = session
             .encode_current_flat_scoring_decision_owned_v3(
@@ -1612,6 +1715,10 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         tensor: &NativeFlatDecisionTensorV4,
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        require(
+            self.input_contract.is_none(),
+            "diagnostic forwards are not defined under the no-state-digest contract",
+        )?;
         let output = self
             .model
             .forward_feature_transfer_v4_mode(
@@ -1767,8 +1874,17 @@ impl FrozenPlayPolicyV1 {
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
         use crate::inference_cache_v1::ForwardPathV1;
+        if self.input_contract.is_some() {
+            // Zeroed and removed digest columns agree only in the pinned
+            // environment (round to nearest, no flush-to-zero, no
+            // denormals-are-zero), so check it before any forward or cache.
+            crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
+                .map_err(|e| format!("no-state-digest contract: {e:?}"))?;
+        }
         let mode = self.forward_mode_v1();
+        let state_digest = self.input_contract.is_none();
         let (path, view) = if let Some(successor) = &mut self.successor {
+            successor.tensorizer.set_state_digest_v1(state_digest);
             successor
                 .tensorizer
                 .fill(
@@ -1781,6 +1897,7 @@ impl FrozenPlayPolicyV1 {
                 encoded_decision_view_v3(&successor.tensor),
             )
         } else if let Some(fresh) = &mut self.fresh_successor {
+            fresh.tensorizer.set_state_digest_v1(state_digest);
             fresh
                 .tensorizer
                 .fill(
@@ -1795,6 +1912,7 @@ impl FrozenPlayPolicyV1 {
         } else {
             let span =
                 crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyTensorize);
+            self.tensorizer.set_state_digest_v1(state_digest);
             self.tensorizer
                 .fill(self.owned.view(), &mut self.tensor)
                 .map_err(|e| format!("visible tensorization: {e:?}"))?;
@@ -1812,6 +1930,16 @@ impl FrozenPlayPolicyV1 {
             mode,
             view,
         )?;
+        if let Some(unconverted) = &self.no_digest_check {
+            let reference = uncached_forward_v1(
+                unconverted,
+                &mut NativePolicyValueForwardScratchV1::default(),
+                path,
+                mode,
+                view,
+            )?;
+            check_converted_scores_v1(&reference, &scores)?;
+        }
         require(
             scores.logits.len() == self.owned.actions.len()
                 && !scores.logits.is_empty()
@@ -1955,6 +2083,59 @@ impl FrozenPlayPolicyV1 {
         .map_err(|e| e.to_string())?;
         u32::try_from(selected).map_err(|e| e.to_string())
     }
+}
+
+/// Whether no value is -0.0. The forward starts each first-layer sum at its
+/// bias and adds the inputs in order; a sum can only be -0.0 if it starts at
+/// -0.0 (an exact cancellation rounds to +0.0), and adding the zeroed
+/// columns' +0.0 would turn it into +0.0 where removing them would not.
+/// With no -0.0 bias the zeroed and the removed columns agree bit for bit.
+pub(crate) fn no_negative_zero_v1(values: &[f32]) -> bool {
+    values.iter().all(|value| value.to_bits() != 0x8000_0000)
+}
+
+/// `MTG_KERNEL_NO_STATE_DIGEST_CHECK`: the converted scores must equal the
+/// unconverted model's on the same input, bit for bit.
+fn check_converted_scores_v1(
+    reference: &FrozenPlayDecisionScoresV1,
+    scores: &FrozenPlayDecisionScoresV1,
+) -> Result<(), String> {
+    require(
+        reference.logits.len() == scores.logits.len()
+            && reference
+                .logits
+                .iter()
+                .zip(&scores.logits)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+            && reference.value.to_bits() == scores.value.to_bits(),
+        "no-state-digest check: converted forward differs from the unconverted one",
+    )
+}
+
+/// One forward of `model` on `view` with no cache of any kind.
+fn uncached_forward_v1(
+    model: &NativePolicyValueNetV1,
+    scratch: &mut NativePolicyValueForwardScratchV1,
+    path: crate::inference_cache_v1::ForwardPathV1,
+    mode: ForwardActivationModeV1,
+    view: crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_>,
+) -> Result<FrozenPlayDecisionScoresV1, String> {
+    use crate::inference_cache_v1::ForwardPathV1;
+    let output = match path {
+        ForwardPathV1::TransferV3 => model
+            .forward_feature_transfer_v3_with_scratch_v1(view, scratch, mode)
+            .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?,
+        ForwardPathV1::TransferV4 => model
+            .forward_feature_transfer_v4_with_scratch_v1(view, scratch, mode)
+            .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?,
+        ForwardPathV1::Flat => model
+            .forward_with_scratch_v1(view, scratch, mode)
+            .map_err(|e| format!("frozen scalar inference: {e:?}"))?,
+    };
+    Ok(FrozenPlayDecisionScoresV1 {
+        logits: output.logits.to_vec(),
+        value: output.value,
+    })
 }
 
 /// One forward through the worker's prediction cache when one is attached:

@@ -87,6 +87,10 @@ impl PublicInputPlayPolicyV1 {
         weights: PublicInputWeightsV1,
     ) -> Result<Self, String> {
         require(
+            base.input_contract.is_none(),
+            "public inputs is not supported under the no-state-digest contract",
+        )?;
+        require(
             base.fresh_successor.is_some() && base.successor.is_none(),
             "public inputs require the exact V4 actor encoder",
         )?;
