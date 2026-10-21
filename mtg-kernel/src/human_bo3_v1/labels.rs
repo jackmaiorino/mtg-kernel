@@ -861,6 +861,44 @@ pub(super) fn label_parts_graveyard_return_v61(
     label_parts_next_five(action, observation, handles, human, &complete.next_five)
 }
 
+fn successor_keyword_names(keywords: card_def::Keywords) -> Result<String, Error> {
+    use card_def::Keywords as K;
+    let known = [
+        (K::FLYING, "flying"),
+        (K::REACH, "reach"),
+        (K::HASTE, "haste"),
+        (K::VIGILANCE, "vigilance"),
+        (K::TRAMPLE, "trample"),
+        (K::FIRST_STRIKE, "first strike"),
+        (K::DOUBLE_STRIKE, "double strike"),
+        (K::DEATHTOUCH, "deathtouch"),
+        (K::MENACE, "menace"),
+        (K::DEFENDER, "defender"),
+        (K::LIFELINK, "lifelink"),
+        (K::HEXPROOF, "hexproof"),
+        (K::INDESTRUCTIBLE, "indestructible"),
+        (
+            K::PROTECTION_FROM_MONOCOLORED,
+            "protection from monocolored",
+        ),
+        (K::ISLANDWALK, "islandwalk"),
+        (K::FLASH, "flash"),
+        (K::CANT_BE_BLOCKED, "unblockability"),
+        (K::TOXIC_1, "toxic 1"),
+        (K::SHROUD, "shroud"),
+        (K::PROTECTION_FROM_EVERYTHING, "protection from everything"),
+    ];
+    let mask = known.iter().fold(0, |mask, (keyword, _)| mask | keyword.0);
+    if keywords == K::NONE || keywords.0 & !mask != 0 {
+        return Err(Error::UnsupportedPrompt);
+    }
+    Ok(known
+        .iter()
+        .filter_map(|(keyword, name)| keywords.has(*keyword).then_some(*name))
+        .collect::<Vec<_>>()
+        .join(", "))
+}
+
 // Pure inherited field mapping after the caller's distinct complete validator.
 fn label_parts_next_five(
     action: &A,
@@ -876,6 +914,44 @@ fn label_parts_next_five(
     };
     if actor(action) != Some(human) {
         return Err(Error::NotHumanTurn);
+    }
+
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none()
+            && source.zone == Zone::Battlefield
+            && source.controller == human
+        {
+            let def = definition(source)?;
+            if def.capability == card_def::CardCapability::Full {
+                if let Some(ability) = def.activated_abilities.get(usize::from(*ability_index)) {
+                    if let EffectOp::GrantKeywordTargetUntilEndOfTurn { object, keyword } =
+                        (ability.effect)()
+                    {
+                        if ability.activation_zone != source.zone {
+                            return Err(Error::UnsupportedPrompt);
+                        }
+                        let name = handles.name(source)?;
+                        return Ok(format!(
+                            "Activate {name}: {}: grant {} to {} until end of turn{}",
+                            activation_cost(ability.cost, &name)?,
+                            successor_keyword_names(keyword)?,
+                            effect_object(object)?,
+                            if ability.sorcery_speed_only {
+                                "; activate only as a sorcery"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     let ref_matches = |stable: &CardStableRefV1, public: &ReferenceV1| {
@@ -4098,6 +4174,13 @@ mod next_five_native_label_tests {
                         break;
                     }
                 } else {
+                    let cavalry = prompt
+                        .actions
+                        .iter()
+                        .find(|row| row.label.starts_with("Activate Axgard Cavalry"))
+                        .expect("the real priority menu includes Cavalry's printed activation");
+                    assert!(cavalry.label.contains("haste"));
+                    assert!(cavalry.label.contains("until end of turn"));
                     let pass = prompt
                         .actions
                         .iter()
