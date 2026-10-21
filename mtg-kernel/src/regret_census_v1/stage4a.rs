@@ -1691,7 +1691,14 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
                     let result = if cfg.mode == "s4a-corpus" {
                         corpus_game(cfg, shared, &mut roles.focal, &mut roles.opps, item, sink)
                     } else if cfg.mode == "s4a-wm-dump" {
-                        wm_dump::wm_dump_game(cfg, shared, &mut roles.focal, &mut roles.opps, item, sink)
+                        wm_dump::wm_dump_game(
+                            cfg,
+                            shared,
+                            &mut roles.focal,
+                            &mut roles.opps,
+                            item,
+                            sink,
+                        )
                     } else {
                         let root = &shared.roots[item as usize];
                         let id = root["root_id"].as_str().unwrap_or("").to_owned();

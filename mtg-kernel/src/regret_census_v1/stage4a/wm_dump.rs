@@ -105,14 +105,18 @@ pub(super) fn wm_dump_game(
     let setup = game_setup(cfg, shared.labels.len(), game);
     let mut steps = Vec::new();
     let (s, finished) = drive(&setup, focal, &mut opps[setup.model], |s, d, a| {
-        steps.push(json!({"step":d.step,"actor":u8::from(acting(d) == PlayerId(1)),
+        steps.push(
+            json!({"step":d.step,"actor":u8::from(acting(d) == PlayerId(1)),
             "legal":d.legal_action_count,"choice":a,"action":action(s, a)?,
-            "facts":facts(s.game_state())}));
+            "facts":facts(s.game_state())}),
+        );
         Ok(false)
     })?;
     let end = match s.current_response() {
-        FastActorResponseV1::Terminal(t) => json!({"classification":format!("{:?}", t.terminal_classification),
-            "winner":t.winner.map(|w| u8::from(w == crate::rl::PlayerSeatV1::P1))}),
+        FastActorResponseV1::Terminal(t) => {
+            json!({"classification":format!("{:?}", t.terminal_classification),
+            "winner":t.winner.map(|w| u8::from(w == crate::rl::PlayerSeatV1::P1))})
+        }
         FastActorResponseV1::Decision(_) => Value::Null,
     };
     let row = json!({"kind":"s4a_wm_game","game":game,"seed":setup.seed,
