@@ -13,6 +13,8 @@ pub(super) fn handles(name: &str) -> bool {
     matches!(
         name,
         "Stab"
+            | "Fleeting Flight"
+            | "Bake into a Pie"
             | "Fleeting Distraction"
             | "Sure Strike"
             | "Snakeskin Veil"
@@ -53,6 +55,73 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             pump(-2, -2),
             vec![pump_meaning(-2, -2)],
         ),
+        "Fleeting Flight" => (
+            ManaColor::W,
+            0,
+            &[Pip::Colored(ManaColor::W)][..],
+            CardType::Instant,
+            TargetSpec::Creature,
+            json!({"type":"Creature"}),
+            EffectOp::Sequence(vec![
+                EffectOp::AddCountersToTarget {
+                    target_index: 0,
+                    optional: false,
+                    plus1_plus1: 1,
+                    lifelink: 0,
+                    stun: 0,
+                },
+                EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                    object: ObjectRef::Target(0),
+                    keyword: Keywords::FLYING,
+                },
+                EffectOp::PreventCombatDamageToTargetThisTurn { target_index: 0 },
+            ]),
+            vec![
+                json!({"operation":"AddCounters","target_slot":0,"counter":"PlusOnePlusOne","count":1,
+                    "mandatory":true,"permanent_counters":true,"normal_counter_replacements_apply":true}),
+                grant_meaning(Keywords::FLYING),
+                json!({"operation":"PreventCombatDamageToCreature","target_slot":0,
+                    "binding":"OriginalTargetIncarnation","duration":"UntilCleanupExpirationAfterDiscard",
+                    "damage_class":"CombatOnly","prevents_damage_to_target_not_damage_dealt_by_target":true,
+                    "normal_damage_prevention_replacement_order_applies":true}),
+            ],
+        ),
+        "Bake into a Pie" => {
+            let food = crate::card_def::card_id_by_name("Food Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            let food_meaning = super::super::next_five::printing(food)?
+                .ok_or(Error::UnsupportedPrintedRoot(food))?;
+            (
+                ManaColor::B,
+                2,
+                &[Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::B)][..],
+                CardType::Instant,
+                TargetSpec::Creature,
+                json!({"type":"Creature"}),
+                EffectOp::Sequence(vec![
+                    EffectOp::Conditional {
+                        cond: EffectCond::TargetInZone(0, Zone::Battlefield),
+                        then: Box::new(EffectOp::DestroyObject {
+                            object: ObjectRef::Target(0),
+                        }),
+                        else_: Box::new(EffectOp::Sequence(vec![])),
+                    },
+                    EffectOp::CreateToken {
+                        token_def: food,
+                        controller: PlayerRef::Controller,
+                    },
+                ]),
+                vec![
+                    json!({"operation":"DestroyPermanent","target_slot":0,
+                        "requires_current_battlefield_incarnation":true,
+                        "respects_indestructible_and_normal_replacements":true}),
+                    json!({"operation":"CreateToken","recipient":"SpellController","count":1,
+                        "token_card_id":food,"token_printing":food_meaning,
+                        "does_not_require_successful_destruction":true,
+                        "normal_entry_replacements_and_triggers_apply":true}),
+                ],
+            )
+        }
         "Fleeting Distraction" => (
             ManaColor::U,
             0,

@@ -392,13 +392,7 @@ fn five_untargeted_printings_actual_paid_cast_resolution_numeric_parity_and_rest
 
 #[test]
 fn eight_targeted_printings_paid_target_payment_resolution_and_pending_restore_both_seats() {
-    use crate::{
-        engine,
-        policy_observation_v6::tests::put,
-        state::{GameState, Step, Zone},
-    };
-    let forest = crate::card_def::card_id_by_name("Forest").unwrap();
-    for name in [
+    check_targeted_printings(&[
         "Stab",
         "Fleeting Distraction",
         "Sure Strike",
@@ -407,7 +401,22 @@ fn eight_targeted_printings_paid_target_payment_resolution_and_pending_restore_b
         "Broken Wings",
         "Make Your Move",
         "Zombify",
-    ] {
+    ]);
+}
+
+#[test]
+fn flight_and_pie_paid_target_payment_complete_resolution_and_pending_restore_both_seats() {
+    check_targeted_printings(&["Fleeting Flight", "Bake into a Pie"]);
+}
+
+fn check_targeted_printings(names: &[&str]) {
+    use crate::{
+        engine,
+        policy_observation_v6::tests::put,
+        state::{GameState, Step, Zone},
+    };
+    let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+    for &name in names {
         for p in [PlayerId::P0, PlayerId::P1] {
             let mut s = GameState::new_from_libraries_with_starting_player_v1(
                 &[forest; 40],
@@ -418,10 +427,10 @@ fn eight_targeted_printings_paid_target_payment_resolution_and_pending_restore_b
             );
             s.step = Step::Main1;
             let land = match name {
-                "Stab" | "Hero's Downfall" | "Zombify" => "Swamp",
+                "Stab" | "Hero's Downfall" | "Zombify" | "Bake into a Pie" => "Swamp",
                 "Fleeting Distraction" => "Island",
                 "Sure Strike" => "Mountain",
-                "Make Your Move" => "Plains",
+                "Make Your Move" | "Fleeting Flight" => "Plains",
                 _ => "Forest",
             };
             for _ in 0..5 {
@@ -433,7 +442,7 @@ fn eight_targeted_printings_paid_target_payment_resolution_and_pending_restore_b
                 "Broken Wings" => put(&mut s, p.opponent(), "Serra Angel", Zone::Battlefield),
                 "Make Your Move" => put(&mut s, p.opponent(), "Serra Angel", Zone::Battlefield),
                 "Zombify" => put(&mut s, p, "Llanowar Elves", Zone::Graveyard),
-                "Sure Strike" | "Snakeskin Veil" => friendly,
+                "Sure Strike" | "Snakeskin Veil" | "Fleeting Flight" => friendly,
                 _ => opposing,
             };
             let spell = put(&mut s, p, name, Zone::Hand);
@@ -520,6 +529,42 @@ fn eight_targeted_printings_paid_target_payment_resolution_and_pending_restore_b
                             crate::card_def::Keywords::HEXPROOF
                         ));
                     }
+                    "Fleeting Flight" => {
+                        let state = own.fixture_state();
+                        assert_eq!(engine::checked_effective_pt(state, target).unwrap(), (2, 2));
+                        assert_eq!(state.objects.get(target).counters.plus1_plus1, 1);
+                        assert!(engine::has_effective_keyword(
+                            state,
+                            target,
+                            crate::card_def::Keywords::FLYING
+                        ));
+                        assert!(state.engine.active_replacements.iter().any(|replacement| matches!(
+                            replacement.kind,
+                            crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { object, turn, active_player }
+                            if replacement.source == spell && object.object == target
+                                && object.zone_change_count == state.objects.get(target).zone_change_count
+                                && turn == state.turn_key_v1()
+                                && active_player == state.active_player
+                        )));
+                    }
+                    "Bake into a Pie" => {
+                        let state = own.fixture_state();
+                        assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+                        let foods: Vec<_> = state.players[p.index()]
+                            .battlefield
+                            .iter()
+                            .copied()
+                            .filter(|&id| {
+                                crate::card_def::CARD_DEFS
+                                    [usize::from(state.objects.get(id).card_def)]
+                                .name
+                                    == "Food Token"
+                            })
+                            .collect();
+                        assert_eq!(foods.len(), 1);
+                        assert!(state.objects.get(foods[0]).is_token);
+                        assert_eq!(state.objects.get(foods[0]).controller, p);
+                    }
                     "Zombify" => {
                         assert_eq!(
                             own.fixture_state().objects.get(target).zone,
@@ -542,6 +587,15 @@ fn eight_targeted_printings_paid_target_payment_resolution_and_pending_restore_b
 
 #[test]
 fn paid_fleeting_distraction_skips_draw_after_real_stab_removes_its_only_target_both_seats() {
+    check_target_departure_skips_secondary_resolution("Fleeting Distraction");
+}
+
+#[test]
+fn paid_pie_skips_food_after_real_stab_removes_its_only_target_both_seats() {
+    check_target_departure_skips_secondary_resolution("Bake into a Pie");
+}
+
+fn check_target_departure_skips_secondary_resolution(name: &str) {
     use crate::{
         policy_observation_v6::tests::put,
         state::{GameState, Step, Zone},
@@ -556,10 +610,18 @@ fn paid_fleeting_distraction_skips_draw_after_real_stab_removes_its_only_target_
             p,
         );
         s.step = Step::Main1;
-        put(&mut s, p, "Island", Zone::Battlefield);
+        let land = if name == "Fleeting Distraction" {
+            "Island"
+        } else {
+            "Swamp"
+        };
+        let cost = if name == "Fleeting Distraction" { 1 } else { 4 };
+        for _ in 0..cost {
+            put(&mut s, p, land, Zone::Battlefield);
+        }
         put(&mut s, p.opponent(), "Swamp", Zone::Battlefield);
         let target = put(&mut s, p.opponent(), "Llanowar Elves", Zone::Battlefield);
-        let spell = put(&mut s, p, "Fleeting Distraction", Zone::Hand);
+        let spell = put(&mut s, p, name, Zone::Hand);
         let response = put(&mut s, p.opponent(), "Stab", Zone::Hand);
         let mut native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
         let mut own =
@@ -588,6 +650,13 @@ fn paid_fleeting_distraction_skips_draw_after_real_stab_removes_its_only_target_
             Zone::Graveyard
         );
         assert_eq!(own.fixture_state().players[p.index()].library.len(), 40);
+        assert!(!own.fixture_state().players[p.index()]
+            .battlefield
+            .iter()
+            .any(|&id| crate::card_def::CARD_DEFS
+                [usize::from(own.fixture_state().objects.get(id).card_def)]
+            .name
+                == "Food Token"));
         assert_eq!(own.fixture_state().objects.get(spell).zone, Zone::Graveyard);
         assert_eq!(
             own.fixture_state().objects.get(response).zone,
