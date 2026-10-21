@@ -5,7 +5,7 @@ the focal player's view? Measurement only: no policy, no reward.
 
     probe.py build --parts DIR --manifest M --out DIR [--full-info]
     probe.py train --data DIR --out DIR --hidden H --unroll U [--epochs E]
-    probe.py eval  --data DIR --model DIR --split S --out FILE [--round-feed]
+    probe.py eval  --data DIR --model DIR --split S --out FILE
 
 A transition is one decision to the next decision (either player), given the
 chosen action; the last decision's successor is the final (terminal) state.
@@ -203,10 +203,19 @@ class Split:
         return np.nonzero(np.arange(len(self.game_of_state)) + k <= self.last_state)[0]
 
 
+N_SCALAR = len(SEAT_FIELDS) * 2 + 1  # seat fields for both seats, then turn
+SCALAR_RANGE = 20  # scalar change classes -20..+20 (clipped)
+CARD_RANGE = 2  # card-count change classes -2..+2 (clipped)
+
+
 class Net(nn.Module):
+    """Predicts the most likely change of every field: a class per change value
+    (exact-match metrics need the mode, not the mean)."""
+
     def __init__(self, lay: Layout, n_kinds, hidden):
         super().__init__()
         self.lay = lay
+        self.n_card = lay.n_reg - N_SCALAR
         self.register_buffer("scale", torch.from_numpy(lay.scale))
         self.kind = nn.Embedding(n_kinds, 32)
         d_in = lay.dim + 32 + 1 + C
@@ -214,46 +223,50 @@ class Net(nn.Module):
         self.blocks = nn.ModuleList([nn.Sequential(nn.LayerNorm(hidden), nn.Linear(hidden, hidden), nn.GELU(),
                                                    nn.Linear(hidden, hidden)) for _ in range(3)])
         self.out_norm = nn.LayerNorm(hidden)
-        self.delta = nn.Linear(hidden, lay.n_reg)
+        self.scalar = nn.Linear(hidden, N_SCALAR * (2 * SCALAR_RANGE + 1))
+        self.card = nn.Linear(hidden, self.n_card * (2 * CARD_RANGE + 1))
         self.active = nn.Linear(hidden, 1)
         self.phase = nn.Linear(hidden, len(PHASES))
         self.over = nn.Linear(hidden, 1)
         self.win = nn.Linear(hidden, 1)
         self.legal = nn.Linear(hidden, 1)
-        nn.init.zeros_(self.delta.weight); nn.init.zeros_(self.delta.bias)
+        # Start at persistence: the no-change class wins until training moves it.
+        for head, r in ((self.scalar, SCALAR_RANGE), (self.card, CARD_RANGE)):
+            nn.init.zeros_(head.weight)
+            bias = torch.zeros(2 * r + 1); bias[r] = 4.0
+            head.bias.data.copy_(bias.repeat(head.out_features // (2 * r + 1)))
 
     def forward(self, state, kind, me, cards):
-        """state: raw (unscaled) next-state prediction inputs. Returns raw outputs."""
         lay = self.lay
         x = torch.cat([state[:, :lay.n_reg] / self.scale, state[:, lay.n_reg:], self.kind(kind), me[:, None], cards], 1)
         h = self.inp(x)
         for b in self.blocks:
             h = h + b(h)
         h = self.out_norm(h)
-        reg = state[:, :lay.n_reg] + self.delta(h) * self.scale
-        return dict(reg=reg, active=self.active(h)[:, 0], phase=self.phase(h), over=self.over(h)[:, 0],
+        return dict(scalar=self.scalar(h).view(len(h), N_SCALAR, 2 * SCALAR_RANGE + 1),
+                    card=self.card(h).view(len(h), self.n_card, 2 * CARD_RANGE + 1),
+                    active=self.active(h)[:, 0], phase=self.phase(h), over=self.over(h)[:, 0],
                     win=self.win(h)[:, 0], legal=self.legal(h)[:, 0])
 
 
-def assemble(lay, out, round_feed):
-    """Next raw state from the outputs (hard active and phase; optional integer rounding)."""
-    reg = out["reg"]
-    if round_feed:
-        reg = torch.round(reg)
-        nonneg = torch.from_numpy(lay.nonneg).to(reg.device)
-        reg = torch.where(nonneg, reg.clamp_min(0), reg)
+def assemble(lay, cur, out):
+    """Most likely next raw state: mode change per field, hard active and phase."""
+    delta = torch.cat([out["scalar"].argmax(2) - SCALAR_RANGE, out["card"].argmax(2) - CARD_RANGE], 1).float()
+    reg = cur[:, :lay.n_reg] + delta
+    nonneg = torch.from_numpy(lay.nonneg).to(reg.device)
+    reg = torch.where(nonneg, reg.clamp_min(0), reg)
     active = (out["active"] > 0).float()[:, None]
     phase = F.one_hot(out["phase"].argmax(1), len(PHASES)).float()
     return torch.cat([reg, active, phase], 1)
 
 
-def soft_assemble(lay, out):
-    return torch.cat([out["reg"], torch.sigmoid(out["active"])[:, None], torch.softmax(out["phase"], 1)], 1)
-
-
-def step_loss(lay, out, true_state, true_over, true_win, true_legal, scale, weight):
-    reg_err = ((out["reg"] - true_state[:, :lay.n_reg]) / scale) ** 2
-    loss = (reg_err * weight).sum(1) / weight.sum()
+def step_loss(lay, cur, out, true_state, true_over, true_win, true_legal, scalar_weight):
+    delta = (true_state[:, :lay.n_reg] - cur[:, :lay.n_reg]).round()
+    ds = (delta[:, :N_SCALAR].clamp(-SCALAR_RANGE, SCALAR_RANGE) + SCALAR_RANGE).long()
+    dc = (delta[:, N_SCALAR:].clamp(-CARD_RANGE, CARD_RANGE) + CARD_RANGE).long()
+    ce_s = F.cross_entropy(out["scalar"].transpose(1, 2), ds, reduction="none")
+    loss = (ce_s * scalar_weight).sum(1) / scalar_weight.sum()
+    loss = loss + F.cross_entropy(out["card"].transpose(1, 2), dc, reduction="none").mean(1)
     loss = loss + F.binary_cross_entropy_with_logits(out["active"], true_state[:, lay.i_active], reduction="none")
     loss = loss + F.cross_entropy(out["phase"], true_state[:, lay.i_phase:].argmax(1), reduction="none")
     loss = loss + F.binary_cross_entropy_with_logits(out["over"], true_over, reduction="none")
@@ -269,9 +282,8 @@ def train(args):
     lay = tr.lay
     net = Net(lay, tr.n_kinds, args.hidden).to(dev)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
-    scale = torch.from_numpy(lay.scale).to(dev)
-    weight = torch.ones(lay.n_reg, device=dev)
-    weight[lay.decisive] = 25.0  # decisive fields count as much as about 100 card dims
+    scalar_weight = torch.ones(N_SCALAR, device=dev)
+    scalar_weight[[i for i in lay.decisive]] = 5.0
     starts = tr.starts(args.unroll)
     steps_per_epoch = math.ceil(len(starts) / args.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.epochs * steps_per_epoch)
@@ -281,16 +293,18 @@ def train(args):
         perm = np.random.permutation(starts)
         total = 0.0
         for b in range(steps_per_epoch):
-            t = torch.from_numpy(perm[b * args.batch:(b + 1) * args.batch]).to(dev)
-            a = torch.from_numpy(tr.action_of_state[perm[b * args.batch:(b + 1) * args.batch]]).to(dev)
+            idx = perm[b * args.batch:(b + 1) * args.batch]
+            t = torch.from_numpy(idx).to(dev)
+            a = torch.from_numpy(tr.action_of_state[idx]).to(dev)
             cur = tr.state(t)
             loss = 0.0
             for j in range(args.unroll):
                 out = net(cur, tr.a_kind[a + j], tr.a_me[a + j], tr.a_cards[a + j])
                 nxt = t + j + 1
-                loss = loss + step_loss(lay, out, tr.state(nxt), tr.over[nxt], tr.win_me[nxt], tr.legal[nxt],
-                                        scale, weight)
-                cur = soft_assemble(lay, out)
+                loss = loss + step_loss(lay, cur, out, tr.state(nxt), tr.over[nxt], tr.win_me[nxt], tr.legal[nxt],
+                                        scalar_weight)
+                # Later steps start from the model's own most likely state (no gradient through the feed).
+                cur = assemble(lay, cur, out).detach()
             loss = loss / args.unroll
             opt.zero_grad(set_to_none=True)
             loss.backward()
@@ -306,7 +320,7 @@ def train(args):
 
 
 @torch.no_grad()
-def rollout_eval(net, sp: Split, k, round_feed, persistence):
+def rollout_eval(net, sp: Split, k, persistence):
     """Per-window primary correctness and per-field correctness at horizon k."""
     lay = sp.lay
     starts = sp.starts(k)
@@ -320,7 +334,7 @@ def rollout_eval(net, sp: Split, k, round_feed, persistence):
         if not persistence:
             for j in range(k):
                 out = net(cur, sp.a_kind[a + j], sp.a_me[a + j], sp.a_cards[a + j])
-                nxt = assemble(lay, out, round_feed)
+                nxt = assemble(lay, cur, out)
                 cur = torch.where(done[:, None], cur, nxt)
                 done = done | (out["over"] > 0)
         true = sp.state(t + k)
@@ -365,11 +379,11 @@ def evaluate(args):
     net = Net(sp.lay, sp.n_kinds, cfg["hidden"]).to(dev)
     net.load_state_dict(torch.load(Path(args.model) / "model.pt", map_location=dev))
     net.eval()
-    report = dict(split=args.split, model=str(args.model), round_feed=args.round_feed, horizons={})
+    report = dict(split=args.split, model=str(args.model), horizons={})
     for k in HORIZONS + DESCRIPTIVE_HORIZONS:
         entry = {}
         for arm, persist in (("model", False), ("persistence", True)):
-            r = rollout_eval(net, sp, k, args.round_feed, persist)
+            r = rollout_eval(net, sp, k, persist)
             ch = r["changed"]
             entry[arm] = dict(windows=int(len(r["primary"])), primary=float(r["primary"].mean()),
                               primary_ci=boot_ci(r["primary"], r["game"]),
@@ -402,7 +416,7 @@ def main():
     e = sub.add_parser("eval")
     e.add_argument("--data", required=True); e.add_argument("--model", required=True)
     e.add_argument("--split", required=True, choices=["validation", "test", "unseen_test", "train"])
-    e.add_argument("--out", required=True); e.add_argument("--round-feed", action="store_true")
+    e.add_argument("--out", required=True)
     args = ap.parse_args()
     dict(build=build, train=train, eval=evaluate)[args.cmd](args)
 

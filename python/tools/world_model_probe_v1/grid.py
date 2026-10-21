@@ -1,8 +1,7 @@
 """Validation-only model selection for the world-model probe (no test split is read).
 
 Builds the focal-view dataset (and the full-information one for the disclosed
-upper-bound arm), trains the grid, evaluates every config on validation with and
-without integer feedback, and picks the config with the best mean primary
+upper-bound arm), trains the grid, evaluates every config on validation, and picks the config with the best mean primary
 accuracy over the decision horizons."""
 import json, subprocess, sys
 from pathlib import Path
@@ -26,14 +25,12 @@ results = []
 for g in GRID:
     tag = f"h{g['hidden']}-u{g['unroll']}"
     run('train', '--data', ROOT / 'data', '--out', ROOT / 'models' / tag, '--hidden', g['hidden'], '--unroll', g['unroll'])
-    for feed in (False, True):
-        out = ROOT / 'validation' / f"{tag}-{'round' if feed else 'soft'}.json"
-        out.parent.mkdir(exist_ok=True)
-        run('eval', '--data', ROOT / 'data', '--model', ROOT / 'models' / tag, '--split', 'validation', '--out', out,
-            *(['--round-feed'] if feed else []))
-        rep = json.loads(out.read_text())
-        score = sum(rep['horizons'][k]['model']['primary'] for k in HORIZONS) / len(HORIZONS)
-        results.append(dict(tag=tag, round_feed=feed, score=score, **g))
+    out = ROOT / 'validation' / f"{tag}.json"
+    out.parent.mkdir(exist_ok=True)
+    run('eval', '--data', ROOT / 'data', '--model', ROOT / 'models' / tag, '--split', 'validation', '--out', out)
+    rep = json.loads(out.read_text())
+    score = sum(rep['horizons'][k]['model']['primary'] for k in HORIZONS) / len(HORIZONS)
+    results.append(dict(tag=tag, score=score, **g))
 best = max(results, key=lambda r: r['score'])
 (ROOT / 'SELECTION.json').write_text(json.dumps(dict(results=results, best=best), indent=1))
 print(json.dumps(best))
