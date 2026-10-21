@@ -260,8 +260,9 @@ pub fn run_observed_inference_v1<R: BufRead, W: Write>(
         return Err("config_schema".into());
     }
     let (policy, identity) = match load_expanded_inference_v1(&config.source) {
-        Ok(loaded) => loaded,
-        Err(_) => {
+        // The ready record advertises the original V3 input contract.
+        Ok(loaded) if loaded.0.input_contract_v1().is_none() => loaded,
+        _ => {
             write_record(writer, &error_record("checkpoint_load"))?;
             return Err("checkpoint_load".into());
         }

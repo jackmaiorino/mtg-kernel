@@ -299,6 +299,13 @@ pub(crate) struct NativeFlatTensorScratchV3 {
     digests: DigestBatchV1,
 }
 
+impl NativeFlatTensorScratchV3 {
+    /// [`NativeFlatTensorizerV2::set_state_digest_v1`] for the V3/V4 fills.
+    pub(crate) fn set_state_digest_v1(&mut self, on: bool) {
+        self.slot.state_digest_off = !on;
+    }
+}
+
 #[cfg(test)]
 mod digest_memo_tests;
 #[cfg(test)]
@@ -314,6 +321,32 @@ struct DigestSlotV1 {
     action_scratch: Vec<u8>,
     action_json: Vec<u8>,
     action_ranges: Vec<(usize, usize)>,
+    /// The no-state-digest input contract (`no_state_digest_v1`): the state
+    /// JSON is still written (its serializer validates the observation) but
+    /// not hashed, and the 96 state-digest features are zero.
+    state_digest_off: bool,
+}
+
+impl DigestSlotV1 {
+    /// The state message that is hashed: empty under the no-state-digest
+    /// contract, whose state features never read the digest.
+    fn state_message(&self) -> &[u8] {
+        if self.state_digest_off {
+            &[]
+        } else {
+            &self.state_json
+        }
+    }
+}
+
+/// The 96 state-digest features from their six blocks, or zeros under the
+/// no-state-digest contract.
+fn state_digest_features_v1(blocks: &[[u8; 64]], state_digest_off: bool, output: &mut [f32]) {
+    if state_digest_off {
+        output.fill(0.0);
+    } else {
+        digest_block_features_v1(blocks, output);
+    }
 }
 
 /// SHA-512 blocks and cache checkpoints for every message of the slots
@@ -655,6 +688,12 @@ impl NativeFlatTensorizerV2 {
         Self::default()
     }
 
+    /// Selects the state-digest inputs: on (the original contract) or off
+    /// (`no_state_digest_v1`). Other features are unchanged.
+    pub(crate) fn set_state_digest_v1(&mut self, on: bool) {
+        self.slot.state_digest_off = !on;
+    }
+
     pub(crate) fn fill(
         &mut self,
         decision: FlatScoringDecisionViewV1<'_>,
@@ -672,6 +711,7 @@ impl NativeFlatTensorizerV2 {
                 decision,
                 prepared,
                 &self.digests.blocks[offsets[0]..offsets[1]],
+                slot.state_digest_off,
             )
         });
         match encoded {
@@ -937,10 +977,13 @@ fn hash_prepared_slots_unmemoized_v2(
     let mut jobs = Vec::new();
     for slot in slots {
         offsets.push(jobs.len());
-        let resume = state_prefix_cache_lookup_v1(&slot.state_json);
+        let state = slot.state_message();
+        let resume = (!slot.state_digest_off)
+            .then(|| state_prefix_cache_lookup_v1(state))
+            .flatten();
         #[cfg(feature = "s4a-profile-v1")]
         crate::search_profile_v1::digest::observe(
-            &slot.state_json,
+            state,
             &slot
                 .action_ranges
                 .iter()
@@ -953,7 +996,7 @@ fn hash_prepared_slots_unmemoized_v2(
             STATE_CACHE_KEY_BYTES_V1,
         );
         for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
-            let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, &slot.state_json);
+            let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
             jobs.push(match &resume {
                 Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
                 None => job,
@@ -981,6 +1024,9 @@ fn hash_prepared_slots_unmemoized_v2(
     );
     if caching {
         for ((slot, resume), &offset) in slots.iter().zip(resumes).zip(&offsets) {
+            if slot.state_digest_off {
+                continue;
+            }
             state_prefix_cache_insert_v1(
                 &slot.state_json,
                 resume,
@@ -1016,7 +1062,7 @@ fn hash_prepared_slots_memoized_v2(
     let (mut hits, mut misses) = (0u64, 0u64);
     for slot in slots {
         offsets.push(messages.len() * N);
-        let state = slot.state_json.as_slice();
+        let state = slot.state_message();
         let hash = digest_memo_hash_v1(STATE_HASH_NAMESPACE_V2, state);
         if let Some(blocks) = memo.get(hash, STATE_HASH_NAMESPACE_V2, state) {
             hits += 1;
@@ -1029,7 +1075,9 @@ fn hash_prepared_slots_memoized_v2(
             ));
         } else {
             misses += 1;
-            let resume = state_prefix_cache_lookup_v1(state);
+            let resume = (!slot.state_digest_off)
+                .then(|| state_prefix_cache_lookup_v1(state))
+                .flatten();
             let first = jobs.len();
             for counter in 0..N as u32 {
                 let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
@@ -1038,7 +1086,9 @@ fn hash_prepared_slots_memoized_v2(
                     None => job,
                 });
             }
-            state_resumes.push((state, resume, first));
+            if !slot.state_digest_off {
+                state_resumes.push((state, resume, first));
+            }
             messages.push((STATE_HASH_NAMESPACE_V2, state, hash, Source::Jobs(first)));
         }
         for &(start, end) in slot.action_ranges.iter() {
@@ -1137,6 +1187,7 @@ fn finish_full_decision_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     prepared: PreparedDecisionV2,
     blocks: &[[u8; 64]],
+    state_digest_off: bool,
 ) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
     let PreparedDecisionV2 {
         mut state_head,
@@ -1146,8 +1197,9 @@ fn finish_full_decision_v2(
     } = prepared;
     let head_len = state_head.len();
     state_head.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
-    digest_block_features_v1(
+    state_digest_features_v1(
         &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
+        state_digest_off,
         &mut state_head[head_len..],
     );
     for (row, row_blocks) in actions
@@ -1598,8 +1650,9 @@ fn fill_successor_reusing_v2(
     let blocks = &scratch.digests.blocks[offsets[0]..offsets[1]];
     let head_len = state.len();
     state.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
-    digest_block_features_v1(
+    state_digest_features_v1(
         &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
+        scratch.slot.state_digest_off,
         &mut state[head_len..],
     );
     for (row, row_blocks) in actions

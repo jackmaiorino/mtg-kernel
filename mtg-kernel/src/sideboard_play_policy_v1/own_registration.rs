@@ -28,6 +28,10 @@ impl OwnRegistrationPlayPolicyV1 {
         mode: RegistrationModeV1,
     ) -> Result<Self, String> {
         require(
+            base.input_contract.is_none(),
+            "own registration is not supported under the no-state-digest contract",
+        )?;
+        require(
             base.fresh_successor.is_some() && base.successor.is_none(),
             "own registration requires exact V4 actor encoder",
         )?;
