@@ -124,7 +124,7 @@ pub(crate) fn cast(
     }
     panic!("cast never published")
 }
-fn until(state: &mut GameState, done: impl Fn(&GameState) -> bool) -> Decision {
+pub(crate) fn until(state: &mut GameState, done: impl Fn(&GameState) -> bool) -> Decision {
     for _ in 0..128 {
         let d = next(state);
         if done(state) {
