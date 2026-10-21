@@ -1330,12 +1330,12 @@ mod paid {
         assert_eq!(
             activation["ordered_costs"],
             json!([
-                CostComponent::Mana(Cost {
+                {"Mana":Cost {
                     generic: 3,
                     pips: &[],
                     x_count: 0
-                }),
-                CostComponent::SacrificeSelf
+                }},
+                "SacrificeSelf"
             ])
         );
         assert_eq!(activation["source_sacrificed_before_publication"], true);

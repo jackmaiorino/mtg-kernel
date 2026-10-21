@@ -236,13 +236,15 @@ pub(super) fn label_printed_hart_v40(
         actor,
         source,
         ability_index: 0,
-        granted_ability: None,
+        granted_ability,
         ..
     } = action
     else {
         return Ok(None);
     };
-    if card_def::card_id_by_name("Burnished Hart") != Some(source.card_db_id) {
+    if !granted_ability.is_none()
+        || card_def::card_id_by_name("Burnished Hart") != Some(source.card_db_id)
+    {
         return Ok(None);
     }
     let def = definition(source)?;

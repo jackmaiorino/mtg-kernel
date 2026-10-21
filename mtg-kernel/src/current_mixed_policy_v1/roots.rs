@@ -831,7 +831,8 @@ fn burnished_hart_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "ordered_activation_roots":[{
             "ability_index":0,"activation_zone":Zone::Battlefield,
             "timing":"ControllerWithPriorityIncludingOpponentsTurnAndNonemptyStack",
-            "ordered_costs":ability.cost,"targets":[],"uses_stack":true,
+            "ordered_costs":[PrintedActivationCost::Mana(cost),PrintedActivationCost::SacrificeSelf],
+            "targets":[],"uses_stack":true,
             "source_sacrificed_before_publication":true,
             "resolution_requires_source_to_remain":false,
             "countering_does_not_refund_cost":true,
@@ -1647,6 +1648,7 @@ struct SowerPrintedActivation {
 #[derive(serde::Serialize)]
 enum PrintedActivationCost {
     Mana(crate::mana::Cost),
+    SacrificeSelf,
 }
 #[derive(serde::Serialize)]
 enum PrintedActivationTiming {
