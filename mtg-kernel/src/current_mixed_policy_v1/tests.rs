@@ -1302,6 +1302,113 @@ mod paid {
     }
 
     #[test]
+    fn burnished_hart_printing_preserves_artifact_creature_paid_sacrifice_and_optional_basic_search(
+    ) {
+        use crate::card_def::{CardType, CostComponent};
+        use crate::effect::{EffectOp, LibraryCardFilter, LibrarySearchDestinationV1, PlayerRef};
+        use crate::mana::Cost;
+        let id = crate::card_def::card_id_by_name("Burnished Hart").unwrap();
+        let value = roots::baseline(id).unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            value
+        );
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["types"],
+            json!([CardType::Artifact, CardType::Creature])
+        );
+        assert_eq!(
+            (printing["power"].as_i64(), printing["toughness"].as_i64()),
+            (Some(2), Some(2))
+        );
+        assert_eq!(
+            printing["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"]["generic"],
+            3
+        );
+        let activation = &printing["ordered_activation_roots"][0];
+        assert_eq!(
+            activation["ordered_costs"],
+            json!([
+                CostComponent::Mana(Cost {
+                    generic: 3,
+                    pips: &[],
+                    x_count: 0
+                }),
+                CostComponent::SacrificeSelf
+            ])
+        );
+        assert_eq!(activation["source_sacrificed_before_publication"], true);
+        assert_eq!(activation["resolution_requires_source_to_remain"], false);
+        assert_eq!(activation["minimum_selected"], 0);
+        assert_eq!(activation["maximum_selected"], 2);
+        assert_eq!(activation["shuffle_even_when_no_cards_selected"], true);
+        assert_eq!(
+            activation["ordered_resolution"],
+            json!([EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: LibraryCardFilter::BasicLand,
+                max_targets: 2,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: true }
+            }])
+        );
+        fn wrong_search() -> EffectOp {
+            EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: LibraryCardFilter::AnyLand,
+                max_targets: 2,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+            }
+        }
+        for mode in 0..10 {
+            let mut changed = ordinary_recipe(id);
+            let mut ability = changed.activated_abilities[0];
+            match mode {
+                0 => changed.cost.generic = 2,
+                1 => changed.power = Some(3),
+                2 => changed.types = &[CardType::Creature],
+                3 => {
+                    ability.cost = &[CostComponent::Mana(Cost {
+                        generic: 3,
+                        pips: &[],
+                        x_count: 0,
+                    })]
+                }
+                4 => {
+                    ability.cost = &[
+                        CostComponent::SacrificeSelf,
+                        CostComponent::Mana(Cost {
+                            generic: 3,
+                            pips: &[],
+                            x_count: 0,
+                        }),
+                    ]
+                }
+                5 => {
+                    ability.cost = &[
+                        CostComponent::Mana(Cost {
+                            generic: 3,
+                            pips: &[],
+                            x_count: 0,
+                        }),
+                        CostComponent::Tap,
+                        CostComponent::SacrificeSelf,
+                    ]
+                }
+                6 => ability.effect = wrong_search,
+                7 => ability.sorcery_speed_only = true,
+                8 => ability.target_spec = crate::card_def::TargetSpec::ControlledCreature,
+                _ => changed.enters_battlefield_tapped = true,
+            }
+            changed.activated_abilities = Box::leak(vec![ability].into_boxed_slice());
+            assert!(
+                matches!(roots::baseline_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(card))if card==id),
+                "field mode {mode}"
+            );
+        }
+    }
+
+    #[test]
     fn diregraf_printing_preserves_mandatory_tapped_entry_and_rejects_a_vanilla_replacement() {
         let id = crate::card_def::card_id_by_name("Diregraf Ghoul").unwrap();
         let value = roots::baseline(id).unwrap();

@@ -365,6 +365,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     // familiar name alone never admits a different cost, program or cast form.
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
+    let hart = burnished_hart_printing(id, d)?;
     let diregraf = d.name == "Diregraf Ghoul";
     if diregraf
         && (crate::card_def::card_id_by_name("Diregraf Ghoul") != Some(id)
@@ -454,7 +455,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             });
     if !(d.capability == CardCapability::Full
         && d.object_name == d.name
-        && (d.activated_abilities.is_empty() || goldvein.is_some())
+        && (d.activated_abilities.is_empty() || goldvein.is_some() || hart.is_some())
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
         && (d.mode2.is_none() || (ordinary_removal.is_some() && d.name == "Abrade"))
@@ -512,6 +513,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
     if let Some(printing) = goldvein {
+        return Ok(printing);
+    }
+    if let Some(printing) = hart {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
@@ -749,6 +753,92 @@ fn goldvein_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "captured_actor":"EquipmentController",
             "resolution_does_not_require_source_or_attachment_to_remain":true,
             "ordered_resolution":[trigger_program],"created_token_printing":baseline(treasure)?
+        }]
+    }})))
+}
+
+/// This Artifact Creature's sacrifice is an activation cost, not resolution.
+/// The enclosing exclusion guard still rejects every unrelated mechanic.
+fn burnished_hart_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{ActivationTargetFilter, CostComponent, Keywords, Subtype};
+    use crate::effect::{LibraryCardFilter, LibrarySearchDestinationV1};
+    use crate::mana::Cost;
+    if d.name != "Burnished Hart" {
+        return Ok(None);
+    }
+    let cost = Cost {
+        generic: 3,
+        pips: &[],
+        x_count: 0,
+    };
+    let [ability] = d.activated_abilities else {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    };
+    let search = EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: LibraryCardFilter::BasicLand,
+        max_targets: 2,
+        destination: LibrarySearchDestinationV1::Battlefield { tapped: true },
+    };
+    if crate::card_def::card_id_by_name("Burnished Hart") != Some(id)
+        || d.cost != cost
+        || d.mana_value != 3
+        || d.types != [CardType::Artifact, CardType::Creature]
+        || d.subtypes != [Subtype::Elk]
+        || !d.supertypes.is_empty()
+        || !d.colors.is_empty()
+        || d.power != Some(2)
+        || d.toughness != Some(2)
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.target_spec != TargetSpec::None
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || ability.cost != [CostComponent::Mana(cost), CostComponent::SacrificeSelf]
+        || ability.target_spec != TargetSpec::None
+        || (ability.effect)() != search
+        || ability.activation_zone != Zone::Battlefield
+        || ability.sorcery_speed_only
+        || ability.activation_target_filter != ActivationTargetFilter::TargetSpecOnly
+        || ability.max_activations_per_turn.is_some()
+        || ability.face.is_some()
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(Some(json!({"card_id":id,"primitive_printing":{
+        "cost":cost,"types":[CardType::Artifact,CardType::Creature],
+        "subtypes":[Subtype::Elk],"supertypes":[],"colors":[],
+        "power":2,"toughness":2,"keywords":0,"mana_value":3,"token":false,
+        "ordered_cast_roots":[OrdinaryPermanentCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,
+            ordinary_origin:Zone::Hand,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets:PermanentTargets::None,
+            ordered_costs:[BaselineManaCost::PrintedMana(cost)],
+            ordered_resolution:[PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority:true,
+            zone_replacements_still_apply:true,
+        }],
+        "ordered_activation_roots":[{
+            "ability_index":0,"activation_zone":Zone::Battlefield,
+            "timing":"ControllerWithPriorityIncludingOpponentsTurnAndNonemptyStack",
+            "ordered_costs":ability.cost,"targets":[],"uses_stack":true,
+            "source_sacrificed_before_publication":true,
+            "resolution_requires_source_to_remain":false,
+            "countering_does_not_refund_cost":true,
+            "library_owner":"CapturedAbilityController",
+            "selection_is_not_targeting":true,"minimum_selected":0,"maximum_selected":2,
+            "shuffle_even_when_no_cards_selected":true,
+            "ordered_resolution":[search]
         }]
     }})))
 }
