@@ -115,9 +115,16 @@ Native241 passed all11 affected short cases and the unchanged full native
 Liliana scene in733.391 seconds; its full numeric scene timed out at1800 seconds.
 Native242 passed all12 affected checks, including exact scalar/model bit parity
 after the zero-feature sign-mask optimization. Its unchanged full numeric scene
-is pending. Published73c8 hosted Linux CI still records1800-second numeric
+also timed out at1800 seconds during P1 ultimate replay, starting step82.
+Published73c8 hosted Linux CI still records1800-second numeric
 Liliana and Genesis Wave X256 timeouts; Human Liliana passed in1315.94 seconds.
 No scene, candidate, observation or deadline was reduced to obtain a pass.
+New unrun Liliana/Genesis Wave preparation source carries a private successful
+full-state validation through the same immutable state borrow into observation
+construction. This removes a repeated full-state walk without caching by
+revision/hash, bypassing any state check or changing the public projection.
+Independent observation entrypoints still validate first. Existing full scenes
+and binding/forgery/restore/sampling cases remain the qualification checks.
 
 Additional committed source supplies closed Flight/Pie/Joust printings and
 repairs scoped sampler, restore, target-order and native-characteristic fixtures.

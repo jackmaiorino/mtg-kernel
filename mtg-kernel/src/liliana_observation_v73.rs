@@ -486,6 +486,17 @@ pub fn observe_v73(
     observe_parts_v73(state, surface, actor_and_origin, step, physical, substep)
         .map(|(value, _)| value)
 }
+/// A successful full state validation tied to this immutable borrow. It cannot
+/// survive a mutation or be reconstructed from a DTO, hash or session revision.
+pub(crate) struct ValidatedStateV73<'a> {
+    state: &'a GameState,
+}
+pub(crate) fn validate_state_for_observation_v73(
+    state: &GameState,
+) -> Result<ValidatedStateV73<'_>, String> {
+    validate_state(state)?;
+    Ok(ValidatedStateV73 { state })
+}
 pub(crate) fn observe_parts_v73(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -494,7 +505,25 @@ pub(crate) fn observe_parts_v73(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<LilianaPublicPartsV73, RlContractError> {
-    validate_state(state).map_err(RlContractError)?;
+    let validated = validate_state_for_observation_v73(state).map_err(RlContractError)?;
+    observe_parts_validated_v73(
+        validated,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+    )
+}
+pub(crate) fn observe_parts_validated_v73(
+    validated: ValidatedStateV73<'_>,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<LilianaPublicPartsV73, RlContractError> {
+    let state = validated.state;
     require_supported(state, Some(actor_and_origin.0)).map_err(RlContractError)?;
     let (inherited, families) =
         crate::ravenous_observation_v51::observe_parts_complete_liliana_v73(

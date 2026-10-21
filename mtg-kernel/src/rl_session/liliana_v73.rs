@@ -53,6 +53,18 @@ pub(super) fn normalized_origin(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, FlatActionDecisionSliceErrorV1> {
+    normalized_origin_with_validated_state(session, current).map(|(candidates, _)| candidates)
+}
+fn normalized_origin_with_validated_state<'a>(
+    session: &'a FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<
+    (
+        Vec<CorePolicyActionCandidateV1>,
+        observation::ValidatedStateV73<'a>,
+    ),
+    FlatActionDecisionSliceErrorV1,
+> {
     if session.flat_action_contract_mode != FlatActionContractModeV1::LilianaV73 {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
@@ -71,7 +83,7 @@ pub(super) fn normalized_origin(
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
-    observation::validate_state(&session.state)
+    let validated = observation::validate_state_for_observation_v73(&session.state)
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
     let actual =
         super::liliana_candidates_v73(&current.origin_decision, &session.state, &session.surface)
@@ -89,19 +101,20 @@ pub(super) fn normalized_origin(
         .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     // Nonscan origins were issued by this private revision's native advance.
     // Re-advancing here would append a genuine Drake Enclosing receipt.
-    Ok(original.candidates)
+    Ok((original.candidates, validated))
 }
 pub(super) fn prepare_current(
     session: &FastActorSessionV1,
     current: &mut FastActorCurrentDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
-    current.candidates = normalized_origin(session, current)?;
+    let (candidates, validated) = normalized_origin_with_validated_state(session, current)?;
+    current.candidates = candidates;
     current.flat_action_cache = None;
     current.flat_action_cache_error = None;
     current.flat_action_cache_v2 = None;
     current.flat_action_cache_error_v2 = None;
-    observation::observe_parts_v73(
-        &session.state,
+    observation::observe_parts_validated_v73(
+        validated,
         &session.surface,
         (current.actor, &current.origin_decision),
         session.policy_step_count,

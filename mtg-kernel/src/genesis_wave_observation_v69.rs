@@ -348,6 +348,17 @@ pub fn observe_v69(
     observe_parts_v69(state, surface, actor_and_origin, step, physical, substep)
         .map(|(value, _)| value)
 }
+/// Full state validation for one immutable borrow, never a reusable authority
+/// based on a hash, DTO or revision number.
+pub(crate) struct ValidatedStateV69<'a> {
+    state: &'a GameState,
+}
+pub(crate) fn validate_state_for_observation_v69(
+    state: &GameState,
+) -> Result<ValidatedStateV69<'_>, String> {
+    validate_state(state)?;
+    Ok(ValidatedStateV69 { state })
+}
 pub(crate) fn observe_parts_v69(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -356,7 +367,25 @@ pub(crate) fn observe_parts_v69(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<GenesisWavePublicPartsV69, RlContractError> {
-    validate_state(state).map_err(RlContractError)?;
+    let validated = validate_state_for_observation_v69(state).map_err(RlContractError)?;
+    observe_parts_validated_v69(
+        validated,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+    )
+}
+pub(crate) fn observe_parts_validated_v69(
+    validated: ValidatedStateV69<'_>,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<GenesisWavePublicPartsV69, RlContractError> {
+    let state = validated.state;
     require_supported(state, Some(actor_and_origin.0)).map_err(RlContractError)?;
     let (inherited, families) =
         crate::ravenous_observation_v51::observe_parts_complete_genesis_wave_v69(
