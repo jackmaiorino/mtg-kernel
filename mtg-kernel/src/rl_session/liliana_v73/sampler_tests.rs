@@ -223,7 +223,9 @@ fn genuine_paid_liliana_hidden_original_and_changed_journal_refuse_readonly_afte
         );
         assert_eq!(old, before);
         let mut forged = d.clone();
-        forged.binding.original.clear();
+        std::sync::Arc::make_mut(&mut forged.binding)
+            .original
+            .clear();
         assert!(o.sampled_clone_v73(&forged, 730007).is_err());
         let mut forged = before.clone();
         let E::LilianaDreadhordeV1{journal}=forged.engine.event_history.iter_mut().find(|e|matches!(e,E::LilianaDreadhordeV1{journal}if matches!(journal.as_ref(),crate::effect::liliana_dreadhorde_v1::JournalV1::Payment{..}))).unwrap()else{panic!()};

@@ -285,7 +285,9 @@ fn paid_sealed_owner_foreign_stale_forged_complete_packet_and_callback_failures_
         assert!(foreign.own.step_v73(&d, 0).is_err());
         assert!(pair.own.restore_v73(&foreign.own.snapshot_v73()).is_err());
         let mut erased = d.clone();
-        erased.binding.original.clear();
+        std::sync::Arc::make_mut(&mut erased.binding)
+            .original
+            .clear();
         assert!(pair.own.step_v73(&erased, 0).is_err());
         let mut changed = d.clone();
         changed
@@ -297,7 +299,9 @@ fn paid_sealed_owner_foreign_stale_forged_complete_packet_and_callback_failures_
             .clear();
         assert!(pair.own.step_v73(&changed, 0).is_err());
         let mut reordered = d.clone();
-        reordered.binding.public_to_original.reverse();
+        std::sync::Arc::make_mut(&mut reordered.binding)
+            .public_to_original
+            .reverse();
         assert_ne!(
             reordered.binding.public_to_original,
             d.binding.public_to_original

@@ -329,14 +329,19 @@ struct BindingV73 {
     projection: LilianaCandidatesV73,
     families: Vec<crate::akroma_family_public_v40::FamilyProjectionV40>,
 }
+type BindingCacheV73 = std::sync::Mutex<Option<(u64, std::sync::Arc<BindingV73>)>>;
 pub struct LilianaSessionV73 {
     inner: FastActorSessionV1,
     owner: std::sync::Arc<()>,
     generation: u64,
+    // `inner` is exclusively owned here. Native steps invalidate this before
+    // mutation; restore constructs and validates a new owner/cache. Sampling
+    // constructs another owner. No mutable native borrow is exposed.
+    binding_cache: BindingCacheV73,
 }
 #[derive(Clone)]
 pub struct LilianaDecisionV73 {
-    binding: BindingV73,
+    binding: std::sync::Arc<BindingV73>,
     actions: Vec<ActionSemanticV1>,
     owner: std::sync::Arc<()>,
     generation: u64,
@@ -384,6 +389,7 @@ impl LilianaSessionV73 {
             inner: session.into_liliana_v73()?,
             owner: std::sync::Arc::new(()),
             generation: 0,
+            binding_cache: std::sync::Mutex::new(None),
         })
     }
     /// Preserves the existing Full-deck preflight. Partial printings remain
@@ -407,6 +413,7 @@ impl LilianaSessionV73 {
             )?,
             owner: std::sync::Arc::new(()),
             generation: 0,
+            binding_cache: std::sync::Mutex::new(None),
         })
     }
     pub fn response(&self) -> FastActorResponseV1 {
@@ -433,6 +440,7 @@ impl LilianaSessionV73 {
             inner: restored,
             owner: self.owner.clone(),
             generation,
+            binding_cache: std::sync::Mutex::new(None),
         };
         if prospective.inner.current.is_some() {
             prospective.fresh_binding()?;
@@ -440,7 +448,7 @@ impl LilianaSessionV73 {
         *self = prospective;
         Ok(())
     }
-    fn fresh_binding(&self) -> Result<BindingV73, RlContractError> {
+    fn fresh_binding(&self) -> Result<std::sync::Arc<BindingV73>, RlContractError> {
         let FastActorResponseV1::Decision(expected) = self.response() else {
             return Err(RlContractError(format!(
                 "Liliana V73 stream is terminal: {:?}",
@@ -454,6 +462,20 @@ impl LilianaSessionV73 {
             .ok_or_else(|| RlContractError("V73 current absent".into()))?;
         flat_validate_expected_decision_ravenous_v51(&self.inner, current, expected)
             .map_err(binding_error)?;
+        {
+            let cache = self
+                .binding_cache
+                .lock()
+                .map_err(|_| RlContractError("V73 binding cache poisoned".into()))?;
+            if let Some((revision, binding)) = cache.as_ref() {
+                if *revision == self.inner.environment_revision
+                    && binding.expected == expected
+                    && binding.original == current.candidates
+                {
+                    return Ok(binding.clone());
+                }
+            }
+        }
         let proof = IssuedOriginV73 {
             session: &self.inner,
             current,
@@ -492,13 +514,19 @@ impl LilianaSessionV73 {
                 value.actions = classified.clone();
             }
         }
-        Ok(BindingV73 {
+        let binding = std::sync::Arc::new(BindingV73 {
             expected,
             original: native.original,
             public_to_original: native.public_to_original,
             projection,
             families,
-        })
+        });
+        *self
+            .binding_cache
+            .lock()
+            .map_err(|_| RlContractError("V73 binding cache poisoned".into()))? =
+            Some((self.inner.environment_revision, binding.clone()));
+        Ok(binding)
     }
     pub fn decision_v73(&self) -> Result<LilianaDecisionV73, RlContractError> {
         let binding = self.fresh_binding()?;
@@ -518,7 +546,7 @@ impl LilianaSessionV73 {
     fn validated_current(
         &self,
         decision: &LilianaDecisionV73,
-    ) -> Result<BindingV73, RlContractError> {
+    ) -> Result<std::sync::Arc<BindingV73>, RlContractError> {
         if !std::sync::Arc::ptr_eq(&self.owner, &decision.owner)
             || self.generation != decision.generation
         {
@@ -530,7 +558,7 @@ impl LilianaSessionV73 {
             "V73 current step={}: comparing binding",
             fresh.expected.step
         );
-        if fresh != decision.binding
+        if (!std::sync::Arc::ptr_eq(&fresh, &decision.binding) && fresh != decision.binding)
             || fresh
                 .projection
                 .candidates
@@ -575,6 +603,7 @@ impl LilianaSessionV73 {
             inner,
             owner: std::sync::Arc::new(()),
             generation: self.generation,
+            binding_cache: std::sync::Mutex::new(None),
         };
         if sampled.fresh_binding()? != before {
             return Err(RlContractError(
@@ -627,6 +656,18 @@ impl LilianaSessionV73 {
         };
         #[cfg(test)]
         eprintln!("V73 step={}: native step", fresh.expected.step);
+        // Clear even if the native call returns an error. Callback/range
+        // refusals above are read-only and preserve the still-current cache.
+        match self.binding_cache.get_mut() {
+            Ok(cache) => {
+                cache.take();
+            }
+            Err(_) => {
+                return Err(native_error(RlContractError(
+                    "V73 binding cache poisoned".into(),
+                )))
+            }
+        }
         let result = self
             .inner
             .step(fresh.expected.episode_id, fresh.expected.step, original)
