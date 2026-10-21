@@ -161,9 +161,13 @@ def screen_estimates(stage: Stage, incumbent: int) -> dict[int, float]:
     return out
 
 
+HOEFFDING_CELLS = 27  # design section 5: the Bonferroni factor is frozen at the maximum cell count
+
+
 def hoeffding_v(stage: Stage, decks: list[int], incumbent: int, pilots: list[str], scheduled: int) -> dict:
     cells = [(deck, pilot) for deck in decks for pilot in pilots]
-    padding = math.sqrt(math.log(len(cells) / 0.05) / (2 * scheduled))
+    assert len(cells) <= HOEFFDING_CELLS
+    padding = math.sqrt(math.log(HOEFFDING_CELLS / 0.05) / (2 * scheduled))
     bounds = {}
     for deck, pilot in cells:
         wins = stage.wins[pilot]
@@ -209,9 +213,10 @@ def joint_samples(stage: Stage, decks: list[int], incumbent: int, pilots: list[s
     series, labels = [], []
     for deck in decks:
         for pilot in pilots:
-            delta = stage.deltas(pilot, deck, incumbent, worst_case=worst_case)
-            if not worst_case:
-                delta = np.where(union, np.nan, delta)
+            delta = stage.deltas(pilot, deck, incumbent)
+            # The joint mask applies to every series; worst case scores a masked case as candidate
+            # loss and incumbent win (-1), otherwise it is excluded.
+            delta = np.where(union | np.isnan(delta), -1.0 if worst_case else np.nan, delta)
             series.append(delta)
             labels.append((deck, pilot))
     opponents, strata = stage.opponents(reference), stage.strata(reference)
@@ -261,7 +266,7 @@ def rank_association(stage: Stage, decks: list[int], incumbent: int, pilots: lis
     for a, b in itertools.combinations(pilots, 2):
         xa, xb = [points[(d, a)] for d in decks], [points[(d, b)] for d in decks]
         taus = [kendall_tau_b([samples[(d, a)][r] for d in decks], [samples[(d, b)][r] for d in decks])
-                for r in range(min(resamples, 2000))]
+                for r in range(resamples)]
         ra, rb = rank(dict(zip(decks, xa)), decks), rank(dict(zip(decks, xb)), decks)
         out[f"{a}~{b}"] = {"tau_b": kendall_tau_b(xa, xb), "ci95": [lower_bound(np.array(taus), 0.025),
                                                                     upper_bound(np.array(taus), 0.025)],
@@ -303,8 +308,10 @@ def main(argv: list[str] | None = None) -> int:
         finalists = [int(x) for x in a.finalists.split(",") if x]
         result = {"labels": m4_labels(stage, finalists, a.burnv2, a.incumbent, a.resamples, a.seed),
                   "validity": stage.validity()}
-    with a.out.open("x", encoding="utf-8", newline="\n") as stream:
-        stream.write(json.dumps(result, indent=1, sort_keys=True) + "\n")
+    assert not a.out.exists(), f"refusing to overwrite {a.out}"
+    tmp = a.out.with_name(a.out.name + ".partial")
+    tmp.write_text(json.dumps(result, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(a.out)
     print(json.dumps({"op": a.op, "out": str(a.out)}))
     return 0
 

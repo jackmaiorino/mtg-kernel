@@ -157,7 +157,7 @@ class Execution(Fixture):
         item = plan["requests"][0]
         os.environ["FAKE_INTERRUPT_AFTER"] = "7"
         os.environ["FAKE_INTERRUPT_MARKER"] = str(self.tmp / "interrupted")
-        state = dvp.execute_request(str(self.exe), self.tmp / "plan", item, lambda *a: None)
+        state = dvp.execute_request(str(self.exe), self.tmp / "plan", item, self.ledger())
         output = Path(json.loads(Path(item["request"]["path"]).read_text())["output_directory"])
         self.assertEqual(state["interruptions"], [{"segment": 0, "kept": 7}])
         self.assertEqual([s["end"] for s in state["segments"]], ["interrupted", "complete"])
@@ -165,7 +165,7 @@ class Execution(Fixture):
         seeds = [line.split("|")[0] for line in self.log.read_text().splitlines()]
         expected = [str(entry["seed"]) for entry in item["items"]]
         self.assertEqual(seeds, expected[:8] + expected[7:], "each case after the prefix ran exactly once more")
-        again = dvp.execute_request(str(self.exe), self.tmp / "plan", item, lambda *a: None)
+        again = dvp.execute_request(str(self.exe), self.tmp / "plan", item, self.ledger())
         self.assertEqual(again, state)
 
     def test_dispatch_admits_nothing_once_stopped_or_over_the_cpu_cap(self):
@@ -178,6 +178,25 @@ class Execution(Fixture):
         outcome = dvp.dispatch(self.tmp / "plan", str(self.exe), 2, self.ledger(cap=0.05, per=0.01),
                                None, self.tmp / "STOP", [], 0, 0)
         self.assertTrue(outcome.startswith("yielded: CPU cap"))
+
+    def test_reservations_charge_interrupted_work_and_refuse_past_the_cap(self):
+        ledger = self.ledger(cap=1.0, per=0.1)
+        rid = ledger.begin("r", 0, 5)  # 0.5 projected
+        self.assertAlmostEqual(ledger.spent(), 0.5, msg="an unsettled reservation stays charged")
+        with self.assertRaises(dvp.CapReached):
+            ledger.begin("r2", 0, 6)  # 0.5 + 0.6 > 1.0
+        ledger.settle(rid, {"exit": 0, "wall_seconds": 1.0, "cpu_seconds": 0.2})
+        self.assertAlmostEqual(ledger.spent(), 0.2)
+        rid2 = ledger.begin("r3", 0, 3)
+        ledger.settle(rid2, {"exit": 1, "wall_seconds": 1.0, "cpu_seconds": None})
+        self.assertAlmostEqual(ledger.spent(), 0.5, msg="a settlement without measurement keeps the projection")
+
+    def test_dispatch_seals_chunks_between_batches(self):
+        self.plan()
+        archive = self.tmp / "archive"
+        dvp.dispatch(self.tmp / "plan", str(self.exe), 2, self.ledger(), None, self.tmp / "STOP", [], 0, 0,
+                     archive_dir=archive, seal_seconds=0, max_files=60)
+        self.assertTrue(list(archive.glob("chunk-*.zip")))
 
     def test_qualification_parity_and_label_invariance(self):
         decks = self.decks + [dict(self.decks[0], label="B0/alias", role="alias")]

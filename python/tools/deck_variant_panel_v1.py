@@ -75,11 +75,15 @@ def require(ok, reason: str) -> None:
 
 
 def write_json(path: Path, value, *, exclusive: bool = True) -> dict:
+    """Write through a temporary file and an atomic rename; ``exclusive`` refuses an existing target."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    require(not (exclusive and path.exists()), f"refusing to overwrite {path}")
     text = json.dumps(value, indent=1, sort_keys=True, allow_nan=False) + "\n"
-    with path.open("x" if exclusive else "w", encoding="utf-8", newline="\n") as stream:
+    tmp = path.with_name(path.name + f".tmp-{os.getpid()}-{threading.get_ident()}")
+    with tmp.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(text)
+    os.replace(tmp, path)
     return pin(path)
 
 
@@ -283,7 +287,7 @@ def valid_prefix(output: Path, expected: list[dict]) -> int:
     return count
 
 
-def execute_request(executable: str, plan_dir: Path, item: dict, ledger, max_crashes: int = 3) -> dict:
+def execute_request(executable: str, plan_dir: Path, item: dict, ledger: "Ledger", max_crashes: int = 3) -> dict:
     """Run one request to full coverage, resuming at the first unfinished case.
 
     Segment 0 is the request; segment k a continuation over the remaining matches. A failure record
@@ -325,8 +329,9 @@ def execute_request(executable: str, plan_dir: Path, item: dict, ledger, max_cra
                 continue
             if output.exists():
                 output.rename(output.with_name(output.name + f".partial-{int(time.time())}"))
+            reservation = ledger.begin(item["name"], k, len(segment_request["matches"]))
             result = run_native(executable, current)
-            ledger(item["name"], k, result, len(segment_request["matches"]))
+            ledger.settle(reservation, result)
             if result["exit"] != 0 and not (output / "failure.json").exists() \
                     and not (output / "completion.json").exists():
                 crashes += 1
@@ -363,43 +368,62 @@ def execute_request(executable: str, plan_dir: Path, item: dict, ledger, max_cra
 # ---------------------------------------------------------------- ledger and yielding
 
 
+class CapReached(Exception):
+    """Admitting this native invocation would exceed the cumulative CPU cap."""
+
+
 class Ledger:
-    """One persistent CPU ledger (JSON lines) shared by qualification, runs and recovery."""
+    """One persistent CPU ledger (JSON lines) shared by qualification, runs and recovery.
+
+    Every native invocation first appends a reservation at its projected CPU and then a settlement
+    with the measured CPU. A reservation without a settlement (a killed dispatcher) stays charged at
+    its projection; a settlement without a measurement keeps the projection too. Rows written before
+    reservations existed (no ``op``) count at their measured or projected CPU."""
 
     def __init__(self, path: Path, cap_seconds: float, per_match_seconds: float):
         self.path, self.cap, self.per_match = Path(path), cap_seconds, per_match_seconds
         self.lock = threading.Lock()
-        self.inflight: dict[str, float] = {}
+
+    def _append(self, row: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps(row, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
 
     def spent(self) -> float:
         if not self.path.exists():
             return 0.0
-        total = 0.0
+        reserved, settled, legacy = {}, {}, 0.0
         for line in self.path.read_text(encoding="utf-8").splitlines():
             row = json.loads(line)
-            total += row["cpu_seconds"] if row["cpu_seconds"] is not None else row["projected_cpu_seconds"]
+            op = row.get("op")
+            if op == "reserve":
+                reserved[row["id"]] = row["projected_cpu_seconds"]
+            elif op == "settle":
+                settled[row["id"]] = row["cpu_seconds"]
+            else:
+                legacy += row["cpu_seconds"] if row["cpu_seconds"] is not None else row["projected_cpu_seconds"]
+        total = legacy
+        for rid, projected in reserved.items():
+            measured = settled.get(rid)
+            total += measured if measured is not None else projected
         return total
 
-    def admit(self, key: str, matches: int) -> bool:
+    def begin(self, key: str, segment: int, matches: int, kind: str = "run", per_match: float | None = None) -> str:
+        projected = matches * (self.per_match if per_match is None else per_match)
         with self.lock:
-            projected = matches * self.per_match
-            if self.spent() + sum(self.inflight.values()) + projected > self.cap:
-                return False
-            self.inflight[key] = projected
-            return True
+            if self.spent() + projected > self.cap:
+                raise CapReached(f"{key}: {projected:.0f} CPU-s would pass the cap")
+            rid = f"{time.time_ns()}-{os.getpid()}-{threading.get_ident()}"
+            self._append({"op": "reserve", "id": rid, "t": time.time(), "kind": kind, "request": key,
+                          "segment": segment, "matches": matches, "projected_cpu_seconds": projected})
+        return rid
 
-    def record(self, key: str, segment: int, result: dict, matches: int, kind: str = "run") -> None:
-        row = {"t": time.time(), "kind": kind, "request": key, "segment": segment, "exit": result["exit"],
-               "wall_seconds": result["wall_seconds"], "cpu_seconds": result["cpu_seconds"],
-               "projected_cpu_seconds": matches * self.per_match}
+    def settle(self, rid: str, result: dict) -> None:
         with self.lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8", newline="\n") as stream:
-                stream.write(json.dumps(row, sort_keys=True) + "\n")
-
-    def release(self, key: str) -> None:
-        with self.lock:
-            self.inflight.pop(key, None)
+            self._append({"op": "settle", "id": rid, "t": time.time(), "exit": result["exit"],
+                          "wall_seconds": result["wall_seconds"], "cpu_seconds": result["cpu_seconds"]})
 
 
 def tree_bytes(roots: list[Path]) -> int:
@@ -415,9 +439,14 @@ def tree_bytes(roots: list[Path]) -> int:
 
 
 def yield_reason(slots_tool: str | None, stop_file: Path, footprint_roots: list[Path], footprint_limit: int,
-                 lane: str = LANE) -> str | None:
+                 lane: str = LANE, interactive_threshold: float = 0.0) -> str | None:
     if stop_file.exists():
         return "stop file"
+    if interactive_threshold:
+        import interactive_load_v1 as interactive
+        if interactive.interactive_cores(5.0) > interactive_threshold \
+                and interactive.interactive_cores(5.0) > interactive_threshold:
+            return "interactive desktop use"
     if footprint_limit and tree_bytes(footprint_roots) > footprint_limit:
         return "hot footprint above limit"
     if slots_tool:
@@ -434,37 +463,49 @@ def yield_reason(slots_tool: str | None, stop_file: Path, footprint_roots: list[
 
 
 def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slots_tool: str | None,
-             stop_file: Path, footprint_roots: list[Path], footprint_limit: int, check_seconds: float = 15.0) -> str:
-    """Admit requests while nothing else wants the host; on a yield signal admit nothing more, let
-    in-flight requests finish (bounded by their size) and return 'yielded'."""
+             stop_file: Path, footprint_roots: list[Path], footprint_limit: int, check_seconds: float = 15.0,
+             interactive_threshold: float = 0.0, archive_dir: Path | None = None, seal_seconds: float = 60.0,
+             max_files: int = 20000, max_bytes: int = int(1.5 * 2**30)) -> str:
+    """Admit requests while nothing else wants the host; on a yield signal (or the CPU cap) admit
+    nothing more, let in-flight requests finish (bounded by their size) and return 'yielded: ...'.
+    Between batches, completed requests are sealed into verified chunks and raw output of
+    acknowledged chunks is freed, so the hot footprint stays bounded while the stage runs."""
     plan = read_json(Path(plan_dir) / "plan.json")
     pending = [item for item in plan["requests"]
-               if not checked(item["request"]).with_suffix(".state.json").exists()]
-    lock, running, errors = threading.Lock(), set(), []
+               if not Path(item["request"]["path"]).with_suffix(".state.json").exists()]
+    lock, running, errors, capped = threading.Lock(), set(), [], []
 
     def one(item):
         try:
-            execute_request(executable, plan_dir, item,
-                            lambda key, seg, result, n: ledger.record(key, seg, result, n))
+            execute_request(executable, plan_dir, item, ledger)
+        except CapReached as error:
+            capped.append(str(error))
         except BaseException as error:  # surfaced after in-flight work drains
             errors.append(f"{item['name']}: {error}")
         finally:
-            ledger.release(item["name"])
             with lock:
                 running.discard(item["name"])
 
-    reason, last_check, threads = None, 0.0, []
+    def seal():
+        if archive_dir is not None:
+            seal_chunks(plan_dir, archive_dir, max_files, max_bytes, final=False)
+            free_acknowledged(archive_dir, archive_dir)
+
+    reason, last_check, last_seal, threads = None, 0.0, time.monotonic(), []
     while pending or running:
         if not reason and time.monotonic() - last_check >= check_seconds:
-            reason, last_check = yield_reason(slots_tool, stop_file, footprint_roots, footprint_limit), time.monotonic()
+            reason = yield_reason(slots_tool, stop_file, footprint_roots, footprint_limit,
+                                  interactive_threshold=interactive_threshold)
+            last_check = time.monotonic()
+        if capped and not reason:
+            reason = "CPU cap reached"
+        if time.monotonic() - last_seal >= seal_seconds:
+            seal()
+            last_seal = time.monotonic()
         with lock:
             free = workers - len(running)
         if not reason and not errors and pending and free > 0:
-            item = pending[0]
-            if not ledger.admit(item["name"], len(item["items"])):
-                reason = "CPU cap reached"
-                continue
-            pending.pop(0)
+            item = pending.pop(0)
             with lock:
                 running.add(item["name"])
             thread = threading.Thread(target=one, args=(item,), daemon=False)
@@ -476,9 +517,14 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
         time.sleep(0.5)
     for thread in threads:
         thread.join()
+    seal()
     if errors:
         raise RuntimeError("; ".join(errors[:5]))
-    return "complete" if not pending else f"yielded: {reason}"
+    remaining = [item for item in plan["requests"]
+                 if not Path(item["request"]["path"]).with_suffix(".state.json").exists()]
+    if not remaining:
+        return "complete"
+    return f"yielded: {reason or 'CPU cap reached'}"
 
 
 # ---------------------------------------------------------------- qualification
@@ -518,7 +564,11 @@ def qualify(plan_dir: Path, root: Path, executable: str, workers: list[int], led
         results = [None] * len(paths)
 
         def run_index(index):
+            matches = len(read_json(paths[index])["matches"])
+            reservation = ledger.begin(f"qual-w{k}-{paths[index].stem}", 0, matches, kind="qualification",
+                                       per_match=1.0)
             results[index] = run_native(executable, paths[index])
+            ledger.settle(reservation, results[index])
 
         threads, next_index = [], 0
         while next_index < len(paths) or any(t.is_alive() for t in threads):
@@ -532,7 +582,6 @@ def qualify(plan_dir: Path, root: Path, executable: str, workers: list[int], led
         seconds = time.monotonic() - started
         hashes = {}
         for path, result in zip(paths, results):
-            ledger.record(f"qual-w{k}-{path.stem}", 0, result, len(read_json(path)["matches"]), kind="qualification")
             output = Path(read_json(path)["output_directory"])
             require(result["exit"] == 0 and (output / "completion.json").exists(), f"qualification request failed: {path}")
             completion = read_json(output / "completion.json")
@@ -800,7 +849,7 @@ def main(argv: list[str] | None = None) -> int:
     add("--cap-cpu-seconds", type=float); add("--footprint-limit", type=int, default=12 * 2**30)
     add("--footprint-roots", default=""); add("--max-files", type=int, default=20000)
     add("--max-bytes", type=int, default=int(1.5 * 2**30)); add("--final", action="store_true")
-    add("--archive-dirs", default="")
+    add("--archive-dirs", default=""); add("--interactive-threshold", type=float, default=0.0)
     a = sub.parse_args(args.rest)
     if args.op == "eligible":
         pilots = dict(part.split("=") for part in a.pilot_checkpoints.split(","))
@@ -838,7 +887,8 @@ def main(argv: list[str] | None = None) -> int:
         ledger = Ledger(a.ledger, a.cap_cpu_seconds, receipt["cpu_seconds_per_match"])
         roots = [Path(p) for p in a.footprint_roots.split(";") if p]
         outcome = dispatch(a.plan, a.executable, receipt["selected_workers"], ledger, a.slots_tool, a.stop_file,
-                           roots, a.footprint_limit)
+                           roots, a.footprint_limit, interactive_threshold=a.interactive_threshold,
+                           archive_dir=a.archive_dir, max_files=a.max_files, max_bytes=a.max_bytes)
         print(json.dumps({"outcome": outcome, "ledger_cpu_seconds": ledger.spent()}))
         return 0 if outcome == "complete" else YIELD_EXIT
     elif args.op == "archive":
@@ -851,8 +901,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"acknowledged": pull(a.remote, a.remote_dir, a.archive_dir, ssh, scp)}))
     else:
         result = rows(a.plan, [Path(p) for p in a.archive_dirs.split(";") if p])
-        with a.out.open("x", encoding="utf-8", newline="\n") as stream:
+        plan = read_json(a.plan / "plan.json")
+        require(len(result) == plan["matches"], "rows do not cover every scheduled match")
+        require(not a.out.exists(), f"refusing to overwrite {a.out}")
+        tmp = a.out.with_name(a.out.name + ".partial")
+        with tmp.open("w", encoding="utf-8", newline="\n") as stream:
             stream.write("".join(json.dumps(row, sort_keys=True) + "\n" for row in result))
+        os.replace(tmp, a.out)
         print(json.dumps({"rows": len(result), "complete": sum(row["complete"] for row in result)}))
     return 0
 

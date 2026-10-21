@@ -73,7 +73,7 @@ class Estimates(unittest.TestCase):
         rows = rows_for(["g115", "a48"], [0, 1], 64, lambda p, d, o, b, s, t: int(d == 1 and (b + s) % 2 == 0))
         stage = dva.Stage(rows)
         rule = dva.hoeffding_v(stage, [1], 0, ["g115", "a48"], 2304)
-        self.assertAlmostEqual(rule["padding"], math.sqrt(math.log(2 / 0.05) / 4608))
+        self.assertAlmostEqual(rule["padding"], math.sqrt(math.log(27 / 0.05) / 4608))
         self.assertAlmostEqual(rule["bounds"]["1/g115"], 0.5 + rule["padding"])
         self.assertEqual(rule["planned_n4"] % 36, 0)
         self.assertGreaterEqual(rule["planned_n4"], 29070 * rule["v"])
@@ -115,6 +115,15 @@ class Labels(unittest.TestCase):
         labels = dva.m4_labels(dva.Stage(rows), [1], None, 0, 4000, 1)
         self.assertEqual(labels["1"]["label"], "principal-pilot gain with H harm")
         self.assertEqual(labels["1"]["harm_flags"], ["H"])
+
+    def test_worst_case_applies_the_joint_mask_across_pilots(self):
+        # The candidate always wins, but cases masked under H only must count as -1 for g115 and a48
+        # in the worst case: with half of all cases masked by H, no gain is certifiable.
+        fail = {("H", 0, o, b, s, t) for o in range(9) for b in range(16) for s in (0, 1) for t in (0, 1) if b % 2 == 0}
+        rows = rows_for(["g115", "a48", "H"], [0, 1], 16, lambda p, d, o, b, s, t: int(d == 1), fail)
+        labels = dva.m4_labels(dva.Stage(rows), [1], None, 0, 2000, 3)
+        self.assertLess(labels["1"]["pilots"]["g115"]["worst_case_lower"], 0.01)
+        self.assertEqual(labels["1"]["label"], "no demonstrated gain")
 
     def test_bootstrap_is_deterministic_for_a_seed(self):
         rows = rows_for(["g115", "a48", "H"], [0, 1], 4, lambda p, d, o, b, s, t: (o * d + b + s) % 2)
