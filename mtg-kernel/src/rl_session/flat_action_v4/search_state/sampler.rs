@@ -66,14 +66,29 @@ fn conflicts_in_scope(
     if crate::krenko_v1::requires_successor(state) {
         return diagnose_refusal("references.krenko", true);
     }
-    // Every ordinary entry has both observation records, even without an
-    // observer. Validate those passive records; the reference walk below
-    // still protects their physical objects. Actual roots remain unsupported.
-    if crate::arahbo_v1::validate_state(state).is_err()
-        || crate::garruks_uprising_v1::validate_state(state).is_err()
-        || crate::arahbo_v1::requires_successor(state)
-        || crate::garruks_uprising_v1::requires_successor(state)
-    {
+    // Frozen V4 search retains its historical refusal after either entry
+    // observer journal, including a passive entry with no actual observer.
+    // New owning scopes validate those passive records before the reference
+    // walk below, while still refusing actual unsupported observer roots.
+    let entry_conflict = if scope == SamplingScopeV68::Legacy {
+        crate::arahbo_v1::requires_successor(state)
+            || state
+                .engine
+                .event_history
+                .iter()
+                .any(crate::arahbo_v1::is_history)
+            || state
+                .engine
+                .event_history
+                .iter()
+                .any(crate::garruks_uprising_v1::is_history)
+    } else {
+        crate::arahbo_v1::validate_state(state).is_err()
+            || crate::garruks_uprising_v1::validate_state(state).is_err()
+            || crate::arahbo_v1::requires_successor(state)
+            || crate::garruks_uprising_v1::requires_successor(state)
+    };
+    if entry_conflict {
         return diagnose_refusal("references.entry_observers", true);
     }
     // Retained linked duration and attack ownership need their qualified sampler.
@@ -708,7 +723,7 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn paid_observerless_entries_allow_sampling_but_keep_history_objects_and_actual_observers_bound(
+    fn paid_observerless_entries_allow_scoped_sampling_but_keep_frozen_v4_and_actual_observers_bound(
     ) {
         use crate::engine::time_stop_v1::tests::{cast, finish, ready, restore};
         use crate::event::{propose_and_commit, CommittedEvent, ProposedEvent};
@@ -725,6 +740,12 @@ mod tests {
             )));
             assert!(!super::super::effect_refs::conflicts(&state, &[], None));
             assert!(super::super::effect_refs::conflicts(&state, &[elf], None));
+            let mut legacy = restore(&state);
+            assert_eq!(
+                redeterminize_with_library_plan_classified(&mut legacy, actor, 8177, None),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(legacy, state);
             let mut malformed = restore(&state);
             let snapshot = malformed
                 .engine
@@ -742,14 +763,37 @@ mod tests {
             snapshot.private_snapshot_json = "{}".into();
             let unchanged = malformed.clone();
             assert_eq!(
-                redeterminize_with_library_plan_classified(&mut malformed, actor, 8177, None),
+                redeterminize_with_library_plan_inner(
+                    &mut malformed,
+                    actor,
+                    8177,
+                    None,
+                    true,
+                    SamplingScopeV68::EndTurn
+                ),
                 Err(Error::HiddenReferenceConflict)
             );
             assert_eq!(malformed, unchanged);
             let mut sampled = restore(&state);
             let mut repeat = restore(&state);
-            redeterminize_with_library_plan_classified(&mut sampled, actor, 8177, None).unwrap();
-            redeterminize_with_library_plan_classified(&mut repeat, actor, 8177, None).unwrap();
+            redeterminize_with_library_plan_inner(
+                &mut sampled,
+                actor,
+                8177,
+                None,
+                true,
+                SamplingScopeV68::EndTurn,
+            )
+            .unwrap();
+            redeterminize_with_library_plan_inner(
+                &mut repeat,
+                actor,
+                8177,
+                None,
+                true,
+                SamplingScopeV68::EndTurn,
+            )
+            .unwrap();
             assert_eq!(sampled, repeat);
             assert_eq!(sampled.engine.event_history, history);
 
@@ -767,7 +811,14 @@ mod tests {
                 .retain(|event| !matches!(event, CommittedEvent::GarrukEntryObservationV1 { .. }));
             let before = malformed.clone();
             assert_eq!(
-                redeterminize_with_library_plan_classified(&mut malformed, actor, 8177, None),
+                redeterminize_with_library_plan_inner(
+                    &mut malformed,
+                    actor,
+                    8177,
+                    None,
+                    true,
+                    SamplingScopeV68::EndTurn
+                ),
                 Err(Error::HiddenReferenceConflict)
             );
             assert_eq!(malformed, before);
@@ -776,7 +827,14 @@ mod tests {
             finish(&mut state);
             let before = state.clone();
             assert_eq!(
-                redeterminize_with_library_plan_classified(&mut state, actor, 8177, None),
+                redeterminize_with_library_plan_inner(
+                    &mut state,
+                    actor,
+                    8177,
+                    None,
+                    true,
+                    SamplingScopeV68::EndTurn
+                ),
                 Err(Error::HiddenReferenceConflict)
             );
             assert_eq!(state, before);

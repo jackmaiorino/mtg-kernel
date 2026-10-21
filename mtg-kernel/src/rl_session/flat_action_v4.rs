@@ -630,6 +630,10 @@ fn validate_origin_decision_against_reordered_candidates_v4(
     extension: &crate::policy_observation_v6::PolicyObservationExtensionsV6,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     let raw = crate::rl::core_policy_action_candidates_v5(&current.origin_decision, &session.state)
+        .inspect_err(|_error| {
+            #[cfg(test)]
+            eprintln!("V4 original candidate reconstruction: {_error}");
+        })
         .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     let mut original = current.clone();
     original.flat_action_cache = None;
@@ -637,8 +641,14 @@ fn validate_origin_decision_against_reordered_candidates_v4(
     original.flat_action_cache_v2 = None;
     original.flat_action_cache_error_v2 = None;
     original.candidates = raw;
-    flat_validate_current_binding_header_v1(session, &original)?;
-    flat_validate_origin_decision_v1(&original, &session.state)?;
+    flat_validate_current_binding_header_v1(session, &original).inspect_err(|_error| {
+        #[cfg(test)]
+        eprintln!("V4 reconstructed binding header: {_error:?}");
+    })?;
+    flat_validate_origin_decision_v1(&original, &session.state).inspect_err(|_error| {
+        #[cfg(test)]
+        eprintln!("V4 reconstructed decision relation: {_error:?}");
+    })?;
     super::flat_action_v3::normalize_candidates(
         &mut original.candidates,
         extension,
@@ -646,6 +656,17 @@ fn validate_origin_decision_against_reordered_candidates_v4(
         &original.origin_decision,
     )?;
     if original.candidates != current.candidates {
+        #[cfg(test)]
+        eprintln!(
+            "V4 normalized candidate mismatch: reconstructed={}, current={}, first_difference={:?}",
+            original.candidates.len(),
+            current.candidates.len(),
+            original
+                .candidates
+                .iter()
+                .zip(&current.candidates)
+                .position(|(a, b)| a != b)
+        );
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
     Ok(())
@@ -874,6 +895,10 @@ impl FastActorSessionV1 {
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
         let extension = crate::rl::policy_observation_extensions_v6(&self.state, current.actor)
+            .inspect_err(|_error| {
+                #[cfg(test)]
+                eprintln!("V4 current observation extension: {_error}");
+            })
             .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
         validate_origin_decision_against_reordered_candidates_v4(self, current, &extension)?;
         let actor: PlayerSeatV1 = current.actor.into();
