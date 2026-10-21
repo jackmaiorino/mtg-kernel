@@ -524,36 +524,6 @@ fn genuine_paid_private_candidates_unknown_prefix_and_public_api_tamper_refuse_b
             assert_eq!(bad, before);
         }
         let chosen = legal[0];
-        // Inspect the real answer component before the engine consumes its
-        // guard while resuming. After engine::step that guard may be absent
-        // legitimately, so erasing it there would be a no-op forgery.
-        let mut answered = restore(&s);
-        crate::effect::choose_resumable_target(&mut answered, Target::Object(chosen)).unwrap();
-        if answered
-            .engine
-            .pending_effect
-            .as_ref()
-            .is_some_and(|p| p.choice.is_some())
-        {
-            crate::effect::finish_resumable_target_selection(&mut answered).unwrap();
-        }
-        assert!(answered
-            .engine
-            .pending_effect
-            .as_ref()
-            .unwrap()
-            .answered_choice_guard
-            .is_some());
-        let mut bad = restore(&answered);
-        bad.engine
-            .pending_effect
-            .as_mut()
-            .unwrap()
-            .answered_choice_guard = None;
-        let before = bad.clone();
-        assert!(validate_pending_effect_choice(&bad).is_err());
-        assert!(resume_resumable_resolution(&mut bad).is_err());
-        assert_eq!(bad, before);
         engine::step(&mut s, Action::ChooseEffectTarget(Target::Object(chosen))).unwrap();
         if s.engine
             .pending_effect
@@ -562,6 +532,30 @@ fn genuine_paid_private_candidates_unknown_prefix_and_public_api_tamper_refuse_b
         {
             engine::step(&mut s, Action::FinishEffectSelection).unwrap();
         }
+        let mut bad = restore(&s);
+        // The actual partition frame binds its answer through this fingerprint.
+        // This path does not use the generic answered_choice_guard field.
+        let frame = bad
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .iter_mut()
+            .find(|frame| matches!(frame, EffectFrame::LookTopPickToHandBottomRest { .. }))
+            .expect("actual answered Loot partition frame");
+        let EffectFrame::LookTopPickToHandBottomRest {
+            progress_fingerprint,
+            ..
+        } = frame
+        else {
+            unreachable!()
+        };
+        *progress_fingerprint ^= 1;
+        let before = bad.clone();
+        assert!(validate_pending_effect_choice(&bad).is_err());
+        assert!(resume_resumable_resolution(&mut bad).is_err());
+        assert_eq!(bad, before);
         finish_stack(&mut s);
         assert_eq!(s.objects.get(chosen).zone, Zone::Battlefield);
     }
