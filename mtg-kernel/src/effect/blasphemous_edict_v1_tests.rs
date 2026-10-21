@@ -437,7 +437,7 @@ fn genuine_paid_countered_edict_keeps_both_rosters_and_real_cast_payments_both_s
             actor.opponent(),
             "Counterspell",
             CastMode::Normal,
-            Some(Target::StackItem(row)),
+            Some(Target::Object(source)),
             2,
         );
         let mut replay = restore(&s);
@@ -445,6 +445,7 @@ fn genuine_paid_countered_edict_keeps_both_rosters_and_real_cast_payments_both_s
         finish(&mut replay);
         assert_eq!(s, replay);
         assert_eq!(s.objects.get(source).zone, Zone::Graveyard);
+        assert!(!s.stack.iter().any(|item| item.v4.stack_item_id == row));
         assert!(a
             .iter()
             .chain(&b)
