@@ -27,6 +27,8 @@ mod legendary_printing;
 mod ordinary_removal_printing;
 #[path = "rallier_bloom_printing.rs"]
 pub(super) mod rallier_bloom_printing;
+#[path = "simple_trigger_printing.rs"]
+mod simple_trigger_printing;
 #[path = "soulstone_printing.rs"]
 pub(super) mod soulstone_printing;
 #[path = "targeted_spell_printing.rs"]
@@ -360,6 +362,12 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     baseline_recipe(id, d)
 }
 
+pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| simple_trigger_printing::handles(d.name))
+}
+
 pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     if d.name == "Divine Resilience" {
         return divine_printing::baseline(id, d);
@@ -404,6 +412,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     // familiar name alone never admits a different cost, program or cast form.
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let targeted_spell = targeted_spell_printing::printing(id, d)?;
+    let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
     let hart = burnished_hart_printing(id, d)?;
     let growth_or_druid = growth_or_druid_printing(id, d)?;
@@ -587,7 +596,8 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && (d.other_controlled_nontoken_death_v1.is_none() && d.creature_type_entry_v1.is_none())
         && (crate::trigger::triggers_for(id).is_empty()
             || goldvein.is_some()
-            || gain_land.is_some()))
+            || gain_land.is_some()
+            || simple_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -618,6 +628,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = targeted_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = simple_trigger {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
@@ -1203,7 +1216,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
-    if is_gain_land(id) {
+    if is_gain_land(id) || is_simple_trigger_permanent(id) {
         return baseline_recipe(id, d).map(Some);
     }
     let keywords = match d.name {
