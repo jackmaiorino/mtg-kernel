@@ -181,7 +181,9 @@ class Execution(Fixture):
 
     def test_qualification_parity_and_label_invariance(self):
         decks = self.decks + [dict(self.decks[0], label="B0/alias", role="alias")]
-        self.plan(blocks=1, decks=decks, size=40, name="qual")
+        cases = dvp.stage_cases(7, "qual", "Burn", 1, ["g115", "a48"], "all")  # shared: same matches per pilot
+        dvp.build_plan("qual", decks, self.field, cases, self.sources, self.tmp / "qual",
+                       str(self.tmp / "qual-native").replace("\\", "/"), 40)
         receipt = dvp.qualify(self.tmp / "qual", self.tmp / "qroot", str(self.exe), [1, 2], self.ledger(), 24)
         self.assertTrue(all(t["parity"] for t in receipt["trials"]))
         self.assertGreater(receipt["label_invariance_cases"], 0)

@@ -512,7 +512,7 @@ def qualify(plan_dir: Path, root: Path, executable: str, workers: list[int], led
                 write_json(path, dict(request, matches=part,
                                       output_directory=str(root / f"w{k}" / f"native-{g:03d}-{i:02d}").replace("\\", "/")))
                 paths.append(path)
-                keyed.extend((json.dumps(m["config"], sort_keys=True), m["registered"][0]["label"],
+                keyed.extend((g, json.dumps(m["config"], sort_keys=True), m["registered"][0]["label"],
                               m["registered"][1]["label"]) for m in part)
         started = time.monotonic()
         results = [None] * len(paths)
@@ -538,10 +538,12 @@ def qualify(plan_dir: Path, root: Path, executable: str, workers: list[int], led
             completion = read_json(output / "completion.json")
             files = match_files(output)
             require([sha256_file(p) for p in files] == completion["match_sha256"], "completion hash mismatch")
+            group = int(path.stem.split("-")[1])  # request-<group>-<part>: one pilot per group
             for p in files:
                 match = read_json(p)
-                key = (json.dumps(match["match"]["config"], sort_keys=True), match["match"]["registered"][0]["label"],
-                       match["match"]["registered"][1]["label"])
+                key = (group, json.dumps(match["match"]["config"], sort_keys=True),
+                       match["match"]["registered"][0]["label"], match["match"]["registered"][1]["label"])
+                require(key not in hashes, "duplicate match inside one request group")
                 hashes[key] = sha256_file(p)
         require(sorted(hashes) == sorted(keyed), "qualification output omits scheduled matches")
         golden = golden or hashes
@@ -585,7 +587,8 @@ def label_invariance(native_root: Path, decks: list[dict]) -> int:
         config = dict(match["match"]["config"], deck_ids=None)
         for alias in aliases:
             labels = [incumbent["label"] if label == alias["label"] else label for label in labels]
-        key = json.dumps(config, sort_keys=True), tuple(labels)
+        group = path.parent.name.split("-")[1]  # native-<group>-<part>: one pilot per group
+        key = group, json.dumps(config, sort_keys=True), tuple(labels)
         text = json.dumps(match["games"], sort_keys=True)
         for alias in aliases:
             text = text.replace(json.dumps(alias["label"]), json.dumps(incumbent["label"]))
@@ -768,10 +771,10 @@ def pull(remote: str, remote_dir: str, local_dir: Path, ssh: list[str], scp: lis
                            check=True)
             require(sha256_file(Path(f"{zip_local}.partial")) == manifest["zip"]["sha256"], f"copy of {stem} differs")
             os.replace(f"{zip_local}.partial", zip_local)
-        ack = json.dumps({"zip_sha256": manifest["zip"]["sha256"], "copy": str(zip_local).replace("\\", "/")})
-        quoted = ack.replace('"', '\\"')
-        subprocess.run(ssh + [remote, f'python -c "open(r\'{remote_dir}\\{stem}.ack\',\'w\').write(\'{quoted}\')"'],
-                       check=True)
+        ack_local = local_dir / f"{stem}.ack"
+        ack_local.write_text(json.dumps({"zip_sha256": manifest["zip"]["sha256"],
+                                         "copy": str(zip_local).replace("\\", "/")}), encoding="utf-8")
+        subprocess.run(scp + [str(ack_local), f"{remote}:/{remote_dir}/{stem}.ack".replace("\\", "/")], check=True)
         acked.append(stem)
     return acked
 
