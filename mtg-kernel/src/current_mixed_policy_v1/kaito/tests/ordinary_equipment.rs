@@ -51,6 +51,7 @@ fn check_grants(s: &GameState, host: ObjectId, katana: bool, active: bool, attac
         (Keywords::HASTE, attached && !katana),
         (Keywords::HEXPROOF, attached && !katana),
         (Keywords::FIRST_STRIKE, attached && katana && active),
+        (Keywords::VIGILANCE, true),
     ] {
         assert_eq!(
             crate::engine::has_effective_keyword(s, host, keyword),
@@ -95,9 +96,10 @@ fn paid_equipment(name: &str) {
         }
         put(&mut s, p.opponent(), "Swamp", Zone::Battlefield);
         let equipment = put(&mut s, p, name, Zone::Hand);
-        let first = put(&mut s, p, "Silvercoat Lion", Zone::Battlefield);
-        let second = put(&mut s, p, "Silvercoat Lion", Zone::Battlefield);
-        let enemy = put(&mut s, p.opponent(), "Silvercoat Lion", Zone::Battlefield);
+        // Registered 2/2 supports have vigilance, separate from these grants.
+        let first = put(&mut s, p, "Prideful Parent", Zone::Battlefield);
+        let second = put(&mut s, p, "Prideful Parent", Zone::Battlefield);
+        let enemy = put(&mut s, p.opponent(), "Prideful Parent", Zone::Battlefield);
         let stab = put(&mut s, p.opponent(), "Stab", Zone::Hand);
         let wings = put(&mut s, p.opponent(), "Broken Wings", Zone::Hand);
         let mut native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());

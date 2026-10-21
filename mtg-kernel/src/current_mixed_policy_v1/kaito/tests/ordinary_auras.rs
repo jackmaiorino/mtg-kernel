@@ -35,6 +35,11 @@ fn check(state: &GameState, host: ObjectId, armor: bool, forests: i32, attached:
         attached && !armor
     );
     assert_eq!(state.objects.get(host).counters.plus1_plus1, 0);
+    assert!(crate::engine::has_effective_keyword(
+        state,
+        host,
+        Keywords::VIGILANCE
+    ));
 }
 
 fn paid_aura(name: &str) {
@@ -88,7 +93,7 @@ fn paid_aura(name: &str) {
                 let own_land = put(&mut s, p, "Forest", Zone::Hand);
                 let other_land = put(&mut s, p.opponent(), "Forest", Zone::Hand);
                 let aura = put(&mut s, p, name, Zone::Hand);
-                let host = put(&mut s, host_owner, "Silvercoat Lion", Zone::Battlefield);
+                let host = put(&mut s, host_owner, "Prideful Parent", Zone::Battlefield);
                 let stab = put(&mut s, p.opponent(), "Stab", Zone::Hand);
                 let wings = put(&mut s, p.opponent(), "Broken Wings", Zone::Hand);
                 let mut native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
