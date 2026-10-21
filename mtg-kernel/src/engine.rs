@@ -18325,14 +18325,19 @@ fn advance_step_native_v1(state: &mut GameState) {
     let result = if ordinary_cleanup_v1::at_priority(state) {
         ordinary_cleanup_v1::repeat(state)
     } else if state.step == Step::End
-        && cfg!(all(
+        && (cfg!(all(
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
-        ))
+        )) || state.engine.active_replacements.iter().any(|replacement| {
+            matches!(
+                replacement.kind,
+                event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+            )
+        }))
     {
-        // The exact cleanup journal belongs to the optional FDN successor.
-        // Default/Standard games retain their historical transition and state
-        // identity, including the frozen trainer's physical-state features.
+        // The optional FDN successor and actual Fiery death replacements need
+        // the owned discard-before-expiration boundary. Other default/Standard
+        // games retain their historical transition and physical-state features.
         ordinary_cleanup_v1::begin(state)
     } else {
         advance_step(state);
