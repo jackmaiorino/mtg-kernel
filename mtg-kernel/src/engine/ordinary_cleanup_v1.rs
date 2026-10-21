@@ -38,6 +38,9 @@ enum PhaseV1 {
     GameOver,
     Finished,
     EndedByTimeStop,
+    /// Native completion of End in a catalog without beginning-End triggers.
+    /// This is not a retroactive beginning-of-step occurrence.
+    EndCompleted,
 }
 /// Scalar native transition evidence only. No hand, object or world is retained.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -116,7 +119,15 @@ fn validate_stages(state: &GameState) -> Result<Option<(usize, &StageV1)>, Strin
             CommittedEvent::OrdinaryCleanupStageV1 { stage } => {
                 let end = usize::try_from(stage.end_step)
                     .map_err(|_| "ordinary cleanup End entry exceeds usize")?;
-                if end >= index
+                if stage.phase == PhaseV1::EndCompleted {
+                    if end != index {
+                        return Err(
+                            "ordinary cleanup completed End changed its own occurrence".into()
+                        );
+                    }
+                    end_step = Some((index, stage.active));
+                }
+                if (end >= index && stage.phase != PhaseV1::EndCompleted)
                     || end_step != Some((end, stage.active))
                     || turn.is_some_and(|turn| turn != (stage.turn, stage.active))
                 {
@@ -128,7 +139,10 @@ fn validate_stages(state: &GameState) -> Result<Option<(usize, &StageV1)>, Strin
                     {
                         if !matches!(
                             (previous.phase, stage.phase),
-                            (PhaseV1::Discard, PhaseV1::Expiration)
+                            (
+                                PhaseV1::EndCompleted,
+                                PhaseV1::Discard | PhaseV1::Expiration
+                            ) | (PhaseV1::Discard, PhaseV1::Expiration)
                                 | (
                                     PhaseV1::Expiration,
                                     PhaseV1::Priority | PhaseV1::GameOver | PhaseV1::Finished
@@ -143,12 +157,18 @@ fn validate_stages(state: &GameState) -> Result<Option<(usize, &StageV1)>, Strin
                             return Err("ordinary cleanup stage sequence changed".into());
                         }
                     } else if !terminal(previous.phase)
-                        || !matches!(stage.phase, PhaseV1::Discard | PhaseV1::Expiration)
+                        || !matches!(
+                            stage.phase,
+                            PhaseV1::Discard | PhaseV1::Expiration | PhaseV1::EndCompleted
+                        )
                         || previous.end_step >= stage.end_step
                     {
                         return Err("ordinary cleanup did not close its preceding step".into());
                     }
-                } else if !matches!(stage.phase, PhaseV1::Discard | PhaseV1::Expiration) {
+                } else if !matches!(
+                    stage.phase,
+                    PhaseV1::Discard | PhaseV1::Expiration | PhaseV1::EndCompleted
+                ) {
                     return Err("ordinary cleanup did not begin with its discard obligation".into());
                 }
                 if stage.phase == PhaseV1::EndedByTimeStop
@@ -191,8 +211,10 @@ fn last_end_step(state: &GameState) -> Option<usize> {
         .engine
         .event_history
         .iter()
-        .rposition(|event| matches!(event, CommittedEvent::BeginningEndStep { .. }))?;
-    if !matches!(state.engine.event_history.get(index), Some(CommittedEvent::BeginningEndStep { active_player, .. }) if *active_player == state.active_player)
+        .enumerate()
+        .rfind(|(index, _)| is_end_origin(state, *index, state.active_player))?
+        .0;
+    if !is_end_origin(state, index, state.active_player)
         || state
             .engine
             .event_history
@@ -203,6 +225,19 @@ fn last_end_step(state: &GameState) -> Option<usize> {
         return None;
     }
     Some(index)
+}
+
+fn is_end_origin(state: &GameState, index: usize, active: PlayerId) -> bool {
+    match state.engine.event_history.get(index) {
+        Some(CommittedEvent::BeginningEndStep { active_player, .. }) => *active_player == active,
+        Some(CommittedEvent::OrdinaryCleanupStageV1 { stage }) => {
+            stage.phase == PhaseV1::EndCompleted
+                && stage.active == active
+                && stage.turn == state.turn_key_v1()
+                && usize::try_from(stage.end_step).ok() == Some(index)
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
@@ -238,7 +273,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         || saved.active != state.active_player
         || state.step != Step::Cleanup
         || usize::try_from(saved.end_step).ok() != last_end_step(state)
-        || !matches!(state.engine.event_history.get(saved.end_step as usize), Some(CommittedEvent::BeginningEndStep { active_player, .. }) if *active_player == saved.active)
+        || !is_end_origin(state, saved.end_step as usize, saved.active)
     {
         return Err("ordinary cleanup changed its current turn or native end-step entry".into());
     }
@@ -282,7 +317,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 return Err("ordinary cleanup retained a completed hand binding".into());
             }
         }
-        PhaseV1::Finished | PhaseV1::EndedByTimeStop => {
+        PhaseV1::Finished | PhaseV1::EndedByTimeStop | PhaseV1::EndCompleted => {
             return Err("ordinary cleanup retained a closed stage".into())
         }
         PhaseV1::GameOver => {
@@ -352,12 +387,33 @@ pub(crate) fn begin(state: &mut GameState) -> Result<(), String> {
     {
         return Err("ordinary cleanup lost its actual completed End step".into());
     }
-    let end_step =
-        last_end_step(state).ok_or("ordinary cleanup has no actual beginning End step")?;
-    if !matches!(state.engine.event_history.get(end_step), Some(CommittedEvent::BeginningEndStep { active_player, .. }) if *active_player == state.active_player)
-    {
-        return Err("ordinary cleanup borrowed another player's End step".into());
-    }
+    let end_step = match last_end_step(state) {
+        Some(index) => index,
+        None if !cfg!(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        )) =>
+        {
+            // Default games retain their old history when cleanup is ordinary.
+            // An actual Fiery replacement can be installed during End itself.
+            // Bind its cleanup here, after the genuine empty-stack pass round,
+            // without inventing an earlier BeginningEndStep event.
+            let index = state.engine.event_history.len();
+            let stage = StageV1 {
+                turn: state.turn_key_v1(),
+                active: state.active_player,
+                end_step: u64::try_from(index)
+                    .map_err(|_| "ordinary cleanup completion exceeds u64")?,
+                phase: PhaseV1::EndCompleted,
+            };
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::OrdinaryCleanupStageV1 { stage });
+            index
+        }
+        None => return Err("ordinary cleanup has no actual beginning End step".into()),
+    };
     state.engine.ordinary_cleanup_v1 = StateV1(Some(CleanupV1 {
         turn: state.turn_key_v1(),
         active: state.active_player,

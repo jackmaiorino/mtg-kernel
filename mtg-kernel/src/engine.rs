@@ -18737,19 +18737,17 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 permission.holder != state.active_player
                     || permission.expiry != PlayPermissionExpiry::UntilHoldersNextEndStep
             });
-            // This actual step boundary also binds ordinary cleanup in the
-            // default catalog. Selected family captures remain feature-scoped.
-            let marker = event::CommittedEvent::BeginningEndStep {
-                active_player: state.active_player,
-                creature_died_this_turn: state.creature_died_this_turn_v1(),
-            };
-            state.engine.event_log.push(marker.clone());
-            state.engine.event_history.push(marker);
             #[cfg(any(
                 feature = "limited-fdn-fixtures",
                 feature = "standard-magezero-fixtures"
             ))]
             {
+                let marker = event::CommittedEvent::BeginningEndStep {
+                    active_player: state.active_player,
+                    creature_died_this_turn: state.creature_died_this_turn_v1(),
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
                 let beginning_index = state.engine.event_history.len() - 1;
                 if event::record_copied_token_end_step_v1(state, beginning_index).is_err() {
                     state.engine.halted =

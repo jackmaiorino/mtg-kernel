@@ -678,10 +678,18 @@ mod tests {
 
     #[test]
     fn genuine_cleanup_roster_preserved_but_expiry_erased_cannot_resurrect_shield() {
-        for actor in [PlayerId::P0, PlayerId::P1] {
+        for (actor, install_at_end) in [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .flat_map(|actor| [false, true].map(|at_end| (actor, at_end)))
+        {
             let (mut state, _, _, ctx) = fixture(actor, false, true);
             for _ in 0..8 {
                 put(&mut state, actor, "Forest", Zone::Hand);
+            }
+            if install_at_end {
+                // The fixture's labelled effect primitive can install during
+                // the real End step, after its beginning has already occurred.
+                crate::policy_observation_v6::tests::advance_to_end_for(&mut state, actor);
             }
             execute(&ctx, &mut state);
             let installed = state.engine.active_replacements.last().unwrap().clone();
