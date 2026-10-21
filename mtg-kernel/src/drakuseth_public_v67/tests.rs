@@ -682,11 +682,12 @@ fn genuine_paid_all17_counter_widths_and_neutral_copy_suppression_primitives_res
         assert!(form.keyword_bits & Keywords::FLYING.0 != 0);
         restored(&suppressed);
         s.objects.get_mut(source).v4.face_down_v1 = Some(FaceDownV1 {
-            disguised: false,
+            disguised: true,
             lookers: 0,
             hidden_by: None,
             hidden_by_source: None,
         });
+        assert_eq!(engine::checked_effective_pt(&s, source).unwrap(), (2, 2));
         let f = capture(&s, actor).unwrap();
         let form = &f.battlefield[actor.index()]
             .iter()

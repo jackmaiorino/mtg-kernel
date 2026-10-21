@@ -385,11 +385,17 @@ fn genuine_paid_copy_ignores_continuous_pump_and_native_face_down_values_are_neu
             if face_down {
                 // Labelled native face-down primitive; not a fabricated disguised cast.
                 s.objects.get_mut(original).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-                    disguised: false,
+                    disguised: true,
                     lookers: 0,
                     hidden_by: None,
                     hidden_by_source: None,
                 });
+                assert!(engine::object_has_type(
+                    &s,
+                    original,
+                    crate::card_def::CardType::Creature
+                ));
+                assert_eq!(engine::checked_effective_pt(&s, original).unwrap(), (2, 2));
             } else {
                 cast(&mut s, p, "Giant Growth", &[Target::Object(original)], 1);
                 finish(&mut s);

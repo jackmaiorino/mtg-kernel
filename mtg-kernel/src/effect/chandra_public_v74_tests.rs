@@ -414,11 +414,17 @@ fn paid_face_down_copy_target_never_projects_hidden_original_printing_both_seats
         finish(&mut s);
         // Native face-down primitive; the actual original target contract stays private.
         s.objects.get_mut(creature).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-            disguised: false,
+            disguised: true,
             lookers: 0,
             hidden_by: None,
             hidden_by_source: None,
         });
+        assert!(engine::object_has_type(
+            &s,
+            creature,
+            crate::card_def::CardType::Creature
+        ));
+        assert_eq!(engine::checked_effective_pt(&s, creature).unwrap(), (2, 2));
         activate(&mut s, p, c, 1, &[Target::Object(creature)]);
         let f = capture(&s, p.opponent());
         let target = &f.activations[0].targets[0];
