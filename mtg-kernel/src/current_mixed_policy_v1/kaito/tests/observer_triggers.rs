@@ -29,18 +29,34 @@ fn paid_lagac_actual_landfall_damage_source_departure_and_restore_both_seats() {
 fn paid_tatyova_actual_landfall_ordered_gain_draw_source_departure_and_restore_both_seats() {
     paid_observer("Tatyova, Benthic Druid");
 }
+#[test]
+fn paid_brineborn_flash_offturn_cast_counter_source_departure_and_restore_both_seats() {
+    paid_observer("Brineborn Cutthroat");
+}
+#[test]
+fn paid_elementalist_flash_prowess_source_departure_and_restore_both_seats() {
+    paid_observer("Elementalist Adept");
+}
+#[test]
+fn paid_beast_kin_other_creature_temporary_boost_source_departure_and_restore_both_seats() {
+    paid_observer("Beast-Kin Ranger");
+}
 
 fn paid_observer(name: &str) {
     let forest = crate::card_def::card_id_by_name("Forest").unwrap();
     let life_observer = matches!(name, "Ajani's Pridemate" | "Marauding Blight-Priest");
-    let source_counter = matches!(name, "Ajani's Pridemate" | "Youthful Valkyrie");
+    let source_counter = matches!(
+        name,
+        "Ajani's Pridemate" | "Youthful Valkyrie" | "Brineborn Cutthroat"
+    );
+    let offturn_cast = matches!(name, "Brineborn Cutthroat" | "Elementalist Adept");
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut state = GameState::new_from_libraries_with_starting_player_v1(
             &[forest; 40],
             &[forest; 40],
             crate::rl::card_name,
             110_296,
-            p,
+            if offturn_cast { p.opponent() } else { p },
         );
         state.step = Step::Main1;
         for land in ["Plains", "Island", "Swamp", "Mountain", "Forest"] {
@@ -53,6 +69,7 @@ fn paid_observer(name: &str) {
         }
         let removal = put(&mut state, p.opponent(), "Hero's Downfall", Zone::Hand);
         let source = put(&mut state, p, name, Zone::Hand);
+        let bolt = offturn_cast.then(|| put(&mut state, p, "Lightning Bolt", Zone::Hand));
         // Explicit initial Food tokens are support operands. Both life events
         // below use the native paid mana/tap/sacrifice activation and real stack.
         let own_food = life_observer.then(|| put(&mut state, p, "Food Token", Zone::Battlefield));
@@ -61,7 +78,7 @@ fn paid_observer(name: &str) {
         let non_angel =
             (name == "Youthful Valkyrie").then(|| put(&mut state, p, "Llanowar Elves", Zone::Hand));
         let entering_name = match name {
-            "Dazzling Angel" => Some("Llanowar Elves"),
+            "Dazzling Angel" | "Beast-Kin Ranger" => Some("Llanowar Elves"),
             "Youthful Valkyrie" => Some("Dazzling Angel"),
             "Spitfire Lagac" | "Tatyova, Benthic Druid" => Some("Forest"),
             _ => None,
@@ -86,6 +103,10 @@ fn paid_observer(name: &str) {
         let mut own =
             KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(state))
                 .unwrap();
+        if offturn_cast {
+            assert_eq!(own.fixture_state().priority_player, p.opponent());
+            act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
+        }
         act(
             &mut own,
             &mut native,
@@ -141,7 +162,19 @@ fn paid_observer(name: &str) {
                 0
             );
         }
-        if let Some(food) = own_food {
+        if let Some(bolt) = bolt {
+            assert_eq!(own.fixture_state().priority_player, p.opponent());
+            act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
+            act(
+                &mut own,
+                &mut native,
+                |a| matches!(a,A::CastSpell { source: card, .. } if card.arena_id == bolt.0),
+            );
+            act(&mut own, &mut native, |a| {
+                matches!(a,A::ChooseTarget { target: crate::rl::TargetRefV1::Player { player }, .. }
+                if *player == crate::rl::PlayerSeatV1::from(p.opponent()))
+            });
+        } else if let Some(food) = own_food {
             act(
                 &mut own,
                 &mut native,
@@ -223,6 +256,19 @@ fn paid_observer(name: &str) {
                     state.objects.get(source).counters.plus1_plus1,
                     i32::from(source_counter && !removed)
                 );
+                if !removed {
+                    let def = &crate::card_def::CARD_DEFS[usize::from(id)];
+                    let boost_power =
+                        i32::from(matches!(name, "Elementalist Adept" | "Beast-Kin Ranger"));
+                    let boost_toughness = i32::from(name == "Elementalist Adept");
+                    assert_eq!(
+                        crate::engine::checked_effective_pt(state, source).unwrap(),
+                        (
+                            def.power.unwrap() + i32::from(source_counter) + boost_power,
+                            def.toughness.unwrap() + i32::from(source_counter) + boost_toughness
+                        )
+                    );
+                }
                 let own_life = if life_observer {
                     23
                 } else if matches!(name, "Dazzling Angel" | "Tatyova, Benthic Druid") {
@@ -232,7 +278,8 @@ fn paid_observer(name: &str) {
                 };
                 assert_eq!(state.players[p.index()].life, own_life);
                 let other_life = if life_observer { 23 } else { 20 }
-                    - i32::from(matches!(name, "Marauding Blight-Priest" | "Spitfire Lagac"));
+                    - i32::from(matches!(name, "Marauding Blight-Priest" | "Spitfire Lagac"))
+                    - if offturn_cast { 3 } else { 0 };
                 assert_eq!(state.players[p.opponent().index()].life, other_life);
                 assert_eq!(
                     state.players[p.index()].library.len(),

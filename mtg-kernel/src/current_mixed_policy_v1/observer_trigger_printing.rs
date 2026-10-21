@@ -18,6 +18,9 @@ pub(super) fn handles(name: &str) -> bool {
             | "Youthful Valkyrie"
             | "Spitfire Lagac"
             | "Tatyova, Benthic Druid"
+            | "Brineborn Cutthroat"
+            | "Elementalist Adept"
+            | "Beast-Kin Ranger"
     )
 }
 
@@ -69,6 +72,33 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             3,
             4,
             Keywords::NONE,
+        ),
+        "Brineborn Cutthroat" => (
+            1,
+            &[Pip::Colored(ManaColor::U)][..],
+            &[ManaColor::U][..],
+            &[Subtype::Merfolk, Subtype::Pirate][..],
+            2,
+            1,
+            Keywords::FLASH,
+        ),
+        "Elementalist Adept" => (
+            1,
+            &[Pip::Colored(ManaColor::U)][..],
+            &[ManaColor::U][..],
+            &[Subtype::Human, Subtype::Wizard][..],
+            2,
+            1,
+            Keywords::FLASH,
+        ),
+        "Beast-Kin Ranger" => (
+            2,
+            &[Pip::Colored(ManaColor::G)][..],
+            &[ManaColor::G][..],
+            &[Subtype::Elf, Subtype::Ranger][..],
+            3,
+            3,
+            Keywords::TRAMPLE,
         ),
         "Tatyova, Benthic Druid" => (
             3,
@@ -129,7 +159,30 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "binding":"CapturedSourceObjectAndBattlefieldIncarnation","requires_same_battlefield_incarnation":true,
         "missing_or_reentered_source_gets_no_counter":true,"normal_counter_replacements_and_triggers_apply":true})
     };
+    let boost_meaning = |power, toughness| {
+        json!({"operation":"ModifyOriginalTriggerSourcePowerToughness",
+        "power_delta":power,"toughness_delta":toughness,"layer":"AdditivePowerToughness",
+        "binding":"CapturedSourceObjectAndBattlefieldIncarnation","requires_same_battlefield_incarnation":true,
+        "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
+    };
     let (condition, event, program, ordered) = match d.name {
+        "Brineborn Cutthroat" => (
+            TriggerCondition::CastSpellDuringOpponentsTurn,
+            json!({"event":"ObserverControllerCastsSpell","requires_opponents_active_turn":true,
+                "copies_without_cast_do_not_count":true,"trigger_count_per_cast":1}),
+            EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
+            vec![counter_meaning()],
+        ),
+        "Elementalist Adept" => (
+            TriggerCondition::CastNoncreatureSpell,
+            json!({"event":"ObserverControllerCastsNoncreatureSpell","copies_without_cast_do_not_count":true,
+                "current_spell_characteristics":true,"trigger_count_per_cast":1}),
+            EffectOp::BindTemporaryBoostToTriggerSource {
+                power: 1,
+                toughness: 1,
+            },
+            vec![boost_meaning(1, 1)],
+        ),
         "Ajani's Pridemate" | "Marauding Blight-Priest" => (
             TriggerCondition::ControllerGainsLife,
             json!({"event":"ObserverControllerActuallyGainsLife","requires_positive_actual_gain":true,
@@ -151,7 +204,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 ]
             },
         ),
-        "Dazzling Angel" | "Youthful Valkyrie" => (
+        "Dazzling Angel" | "Youthful Valkyrie" | "Beast-Kin Ranger" => (
             TriggerCondition::OtherControlledCreatureEnters {
                 subtype: if d.name == "Youthful Valkyrie" {
                     Some(Subtype::Angel)
@@ -164,11 +217,18 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 "current_effective_entry_characteristics":true,"tokens_count":true,"trigger_count_per_entering_creature":1}),
             if d.name == "Dazzling Angel" {
                 gain()
+            } else if d.name == "Beast-Kin Ranger" {
+                EffectOp::BindTemporaryBoostToTriggerSource {
+                    power: 1,
+                    toughness: 0,
+                }
             } else {
                 EffectOp::BindPlusOnePlusOneCounterToTriggerSource
             },
             if d.name == "Dazzling Angel" {
                 vec![gain_meaning()]
+            } else if d.name == "Beast-Kin Ranger" {
+                vec![boost_meaning(1, 0)]
             } else {
                 vec![counter_meaning()]
             },
@@ -233,7 +293,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "supertypes":d.supertypes,"colors":d.colors,"power":power,"toughness":toughness,
         "keywords":keywords.0,"mana_value":d.mana_value,"token":false,
         "ordinary_cast":{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
-            "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+            "timing":if keywords.has(Keywords::FLASH) {"InstantWithPriority"} else {"OwnMainPhaseEmptyStackWithPriority"},"ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
             "targets":[],"ordered_resolution":[{"operation":"MoveOriginalSpellToBattlefield","controller":"Caster"}],
             "other_cast_permissions_require_current_candidate_authority":true,
             "countered_or_failed_spell_destination":"OwnersGraveyard","normal_zone_replacements_and_entry_triggers_apply":true},

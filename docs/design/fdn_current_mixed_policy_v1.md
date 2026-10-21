@@ -123,11 +123,11 @@ Additional committed source supplies closed Flight/Pie/Joust printings and
 repairs scoped sampler, restore, target-order and native-characteristic fixtures.
 Corrected Native244 candidate `d0216adf8` contains22 affected cases; the earlier
 Native243 candidate was superseded before launch after source review caught a
-test's token-storage field mistake. Newer source adds six closed life-gain,
-other-creature/Angel-entry and landfall observers, including exact original
+test's token-storage field mistake. Newer source adds nine closed life-gain,
+other-creature/Angel-entry, landfall, off-turn-cast and prowess observers, including exact original
 source/controller binding, per-event counts, ordered outcomes, and mandatory
-numeric printing supplements. Six paid both-seat cases exercise real Food
-activations, creature casts or land plays, source removal in response, and
+numeric printing supplements. Nine paid both-seat cases exercise real Food
+activations, creature casts, off-turn Flash/Bolt casts or land plays, source removal in response, and
 repeated native/model replay. The observer source is included in the producer
 identity. These newer source additions are unrun and do not change the observed
 159-gap count. The
