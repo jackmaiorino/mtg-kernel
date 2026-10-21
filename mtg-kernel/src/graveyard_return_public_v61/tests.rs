@@ -336,6 +336,80 @@ fn paid_alesha_raid_binds_actual_current_then_departure_power_and_public_target_
         let facts = capture(&state, actor).unwrap();
         assert_eq!(facts.alesha_departures.len(), 1);
         assert_eq!(facts.alesha_departures[0].power, 3);
+        let contract = state
+            .stack
+            .iter()
+            .find(|row| row.source == alesha)
+            .unwrap()
+            .v4
+            .ability_source_contract
+            .unwrap();
+        assert_eq!(engine::alesha_raid_source_power(&state, contract), Some(3));
+        let receipt = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| matches!(event,E::AleshaPowerLkiV1{source,..}if *source==alesha))
+            .unwrap();
+        let E::AleshaPowerLkiV1 {
+            departure_history_index,
+            ..
+        } = &state.engine.event_history[receipt]
+        else {
+            unreachable!()
+        };
+        let departure = usize::try_from(*departure_history_index).unwrap();
+        assert_eq!(
+            engine::alesha_power_receipt_index_v1(&state, departure),
+            Some(receipt)
+        );
+        assert_eq!(receipt, departure + 2);
+        assert!(
+            matches!(&state.engine.event_history[departure+1],E::NivMizzetVisionaryDamageSourceDepartureV1{source,..}if source.source==alesha)
+        );
+        // Actual native receipt composition is accepted; edits below are only
+        // negative fixtures and never replace an engine-produced departure.
+        for mode in 0..9 {
+            let mut changed = state.clone();
+            match mode {
+                3 => {
+                    changed.engine.event_history.remove(departure + 1);
+                }
+                4 => {
+                    let unrelated = changed.engine.event_history[departure].clone();
+                    changed.engine.event_history.insert(receipt, unrelated);
+                }
+                5 => {
+                    let duplicate = changed.engine.event_history[receipt].clone();
+                    changed.engine.event_history.push(duplicate);
+                }
+                6 => changed.engine.event_history.swap(departure + 1, receipt),
+                _ => {
+                    let E::NivMizzetVisionaryDamageSourceDepartureV1 {
+                        source,
+                        departure_history_index,
+                    } = &mut changed.engine.event_history[departure + 1]
+                    else {
+                        unreachable!()
+                    };
+                    match mode {
+                        0 => source.zone_change_count += 1,
+                        1 => source.controller = actor.opponent(),
+                        2 => *departure_history_index += 1,
+                        7 => source.card_def = crate::card_def::card_id_by_name("Forest").unwrap(),
+                        _ => source.owner = actor.opponent(),
+                    }
+                }
+            }
+            let before = serde_json::to_vec(&changed).unwrap();
+            assert_eq!(
+                engine::alesha_raid_source_power(&changed, contract),
+                None,
+                "field mode {mode}"
+            );
+            assert!(capture(&changed, actor).is_err(), "field mode {mode}");
+            assert_eq!(serde_json::to_vec(&changed).unwrap(), before);
+        }
         assert!(facts.triggers.iter().any(|r|matches!(&r.program,ProgramV61::AleshaRaid{power,..}if power.amount==3 && power.source==PowerSourceV61::ExactDepartureLki)
             && r.targets.len()==1 && r.targets[0].legal_now));
         let mut bad = facts.clone();

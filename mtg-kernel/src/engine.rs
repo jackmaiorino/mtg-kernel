@@ -3555,7 +3555,7 @@ pub(crate) fn alesha_raid_source_power(
     else {
         return None;
     };
-    let receipt_index = departure_index.checked_add(1)?;
+    let receipt_index = alesha_power_receipt_index_v1(state, departure_index)?;
     let Some(crate::event::CommittedEvent::AleshaPowerLkiV1 {
         source: receipt_source,
         card_def: receipt_card_def,
@@ -3574,6 +3574,72 @@ pub(crate) fn alesha_raid_source_power(
         && *receipt_departure_index == departure_index as u64
         && *receipt_power == power)
         .then_some(power)
+}
+
+/// A physical departure emits the catalog's Niv source receipt before the
+/// Alesha power receipt. Authenticate that closed sequence, never skip an
+/// arbitrary journal row or bind the controller of an earlier Raid trigger.
+pub(crate) fn alesha_power_receipt_index_v1(
+    state: &GameState,
+    departure_index: usize,
+) -> Option<usize> {
+    use crate::event::CommittedEvent as E;
+    let E::ZoneChange {
+        object,
+        from: Zone::Battlefield,
+        to,
+        controller_before,
+    } = state.engine.event_history.get(departure_index)?
+    else {
+        return None;
+    };
+    if *to == Zone::Battlefield {
+        return None;
+    }
+    let mut next = departure_index.checked_add(1)?;
+    let niv = if crate::event::niv_mizzet_catalog_enabled_v1() {
+        let E::NivMizzetVisionaryDamageSourceDepartureV1 {
+            source,
+            departure_history_index,
+        } = state.engine.event_history.get(next)?
+        else {
+            return None;
+        };
+        let live = state.objects.try_get(*object)?;
+        if source.source != *object
+            || source.zone != Zone::Battlefield
+            || source.controller != *controller_before
+            || source.owner != live.owner
+            || usize::try_from(*departure_history_index).ok()? != departure_index
+            || live.zone_change_count <= source.zone_change_count
+        {
+            return None;
+        }
+        next = next.checked_add(1)?;
+        Some(source)
+    } else {
+        None
+    };
+    let E::AleshaPowerLkiV1 {
+        source,
+        card_def,
+        zone_change_count,
+        departure_history_index,
+        ..
+    } = state.engine.event_history.get(next)?
+    else {
+        return None;
+    };
+    if source != object
+        || usize::try_from(*departure_history_index).ok()? != departure_index
+        || card_def::CARD_DEFS.get(usize::from(*card_def))?.name != "Alesha, Who Laughs at Fate"
+        || niv.is_some_and(|niv| {
+            niv.card_def != *card_def || niv.zone_change_count != *zone_change_count
+        })
+    {
+        return None;
+    }
+    Some(next)
 }
 
 pub(crate) fn legal_targets_for_controller(

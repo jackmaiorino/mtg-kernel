@@ -993,7 +993,8 @@ fn capture_for_consumer(
         };
         if object != source
             || *to == Zone::Battlefield
-            || departure_index.checked_add(1) != Some(receipt_index)
+            || crate::engine::alesha_power_receipt_index_v1(state, departure_index)
+                != Some(receipt_index)
             || state
                 .engine
                 .event_history
