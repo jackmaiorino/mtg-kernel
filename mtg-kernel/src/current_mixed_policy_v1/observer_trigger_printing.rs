@@ -24,6 +24,8 @@ pub(super) fn handles(name: &str) -> bool {
             | "Firebrand Archer"
             | "Crackling Cyclops"
             | "Elfsworn Giant"
+            | "Clinquant Skymage"
+            | "Erudite Wizard"
     )
 }
 
@@ -31,6 +33,23 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Clinquant Skymage" | "Erudite Wizard" => (
+            if d.name == "Clinquant Skymage" { 3 } else { 2 },
+            &[Pip::Colored(ManaColor::U)][..],
+            &[ManaColor::U][..],
+            if d.name == "Clinquant Skymage" {
+                &[Subtype::Bird, Subtype::Wizard][..]
+            } else {
+                &[Subtype::Human, Subtype::Wizard][..]
+            },
+            if d.name == "Clinquant Skymage" { 1 } else { 2 },
+            if d.name == "Clinquant Skymage" { 1 } else { 3 },
+            if d.name == "Clinquant Skymage" {
+                Keywords::FLYING
+            } else {
+                Keywords::NONE
+            },
+        ),
         "Elfsworn Giant" => (
             3,
             &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::G)][..],
@@ -196,6 +215,18 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Clinquant Skymage" | "Erudite Wizard" => (
+            if d.name == "Erudite Wizard" {
+                TriggerCondition::DrawNth(2)
+            } else {
+                TriggerCondition::ControllerDraws
+            },
+            json!({"event":"ObserverControllerActuallyDrawsCard","multiple_card_draws_are_individual_events":true,
+                "requires_this_turn_draw_ordinal":if d.name == "Erudite Wizard" { Some(2) } else { None },
+                "uses_native_per_player_turn_draw_count":true,"trigger_count_per_matching_draw":1}),
+            EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
+            vec![counter_meaning()],
+        ),
         "Brineborn Cutthroat" => (
             TriggerCondition::CastSpellDuringOpponentsTurn,
             json!({"event":"ObserverControllerCastsSpell","requires_opponents_active_turn":true,

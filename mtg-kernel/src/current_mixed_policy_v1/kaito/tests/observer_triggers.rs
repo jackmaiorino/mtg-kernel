@@ -50,6 +50,14 @@ fn paid_elfsworn_landfall_token_source_departure_and_restore_both_seats() {
     paid_observer("Elfsworn Giant");
 }
 #[test]
+fn paid_skymage_controller_draw_counter_source_departure_and_restore_both_seats() {
+    paid_observer("Clinquant Skymage");
+}
+#[test]
+fn paid_erudite_exact_second_draw_counter_source_departure_and_restore_both_seats() {
+    paid_observer("Erudite Wizard");
+}
+#[test]
 fn paid_beast_kin_other_creature_temporary_boost_source_departure_and_restore_both_seats() {
     paid_observer("Beast-Kin Ranger");
 }
@@ -59,11 +67,16 @@ fn paid_observer(name: &str) {
     let life_observer = matches!(name, "Ajani's Pridemate" | "Marauding Blight-Priest");
     let source_counter = matches!(
         name,
-        "Ajani's Pridemate" | "Youthful Valkyrie" | "Brineborn Cutthroat"
+        "Ajani's Pridemate"
+            | "Youthful Valkyrie"
+            | "Brineborn Cutthroat"
+            | "Clinquant Skymage"
+            | "Erudite Wizard"
     );
     let offturn_cast = matches!(name, "Brineborn Cutthroat" | "Elementalist Adept");
     let spell_cast_observer =
         offturn_cast || matches!(name, "Firebrand Archer" | "Crackling Cyclops");
+    let draw_observer = matches!(name, "Clinquant Skymage" | "Erudite Wizard");
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut state = GameState::new_from_libraries_with_starting_player_v1(
             &[forest; 40],
@@ -81,9 +94,20 @@ fn paid_observer(name: &str) {
         for _ in 0..5 {
             put(&mut state, p.opponent(), "Swamp", Zone::Battlefield);
         }
+        if draw_observer {
+            put(&mut state, p, "Island", Zone::Battlefield);
+            for _ in 0..2 {
+                put(&mut state, p.opponent(), "Island", Zone::Battlefield);
+            }
+        }
         let removal = put(&mut state, p.opponent(), "Hero's Downfall", Zone::Hand);
         let source = put(&mut state, p, name, Zone::Hand);
         let bolt = spell_cast_observer.then(|| put(&mut state, p, "Lightning Bolt", Zone::Hand));
+        let other_draw =
+            draw_observer.then(|| put(&mut state, p.opponent(), "Think Twice", Zone::Hand));
+        let own_draw = draw_observer.then(|| put(&mut state, p, "Think Twice", Zone::Hand));
+        let first_draw =
+            (name == "Erudite Wizard").then(|| put(&mut state, p, "Think Twice", Zone::Hand));
         // Explicit initial Food tokens are support operands. Both life events
         // below use the native paid mana/tap/sacrifice activation and real stack.
         let own_food = life_observer.then(|| put(&mut state, p, "Food Token", Zone::Battlefield));
@@ -151,6 +175,39 @@ fn paid_observer(name: &str) {
         assert_eq!(own.fixture_state().players[p.index()].library.len(), 40);
         // Its own entry cannot count as another creature, an Angel entering
         // under another observer, a life-gain event or landfall.
+        if let Some(draw) = other_draw {
+            act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
+            act(
+                &mut own,
+                &mut native,
+                |a| matches!(a, A::CastSpell { source: card, .. } if card.arena_id == draw.0),
+            );
+            settle(&mut own, &mut native);
+            assert_eq!(
+                own.fixture_state().players[p.opponent().index()]
+                    .library
+                    .len(),
+                39
+            );
+            assert_eq!(own.fixture_state().players[p.index()].library.len(), 40);
+            assert_eq!(
+                own.fixture_state().objects.get(source).counters.plus1_plus1,
+                0
+            );
+        }
+        if let Some(draw) = first_draw {
+            act(
+                &mut own,
+                &mut native,
+                |a| matches!(a, A::CastSpell { source: card, .. } if card.arena_id == draw.0),
+            );
+            settle(&mut own, &mut native);
+            assert_eq!(own.fixture_state().players[p.index()].library.len(), 39);
+            assert_eq!(
+                own.fixture_state().objects.get(source).counters.plus1_plus1,
+                0
+            );
+        }
         if let Some(food) = other_food {
             act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
             act(
@@ -179,7 +236,13 @@ fn paid_observer(name: &str) {
                 0
             );
         }
-        if let Some(bolt) = bolt {
+        if let Some(draw) = own_draw {
+            act(
+                &mut own,
+                &mut native,
+                |a| matches!(a, A::CastSpell { source: card, .. } if card.arena_id == draw.0),
+            );
+        } else if let Some(bolt) = bolt {
             if offturn_cast {
                 assert_eq!(own.fixture_state().priority_player, p.opponent());
                 act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
@@ -330,7 +393,9 @@ fn paid_observer(name: &str) {
                 assert_eq!(state.players[p.opponent().index()].life, other_life);
                 assert_eq!(
                     state.players[p.index()].library.len(),
-                    if name == "Tatyova, Benthic Druid" {
+                    if name == "Erudite Wizard" {
+                        38
+                    } else if matches!(name, "Tatyova, Benthic Druid" | "Clinquant Skymage") {
                         39
                     } else {
                         40
