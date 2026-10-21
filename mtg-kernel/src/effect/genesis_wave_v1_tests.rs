@@ -489,7 +489,11 @@ fn genuine_paid_wave_aura_uses_preexisting_untargeted_host_and_unattachable_aura
 fn genuine_paid_wave_as_enters_and_season_replacements_finish_one_entry_batch_both_seats() {
     for p in players() {
         let mut s = ready(p, &["Heraldic Banner", "Nine-Lives Familiar"], 20, "Island");
+        for _ in 0..2 {
+            put(&mut s, p, "Swamp", Zone::Battlefield);
+        }
         put(&mut s, p, "Genesis Wave", Zone::Hand);
+        put(&mut s, p, "Nine-Lives Familiar", Zone::Hand);
         let season = paid(&mut s, p, "Doubling Season", None, 5);
         for _ in 0..20 {
             let d = next(&mut s);
@@ -514,7 +518,13 @@ fn genuine_paid_wave_as_enters_and_season_replacements_finish_one_entry_batch_bo
         finish(&mut s, wave);
         finish(&mut replay, wave);
         assert_eq!(s, replay);
-        assert_eq!(s.objects.get(original[1]).counters.revival, 16);
+        // Wave puts this Familiar onto the battlefield without casting it.
+        // Its eight-counter entry condition is false, even under Season.
+        assert_eq!(s.objects.get(original[1]).zone, Zone::Battlefield);
+        assert_eq!(s.objects.get(original[1]).counters.revival, 0);
+        let cast_familiar = paid(&mut s, p, "Nine-Lives Familiar", None, 3);
+        finish(&mut s, cast_familiar);
+        assert_eq!(s.objects.get(cast_familiar).counters.revival, 16);
     }
 }
 #[test]
