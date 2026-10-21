@@ -233,9 +233,15 @@ class Execution(Fixture):
 
     def test_a_transient_cap_refusal_is_retried_after_in_flight_work_settles(self):
         self.plan(size=40)
-        # Cap fits one 40-match request at a time by projection (0.03 each), and measured CPU is small.
+        # Cap fits one 40-match request at a time by projection (0.03 each); measured CPU is small (stubbed
+        # so the test does not depend on the platform's process accounting).
         ledger = self.ledger(cap=2.0, per=0.03)
-        outcome = dvp.dispatch(self.tmp / "plan", str(self.exe), 2, ledger, None, self.tmp / "STOP", [], 0, 0)
+        original = dvp.process_cpu_seconds
+        dvp.process_cpu_seconds = lambda child: 0.01
+        try:
+            outcome = dvp.dispatch(self.tmp / "plan", str(self.exe), 2, ledger, None, self.tmp / "STOP", [], 0, 0)
+        finally:
+            dvp.process_cpu_seconds = original
         self.assertEqual(outcome, "complete")
 
     def test_qualification_parity_and_label_invariance(self):

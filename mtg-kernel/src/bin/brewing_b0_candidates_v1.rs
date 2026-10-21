@@ -10,7 +10,8 @@
 use mtg_kernel::sideboard::checked_in_pauper_registered_deck_by_id_v1;
 use mtg_kernel::sideboard_search_campaign_v1::pool_swaps::{
     build_multi_swap_neighborhood_v1, generate_pool_swap_singles_v1, sorted_mainboard_sha256_v1,
-    PoolInCardV1, PoolSwapCandidateV1, POOL_SWAP_CANDIDATES_SCHEMA_V1, POOL_SWAP_HASH_CONVENTION_V1,
+    PoolInCardV1, PoolSwapCandidateV1, POOL_SWAP_CANDIDATES_SCHEMA_V1,
+    POOL_SWAP_HASH_CONVENTION_V1,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -53,7 +54,8 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args.first().cloned().ok_or("usage: singles|multi ...")?;
     let deck_id = arg(&args, "--deck")?;
-    let registered = checked_in_pauper_registered_deck_by_id_v1(&deck_id).map_err(|e| format!("{e:?}"))?;
+    let registered =
+        checked_in_pauper_registered_deck_by_id_v1(&deck_id).map_err(|e| format!("{e:?}"))?;
     let configuration = registered.registered_configuration();
     let incumbent = Incumbent {
         deck_id: deck_id.clone(),
@@ -63,28 +65,46 @@ fn run() -> Result<(), String> {
     };
     let candidates = match mode.as_str() {
         "singles" => {
-            let raw = std::fs::read_to_string(arg(&args, "--in-cards")?).map_err(|e| e.to_string())?;
+            let raw =
+                std::fs::read_to_string(arg(&args, "--in-cards")?).map_err(|e| e.to_string())?;
             let in_cards: InCards = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
             generate_pool_swap_singles_v1(&registered, &in_cards.in_cards)
         }
         "multi" => {
-            let raw = std::fs::read_to_string(arg(&args, "--singles")?).map_err(|e| e.to_string())?;
+            let raw =
+                std::fs::read_to_string(arg(&args, "--singles")?).map_err(|e| e.to_string())?;
             let singles: Output = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-            if singles.stage != "singles" || singles.incumbent.mainboard_sha256 != incumbent.mainboard_sha256 {
+            if singles.stage != "singles"
+                || singles.incumbent.mainboard_sha256 != incumbent.mainboard_sha256
+            {
                 return Err("--singles is not this deck's singles list".to_owned());
             }
             let parents = arg(&args, "--parents")?
                 .split(',')
                 .filter(|part| !part.is_empty())
                 .map(|part| {
-                    let index: usize = part.parse().map_err(|_| format!("bad parent index {part}"))?;
-                    singles.candidates.get(index).cloned().ok_or(format!("no single {index}"))
+                    let index: usize = part
+                        .parse()
+                        .map_err(|_| format!("bad parent index {part}"))?;
+                    singles
+                        .candidates
+                        .get(index)
+                        .cloned()
+                        .ok_or(format!("no single {index}"))
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            let mut seen: BTreeSet<String> =
-                singles.candidates.iter().map(|c| c.mainboard_sha256.clone()).collect();
+            let mut seen: BTreeSet<String> = singles
+                .candidates
+                .iter()
+                .map(|c| c.mainboard_sha256.clone())
+                .collect();
             seen.insert(incumbent.mainboard_sha256.clone());
-            build_multi_swap_neighborhood_v1(&registered, &parents, singles.candidates.len() as u32, &seen)
+            build_multi_swap_neighborhood_v1(
+                &registered,
+                &parents,
+                singles.candidates.len() as u32,
+                &seen,
+            )
         }
         other => return Err(format!("unknown mode {other}")),
     };

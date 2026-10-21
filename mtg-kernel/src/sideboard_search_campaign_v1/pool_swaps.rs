@@ -64,7 +64,7 @@ pub fn candidate_label_v1(index: u32) -> String {
 
 fn expand_v1(rows: &[CardCountV1]) -> Vec<u16> {
     rows.iter()
-        .flat_map(|row| std::iter::repeat(row.card_id).take(usize::from(row.count)))
+        .flat_map(|row| std::iter::repeat_n(row.card_id, usize::from(row.count)))
         .collect()
 }
 
@@ -80,7 +80,11 @@ pub fn apply_pool_swap_v1(
     if outs.is_empty() || outs.len() != ins.len() || outs.len() > 4 {
         return Err("a swap moves 1 to 4 copies out and the same number in".to_owned());
     }
-    if swap.cards_out.iter().any(|out| swap.cards_in.iter().any(|row| row.card_id == out.card_id)) {
+    if swap
+        .cards_out
+        .iter()
+        .any(|out| swap.cards_in.iter().any(|row| row.card_id == out.card_id))
+    {
         return Err("a card cannot be swapped both out and in".to_owned());
     }
     let configuration = registered.registered_configuration();
@@ -152,8 +156,14 @@ pub fn generate_pool_swap_singles_v1(
                 continue;
             }
             let swap = PoolSwapV1 {
-                cards_out: vec![CardCountV1 { card_id: out, count: 1 }],
-                cards_in: vec![CardCountV1 { card_id: card.card_id, count: 1 }],
+                cards_out: vec![CardCountV1 {
+                    card_id: out,
+                    count: 1,
+                }],
+                cards_in: vec![CardCountV1 {
+                    card_id: card.card_id,
+                    count: 1,
+                }],
             };
             let index = candidates.len() as u32;
             if let Some(candidate) = candidate_v1(registered, swap, index, card.primary) {
@@ -174,7 +184,10 @@ fn single_parts_v1(parent: &PoolSwapCandidateV1) -> (u16, u16) {
             && parent.swap.cards_in[0].count == 1,
         "M2 parents must be M1 singles"
     );
-    (parent.swap.cards_out[0].card_id, parent.swap.cards_in[0].card_id)
+    (
+        parent.swap.cards_out[0].card_id,
+        parent.swap.cards_in[0].card_id,
+    )
 }
 
 fn union_swap_v1(parents: &[&PoolSwapCandidateV1]) -> PoolSwapV1 {
@@ -190,7 +203,10 @@ fn union_swap_v1(parents: &[&PoolSwapCandidateV1]) -> PoolSwapV1 {
             .map(|(card_id, count)| CardCountV1 { card_id, count })
             .collect()
     };
-    PoolSwapV1 { cards_out: rows(outs), cards_in: rows(ins) }
+    PoolSwapV1 {
+        cards_out: rows(outs),
+        cards_in: rows(ins),
+    }
 }
 
 /// M2: from up to 8 ranked primary M1 singles, in this order: k-copy versions
@@ -207,14 +223,23 @@ pub fn build_multi_swap_neighborhood_v1(
     seen_hashes: &BTreeSet<String>,
 ) -> Vec<PoolSwapCandidateV1> {
     let parents: Vec<&PoolSwapCandidateV1> = ranked_parents.iter().take(8).collect();
-    assert!(parents.iter().all(|parent| parent.primary), "M2 parents must be primary");
+    assert!(
+        parents.iter().all(|parent| parent.primary),
+        "M2 parents must be primary"
+    );
     let mut swaps: Vec<PoolSwapV1> = Vec::new();
     for parent in &parents {
         let (out, card_in) = single_parts_v1(parent);
         for k in 2..=4u8 {
             swaps.push(PoolSwapV1 {
-                cards_out: vec![CardCountV1 { card_id: out, count: k }],
-                cards_in: vec![CardCountV1 { card_id: card_in, count: k }],
+                cards_out: vec![CardCountV1 {
+                    card_id: out,
+                    count: k,
+                }],
+                cards_in: vec![CardCountV1 {
+                    card_id: card_in,
+                    count: k,
+                }],
             });
         }
     }
@@ -269,8 +294,14 @@ mod tests {
 
     fn one(out: &str, card_in: &str) -> PoolSwapV1 {
         PoolSwapV1 {
-            cards_out: vec![CardCountV1 { card_id: id(out), count: 1 }],
-            cards_in: vec![CardCountV1 { card_id: id(card_in), count: 1 }],
+            cards_out: vec![CardCountV1 {
+                card_id: id(out),
+                count: 1,
+            }],
+            cards_in: vec![CardCountV1 {
+                card_id: id(card_in),
+                count: 1,
+            }],
         }
     }
 
@@ -297,7 +328,10 @@ mod tests {
         let configuration = deck.registered_configuration();
         assert_eq!(count(configuration.mainboard(), id("Chain Lightning")), 1);
         assert_eq!(count(configuration.mainboard(), id("Mountain")), 17);
-        assert_eq!(configuration.sideboard(), burn().registered_configuration().sideboard());
+        assert_eq!(
+            configuration.sideboard(),
+            burn().registered_configuration().sideboard()
+        );
     }
 
     #[test]
@@ -307,23 +341,58 @@ mod tests {
         // Four new Searing Blaze copies would make eight across the 75 if the
         // sideboard copies did not move; the move rule keeps it legal.
         let swap = PoolSwapV1 {
-            cards_out: vec![CardCountV1 { card_id: id("Mountain"), count: 4 }],
-            cards_in: vec![CardCountV1 { card_id: id("Searing Blaze"), count: 4 }],
+            cards_out: vec![CardCountV1 {
+                card_id: id("Mountain"),
+                count: 4,
+            }],
+            cards_in: vec![CardCountV1 {
+                card_id: id("Searing Blaze"),
+                count: 4,
+            }],
         };
         let deck = apply_pool_swap_v1(&burn(), &swap, "t").unwrap();
-        assert_eq!(count(deck.registered_configuration().mainboard(), id("Searing Blaze")), 4);
-        assert_eq!(count(deck.registered_configuration().sideboard(), id("Searing Blaze")), 0);
-        assert_eq!(count(deck.registered_configuration().sideboard(), id("Mountain")), 4);
-        assert!(apply_pool_swap_v1(&burn(), &one("Lightning Bolt", "Lightning Bolt"), "t").is_err());
+        assert_eq!(
+            count(
+                deck.registered_configuration().mainboard(),
+                id("Searing Blaze")
+            ),
+            4
+        );
+        assert_eq!(
+            count(
+                deck.registered_configuration().sideboard(),
+                id("Searing Blaze")
+            ),
+            0
+        );
+        assert_eq!(
+            count(deck.registered_configuration().sideboard(), id("Mountain")),
+            4
+        );
+        assert!(
+            apply_pool_swap_v1(&burn(), &one("Lightning Bolt", "Lightning Bolt"), "t").is_err()
+        );
     }
 
     #[test]
     fn singles_are_legal_ordered_unique_and_carry_their_exposure_label() {
         let in_cards = [
-            PoolInCardV1 { card_id: id("Chain Lightning"), primary: true },
-            PoolInCardV1 { card_id: id("Pyroblast"), primary: false },
-            PoolInCardV1 { card_id: id("Lightning Bolt"), primary: true },
-            PoolInCardV1 { card_id: id("Faithless Looting"), primary: true },
+            PoolInCardV1 {
+                card_id: id("Chain Lightning"),
+                primary: true,
+            },
+            PoolInCardV1 {
+                card_id: id("Pyroblast"),
+                primary: false,
+            },
+            PoolInCardV1 {
+                card_id: id("Lightning Bolt"),
+                primary: true,
+            },
+            PoolInCardV1 {
+                card_id: id("Faithless Looting"),
+                primary: true,
+            },
         ];
         let singles = generate_pool_swap_singles_v1(&burn(), &in_cards);
         let hashes: BTreeSet<_> = singles.iter().map(|c| c.mainboard_sha256.clone()).collect();
@@ -335,7 +404,11 @@ mod tests {
             let key = single_parts_v1(candidate);
             assert!(index == 0 || key > last, "ascending (X id, Y id)");
             last = key;
-            assert_ne!(key.1, id("Lightning Bolt"), "a fifth Bolt is never generated");
+            assert_ne!(
+                key.1,
+                id("Lightning Bolt"),
+                "a fifth Bolt is never generated"
+            );
             assert_eq!(candidate.primary, key.1 != id("Pyroblast"));
             RegisteredDeckV1::new_executable_v1(
                 candidate.label.clone(),
@@ -353,23 +426,45 @@ mod tests {
     /// fixture and expects the same bounds) at B0's alpha levels.
     #[test]
     fn paired_bootstrap_matches_the_python_mirror_at_b0_alpha_levels() {
-        use crate::paired_bo1_harness_v1::{paired_bootstrap_ci_with_alpha_v1, BootstrapSidednessV1};
-        let deltas: [i8; 20] = [1, 0, -1, 1, 1, 0, 0, -1, 1, 0, 1, 0, 0, 1, -1, 0, 1, 1, 0, 0];
+        use crate::paired_bo1_harness_v1::{
+            paired_bootstrap_ci_with_alpha_v1, BootstrapSidednessV1,
+        };
+        let deltas: [i8; 20] = [
+            1, 0, -1, 1, 1, 0, 0, -1, 1, 0, 1, 0, 0, 1, -1, 0, 1, 1, 0, 0,
+        ];
         let lower = |alpha: f64| {
-            paired_bootstrap_ci_with_alpha_v1(&deltas, 1000, 0x5EED, BootstrapSidednessV1::OneSidedLower, alpha)
+            paired_bootstrap_ci_with_alpha_v1(
+                &deltas,
+                1000,
+                0x5EED,
+                BootstrapSidednessV1::OneSidedLower,
+                alpha,
+            )
         };
         assert_eq!(lower(0.05 / 3.0).lower, -0.1);
         assert_eq!(lower(0.05).lower, 0.0);
         assert_eq!(lower(0.05).mean, 0.25);
-        let two = paired_bootstrap_ci_with_alpha_v1(&deltas, 1000, 0x5EED, BootstrapSidednessV1::TwoSided, 0.05);
+        let two = paired_bootstrap_ci_with_alpha_v1(
+            &deltas,
+            1000,
+            0x5EED,
+            BootstrapSidednessV1::TwoSided,
+            0.05,
+        );
         assert_eq!((two.lower, two.upper), (-0.05, 0.55));
     }
 
     #[test]
     fn multi_swaps_follow_the_traversal_skip_conflicts_and_drop_duplicates() {
         let in_cards = [
-            PoolInCardV1 { card_id: id("Chain Lightning"), primary: true },
-            PoolInCardV1 { card_id: id("Faithless Looting"), primary: true },
+            PoolInCardV1 {
+                card_id: id("Chain Lightning"),
+                primary: true,
+            },
+            PoolInCardV1 {
+                card_id: id("Faithless Looting"),
+                primary: true,
+            },
         ];
         let singles = generate_pool_swap_singles_v1(&burn(), &in_cards);
         let pick = |out: &str, card_in: &str| {
@@ -392,7 +487,13 @@ mod tests {
             assert!(!seen.contains(&candidate.mainboard_sha256));
         }
         // The first entry is "-2 Mountain, +2 Chain Lightning".
-        assert_eq!(multi[0].swap.cards_out, vec![CardCountV1 { card_id: id("Mountain"), count: 2 }]);
+        assert_eq!(
+            multi[0].swap.cards_out,
+            vec![CardCountV1 {
+                card_id: id("Mountain"),
+                count: 2
+            }]
+        );
         // Looting goes 2 -> 4 at most: "-3/-4 X, +3/+4 Looting" are illegal and skipped.
         assert!(!multi.iter().any(|c| c
             .swap
@@ -401,7 +502,10 @@ mod tests {
             .any(|row| row.card_id == id("Faithless Looting") && row.count >= 3)));
         // Parents 2 and 3 together add two Lootings (legal, 2 -> 4).
         assert!(multi.iter().any(|c| c.swap.cards_in
-            == vec![CardCountV1 { card_id: id("Faithless Looting"), count: 2 }]
+            == vec![CardCountV1 {
+                card_id: id("Faithless Looting"),
+                count: 2
+            }]
             && c.swap.cards_out.len() == 2));
         let hashes: BTreeSet<_> = multi.iter().map(|c| c.mainboard_sha256.clone()).collect();
         assert_eq!(hashes.len(), multi.len());
