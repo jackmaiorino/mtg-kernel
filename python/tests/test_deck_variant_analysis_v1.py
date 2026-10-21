@@ -53,15 +53,16 @@ class CrossCheck(unittest.TestCase):
 
 class Estimates(unittest.TestCase):
     def test_field_mean_weights_opponents_equally(self):
-        delta = np.array([1.0] * 4 + [0.0] * 36)
-        opponents = np.array([0] * 4 + [o for o in range(1, 9) for _ in range(4)] + [0] * 4)[:40]
-        self.assertAlmostEqual(dva.field_mean(delta, opponents), 1 / 9)
+        delta = np.array([1.0] * 4 + [0.0] * 32 + [1.0] * 8)
+        opponents = np.array([0] * 4 + [o for o in range(1, 9) for _ in range(4)] + [8] * 8)
+        # Opponent 0 has mean 1; opponent 8 has 12 cases with mean 2/3; the rest 0.
+        self.assertAlmostEqual(dva.field_mean(delta, opponents), (1 + 2 / 3) / 9)
 
     def test_common_mask_and_worst_case_imputation(self):
         fail = {("g115", 1, 0, 0, 0, 0)}
         rows = rows_for(["g115"], [0, 1], 2, lambda p, d, o, b, s, t: int(d == 1), fail)
         stage = dva.Stage(rows)
-        self.assertAlmostEqual(stage.masked_share("g115"), 1 / 144)
+        self.assertAlmostEqual(stage.masked_share("g115"), 1 / 72)
         self.assertTrue(np.isnan(stage.deltas("g115", 1, 0)[0]))
         self.assertEqual(stage.deltas("g115", 1, 0, worst_case=True)[0], -1.0)
 
