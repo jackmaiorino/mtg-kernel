@@ -516,8 +516,21 @@ fn genuine_native_spell_copy_conversion_season_legend_and_token_cease_both_seats
             assert!(s.engine.event_history.iter().any(|entry|matches!(entry,event::CommittedEvent::ProgenitusShuffledV1{source,..}if source.source==copy)));
             crate::progenitus_v1::validate(&s).unwrap();
             let mut raw = ready(p, "Forest");
+            // Explicit trusted token-entry primitive. Progenitus is a physical
+            // card definition, so it is outside the Partial token-blueprint
+            // refusal. This does not claim an available paid token producer.
             event::propose_and_commit(&mut raw, event::ProposedEvent::create_token(id(NAME), p));
-            assert!(raw.engine.halted.is_some());
+            assert!(raw.engine.halted.is_none());
+            let token = *raw.players[p.index()].battlefield.last().unwrap();
+            assert!(raw.objects.get(token).v4.is_token);
+            assert_eq!(checked_effective_pt(&raw, token).unwrap(), (10, 10));
+            assert!(has_effective_keyword(
+                &raw,
+                token,
+                Keywords::PROTECTION_FROM_EVERYTHING
+            ));
+            crate::progenitus_v1::validate(&raw).unwrap();
+            assert_eq!(raw, restore(&raw));
         }
     }
 }
