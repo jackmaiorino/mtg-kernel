@@ -1620,114 +1620,100 @@ fn conflicts_in_scope(
             EventKindV1::PlusCounterInputV48,
         ])
         .iter()
-        .any(|event| {
-            if matches!(
-                event,
-                crate::event::CommittedEvent::TimeStopJournalV1 { .. }
-            ) {
-                return !matches!(
-                    scope,
-                    ReferenceScopeV68::EndTurn
-                        | ReferenceScopeV68::GenesisWave
-                        | ReferenceScopeV68::Muldrotha
-                        | ReferenceScopeV68::Tinybones
-                        | ReferenceScopeV68::Liliana
-                        | ReferenceScopeV68::Chandra
-                        | ReferenceScopeV68::Kaito
-                );
-            }
-            if matches!(
-                event,
-                crate::event::CommittedEvent::GenesisWaveProgressV1 { .. }
-                    | crate::event::CommittedEvent::GenesisWaveFinishedV1 { .. }
-            ) {
-                return !matches!(
-                    scope,
-                    ReferenceScopeV68::GenesisWave
-                        | ReferenceScopeV68::Muldrotha
-                        | ReferenceScopeV68::Tinybones
-                        | ReferenceScopeV68::Liliana
-                        | ReferenceScopeV68::Chandra
-                        | ReferenceScopeV68::Kaito
-                );
-            }
-            matches!(
-                event,
-                crate::event::CommittedEvent::GenesisWaveProgressV1 { .. }
-                    | crate::event::CommittedEvent::GenesisWaveFinishedV1 { .. }
-                    | crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
-                    | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
-                    | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
-                    | crate::event::CommittedEvent::SphinxsTutelageMillStartedV1 { .. }
-                    | crate::event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }
-                    | crate::event::CommittedEvent::KinshipEntryV1 { .. }
-                    | crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
-                    | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
-                    | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
-                    | crate::event::CommittedEvent::BannerEntryColorCommittedV1 { .. }
-                    | crate::event::CommittedEvent::BannerEntryOperationCompletedV1 { .. }
-                    | crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
-                    | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
-                    | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
-                    | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandCostOperationV2 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandCleanupV2 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandExpiredV2 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandAttackCaptureV2 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandCollectedV2 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandPublishedV2 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandCounterRemovedV2 { .. }
-                    | crate::event::CommittedEvent::VampireGourmandCounterClosedV2 { .. }
-                    | crate::event::CommittedEvent::RaidEntryCaptureV1 { .. }
-                    | crate::event::CommittedEvent::RaidEntryPublishedV1 { .. }
-                    | crate::event::CommittedEvent::RaidEntryDroppedV1 { .. }
-                    | crate::event::CommittedEvent::RaidEntryCounteredV1 { .. }
-                    | crate::event::CommittedEvent::RaidEntryStartedV1 { .. }
-                    | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
-                    | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
-                    | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
-                    | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
-                    | crate::event::CommittedEvent::GorehornOperationV1 { .. }
-                    | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
-                    | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
-                    | crate::event::CommittedEvent::EquipmentDamagePublishedV4 { .. }
-                    | crate::event::CommittedEvent::EquipmentDamageDepartureV4 { .. }
-                    | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
-                    | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
-                    | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
-                    | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
-                    | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
-                    | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
-                    | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
-                    | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
-                    | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
-                    | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
-                    | crate::event::CommittedEvent::FaebloomJournalV43 { .. }
-                    | crate::event::CommittedEvent::FakeJournalV50 { .. }
-                    | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
-                    | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
-                    | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
-                    | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
-                    | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
-                    | crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
-                    | crate::event::CommittedEvent::MandatoryCastPaymentInputV1 { .. }
-                    | crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
-                    | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
-                    | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
-                    | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
-                    | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
-                    | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
-                    | crate::event::CommittedEvent::PlusCounterInputV48 { .. }
-            )
+        .any(|event| match event {
+            crate::event::CommittedEvent::TimeStopJournalV1 { .. } => !matches!(
+                scope,
+                ReferenceScopeV68::EndTurn
+                    | ReferenceScopeV68::GenesisWave
+                    | ReferenceScopeV68::Muldrotha
+                    | ReferenceScopeV68::Tinybones
+                    | ReferenceScopeV68::Liliana
+                    | ReferenceScopeV68::Chandra
+                    | ReferenceScopeV68::Kaito
+            ),
+            crate::event::CommittedEvent::GenesisWaveProgressV1 { .. }
+            | crate::event::CommittedEvent::GenesisWaveFinishedV1 { .. } => !matches!(
+                scope,
+                ReferenceScopeV68::GenesisWave
+                    | ReferenceScopeV68::Muldrotha
+                    | ReferenceScopeV68::Tinybones
+                    | ReferenceScopeV68::Liliana
+                    | ReferenceScopeV68::Chandra
+                    | ReferenceScopeV68::Kaito
+            ),
+            crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+            | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
+            | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
+            | crate::event::CommittedEvent::SphinxsTutelageMillStartedV1 { .. }
+            | crate::event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }
+            | crate::event::CommittedEvent::KinshipEntryV1 { .. }
+            | crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
+            | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
+            | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
+            | crate::event::CommittedEvent::BannerEntryColorCommittedV1 { .. }
+            | crate::event::CommittedEvent::BannerEntryOperationCompletedV1 { .. }
+            | crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
+            | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
+            | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
+            | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+            | crate::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
+            | crate::event::CommittedEvent::VampireGourmandCostOperationV2 { .. }
+            | crate::event::CommittedEvent::VampireGourmandCleanupV2 { .. }
+            | crate::event::CommittedEvent::VampireGourmandExpiredV2 { .. }
+            | crate::event::CommittedEvent::VampireGourmandAttackCaptureV2 { .. }
+            | crate::event::CommittedEvent::VampireGourmandCollectedV2 { .. }
+            | crate::event::CommittedEvent::VampireGourmandPublishedV2 { .. }
+            | crate::event::CommittedEvent::VampireGourmandCounterRemovedV2 { .. }
+            | crate::event::CommittedEvent::VampireGourmandCounterClosedV2 { .. }
+            | crate::event::CommittedEvent::RaidEntryCaptureV1 { .. }
+            | crate::event::CommittedEvent::RaidEntryPublishedV1 { .. }
+            | crate::event::CommittedEvent::RaidEntryDroppedV1 { .. }
+            | crate::event::CommittedEvent::RaidEntryCounteredV1 { .. }
+            | crate::event::CommittedEvent::RaidEntryStartedV1 { .. }
+            | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
+            | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
+            | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
+            | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
+            | crate::event::CommittedEvent::GorehornOperationV1 { .. }
+            | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+            | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
+            | crate::event::CommittedEvent::EquipmentDamagePublishedV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamageDepartureV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+            | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
+            | crate::event::CommittedEvent::FaebloomJournalV43 { .. }
+            | crate::event::CommittedEvent::FakeJournalV50 { .. }
+            | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
+            | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
+            | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
+            | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
+            | crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
+            | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
+            | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
+            | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
+            | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
+            | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
+            | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
+            | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
+            | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
+            | crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
+            | crate::event::CommittedEvent::MandatoryCastPaymentInputV1 { .. }
+            | crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
+            | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+            | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
+            | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
+            | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
+            | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
+            | crate::event::CommittedEvent::PlusCounterInputV48 { .. } => true,
+            _ => false,
         })
     {
         return true;

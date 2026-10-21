@@ -926,7 +926,7 @@ fn public_facts_for_scope_v69(
         .iter()
         .enumerate()
     {
-        let Some(saved) = journal(event) else {
+        let CommittedEvent::TimeStopJournalV1 { journal: saved } = event else {
             continue;
         };
         let OperationV1::Dispose { item } = &saved.operation else {

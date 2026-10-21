@@ -94,14 +94,17 @@ fn validate_stages(state: &GameState) -> Result<Option<(usize, &StageV1)>, Strin
     for (index, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::OrdinaryCleanupStageV1])
+        .scan_for_v1(&[
+            EventKindV1::BeginningEndStep,
+            EventKindV1::LifeLossTurnBeganV1,
+            EventKindV1::OrdinaryCleanupStageV1,
+        ])
         .iter()
         .enumerate()
     {
-        let stage = match event {
+        match event {
             CommittedEvent::BeginningEndStep { active_player, .. } => {
                 end_step = Some((index, *active_player));
-                continue;
             }
             CommittedEvent::LifeLossTurnBeganV1 {
                 turn: occurrence,
@@ -109,57 +112,60 @@ fn validate_stages(state: &GameState) -> Result<Option<(usize, &StageV1)>, Strin
             } => {
                 turn = Some((*occurrence, *active_player));
                 end_step = None;
-                continue;
             }
-            CommittedEvent::OrdinaryCleanupStageV1 { stage } => stage,
-            _ => continue,
-        };
-        let end = usize::try_from(stage.end_step)
-            .map_err(|_| "ordinary cleanup End entry exceeds usize")?;
-        if end >= index
-            || end_step != Some((end, stage.active))
-            || turn.is_some_and(|turn| turn != (stage.turn, stage.active))
-        {
-            return Err("ordinary cleanup stage borrowed a foreign native End step".into());
-        }
-        if let Some((_, previous)) = last {
-            if (previous.turn, previous.active, previous.end_step)
-                == (stage.turn, stage.active, stage.end_step)
-            {
-                if !matches!(
-                    (previous.phase, stage.phase),
-                    (PhaseV1::Discard, PhaseV1::Expiration)
-                        | (
-                            PhaseV1::Expiration,
-                            PhaseV1::Priority | PhaseV1::GameOver | PhaseV1::Finished
-                        )
-                        | (
-                            PhaseV1::Priority,
-                            PhaseV1::Discard | PhaseV1::Expiration | PhaseV1::EndedByTimeStop
-                        )
-                ) {
-                    return Err("ordinary cleanup stage sequence changed".into());
+            CommittedEvent::OrdinaryCleanupStageV1 { stage } => {
+                let end = usize::try_from(stage.end_step)
+                    .map_err(|_| "ordinary cleanup End entry exceeds usize")?;
+                if end >= index
+                    || end_step != Some((end, stage.active))
+                    || turn.is_some_and(|turn| turn != (stage.turn, stage.active))
+                {
+                    return Err("ordinary cleanup stage borrowed a foreign native End step".into());
                 }
-            } else if !terminal(previous.phase)
-                || !matches!(stage.phase, PhaseV1::Discard | PhaseV1::Expiration)
-                || previous.end_step >= stage.end_step
-            {
-                return Err("ordinary cleanup did not close its preceding step".into());
+                if let Some((_, previous)) = last {
+                    if (previous.turn, previous.active, previous.end_step)
+                        == (stage.turn, stage.active, stage.end_step)
+                    {
+                        if !matches!(
+                            (previous.phase, stage.phase),
+                            (PhaseV1::Discard, PhaseV1::Expiration)
+                                | (
+                                    PhaseV1::Expiration,
+                                    PhaseV1::Priority | PhaseV1::GameOver | PhaseV1::Finished
+                                )
+                                | (
+                                    PhaseV1::Priority,
+                                    PhaseV1::Discard
+                                        | PhaseV1::Expiration
+                                        | PhaseV1::EndedByTimeStop
+                                )
+                        ) {
+                            return Err("ordinary cleanup stage sequence changed".into());
+                        }
+                    } else if !terminal(previous.phase)
+                        || !matches!(stage.phase, PhaseV1::Discard | PhaseV1::Expiration)
+                        || previous.end_step >= stage.end_step
+                    {
+                        return Err("ordinary cleanup did not close its preceding step".into());
+                    }
+                } else if !matches!(stage.phase, PhaseV1::Discard | PhaseV1::Expiration) {
+                    return Err("ordinary cleanup did not begin with its discard obligation".into());
+                }
+                if stage.phase == PhaseV1::EndedByTimeStop
+                    && !matches!(
+                        state.engine.event_history.get(index + 1),
+                        Some(CommittedEvent::TimeStopJournalV1 { .. })
+                    )
+                {
+                    return Err(
+                        "ordinary cleanup end-turn replacement lost its native disposal outcome"
+                            .into(),
+                    );
+                }
+                last = Some((index, stage));
             }
-        } else if !matches!(stage.phase, PhaseV1::Discard | PhaseV1::Expiration) {
-            return Err("ordinary cleanup did not begin with its discard obligation".into());
+            _ => {}
         }
-        if stage.phase == PhaseV1::EndedByTimeStop
-            && !matches!(
-                state.engine.event_history.get(index + 1),
-                Some(CommittedEvent::TimeStopJournalV1 { .. })
-            )
-        {
-            return Err(
-                "ordinary cleanup end-turn replacement lost its native disposal outcome".into(),
-            );
-        }
-        last = Some((index, stage));
     }
     Ok(last)
 }
