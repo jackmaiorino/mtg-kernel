@@ -196,9 +196,8 @@ mod tests {
     fn genuine_pending_occurrence_erasure_invalidates_existing_v27_binding_readonly() {
         use crate::engine::{self, Action, Decision};
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state =
+                crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
             state.step = crate::state::Step::DeclareAttackers;
             let source = put(&mut state, actor, "Ashroot Animist", Zone::Battlefield);
             put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);

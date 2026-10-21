@@ -814,7 +814,16 @@ impl NativePolicyValueTrainStateV1 {
             }
         };
         validate_finite_nested("gae_gradient", &gradients)?;
-        let line_b_result = line_b_terms
+        // STAGE-B2.md telemetry: the ordinary gradient alone, as Adam would see it.
+        let ordinary_only = line_b_terms
+            .as_ref()
+            .filter(|terms| terms.step_telemetry_v1())
+            .map(|_| {
+                let mut ordinary = gradients.clone();
+                ordinary[SCORER_SECOND_BIAS][0] = 0.0;
+                ordinary
+            });
+        let mut line_b_result = line_b_terms
             .map(|terms| terms.combine_v1(&parameters, &mut gradients, &mut gauge_accumulator))
             .transpose()?;
         validate_finite_nested("gae_line_b_gradient", &gradients)?;
@@ -845,6 +854,29 @@ impl NativePolicyValueTrainStateV1 {
         next_second_moments[SCORER_SECOND_BIAS][0] = 0.0;
         scorer_bias_gauge.parameter_after_bits =
             next_parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+        if let (Some(ordinary), Some(result)) = (&ordinary_only, line_b_result.as_mut()) {
+            let (mut alone, _, _) = adam_update(
+                &parameters,
+                ordinary,
+                &self.first_moments,
+                &self.second_moments,
+                next_step,
+                learning_rate,
+                math,
+            )?;
+            alone[SCORER_SECOND_BIAS].values[0] = f32::from_bits(self.scorer_bias_anchor_bits);
+            let (mut combined, mut ordinary_step, mut difference) = (0.0_f64, 0.0_f64, 0.0_f64);
+            for ((before, after), only) in parameters.iter().zip(&next_parameters).zip(&alone) {
+                for ((&x, &y), &o) in before.values.iter().zip(&after.values).zip(&only.values) {
+                    let (x, y, o) = (f64::from(x), f64::from(y), f64::from(o));
+                    combined += (y - x) * (y - x);
+                    ordinary_step += (o - x) * (o - x);
+                    difference += (y - o) * (y - o);
+                }
+            }
+            result.adam_steps = Some(serde_json::json!({"combined_l2":combined.sqrt(),
+                "ordinary_l2":ordinary_step.sqrt(),"difference_l2":difference.sqrt()}));
+        }
 
         phase_recorder.finish_v1(adam_timer);
         let finalization_timer =

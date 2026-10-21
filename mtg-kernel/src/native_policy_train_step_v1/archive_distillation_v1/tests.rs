@@ -63,6 +63,8 @@ fn external<'a>(
         direction: LineBDivergenceV1::Forward,
         coefficient,
         denominator,
+        cap: None,
+        step_telemetry: false,
         rows: tensors
             .iter()
             .zip(targets)
@@ -559,6 +561,8 @@ fn invalid_inputs_reject_before_mutation() {
         direction: LineBDivergenceV1::Forward,
         coefficient: 1.0,
         denominator: 1,
+        cap: None,
+        step_telemetry: false,
         rows: Vec::new(),
     };
     for terms in [

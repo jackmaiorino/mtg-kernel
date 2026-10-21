@@ -3623,14 +3623,7 @@ fn execute_update_inner_v1(
             read_pinned_bytes(&packet)?;
         }
         if let Some(identity) = &saved.search_targets {
-            ensure(
-                search_targets
-                    .as_ref()
-                    .map(search_targets_v1::continuation_identity)
-                    .as_ref()
-                    == identity.get("continuation"),
-                "search-target continuation must preserve method, inputs, coefficient and denominator",
-            )?;
+            search_targets_v1::check_continuation_v1(identity, search_targets.as_ref())?;
             let packet: PinnedFileV1 =
                 serde_json::from_value(identity["packet"].clone()).map_err(err)?;
             search_targets_v1::revalidate_packet_v1(&packet)?;
@@ -4107,9 +4100,12 @@ fn execute_update_inner_v1(
                 .expect("computed above whenever loss_selection is gae_advantage_value/v1");
             match (update_backend, generation) {
                 (ExpandedUpdateBackendV1::Cpu, _)
-                    if st_teacher
-                        .as_ref()
-                        .is_some_and(|(_, rows)| !rows.is_empty()) =>
+                    if st_teacher.as_ref().is_some_and(|(_, rows)| {
+                        !rows.is_empty()
+                            || search_targets
+                                .as_ref()
+                                .is_some_and(search_targets_v1::stage_b2_v1)
+                    }) =>
                 {
                     let (_, rows) = st_teacher.as_ref().expect("guarded");
                     let options = search_targets.as_ref().expect("teacher implies options");
@@ -4135,6 +4131,14 @@ fn execute_update_inner_v1(
                         "auxiliary_head_l2":auxiliary.auxiliary_head_l2,
                         "ordinary_head_l2":auxiliary.ordinary_head_l2,
                         "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual}));
+                    if let Some(exposure) = st_auxiliary.as_mut() {
+                        if let Some(cap) = auxiliary.cap {
+                            exposure["cap"] = cap;
+                        }
+                        if let Some(steps) = auxiliary.adam_steps {
+                            exposure["adam_steps"] = steps;
+                        }
+                    }
                     result
                 }
                 (ExpandedUpdateBackendV1::Cpu, _) if sq_teacher.is_some() => {

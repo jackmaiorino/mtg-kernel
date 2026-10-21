@@ -61,6 +61,8 @@ fn input<'a>(
         direction: LineBDivergenceV1::Forward,
         coefficient: 1.0,
         denominator: 1,
+        cap: None,
+        step_telemetry: false,
         rows: vec![ExternalAuxiliaryRowV1 {
             encoded: encoded_decision_view_v3(tensor),
             target,
