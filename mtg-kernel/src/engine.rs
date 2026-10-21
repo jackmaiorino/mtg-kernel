@@ -16933,6 +16933,10 @@ fn execute_resolving_program(
     } else {
         effect::begin_resumable_resolution(program, ctx, item.clone(), state)
     };
+    #[cfg(test)]
+    if let Err(error) = &progress {
+        eprintln!("Owned resolving program rejected: {error}");
+    }
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
             if if let Some(owner) = hunter_owner {
