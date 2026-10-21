@@ -77,6 +77,11 @@ pub struct Command {
     pub matches: Vec<Match>,
     pub cross_generation_evaluation: bool,
     pub capture_decisions: bool,
+    /// Diagnostic only: with `capture_decisions`, each captured row also
+    /// carries the actor-visible observation and semantic action menu that
+    /// `visible_sha256` hashes. Play is unchanged; off keeps the old wire shape.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub capture_visible_v1: bool,
     /// Stop after the first natural physical game, including a draw.
     /// The result is a game-one record, never a completed match reward.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -318,6 +323,7 @@ fn load(source: &ModelSource) -> Result<(Play, Value), String> {
 struct Trace<'a> {
     base: &'a mut dyn PairedBo1PolicyV1,
     capture: bool,
+    visible: bool,
     spell_adapter: [bool; 2],
     generations: [PlayPolicyGenerationV1; 2],
     diagnostic_repairs: [u64; 2],
@@ -397,10 +403,13 @@ impl PairedBo1PolicyV1 for Trace<'_> {
             let visible =
                 hash(&serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?);
             let d = input.decision();
-            Some(
-                json!({"game_index":self.resets.len(),"step":d.step,"physical_decision_id":d.physical_decision_id,
-                "substep_index":d.substep_index,"actor":d.acting_player,"visible_sha256":visible,"legal_action_count":actions.len()}),
-            )
+            let mut row = json!({"game_index":self.resets.len(),"step":d.step,"physical_decision_id":d.physical_decision_id,
+                "substep_index":d.substep_index,"actor":d.acting_player,"visible_sha256":visible,"legal_action_count":actions.len()});
+            if self.visible {
+                row["observation"] = serde_json::to_value(&observation).map_err(|e| fail(error(e)))?;
+                row["actions"] = serde_json::to_value(&actions).map_err(|e| fail(error(e)))?;
+            }
+            Some(row)
         } else {
             None
         };
@@ -607,6 +616,7 @@ pub fn run(command: Command) -> Result<Value, String> {
             let mut trace = Trace {
                 base: &mut router,
                 capture: command.capture_decisions,
+                visible: command.capture_decisions && command.capture_visible_v1,
                 spell_adapter,
                 generations: generation_ids,
                 diagnostic_repairs: [0; 2],
@@ -793,6 +803,7 @@ mod tests {
         let mut trace = Trace {
             base: &mut base,
             capture: true,
+            visible: false,
             spell_adapter: [false; 2],
             generations: [PlayPolicyGenerationV1::V3; 2],
             diagnostic_repairs: [0; 2],
@@ -836,6 +847,7 @@ mod tests {
         let mut trace = Trace {
             base: &mut v4,
             capture: true,
+            visible: false,
             spell_adapter: [false; 2],
             generations: [PlayPolicyGenerationV1::V4; 2],
             diagnostic_repairs: [0; 2],
