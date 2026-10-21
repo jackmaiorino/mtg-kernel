@@ -412,16 +412,25 @@ mod tests {
             let (count, choices) = cleanup_discard
                 .expect("Niv control returns during cleanup, after its controller's discard check");
             assert_eq!(count, (8 + expected_draws - 7) as u32);
-            assert_eq!(state.objects.get(niv).controller, actor);
+            assert_eq!(state.objects.get(niv).controller, responder);
             assert_eq!(state.players[actor.index()].hand.len(), 8 + expected_draws);
             let discard_count = usize::try_from(count).unwrap();
             assert!(choices.len() >= discard_count);
-            engine::step(
-                &mut state,
-                Action::Discard(choices[..discard_count].to_vec()),
-            )
-            .unwrap();
-            assert_eq!(state.players[actor.index()].hand.len(), 7);
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                engine::step(branch, Action::Discard(choices[..discard_count].to_vec())).unwrap();
+                assert_eq!(branch.players[actor.index()].hand.len(), 7);
+                assert_eq!(branch.objects.get(niv).controller, responder);
+                // Cleanup discards before expiring "until end of turn" control.
+                // The next advance owns expiration and the following turn.
+                assert!(!matches!(
+                    engine::advance_until_decision(branch),
+                    Decision::Halted { .. }
+                ));
+                assert_eq!(branch.objects.get(niv).controller, actor);
+            }
+            assert_eq!(state, replay);
         } else {
             assert!(
                 cleanup_discard.is_none(),

@@ -2936,7 +2936,6 @@ fn virtue_adventure_and_end_step_counter_then_untap_current_creatures() {
 
 fn finish_current_turn(state: &mut GameState) {
     let active = state.active_player;
-    state.step = Step::End;
     for _ in 0..30 {
         let decision = next(state);
         if state.active_player != active {
@@ -2944,6 +2943,9 @@ fn finish_current_turn(state: &mut GameState) {
         }
         match decision {
             Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::DeclareAttackers { .. } => {
+                engine::step(state, Action::DeclareAttackers(Vec::new())).unwrap()
+            }
             other => panic!("unexpected turn-end decision {other:?}"),
         }
     }
