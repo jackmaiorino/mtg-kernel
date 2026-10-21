@@ -111,8 +111,12 @@ pub(crate) fn pay_form(
     x: u16,
 ) -> StackItem {
     priority(s, p);
+    let decision = next(s);
     assert!(
-        matches!(next(s),Decision::CastSpellOrPass { castable_spells,.. } if castable_spells.contains(&card))
+        matches!(&decision,Decision::CastSpellOrPass { castable_spells,.. } if castable_spells.contains(&card)),
+        "{} not castable for {p:?} during {:?}: {decision:?}",
+        s.objects.get(card).name,
+        s.step
     );
     step(s, Action::CastSpell(card)).unwrap();
     complete_cast(s, p, card, permission, target, form, x)

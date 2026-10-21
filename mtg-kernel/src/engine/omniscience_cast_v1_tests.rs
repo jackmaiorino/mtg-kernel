@@ -101,8 +101,21 @@ fn pay(
 ) -> StackItem {
     let (free, x, kick) = selection;
     priority(s, p);
+    let decision = next(s);
     assert!(
-        matches!(next(s),Decision::CastSpellOrPass{castable_spells,..}if castable_spells.contains(&card))
+        matches!(&decision,Decision::CastSpellOrPass{castable_spells,..}if castable_spells.contains(&card)),
+        "{} not castable for {p:?} during {:?}: {decision:?}; untapped mana sources: {:?}",
+        s.objects.get(card).name,
+        s.step,
+        s.players[p.index()]
+            .battlefield
+            .iter()
+            .filter_map(|id| {
+                let object = s.objects.get(*id);
+                (!object.tapped && card_def::CARD_DEFS[object.card_def as usize].is_land)
+                    .then_some(object.name.as_str())
+            })
+            .collect::<Vec<_>>()
     );
     step(s, Action::CastSpell(card)).unwrap();
     let mut chosen = 0;
