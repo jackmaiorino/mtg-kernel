@@ -112,7 +112,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             1,
             Keywords::FLASH,
         ),
-        "Elementalist Adept" | "Crackling Cyclops" => (
+        "Elementalist Adept" => (
             1,
             &[Pip::Colored(ManaColor::U)][..],
             &[ManaColor::U][..],
@@ -203,7 +203,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
             vec![counter_meaning()],
         ),
-        "Elementalist Adept" => (
+        "Elementalist Adept" | "Crackling Cyclops" => (
             TriggerCondition::CastNoncreatureSpell,
             json!({"event":"ObserverControllerCastsNoncreatureSpell","copies_without_cast_do_not_count":true,
                 "current_spell_characteristics":true,"trigger_count_per_cast":1}),
