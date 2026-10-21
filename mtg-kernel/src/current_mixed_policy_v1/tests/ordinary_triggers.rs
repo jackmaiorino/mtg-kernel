@@ -725,7 +725,7 @@ fn paid_burnished_hart<O: Owner>() {
             }
             step(
                 &mut s,
-                |a| matches!(a,ActionSemanticV1::ActivateAbility { source,ability_index:0,granted_ability:None,.. }if source.arena_id==hart.0),
+                |a| matches!(a,ActionSemanticV1::ActivateAbility { source,ability_index:0,granted_ability,.. }if source.arena_id==hart.0 && granted_ability.is_none()),
             );
             assert_eq!(s.world().objects.get(hart).zone, Zone::Graveyard);
             assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);
