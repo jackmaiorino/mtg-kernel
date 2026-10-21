@@ -63,6 +63,15 @@ fn act(own: &mut LilianaSession, native: &mut FastActorSessionV1, choose: impl F
     eprintln!("Liliana numeric action step={}: encoding", h.step);
     let d = own.encode(h).unwrap();
     eprintln!("Liliana numeric action step={}: encoded", h.step);
+    act_encoded(own, native, d, choose);
+}
+fn act_encoded(
+    own: &mut LilianaSession,
+    native: &mut FastActorSessionV1,
+    d: LilianaDecision,
+    choose: impl Fn(&A) -> bool,
+) {
+    let h = d.backend.expected();
     let i = d
         .backend
         .actions()
@@ -121,7 +130,9 @@ fn complete(own: &mut LilianaSession, native: &mut FastActorSessionV1) {
             .actions()
             .iter()
             .any(|a| matches!(a, A::FinishEffectSelection { .. }));
-        act(own, native, |a| {
+        // Score and apply this exact issued decision. Re-encoding the same
+        // unchanged native root would retain two full numeric packets here.
+        act_encoded(own, native, d, |a| {
             if finish {
                 matches!(a, A::FinishEffectSelection { .. })
             } else {
