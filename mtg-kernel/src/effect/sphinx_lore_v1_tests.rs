@@ -573,6 +573,9 @@ fn granted_additional_discard_x_and_kicker_use_complete_native_costs_both_seats(
         ] {
             let (mut s, _, card, _) = scenario(p, name);
             install(&mut s, p, card);
+            // The attack grant lasts through this turn. Goblin Negotiation
+            // still needs genuine sorcery timing after combat.
+            main2(&mut s, p);
             let discard = put(&mut s, p, "Forest", Zone::Hand);
             let bear = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Battlefield);
             let targets = if name == "Thrill of Possibility" {

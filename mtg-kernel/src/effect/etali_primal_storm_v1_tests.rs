@@ -446,12 +446,15 @@ fn paid_attack_free_x_is_zero_and_real_additional_discard_is_still_paid_both_sea
         let card = choice.scans[0].hit.unwrap().object;
         let discard = s.players[p.index()].hand[0];
         assert_eq!(s.objects.get(discard).card_def, id("Forest"));
+        // Keep an actual choice: a singleton hand is discarded automatically.
+        let kept = put(&mut s, p, "Mountain", Zone::Hand);
         answer(&mut s, Action::ChooseEffectTarget(Target::Object(card)));
         assert!(matches!(next(&mut s),Decision::Discard{player,count:1,..}if player==p));
         answer(&mut s, Action::Discard(vec![discard]));
         let row = s.stack.iter().find(|row| row.source == card).unwrap();
         assert!(row.discarded.contains(&discard));
         assert_eq!(s.objects.get(discard).zone, Zone::Graveyard);
+        assert_eq!(s.objects.get(kept).zone, Zone::Hand);
         assert_eq!(s.players[p.index()].mana_pool, [0; 6]);
         settle(&mut s);
     }

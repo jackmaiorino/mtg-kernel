@@ -689,7 +689,7 @@ fn paid_battlefield_only_graveyard_cards_count_control_suppression_and_checked_b
         // Explicit neutral face-down primitive hides the printed static.
         let mut neutral = restore(&s);
         neutral.objects.get_mut(source).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-            disguised: false,
+            disguised: true,
             lookers: 0,
             hidden_by: None,
             hidden_by_source: None,

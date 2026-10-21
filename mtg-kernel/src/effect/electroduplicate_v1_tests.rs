@@ -1177,7 +1177,7 @@ fn genuine_paid_soul_copy_and_nightmare_entry_primitive_keep_original_etb_creati
         for _ in 0..8 {
             put(&mut s, actor, "Swamp", Zone::Battlefield);
         }
-        let original = cast(&mut s, actor, "Soul-Shackled Zombie", &[], 3);
+        let original = cast(&mut s, actor, "Soul-Shackled Zombie", &[], 4);
         finish_zombie_copy(&mut s, None);
         cast(&mut s, actor, NAME, &[Target::Object(original)], 3);
         finish_zombie_copy(&mut s, None);

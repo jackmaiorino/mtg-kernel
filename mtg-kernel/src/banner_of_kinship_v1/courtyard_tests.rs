@@ -233,8 +233,10 @@ fn genuine_changeling_spell_matches_unrepresented_chosen_type_with_paid_colored_
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(actor);
         let source = land(&mut s, actor, CreatureTypeV60::TimeLord);
-        // Existing colorless land entry primitives supply only the generic4.
-        for _ in 0..4 {
+        // Webweaver costs 3GG. Courtyard supplies one matching green unit;
+        // the other green and three generic units use ordinary native lands.
+        put(&mut s, actor, "Forest", Zone::Battlefield);
+        for _ in 0..3 {
             put(&mut s, actor, "Soulstone Sanctuary", Zone::Battlefield);
         }
         assert!(card_def::CARD_DEFS[usize::from(id("Webweaver Changeling"))].changeling);
