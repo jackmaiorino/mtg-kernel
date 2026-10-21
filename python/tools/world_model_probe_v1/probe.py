@@ -302,6 +302,89 @@ class Net(nn.Module):
                     win=self.win(h)[:, 0], legal=self.legal(h)[:, 0])
 
 
+MAX_STATE_TOKENS = 96  # observed maximum is 67 distinct (zone, card) entries per state
+MAX_ACTION_TOKENS = 24  # observed maximum is 20 action features
+
+
+class SetNet(nn.Module):
+    """Arm B: a transformer over the state as a set of (zone, card, count)
+    tokens, a scalar token (life, sizes, turn, active, phase) and action tokens
+    (kind, actor, role-card and choice features). Same heads as `Net`."""
+
+    def __init__(self, lay: Layout, n_kinds, hidden, layers=4, heads=8):
+        super().__init__()
+        self.lay = lay
+        self.n_card = lay.n_reg - N_SCALAR
+        self.register_buffer("scale", torch.from_numpy(lay.scale))
+        d = hidden
+        self.cls = nn.Parameter(torch.zeros(1, 1, d))
+        self.scalar_in = nn.Sequential(nn.Linear(N_SCALAR + 1 + len(PHASES), d), nn.GELU(), nn.Linear(d, d))
+        n_blocks = len(lay.blocks)
+        self.block_emb = nn.Embedding(n_blocks, d)
+        self.card_emb = nn.Embedding(C, d)
+        self.count_emb = nn.Embedding(8, d)
+        self.kind = nn.Embedding(n_kinds, d)
+        self.actor = nn.Embedding(2, d)
+        self.role_emb = nn.Embedding(len(ROLES), d)
+        self.token_emb = nn.Embedding(N_TOKENS, d)
+        self.type_emb = nn.Embedding(4, d)  # cls/scalar, state card, action head, action feature
+        layer = nn.TransformerEncoderLayer(d, heads, 4 * d, dropout=0.0, activation="gelu", batch_first=True,
+                                           norm_first=True)
+        self.encoder = nn.TransformerEncoder(layer, layers)
+        self.out_norm = nn.LayerNorm(d)
+        self.scalar = nn.Linear(d, N_SCALAR * (2 * SCALAR_RANGE + 1))
+        self.card = nn.Linear(d, self.n_card * (2 * CARD_RANGE + 1))
+        self.active = nn.Linear(d, 1)
+        self.phase = nn.Linear(d, len(PHASES))
+        self.over = nn.Linear(d, 1)
+        self.win = nn.Linear(d, 1)
+        self.legal = nn.Linear(d, 1)
+        for head, r in ((self.scalar, SCALAR_RANGE), (self.card, CARD_RANGE)):
+            nn.init.zeros_(head.weight)
+            bias = torch.zeros(2 * r + 1); bias[r] = 4.0
+            head.bias.data.copy_(bias.repeat(head.out_features // (2 * r + 1)))
+        self.truncated = 0  # states with more card entries than MAX_STATE_TOKENS (counted, never silent)
+
+    @staticmethod
+    def _top(mask, k):
+        """Indices of the True entries (up to k, in index order) and their validity."""
+        n = mask.shape[1]
+        key = mask.float() * (2 * n) - torch.arange(n, device=mask.device).float()[None, :] / n
+        val, ix = key.topk(min(k, n), dim=1)
+        return ix, val > 0
+
+    def forward(self, state, kind, me, cards):
+        lay = self.lay
+        B = len(state)
+        scal = torch.cat([state[:, :N_SCALAR] / self.scale[:N_SCALAR], state[:, lay.n_reg:]], 1)
+        counts = state[:, N_SCALAR:lay.n_reg]
+        present = counts > 0.5
+        self.truncated += int((present.sum(1) > MAX_STATE_TOKENS).sum())
+        ix, valid = self._top(present, MAX_STATE_TOKENS)
+        cnt = counts.gather(1, ix).round().clamp(0, 7).long()
+        st = (self.block_emb(ix // C) + self.card_emb(ix % C) + self.count_emb(cnt) + self.type_emb.weight[1])
+        a_ix, a_valid = self._top(cards > 0.5, MAX_ACTION_TOKENS)
+        is_card = a_ix < len(ROLES) * C
+        a_tok = torch.where(is_card[..., None], self.role_emb((a_ix // C).clamp(max=len(ROLES) - 1))
+                            + self.card_emb(a_ix % C),
+                            self.token_emb((a_ix - len(ROLES) * C).clamp(min=0))) + self.type_emb.weight[3]
+        head = (self.kind(kind) + self.actor(me.long()) + self.type_emb.weight[2])[:, None]
+        sc = (self.scalar_in(scal) + self.type_emb.weight[0])[:, None]
+        x = torch.cat([self.cls.expand(B, 1, -1), sc, head, st, a_tok], 1)
+        pad = torch.cat([torch.zeros(B, 3, dtype=torch.bool, device=x.device), ~valid, ~a_valid], 1)
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=x.is_cuda):
+            h = self.encoder(x, src_key_padding_mask=pad)[:, 0]
+        h = self.out_norm(h.float())
+        return dict(scalar=self.scalar(h).view(B, N_SCALAR, 2 * SCALAR_RANGE + 1),
+                    card=self.card(h).view(B, self.n_card, 2 * CARD_RANGE + 1),
+                    active=self.active(h)[:, 0], phase=self.phase(h), over=self.over(h)[:, 0],
+                    win=self.win(h)[:, 0], legal=self.legal(h)[:, 0])
+
+
+def make_net(arch, lay, n_kinds, hidden):
+    return SetNet(lay, n_kinds, hidden) if arch == "set" else Net(lay, n_kinds, hidden)
+
+
 def assemble(lay, cur, out):
     """Most likely next raw state: mode change per field, hard active and phase."""
     delta = torch.cat([out["scalar"].argmax(2) - SCALAR_RANGE, out["card"].argmax(2) - CARD_RANGE], 1).float()
@@ -333,7 +416,7 @@ def train(args):
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tr = Split(args.data, "train", dev)
     lay = tr.lay
-    net = Net(lay, tr.n_kinds, args.hidden).to(dev)
+    net = make_net(args.arch, lay, tr.n_kinds, args.hidden).to(dev)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     scalar_weight = torch.ones(N_SCALAR, device=dev)
     scalar_weight[[i for i in lay.decisive]] = 5.0
@@ -369,7 +452,8 @@ def train(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=False)
     torch.save(net.state_dict(), out / "model.pt")
-    (out / "config.json").write_text(json.dumps(dict(vars(args), log=log), indent=1))
+    (out / "config.json").write_text(json.dumps(dict(vars(args), log=log,
+                                                     truncated_states=getattr(net, "truncated", None)), indent=1))
 
 
 @torch.no_grad()
@@ -429,7 +513,7 @@ def evaluate(args):
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sp = Split(args.data, args.split, dev)
     cfg = json.loads((Path(args.model) / "config.json").read_text())
-    net = Net(sp.lay, sp.n_kinds, cfg["hidden"]).to(dev)
+    net = make_net(cfg.get("arch", "mlp"), sp.lay, sp.n_kinds, cfg["hidden"]).to(dev)
     net.load_state_dict(torch.load(Path(args.model) / "model.pt", map_location=dev))
     net.eval()
     report = dict(split=args.split, model=str(args.model), horizons={})
@@ -453,6 +537,7 @@ def evaluate(args):
         m, p = entry["model"], entry["persistence"]
         print(f"k={k:>2} model {m['primary']:.3f} {m['primary_ci']} persistence {p['primary']:.3f} "
               f"gap {entry['gap']['mean']:+.3f} changed {m['changed_share']:.2f}", flush=True)
+    report["truncated_states"] = getattr(net, "truncated", None)
     Path(args.out).write_text(json.dumps(report, indent=1))
 
 
@@ -467,6 +552,7 @@ def main():
     t.add_argument("--hidden", type=int, default=1024); t.add_argument("--unroll", type=int, default=5)
     t.add_argument("--epochs", type=int, default=8); t.add_argument("--batch", type=int, default=1024)
     t.add_argument("--lr", type=float, default=1e-3); t.add_argument("--seed", type=int, default=20261021)
+    t.add_argument("--arch", choices=["mlp", "set"], default="mlp")
     e = sub.add_parser("eval")
     e.add_argument("--data", required=True); e.add_argument("--model", required=True)
     e.add_argument("--split", required=True, choices=["validation", "test", "unseen_test", "train"])
