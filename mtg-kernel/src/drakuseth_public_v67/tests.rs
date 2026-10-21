@@ -741,8 +741,7 @@ fn independent_initial_hidden_worlds_before_genuine_paid_attack_keep_public_fact
     }
 }
 #[test]
-fn genuine_paid_crystal_native_refusal_keeps_public_program_but_never_invents_resolving_facts_both_seats(
-) {
+fn genuine_paid_crystal_does_not_prevent_damage_to_its_controllers_opponent_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut s, source) = paid(actor);
         put(
@@ -757,21 +756,20 @@ fn genuine_paid_crystal_native_refusal_keeps_public_program_but_never_invents_re
         let facts = capture(&s, actor).unwrap();
         assert_eq!(published(&facts).stage, StageV67::Published);
         let start = s.engine.event_history.len();
-        let mut refused = false;
-        for _ in 0..16 {
-            let d = engine::advance_until_decision(&mut s);
-            if matches!(d,Decision::Halted{mechanic:engine::UnsupportedMechanic::InvalidEffectContinuation,source:id}if id==source)
-            {
-                refused = true;
-                break;
-            }
-            quiet(&mut s, d)
+        let mut replay = restored(&s);
+        for branch in [&mut s, &mut replay] {
+            settle(branch);
+            assert!(branch.engine.halted.is_none());
+            assert!(!branch.stack.contains(&row));
+            assert_eq!(
+                damage_since(branch, start, source),
+                vec![(Target::Player(actor), 4)]
+            );
+            assert_eq!(branch.players[actor.index()].life, 16);
+            assert_eq!(branch.players[actor.opponent().index()].life, 20);
+            assert!(capture(branch, actor).unwrap().triggers.is_empty());
         }
-        assert!(refused);
-        assert_eq!(s.stack.last(), Some(&row));
-        assert!(damage_since(&s, start, source).is_empty());
-        assert!(capture(&s, actor).is_err());
-        assert_eq!(s.players[actor.index()].life, 20);
+        assert_eq!(s, replay);
     }
 }
 
