@@ -550,6 +550,33 @@ fn genuine_paid_divided_damage_tyrant_shield_order_uses_real_affected_choice_and
                 pass(&mut s, d);
             }
             let start = s.engine.event_history.len();
+            let pending = s.engine.pending_effect.as_ref().unwrap();
+            let Some(PendingEffectChoice::ChooseOption {
+                purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                ..
+            }) = &pending.choice
+            else {
+                panic!("real affected Chandra choice absent")
+            };
+            assert!(choice.historical_source.is_some());
+            assert_eq!(choice.historical_source, pending.ctx.stack_item_id);
+            validate_pending_effect_choice(&s).unwrap();
+            for historical_source in [None, Some(StackItemId(u64::MAX))] {
+                let mut forged = s.clone();
+                let pending = forged.engine.pending_effect.as_mut().unwrap();
+                let Some(PendingEffectChoice::ChooseOption {
+                    purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                    ..
+                }) = &mut pending.choice
+                else {
+                    unreachable!()
+                };
+                choice.historical_source = historical_source;
+                let before = forged.clone();
+                assert!(validate_pending_effect_choice(&forged).is_err());
+                assert!(engine::step(&mut forged, Action::ChooseEffectOption(0)).is_err());
+                assert_eq!(forged, before);
+            }
             let mut replay = restore(&s);
             for branch in [&mut s, &mut replay] {
                 let Some(PendingEffectChoice::ChooseOption {

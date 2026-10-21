@@ -527,7 +527,6 @@ impl OwnerV1 {
             && batch_recipe(&capture.op) && events.iter().all(|event| {
             matches!(event, crate::event::ProposedEvent::Damage(damage)
                 if !damage.is_combat
-                    && damage.historical_source.is_none()
                     && capture.proposals.iter().enumerate().any(|(slot, original)| {
                         let expected = original.proposed_with_context(&capture.ctx);
                         let maximum = capture.multiplier_options.0.get(slot).map_or(
@@ -540,7 +539,8 @@ impl OwnerV1 {
                                 }
                             }),
                         );
-                        damage.niv_damage_origin_v1 == expected.niv_damage_origin_v1
+                        damage.historical_source == expected.historical_source
+                            && damage.niv_damage_origin_v1 == expected.niv_damage_origin_v1
                             && original.source == damage.source
                             && original.target == damage.target
                             && damage.amount > 0
@@ -3523,12 +3523,11 @@ fn batch_choice(
         .and_then(|o| o.clone())
         .ok_or("Crystal batch choice lost original options")?;
     u16::try_from(options.len()).map_err(|_| "Crystal batch menu exceeds u16")?;
+    let proposed = damage.proposed_with_context(&capture.ctx);
     Ok(ChoiceV1 {
         source: damage.source,
-        historical_source: None,
-        niv_damage_origin_v1: damage
-            .proposed_with_context(&capture.ctx)
-            .niv_damage_origin_v1,
+        historical_source: proposed.historical_source,
+        niv_damage_origin_v1: proposed.niv_damage_origin_v1,
         batch: Some(progress),
         creature_power: None,
         target: damage.target,
@@ -4537,7 +4536,7 @@ fn validate_batch_choice_record(
     if choice.source != original.source
         || choice.niv_damage_origin_v1 != original.niv_damage_origin_v1
         || choice.target != original.target
-        || choice.historical_source.is_some()
+        || choice.historical_source != original.historical_source
         || choice.creature_power.is_some()
         || choice.original_amount != original.original_amount
         || choice.remaining_amount <= 0
