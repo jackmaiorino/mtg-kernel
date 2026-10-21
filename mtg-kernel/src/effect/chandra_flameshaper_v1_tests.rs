@@ -615,6 +615,18 @@ fn genuine_paid_divided_damage_tyrant_shield_order_uses_real_affected_choice_and
                     assert!(matches!(next(branch), Decision::ChooseEffectOption { .. }));
                     engine::step(branch, Action::ChooseEffectOption(0)).unwrap();
                 }
+                let ready = branch
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .unwrap()
+                    .resolving_item
+                    .clone();
+                let before = branch.clone();
+                assert!(super::super::acquire_tutelage_resume_v1(branch, &ready)
+                    .unwrap()
+                    .is_none());
+                assert_eq!(*branch, before);
                 finish(branch);
                 assert_eq!(
                     branch.engine.event_history[start..]

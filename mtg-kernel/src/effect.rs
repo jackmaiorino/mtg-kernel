@@ -26580,8 +26580,14 @@ pub(crate) fn acquire_tutelage_resume_v1(
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(None);
     };
+    // Dedicated batch, Storm and Crystal rows retain their own resume owners.
     if standard_exile::top_batch_pending(pending)
         || thousand_year_storm_v1::pending_selected(state, pending)
+        || !pending
+            .resolving_item
+            .v4
+            .crystal_prevention_started_v1
+            .is_empty()
     {
         return Ok(None);
     }
