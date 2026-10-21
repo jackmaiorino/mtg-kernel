@@ -49,7 +49,11 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         .iter()
         .find(|item| item.v4.stack_item_id == spell.v4.stack_item_id)
     {
-        if !effect::crystal_prevention_v1::spell_cast_snapshot_matches(state, current, spell) {
+        if !effect::crystal_prevention_v1::spell_cast_snapshot_matches(state, current, spell)
+            && !effect::inspiration_resolution_v1::spell_cast_snapshot_matches(
+                state, current, spell,
+            )
+        {
             return Err("copy snapshot differs from its original spell".into());
         }
     }

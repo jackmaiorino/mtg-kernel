@@ -423,6 +423,75 @@ impl std::hash::Hash for InspirationRuntimeV1 {
 fn locally_owned(state: &GameState) -> bool {
     state.engine.inspiration_runtime_v1.0.is_some()
 }
+
+/// A cast snapshot precedes the exact native resolution-start marker. Only
+/// the original private begin loan or its initial receipt explains that field.
+pub(crate) fn spell_cast_snapshot_matches(
+    state: &GameState,
+    current: &StackItem,
+    saved: &StackItem,
+) -> bool {
+    if current.kind != crate::state::StackItemKind::Spell
+        || current.inline_effect.is_some()
+        || !saved.v4.inspiration_started_v1.is_empty()
+    {
+        return false;
+    }
+    let Some(index) = current.v4.inspiration_started_v1.0 else {
+        return false;
+    };
+    let mut original = current.clone();
+    original.v4.inspiration_started_v1 = InspirationStartedV1::default();
+    if original != *saved {
+        return false;
+    }
+    if state
+        .engine
+        .inspiration_runtime_v1
+        .0
+        .as_ref()
+        .is_some_and(|owner| {
+            owner.initial
+                && owner.original == original
+                && usize::try_from(index).ok() == Some(state.engine.event_history.len())
+        })
+    {
+        return true;
+    }
+    let Some(CommittedEvent::InspirationResolutionBoundaryV1 { receipt }) =
+        state.engine.event_history.get(index as usize)
+    else {
+        return false;
+    };
+    let Some(pending) = receipt.pending.as_deref() else {
+        return false;
+    };
+    let Some(root) = CARD_DEFS
+        .get(usize::from(receipt.source.card_def))
+        .and_then(|definition| (definition.spell_effect)())
+        .filter(owned_root)
+    else {
+        return false;
+    };
+    receipt.history_index == index
+        && receipt.ordinal == 0
+        && receipt.previous_history_index.is_none()
+        && receipt.stack_item_id == current.v4.stack_item_id
+        && pending.resolving_item == *current
+        && pending.ctx.source == current.source
+        && pending.ctx.controller == current.controller
+        && pending.ctx.stack_item_id == Some(current.v4.stack_item_id)
+        && state.objects.try_get(current.source).is_some()
+        && receipt.source == AbilitySourceContractV4::capture(state, current.source)
+        && pending.choice.is_none()
+        && pending.answered_choice_guard.is_none()
+        && pending.frames
+            == vec![EffectFrame::Program {
+                op: root,
+                path: Vec::new(),
+            }]
+}
+
 pub(crate) fn acquire_owner(
     state: &GameState,
     item: &StackItem,
