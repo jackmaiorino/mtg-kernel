@@ -51,7 +51,9 @@ SQ1_PANEL_NS = "sq1-panel-v1-20261018"
 TP1B_PANEL_NS = "tp1b-panel-20261019"
 # TP1 Stage B2 (STAGE-B2.md section 3).
 TP1B2_PANEL_NS = "tp1b2-panel-20261020"
-PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS)
+# The no-state-digest plain-play panel (collab LANES/throughput-architecture-20261020/STEP5-PANEL-DRAFT.md).
+NSD5_PANEL_NS = "nsd5-panel-v1"
+PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS)
 
 
 def key(parts: list) -> bytes:

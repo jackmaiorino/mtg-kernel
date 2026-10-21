@@ -272,3 +272,48 @@ fn reused_successor_tensorizers_preserve_last_output_on_late_error_and_poison() 
         }
     }
 }
+
+/// The no-state-digest contract changes exactly the 96 state-digest
+/// features (to zero) and nothing else, on reused scratch in either order.
+#[test]
+fn no_state_digest_contract_zeroes_only_the_state_digest() {
+    use super::NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2 as DIGEST;
+    for v4 in [false, true] {
+        let cost = OwnedDecision::from_state(monstrous_emergence_cost_fixture_v3(false).0, v4);
+        let paid =
+            OwnedDecision::from_state(monstrous_emergence_paid_fixture_v3(false, Some(3)).0, v4);
+        let mut scratch = NativeFlatTensorScratchV3::default();
+        let mut output = NativeFlatDecisionTensorV2::default();
+        for (round, owned) in [&cost, &paid, &cost, &paid].into_iter().enumerate() {
+            let expected = if v4 {
+                fill_native_flat_decision_tensors_v4(owned.v4()).unwrap()
+            } else {
+                fill_native_flat_decision_tensors_v3(owned.v3()).unwrap()
+            };
+            let off = round % 2 == 0;
+            scratch.set_state_digest_v1(!off);
+            if v4 {
+                fill_native_flat_decision_tensors_v4_with_scratch(
+                    owned.v4(),
+                    &mut scratch,
+                    &mut output,
+                )
+                .unwrap();
+            } else {
+                fill_native_flat_decision_tensors_v3_with_scratch(
+                    owned.v3(),
+                    &mut scratch,
+                    &mut output,
+                )
+                .unwrap();
+            }
+            let mut want = expected.clone();
+            if off {
+                let head = want.state.len() - DIGEST;
+                assert!(want.state[head..].iter().any(|&x| x != 0.0));
+                want.state[head..].fill(0.0);
+            }
+            assert_tensor_bits(&output, &want);
+        }
+    }
+}

@@ -60,7 +60,9 @@ impl<'a> V4SearchLeafEvaluatorV1<'a> {
             .map_err(|e| format!("V4 search leaf encoding: {e:?}"))?;
         owned.globals = encoded.globals;
         let mut tensor = NativeFlatDecisionTensorV4::default();
-        NativeFlatTensorizerV4::default()
+        let mut tensorizer = NativeFlatTensorizerV4::default();
+        tensorizer.set_state_digest_v1(self.policy.input_contract.is_none());
+        tensorizer
             .fill(
                 FlatScoringDecisionViewV4::new(owned.view(), &encoded.extensions),
                 &mut tensor,
@@ -87,6 +89,18 @@ impl ModelGuidedSearchLeafEvaluatorV1 for V4SearchLeafEvaluatorV1<'_> {
             .policy
             .model
             .forward_search_feature_transfer_v4(encoded_decision_view_v4(&tensor))?;
+        if let Some(unconverted) = &self.policy.no_digest_check {
+            let reference = unconverted
+                .forward_search_feature_transfer_v4(encoded_decision_view_v4(&tensor))?;
+            let scores = |o: &crate::native_policy_value_net_v1::NativePolicyValueOutputV1| {
+                super::FrozenPlayDecisionScoresV1 {
+                    logits: o.logits.clone(),
+                    value: o.value,
+                }
+            };
+            super::check_converted_scores_v1(&scores(&reference), &scores(&output))
+                .map_err(ModelGuidedSearchCoreErrorV1::Tensorize)?;
+        }
         if output.logits.len() != legal_action_count as usize
             || output.logits.is_empty()
             || !output.value.is_finite()
@@ -886,6 +900,43 @@ mod tests {
             let rejected = V4SearchLeafEvaluatorV1::new(&policy).is_err();
             write_mxcsr_v1(original);
             assert!(rejected);
+        })
+        .join()
+        .unwrap();
+    }
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn converted_policy_scores_only_in_the_pinned_environment() {
+        std::thread::spawn(|| {
+            use crate::deterministic_math_v1::*;
+            let original = read_mxcsr_v1();
+            assert!(verify_pinned_mxcsr_state_v1().is_ok());
+            let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+            policy
+                .apply_no_state_digest_v1("converted".into(), 123..219, 1_499, true)
+                .unwrap();
+            let cache = crate::inference_cache_v1::InferenceCacheV1::shared(64 << 20);
+            policy.attach_inference_cache_v1(&cache).unwrap();
+            let s = session();
+            // Clean: the converted forward passes the per-forward check, and
+            // the second call is a prediction-cache hit.
+            let first = policy.score_fast_session_v1(&s).unwrap();
+            let second = policy.score_fast_session_v1(&s).unwrap();
+            assert_eq!(
+                first.logits.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                second
+                    .logits
+                    .iter()
+                    .map(|x| x.to_bits())
+                    .collect::<Vec<_>>()
+            );
+            // Flush-to-zero, denormals-are-zero, round down, round up.
+            for dirty in [1u32 << 15, 1 << 6, 1 << 13, 1 << 14] {
+                write_mxcsr_v1(original | dirty);
+                let refused = policy.score_fast_session_v1(&s).is_err();
+                write_mxcsr_v1(original);
+                assert!(refused, "MXCSR {dirty:#x} was not refused");
+            }
         })
         .join()
         .unwrap();
