@@ -26903,10 +26903,15 @@ mod tests {
     }
 
     fn assert_paid_offturn_trigger_priority(caster: PlayerId, ward: bool) {
-        let mut state = empty_game();
+        let forest = card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &[forest; 40],
+            &[forest; 40],
+            crate::rl::card_name,
+            110_291,
+            caster.opponent(),
+        );
         state.step = Step::Main1;
-        state.active_player = caster.opponent();
-        state.priority_player = caster;
         let land = put_on_battlefield(&mut state, caster, if ward { "Swamp" } else { "Island" });
         let trigger_source = put_on_battlefield(
             &mut state,
@@ -26926,10 +26931,19 @@ mod tests {
                 "Thought Scour"
             },
         );
-        assert!(matches!(
-            advance_until_decision(&mut state),
-            Decision::CastSpellOrPass { player, .. } if player == caster
-        ));
+        // Let native main-phase work finish, then obtain the off-turn window
+        // through the active player's actual pass for either starting seat.
+        let initial = advance_until_decision(&mut state);
+        assert!(
+            matches!(initial, Decision::CastSpellOrPass { player, .. } if player == caster.opponent()),
+            "initial window for {caster:?}: {initial:?}"
+        );
+        step(&mut state, Action::Pass).unwrap();
+        let offturn = advance_until_decision(&mut state);
+        assert!(
+            matches!(offturn, Decision::CastSpellOrPass { player, .. } if player == caster),
+            "off-turn window for {caster:?}: {offturn:?}"
+        );
         step(&mut state, Action::CastSpell(spell)).unwrap();
         step(
             &mut state,
