@@ -76,6 +76,7 @@ fn every_frozen_fdn_printing_in_own_hand_has_current_numeric_coverage_both_seats
     for name in names {
         let name = name.as_str().unwrap();
         for p in [PlayerId::P0, PlayerId::P1] {
+            eprintln!("full286 opening-hand printing={name} seat={p:?}");
             if let Err(error) = check(name, p, &model) {
                 failures.push(format!("{name} {p:?}: {error}"));
             }

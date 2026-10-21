@@ -458,6 +458,10 @@ impl LilianaSessionV73 {
             session: &self.inner,
             current,
         };
+        #[cfg(test)]
+        let started = std::time::Instant::now();
+        #[cfg(test)]
+        eprintln!("V73 binding step={}: projecting candidates", expected.step);
         let (projection, native) = candidates::project_issued_parts_v73(
             &proof,
             &self.inner.state,
@@ -467,17 +471,16 @@ impl LilianaSessionV73 {
             current.physical_decision_id,
             (current.substep_index, current.substep_count),
         )?;
+        #[cfg(test)]
+        eprintln!(
+            "V73 binding step={}: candidates ready elapsed_ms={}",
+            expected.step,
+            started.elapsed().as_millis()
+        );
         if native.original != current.candidates {
             return Err(RlContractError("V73 original pair binding changed".into()));
         }
-        let (_, mut families) = observation::observe_parts_v73(
-            &self.inner.state,
-            &self.inner.surface,
-            (current.actor, &current.origin_decision),
-            self.inner.policy_step_count,
-            current.physical_decision_id,
-            (current.substep_index, current.substep_count),
-        )?;
+        let mut families = native.families;
         let classified = projection
             .candidates
             .iter()
@@ -522,6 +525,11 @@ impl LilianaSessionV73 {
             return Err(RlContractError("foreign or stale V73 decision".into()));
         }
         let fresh = self.fresh_binding()?;
+        #[cfg(test)]
+        eprintln!(
+            "V73 current step={}: comparing binding",
+            fresh.expected.step
+        );
         if fresh != decision.binding
             || fresh
                 .projection
@@ -596,8 +604,17 @@ impl LilianaSessionV73 {
         binding_error: impl FnOnce(RlContractError) -> E,
         native_error: impl FnOnce(RlContractError) -> E,
     ) -> Result<FastActorResponseV1, E> {
+        #[cfg(test)]
+        eprintln!(
+            "V73 step={}: validating current",
+            decision.binding.expected.step
+        );
         let fresh = self.validated_current(decision).map_err(binding_error)?;
+        #[cfg(test)]
+        eprintln!("V73 step={}: checking packet", fresh.expected.step);
         check(&fresh.projection, &decision.actions)?;
+        #[cfg(test)]
+        eprintln!("V73 step={}: packet checked", fresh.expected.step);
         let Some(original) = usize::try_from(index)
             .ok()
             .and_then(|i| fresh.public_to_original.get(i))
@@ -608,10 +625,20 @@ impl LilianaSessionV73 {
                 "V73 public action index out of range".into(),
             )));
         };
-        self.inner
+        #[cfg(test)]
+        eprintln!("V73 step={}: native step", fresh.expected.step);
+        let result = self
+            .inner
             .step(fresh.expected.episode_id, fresh.expected.step, original)
             .map_err(|e| RlContractError(format!("V73 native step:{e:?}")))
-            .map_err(native_error)
+            .map_err(native_error);
+        #[cfg(test)]
+        eprintln!(
+            "V73 step={}: native step returned ok={}",
+            fresh.expected.step,
+            result.is_ok()
+        );
+        result
     }
     #[cfg(all(
         test,

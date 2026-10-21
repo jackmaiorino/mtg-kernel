@@ -545,6 +545,9 @@ fn drake_activation(
 pub(crate) struct NativeCandidateProjectionV73 {
     pub(crate) original: Vec<crate::rl::CorePolicyActionCandidateV1>,
     pub(crate) public_to_original: Vec<usize>,
+    /// Produced with the same immutable authenticated observation. Kept private
+    /// so the owner need not reconstruct that whole observation a second time.
+    pub(crate) families: Vec<crate::akroma_family_public_v40::FamilyProjectionV40>,
 }
 
 pub fn project_v73(
@@ -612,8 +615,8 @@ fn project_authenticated_parts_v73(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(LilianaCandidatesV73, NativeCandidateProjectionV73), RlContractError> {
-    let observation =
-        observation::observe_v73(state, surface, actor_and_origin, step, physical, substep)?;
+    let (observation, families) =
+        observation::observe_parts_v73(state, surface, actor_and_origin, step, physical, substep)?;
     let authorized = authorized_references(&observation)?;
     // No native action or original semantic enters the public value. Keep the
     // original vector intact so index i continues to bind its exact native pair.
@@ -721,6 +724,7 @@ fn project_authenticated_parts_v73(
         NativeCandidateProjectionV73 {
             original,
             public_to_original,
+            families,
         },
     ))
 }
