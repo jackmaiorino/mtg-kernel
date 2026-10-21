@@ -475,13 +475,14 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
     plan = read_json(Path(plan_dir) / "plan.json")
     pending = [item for item in plan["requests"]
                if not Path(item["request"]["path"]).with_suffix(".state.json").exists()]
-    lock, running, errors, capped = threading.Lock(), set(), [], []
+    lock, running, errors, capped, progress = threading.Lock(), set(), [], [], []
     by_name = {item["name"]: item for item in plan["requests"]}
     gated_since, cap_refusals = None, 0
 
     def one(item):
         try:
             execute_request(executable, plan_dir, item, ledger)
+            progress.append(item["name"])
         except CapReached as error:
             with lock:
                 pending.insert(0, item)  # not lost: retried once in-flight work has settled
@@ -501,6 +502,8 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
     def raw_backlog() -> tuple[int, int, int]:
         """Raw match files and bytes not yet freed under ``raw_root`` (every stage's native output)
         and the matches of in-flight requests."""
+        with lock:
+            inflight = sum(len(by_name[name]["items"]) for name in running)
         files = size = 0
         for folder, _, names in os.walk(raw_root):
             for name in names:
@@ -510,8 +513,6 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
                         size += os.path.getsize(os.path.join(folder, name))
                     except OSError:
                         pass
-        with lock:
-            inflight = sum(len(by_name[name]["items"]) for name in running)
         return files, size, inflight
 
     def over_two_chunks(next_matches: int) -> bool:
@@ -531,7 +532,10 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
                 busy = bool(running)
             if not busy:
                 # Everything in flight has settled. Retry admission once; a second refusal with nothing
-                # running means the cap itself is reached.
+                # running and no progress since the last refusal means the cap itself is reached.
+                if progress:
+                    cap_refusals = 0
+                    progress.clear()
                 cap_refusals += 1
                 capped.clear()
                 if cap_refusals >= 2:
