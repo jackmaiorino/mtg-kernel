@@ -23,6 +23,8 @@ pub(super) mod fiery_printing;
 pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
+#[path = "observer_trigger_printing.rs"]
+mod observer_trigger_printing;
 #[path = "ordinary_removal_printing.rs"]
 mod ordinary_removal_printing;
 #[path = "rallier_bloom_printing.rs"]
@@ -363,9 +365,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
 }
 
 pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
-    CARD_DEFS
-        .get(usize::from(id))
-        .is_some_and(|d| simple_trigger_printing::handles(d.name))
+    CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+        simple_trigger_printing::handles(d.name) || observer_trigger_printing::handles(d.name)
+    })
 }
 
 pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
@@ -413,6 +415,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let targeted_spell = targeted_spell_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
+    let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
     let hart = burnished_hart_printing(id, d)?;
     let growth_or_druid = growth_or_druid_printing(id, d)?;
@@ -597,7 +600,8 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && (crate::trigger::triggers_for(id).is_empty()
             || goldvein.is_some()
             || gain_land.is_some()
-            || simple_trigger.is_some()))
+            || simple_trigger.is_some()
+            || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -631,6 +635,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = simple_trigger {
+        return Ok(printing);
+    }
+    if let Some(printing) = observer_trigger {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
