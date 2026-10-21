@@ -77,6 +77,7 @@ fn genuine_paid_wave_numeric_full_packet_index_parity_restore_and_foreign_refusa
 fn genuine_paid_wave_numeric_x256_and_independent_hidden_worlds_keep_exact_operands_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let make = |hidden| {
+            eprintln!("Wave numeric X256 {p:?}: initial setup");
             let mut s = crate::effect::genesis_wave_v1::tests::ready(
                 p,
                 &["Forest", "Giant Growth"],
@@ -90,13 +91,16 @@ fn genuine_paid_wave_numeric_x256_and_independent_hidden_worlds_keep_exact_opera
                 crate::state::Zone::Hand,
             );
             let mut pair = Pair::new(s);
+            eprintln!("Wave numeric X256 {p:?}: paid cast");
             pair.cast(wave, p, 256);
+            eprintln!("Wave numeric X256 {p:?}: paid cast complete, revealing subset");
             pair.advance_to_subset();
             let model = GenesisWaveSession::from_genesis_wave(pair.own);
             let FastActorResponseV1::Decision(e) = model.current_response() else {
                 panic!()
             };
             let d = model.encode(e).unwrap();
+            eprintln!("Wave numeric X256 {p:?}: complete numeric packet encoded");
             assert_eq!(d.backend.observation().genesis_wave.waves[0].x_value, 256);
             assert_eq!(
                 d.backend.observation().genesis_wave.waves[0].revealed.len(),

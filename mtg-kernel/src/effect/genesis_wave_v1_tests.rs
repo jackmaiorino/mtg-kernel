@@ -556,10 +556,13 @@ fn genuine_paid_wave_progenitus_remainder_uses_real_shuffle_and_actual_graveyard
 #[test]
 fn genuine_paid_wave_x256_real_automatic_sources_and_full_native_subset_width_both_seats() {
     for p in players() {
+        eprintln!("Wave native X256 {p:?}: initial setup");
         let library = vec!["Forest"; 257];
         let mut s = ready(p, &library, 259, "Island");
         let original = s.players[p.index()].library.clone();
+        eprintln!("Wave native X256 {p:?}: paid cast");
         let wave = paid(&mut s, p, "Genesis Wave", Some(256), 259);
+        eprintln!("Wave native X256 {p:?}: paid cast complete, revealing subset");
         let candidates = subset(&mut s, p);
         assert_eq!(candidates, original[..256]);
         assert!(matches!(
@@ -570,8 +573,10 @@ fn genuine_paid_wave_x256_real_automatic_sources_and_full_native_subset_width_bo
             }
         ));
         let mut replay = restore(&s);
+        eprintln!("Wave native X256 {p:?}: selecting original slot255 and replay");
         choose(&mut s, &[original[255]]);
         choose(&mut replay, &[original[255]]);
+        eprintln!("Wave native X256 {p:?}: finishing full remainder and replay");
         finish(&mut s, wave);
         finish(&mut replay, wave);
         assert_eq!(s, replay);
@@ -585,6 +590,7 @@ fn genuine_paid_wave_x256_real_automatic_sources_and_full_native_subset_width_bo
                 .count(),
             255
         );
+        eprintln!("Wave native X256 {p:?}: complete");
     }
 }
 #[test]
