@@ -26902,6 +26902,98 @@ mod tests {
         assert_eq!(state.stack[0].source, blood);
     }
 
+    fn assert_paid_offturn_trigger_priority(caster: PlayerId, ward: bool) {
+        let mut state = empty_game();
+        state.step = Step::Main1;
+        state.active_player = caster.opponent();
+        state.priority_player = caster;
+        let land = put_on_battlefield(&mut state, caster, if ward { "Swamp" } else { "Island" });
+        let trigger_source = put_on_battlefield(
+            &mut state,
+            if ward { caster.opponent() } else { caster },
+            if ward {
+                "Tolarian Terror"
+            } else {
+                "Murmuring Mystic"
+            },
+        );
+        let spell = put_in_hand(
+            &mut state,
+            caster,
+            if ward {
+                "Toxin Analysis"
+            } else {
+                "Thought Scour"
+            },
+        );
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == caster
+        ));
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(if ward {
+                Target::Object(trigger_source)
+            } else {
+                Target::Player(caster.opponent())
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == caster
+        ));
+        assert!(state.objects.get(land).tapped, "the printed cost was paid");
+        assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
+        assert_eq!(state.engine.priority_passes, [false; 2]);
+        assert_eq!(state.stack.len(), 2);
+        assert_eq!(state.stack[0].source, spell);
+        let trigger = &state.stack[1];
+        assert_eq!(trigger.source, trigger_source);
+        assert_eq!(
+            trigger.controller,
+            if ward { caster.opponent() } else { caster }
+        );
+        assert!(trigger.v4.source_contract.is_some());
+
+        // CR 117.3c/117.5: neither the trigger's controller nor APNAP
+        // placement transfers the caster's pending priority to the active player.
+        // Restoring the exact native stack must preserve that handoff as well.
+        let saved = state.clone();
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        for stream in [&mut state, &mut restored] {
+            assert!(matches!(
+                advance_until_decision(stream),
+                Decision::CastSpellOrPass { player, .. } if player == caster
+            ));
+            step(stream, Action::Pass).unwrap();
+            assert!(matches!(
+                advance_until_decision(stream),
+                Decision::CastSpellOrPass { player, .. } if player == caster.opponent()
+            ));
+            assert!(stream.engine.priority_passes[caster.index()]);
+            assert!(!stream.engine.priority_passes[caster.opponent().index()]);
+            assert_eq!(stream.stack.len(), 2, "one pass cannot resolve the trigger");
+        }
+        assert_eq!(state, restored);
+    }
+
+    #[test]
+    fn paid_offturn_ward_trigger_preserves_caster_priority_and_restore_both_seats() {
+        for caster in [PlayerId::P0, PlayerId::P1] {
+            assert_paid_offturn_trigger_priority(caster, true);
+        }
+    }
+
+    #[test]
+    fn paid_offturn_mystic_trigger_preserves_caster_priority_and_restore_both_seats() {
+        for caster in [PlayerId::P0, PlayerId::P1] {
+            assert_paid_offturn_trigger_priority(caster, false);
+        }
+    }
+
     fn put_on_battlefield(state: &mut GameState, player: PlayerId, card_name: &str) -> ObjectId {
         let card_id =
             card_id_by_name(card_name).unwrap_or_else(|| panic!("{card_name} not in CARD_DEFS"));
