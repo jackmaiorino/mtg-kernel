@@ -4,6 +4,8 @@
 //! scope for this plan) and it never mutates
 //! `data/pauper_sideboard_policy_v1.json`.
 
+pub mod pool_swaps;
+
 use crate::ids::PlayerId;
 use crate::paired_bo1_harness_v1::BootstrapSidednessV1;
 use crate::sideboard::{CardCountV1, RegisteredDeckV1, SideboardErrorV1, SideboardPlanV1};
