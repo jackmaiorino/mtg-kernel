@@ -769,6 +769,10 @@ fn validate_state_with_removed(
         let not_resolved = usize::from(not_resolved.contains(&(i as u64)));
         let disposed = usize::from(crate::engine::time_stop_v1::disposed(state, item)?);
         if live + removed + completed + not_resolved + disposed != 1 {
+            #[cfg(test)]
+            eprintln!(
+                "Chandra ownership counts: live={live}, removed={removed}, completed={completed}, not_resolved={not_resolved}, disposed={disposed}"
+            );
             return Err(
                 "Chandra live/resolved/nonresolved/disposed ownership overlaps or was erased"
                     .into(),

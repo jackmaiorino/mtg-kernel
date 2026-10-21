@@ -391,6 +391,23 @@ fn genuine_paid_human_crystal_options_original_menu_sort_restore_and_native_dama
     for p in [PlayerId::P0, PlayerId::P1] {
         for double_first in [false, true] {
             let s = pending_damage_boundary(p);
+            for scope in [
+                None,
+                Some(crate::rl::CommonProjectionScopeV42::LilianaV73),
+                Some(crate::rl::CommonProjectionScopeV42::ChandraV74),
+                Some(crate::rl::CommonProjectionScopeV42::KaitoV75),
+            ] {
+                assert_eq!(
+                    crate::crystal_public_v1::menu_owned_by_chandra_scope(&s, scope),
+                    matches!(
+                        scope,
+                        Some(
+                            crate::rl::CommonProjectionScopeV42::ChandraV74
+                                | crate::rl::CommonProjectionScopeV42::KaitoV75
+                        )
+                    )
+                );
+            }
             let mut pair = Pair::new(s, p.opponent());
             let v = pair.visible();
             let damage = v.state.chandra.pending_damage.as_ref().unwrap();

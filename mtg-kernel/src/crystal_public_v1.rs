@@ -624,6 +624,23 @@ pub(crate) fn parts_for_common_scope(
         None,
     )
 }
+/// The complete Chandra consumer carries its own authenticated damage menu.
+/// Frozen consumers still construct their original menu and refuse this source.
+pub(crate) fn menu_owned_by_chandra_scope(
+    state: &GameState,
+    scope: Option<crate::rl::CommonProjectionScopeV42>,
+) -> bool {
+    matches!(
+        scope,
+        Some(
+            crate::rl::CommonProjectionScopeV42::ChandraV74
+                | crate::rl::CommonProjectionScopeV42::KaitoV75
+        )
+    ) && crate::effect::crystal_prevention_v1::is_choice(state)
+        && state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            crate::effect::chandra_flameshaper_v1::selected(state, &pending.resolving_item)
+        })
+}
 pub(crate) fn parts_for_common_scope_with_common(
     request: (crate::rl::CommonProjectionScopeV42, &GameState),
     surface: &PolicySurfaceV5,
@@ -648,7 +665,8 @@ pub(crate) fn parts_for_common_scope_with_common(
     );
 
     validate_state(state).map_err(RlContractError)?;
-    let project_menu = !crate::twinflame_observation_v1::owns_family_menu(state);
+    let project_menu = !menu_owned_by_chandra_scope(state, Some(scope))
+        && !crate::twinflame_observation_v1::owns_family_menu(state);
     let optional_discard_menu = if project_menu {
         discard_menu_fake_scoped_v50(state, actor, true, accept_fake)?
     } else {
@@ -718,21 +736,13 @@ pub(crate) fn parts_for_common_scope_with_common(
             state.player_attacked_this_turn_v1(PlayerId::P1),
         ],
         static_sources,
-        prevention_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
-            None
-        } else {
+        prevention_menu: if project_menu {
             menu_fake_scoped_v50(state, true, accept_fake)?
-        },
-        optional_discard_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
-            None
         } else {
-            optional_discard_menu
-        },
-        optional_fight_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
             None
-        } else {
-            optional_fight_menu
         },
+        optional_discard_menu,
+        optional_fight_menu,
         equipment_damage_sources: crate::equipment_damage_source_v4::public_sources(state)
             .map_err(RlContractError)?,
         projection_sha256: String::new(),

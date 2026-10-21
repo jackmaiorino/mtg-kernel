@@ -636,6 +636,14 @@ fn genuine_paid_divided_damage_tyrant_shield_order_uses_real_affected_choice_and
                         .collect::<Vec<_>>(),
                     vec![if double_first { 13 } else { 10 }]
                 );
+                assert!(branch.engine.halted.is_none(), "{:?}", branch.engine.halted);
+                assert_eq!(
+                    rows(branch)
+                        .filter(|(_, journal)| matches!(journal, JournalV74::Completed { .. }))
+                        .count(),
+                    1,
+                    "the answered damage batch must finish its original paid activation"
+                );
                 validate_state(branch).unwrap();
             }
             assert_eq!(s, replay);

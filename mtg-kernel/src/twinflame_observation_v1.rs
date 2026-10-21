@@ -646,7 +646,9 @@ fn observe_inner_scoped(
     validate_projection_authority(state)?;
     // The union gives each real pending menu to its actual typed family. Do not
     // construct a frozen foreign source projection merely to discard it later.
-    let project_menu = !accepted_union || owns_family_menu(state);
+    let project_menu = !accepted_union
+        || owns_family_menu(state)
+            && !crate::crystal_public_v1::menu_owned_by_chandra_scope(state, explicit_scope);
     let optional_discard_menu = if project_menu {
         crate::crystal_public_v1::discard_menu_fake_scoped_v50(
             state,
