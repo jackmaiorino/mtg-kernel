@@ -49,6 +49,7 @@ struct ThinkTwiceCastRoot {
 #[derive(serde::Serialize)]
 enum BaselineTiming {
     InstantWithPriority,
+    OwnMainPhaseEmptyStackWithPriority,
 }
 #[derive(serde::Serialize)]
 enum BaselineManaCost {
@@ -334,6 +335,14 @@ pub(super) fn is_gain_land(id: u16) -> bool {
     CARD_DEFS
         .get(usize::from(id))
         .is_some_and(|d| gain_land_colors(d.name).is_some())
+}
+pub(super) fn is_untargeted_spell(id: u16) -> bool {
+    CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+        matches!(
+            d.name,
+            "Aetherize" | "Boltwave" | "Day of Judgment" | "Overrun" | "Preposterous Proportions"
+        )
+    })
 }
 
 pub(super) fn baseline(id: u16) -> Result<Value> {
@@ -1162,6 +1171,9 @@ pub(super) fn registered_spell_printing(id: u16) -> Result<Option<Value>> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if is_untargeted_spell(id) {
+        return baseline_recipe(id, d).map(Some);
+    }
     match d.name {
         "Divine Resilience" => divine_printing::printing(id, d).map(Some),
         "Fiery Annihilation" => fiery_printing::printing(id, d).map(Some),

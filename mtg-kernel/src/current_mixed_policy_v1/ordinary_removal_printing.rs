@@ -15,6 +15,29 @@ enum TargetFilter {
 }
 #[derive(serde::Serialize)]
 enum Resolution {
+    DamageEachOpponent {
+        amount: i32,
+        damage_not_life_loss: bool,
+        normal_prevention_and_replacements_apply: bool,
+    },
+    DestroyEveryCurrentCreature {
+        simultaneous_zone_change_batch: bool,
+        respects_current_indestructible_and_replacements: bool,
+    },
+    ReturnEveryCurrentAttackingCreatureToItsOwnersHand {
+        simultaneous_zone_change_batch: bool,
+        current_combat_membership_and_creature_type_at_resolution: bool,
+        removes_from_combat: bool,
+    },
+    BoostCurrentControlledCreatures {
+        power: i32,
+        toughness: i32,
+        keyword_bits: u32,
+        exact_incarnation_set_captured_at_resolution: bool,
+        includes_spell_casters_creatures_only: bool,
+        later_entries_excluded: bool,
+        expires_at_cleanup_after_discard: bool,
+    },
     DamageBoundCreature {
         target_slot: u8,
         amount: i32,
@@ -73,6 +96,9 @@ fn root(cost: Cost, mode_index: u8, filter: TargetFilter, op: Resolution) -> Cas
 /// Every other capability remains subject to the caller's common exclusion
 /// guard. A familiar name never admits changed characteristics or programs.
 pub(super) fn cast_roots(id: u16, d: &CardDef) -> Result<Option<Vec<CastRoot>>> {
+    if let Some(root) = untargeted_root(id, d)? {
+        return Ok(Some(vec![root]));
+    }
     let cost = Cost {
         pips: &[Pip::Colored(ManaColor::R)],
         generic: match d.name {
@@ -163,4 +189,128 @@ pub(super) fn cast_roots(id: u16, d: &CardDef) -> Result<Option<Vec<CastRoot>>> 
         }
         _ => unreachable!(),
     }
+}
+
+fn untargeted_root(id: u16, d: &CardDef) -> Result<Option<CastRoot>> {
+    let (cost, kind, color, program, resolution) = match d.name {
+        "Aetherize" => (
+            Cost {
+                generic: 3,
+                pips: &[Pip::Colored(ManaColor::U)],
+                x_count: 0,
+            },
+            CardType::Instant,
+            ManaColor::U,
+            EffectOp::ReturnAttackingCreaturesToOwnersHands,
+            Resolution::ReturnEveryCurrentAttackingCreatureToItsOwnersHand {
+                simultaneous_zone_change_batch: true,
+                current_combat_membership_and_creature_type_at_resolution: true,
+                removes_from_combat: true,
+            },
+        ),
+        "Boltwave" => (
+            Cost {
+                generic: 0,
+                pips: &[Pip::Colored(ManaColor::R)],
+                x_count: 0,
+            },
+            CardType::Sorcery,
+            ManaColor::R,
+            EffectOp::DealDamage {
+                target: TargetRef::Opponent,
+                amount: 3,
+            },
+            Resolution::DamageEachOpponent {
+                amount: 3,
+                damage_not_life_loss: true,
+                normal_prevention_and_replacements_apply: true,
+            },
+        ),
+        "Day of Judgment" => (
+            Cost {
+                generic: 2,
+                pips: &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::W)],
+                x_count: 0,
+            },
+            CardType::Sorcery,
+            ManaColor::W,
+            EffectOp::DestroyAllCreatures,
+            Resolution::DestroyEveryCurrentCreature {
+                simultaneous_zone_change_batch: true,
+                respects_current_indestructible_and_replacements: true,
+            },
+        ),
+        "Overrun" | "Preposterous Proportions" => {
+            let overrun = d.name == "Overrun";
+            let cost = if overrun {
+                Cost {
+                    generic: 2,
+                    pips: &[
+                        Pip::Colored(ManaColor::G),
+                        Pip::Colored(ManaColor::G),
+                        Pip::Colored(ManaColor::G),
+                    ],
+                    x_count: 0,
+                }
+            } else {
+                Cost {
+                    generic: 5,
+                    pips: &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::G)],
+                    x_count: 0,
+                }
+            };
+            let amount = if overrun { 3 } else { 10 };
+            let keywords = if overrun {
+                Keywords::TRAMPLE
+            } else {
+                Keywords::VIGILANCE
+            };
+            (
+                cost,
+                CardType::Sorcery,
+                ManaColor::G,
+                EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+                    power: amount,
+                    toughness: amount,
+                    keywords,
+                },
+                Resolution::BoostCurrentControlledCreatures {
+                    power: amount,
+                    toughness: amount,
+                    keyword_bits: keywords.0,
+                    exact_incarnation_set_captured_at_resolution: true,
+                    includes_spell_casters_creatures_only: true,
+                    later_entries_excluded: true,
+                    expires_at_cleanup_after_discard: true,
+                },
+            )
+        }
+        _ => return Ok(None),
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.is_token
+        || d.is_land
+        || d.types != [kind]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [color]
+        || d.cost != cost
+        || usize::from(d.mana_value) != usize::from(cost.generic) + cost.pips.len()
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.target_spec != TargetSpec::None
+        || d.mode2.is_some()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)() != Some(program)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let mut value = root(cost, 0, TargetFilter::None, resolution);
+    if kind == CardType::Sorcery {
+        value.timing = BaselineTiming::OwnMainPhaseEmptyStackWithPriority;
+    }
+    Ok(Some(value))
 }

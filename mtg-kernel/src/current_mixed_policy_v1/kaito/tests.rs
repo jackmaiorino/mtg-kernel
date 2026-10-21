@@ -234,6 +234,161 @@ fn gainlands_actual_play_entry_life_and_each_native_mana_color_keep_numeric_pari
     }
 }
 
+#[test]
+fn five_untargeted_printings_actual_paid_cast_resolution_numeric_parity_and_restore_both_seats() {
+    use crate::{
+        engine::{self, Action, Decision},
+        policy_observation_v6::tests::put,
+        state::{GameState, Step, Zone},
+    };
+    let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+    for name in [
+        "Aetherize",
+        "Boltwave",
+        "Day of Judgment",
+        "Overrun",
+        "Preposterous Proportions",
+    ] {
+        for p in [PlayerId::P0, PlayerId::P1] {
+            let aetherize = name == "Aetherize";
+            let active = if aetherize { p.opponent() } else { p };
+            let mut s = GameState::new_from_libraries_with_starting_player_v1(
+                &[forest; 40],
+                &[forest; 40],
+                crate::rl::card_name,
+                110_287,
+                active,
+            );
+            s.step = Step::Main1;
+            let land = match name {
+                "Aetherize" => "Island",
+                "Boltwave" => "Mountain",
+                "Day of Judgment" => "Plains",
+                _ => "Forest",
+            };
+            for _ in 0..8 {
+                put(&mut s, p, land, Zone::Battlefield);
+            }
+            let friendly = put(&mut s, p, "Llanowar Elves", Zone::Battlefield);
+            let opposing = put(&mut s, p.opponent(), "Llanowar Elves", Zone::Battlefield);
+            let idle = put(&mut s, p.opponent(), "Llanowar Elves", Zone::Battlefield);
+            let later = put(&mut s, p, "Llanowar Elves", Zone::Hand);
+            let spell = put(&mut s, p, name, Zone::Hand);
+            if aetherize {
+                s.step = Step::DeclareAttackers;
+                assert!(matches!(
+                    engine::advance_until_decision(&mut s),
+                    Decision::DeclareAttackers { .. }
+                ));
+                engine::step(&mut s, Action::DeclareAttackers(vec![opposing])).unwrap();
+                assert!(
+                    matches!(engine::advance_until_decision(&mut s), Decision::CastSpellOrPass { player, .. } if player == active)
+                );
+                engine::step(&mut s, Action::Pass).unwrap();
+                assert!(
+                    matches!(engine::advance_until_decision(&mut s), Decision::CastSpellOrPass { player, .. } if player == p)
+                );
+            }
+            let mut native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
+            let mut own =
+                KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(s))
+                    .unwrap();
+            act(
+                &mut own,
+                &mut native,
+                |a| matches!(a, A::CastSpell { source, .. } if source.arena_id == spell.0),
+            );
+            assert!(own.fixture_state().engine.pending_cast.is_none());
+            assert_eq!(own.fixture_state().objects.get(spell).zone, Zone::Stack);
+            let def = &crate::card_def::CARD_DEFS
+                [usize::from(crate::card_def::card_id_by_name(name).unwrap())];
+            let tapped = own.fixture_state().players[p.index()]
+                .battlefield
+                .iter()
+                .filter(|&&id| own.fixture_state().objects.get(id).tapped)
+                .count();
+            assert_eq!(tapped, usize::from(def.cost.generic) + def.cost.pips.len());
+            let saved = own.snapshot();
+            let raw = native.snapshot_v1();
+            settle(&mut own, &mut native);
+            assert_eq!(own.fixture_state().objects.get(spell).zone, Zone::Graveyard);
+            match name {
+                "Aetherize" => {
+                    assert_eq!(own.fixture_state().objects.get(opposing).zone, Zone::Hand);
+                    assert!(own.fixture_state().players[p.opponent().index()]
+                        .hand
+                        .contains(&opposing));
+                    assert_eq!(
+                        own.fixture_state().objects.get(idle).zone,
+                        Zone::Battlefield
+                    );
+                    assert_eq!(
+                        own.fixture_state().objects.get(friendly).zone,
+                        Zone::Battlefield
+                    );
+                    assert!(!own
+                        .fixture_state()
+                        .engine
+                        .combat
+                        .attackers
+                        .contains(&opposing));
+                }
+                "Boltwave" => {
+                    assert_eq!(own.fixture_state().players[p.opponent().index()].life, 17);
+                    assert_eq!(own.fixture_state().players[p.index()].life, 20);
+                    assert_eq!(
+                        own.fixture_state().objects.get(opposing).zone,
+                        Zone::Battlefield
+                    );
+                }
+                "Day of Judgment" => {
+                    for id in [friendly, opposing, idle] {
+                        assert_eq!(own.fixture_state().objects.get(id).zone, Zone::Graveyard);
+                    }
+                }
+                _ => {
+                    let amount = if name == "Overrun" { 3 } else { 10 };
+                    let keyword = if name == "Overrun" {
+                        crate::card_def::Keywords::TRAMPLE
+                    } else {
+                        crate::card_def::Keywords::VIGILANCE
+                    };
+                    assert_eq!(
+                        engine::checked_effective_pt(own.fixture_state(), friendly).unwrap(),
+                        (1 + amount, 1 + amount)
+                    );
+                    assert!(engine::has_effective_keyword(
+                        own.fixture_state(),
+                        friendly,
+                        keyword
+                    ));
+                    assert_eq!(
+                        engine::checked_effective_pt(own.fixture_state(), opposing).unwrap(),
+                        (1, 1)
+                    );
+                }
+            }
+            let expected = own.fixture_state().clone();
+            own.restore(&saved).unwrap();
+            native.kaito_restore_v75(&raw).unwrap();
+            settle(&mut own, &mut native);
+            assert_eq!(own.fixture_state(), &expected);
+            if matches!(name, "Overrun" | "Preposterous Proportions") {
+                act(
+                    &mut own,
+                    &mut native,
+                    |a| matches!(a, A::CastSpell { source, .. } if source.arena_id == later.0),
+                );
+                settle(&mut own, &mut native);
+                assert_eq!(
+                    engine::checked_effective_pt(own.fixture_state(), later).unwrap(),
+                    (1, 1)
+                );
+            }
+        }
+    }
+}
+
 fn complete(own: &mut KaitoSession, native: &mut FastActorSessionV1) {
     for _ in 0..512 {
         let FastActorResponseV1::Decision(h) = own.current_response() else {

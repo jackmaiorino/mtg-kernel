@@ -597,9 +597,9 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         {
             continue;
         }
-        // The complete gainland printing is added once by the mandatory
-        // supplement below, even if a catalog family already covered its ID.
-        if !roots::is_gain_land(*id) {
+        // These complete ordinary printings are added once by the mandatory
+        // supplements below, even if a catalog family already covered an ID.
+        if !roots::is_gain_land(*id) && !roots::is_untargeted_spell(*id) {
             meanings.push(roots::baseline(*id)?);
         }
     }
