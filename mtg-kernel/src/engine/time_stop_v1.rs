@@ -822,7 +822,14 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
         || state
             .engine
             .event_history
-            .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+            .scan_for_v1(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    crate::event::CommittedEvent::TimeStopJournalV1 { .. }
+                )
+            })
         || state.objects.iter().any(|(_, object)| {
             matches!(
                 object.zone,

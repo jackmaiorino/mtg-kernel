@@ -1102,10 +1102,21 @@ pub(crate) fn refuse_legacy(state: &GameState, viewer: Option<PlayerId>) -> Resu
         })
     });
     if visible
-        || state.engine.event_history.has_any(&[
-            crate::event_history_v1::EventKindV1::GenesisWaveProgressV1,
-            crate::event_history_v1::EventKindV1::GenesisWaveFinishedV1,
-        ])
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                crate::event_history_v1::EventKindV1::GenesisWaveProgressV1,
+                crate::event_history_v1::EventKindV1::GenesisWaveFinishedV1,
+            ])
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    crate::event::CommittedEvent::GenesisWaveProgressV1 { .. }
+                        | crate::event::CommittedEvent::GenesisWaveFinishedV1 { .. }
+                )
+            })
     {
         return Err("Genesis Wave requires a distinct complete revealed-entry consumer".into());
     }

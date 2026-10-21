@@ -904,11 +904,23 @@ pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Res
     });
     if visible
         || state.engine.muldrotha_v1.0.is_some()
-        || state.engine.event_history.has_any(&[
-            EventKindV1::MuldrothaOptionsV1,
-            EventKindV1::MuldrothaSelectedV1,
-            EventKindV1::MuldrothaPlayedV1,
-        ])
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::MuldrothaOptionsV1,
+                EventKindV1::MuldrothaSelectedV1,
+                EventKindV1::MuldrothaPlayedV1,
+            ])
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    crate::event::CommittedEvent::MuldrothaOptionsV1 { .. }
+                        | crate::event::CommittedEvent::MuldrothaSelectedV1 { .. }
+                        | crate::event::CommittedEvent::MuldrothaPlayedV1 { .. }
+                )
+            })
     {
         Err("Muldrotha source/type permission requires a complete V71 consumer".into())
     } else {
