@@ -344,6 +344,7 @@ class SetNet(nn.Module):
             bias = torch.zeros(2 * r + 1); bias[r] = 4.0
             head.bias.data.copy_(bias.repeat(head.out_features // (2 * r + 1)))
         self.truncated = 0  # states with more card entries than MAX_STATE_TOKENS (counted, never silent)
+        self.action_truncated = 0  # actions with more features than MAX_ACTION_TOKENS
 
     @staticmethod
     def _top(mask, k):
@@ -363,6 +364,7 @@ class SetNet(nn.Module):
         ix, valid = self._top(present, MAX_STATE_TOKENS)
         cnt = counts.gather(1, ix).round().clamp(0, 7).long()
         st = (self.block_emb(ix // C) + self.card_emb(ix % C) + self.count_emb(cnt) + self.type_emb.weight[1])
+        self.action_truncated += int(((cards > 0.5).sum(1) > MAX_ACTION_TOKENS).sum())
         a_ix, a_valid = self._top(cards > 0.5, MAX_ACTION_TOKENS)
         is_card = a_ix < len(ROLES) * C
         a_tok = torch.where(is_card[..., None], self.role_emb((a_ix // C).clamp(max=len(ROLES) - 1))
@@ -454,7 +456,9 @@ def train(args):
     out.mkdir(parents=True, exist_ok=False)
     torch.save(net.state_dict(), out / "model.pt")
     (out / "config.json").write_text(json.dumps(dict(vars(args), log=log,
-                                                     truncated_states=getattr(net, "truncated", None)), indent=1))
+                                                     truncated_states=getattr(net, "truncated", None),
+                                                     truncated_actions=getattr(net, "action_truncated", None)),
+                                                indent=1))
 
 
 @torch.no_grad()
@@ -539,6 +543,7 @@ def evaluate(args):
         print(f"k={k:>2} model {m['primary']:.3f} {m['primary_ci']} persistence {p['primary']:.3f} "
               f"gap {entry['gap']['mean']:+.3f} changed {m['changed_share']:.2f}", flush=True)
     report["truncated_states"] = getattr(net, "truncated", None)
+    report["truncated_actions"] = getattr(net, "action_truncated", None)
     Path(args.out).write_text(json.dumps(report, indent=1))
 
 
