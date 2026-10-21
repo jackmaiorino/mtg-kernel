@@ -75,6 +75,10 @@ pub(super) fn normalized_origin(
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
     let actual =
         super::kaito_candidates_v75(&current.origin_decision, &session.state, &session.surface)
+            .inspect_err(|_error| {
+                #[cfg(test)]
+                eprintln!("V75 normalized origin candidates: {_error}");
+            })
             .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     let mut original = current.clone();
     original.candidates = actual;
@@ -108,6 +112,10 @@ pub(super) fn prepare_current(
         current.physical_decision_id,
         (current.substep_index, current.substep_count),
     )
+    .inspect_err(|_error| {
+        #[cfg(test)]
+        eprintln!("V75 current observation: {_error}");
+    })
     .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     Ok(())
 }

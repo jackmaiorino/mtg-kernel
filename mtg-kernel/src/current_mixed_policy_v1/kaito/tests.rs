@@ -118,6 +118,122 @@ fn act(own: &mut KaitoSession, native: &mut FastActorSessionV1, choose: impl Fn(
         (native.policy_step_count(), native.physical_decision_count())
     );
 }
+
+#[test]
+fn gainlands_actual_play_entry_life_and_each_native_mana_color_keep_numeric_parity_both_seats() {
+    use crate::{
+        policy_observation_v6::tests::put,
+        state::{GameState, Step, Zone},
+    };
+    let names = [
+        "Blossoming Sands",
+        "Thornwood Falls",
+        "Bloodfell Caves",
+        "Dismal Backwater",
+        "Jungle Hollow",
+        "Rugged Highlands",
+        "Scoured Barrens",
+        "Swiftwater Cliffs",
+        "Tranquil Cove",
+        "Wind-Scarred Crag",
+    ];
+    let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+    for name in names {
+        let id = crate::card_def::card_id_by_name(name).unwrap();
+        let meaning = super::super::roots::baseline(id).unwrap();
+        assert_eq!(
+            meaning["gain_land_printing"]["ordinary_play"]["is_cast"],
+            false
+        );
+        assert_eq!(
+            meaning["gain_land_printing"]["mana_ability"]["choose_exactly_one"],
+            true
+        );
+        assert_eq!(
+            meaning["gain_land_printing"]["entry_trigger"]["ordered_resolution"][0]["amount"],
+            1
+        );
+        for p in [PlayerId::P0, PlayerId::P1] {
+            let scene = || {
+                let mut s = GameState::new_from_libraries_with_starting_player_v1(
+                    &[forest; 40],
+                    &[forest; 40],
+                    crate::rl::card_name,
+                    110_286,
+                    p,
+                );
+                s.step = Step::Main1;
+                s
+            };
+            let pair = |s: GameState| {
+                let native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
+                let own =
+                    KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(s))
+                        .unwrap();
+                (own, native)
+            };
+            let mut s = scene();
+            let land = put(&mut s, p, name, Zone::Hand);
+            let (mut own, mut native) = pair(s);
+            act(
+                &mut own,
+                &mut native,
+                |a| matches!(a, A::PlayLand { source, .. } if source.arena_id == land.0),
+            );
+            assert_eq!(
+                own.fixture_state().objects.get(land).zone,
+                Zone::Battlefield
+            );
+            assert!(own.fixture_state().objects.get(land).tapped);
+            for _ in 0..16 {
+                if own.fixture_state().players[p.index()].life == 21 {
+                    break;
+                }
+                act(&mut own, &mut native, |a| {
+                    matches!(
+                        a,
+                        A::Pass { .. } | A::OrderTriggers { .. } | A::ChooseTriggerOrderNext { .. }
+                    )
+                });
+            }
+            assert_eq!(own.fixture_state().players[p.index()].life, 21);
+            assert_eq!(own.fixture_state().players[p.opponent().index()].life, 20);
+            assert_eq!(
+                own.fixture_state().players[p.index()].lands_played_this_turn,
+                1
+            );
+            for color in crate::card_def::CARD_DEFS[usize::from(id)].mana_ability_choices {
+                // A separate initial untapped battlefield scene checks each
+                // mana alternative. It is not a claim that entry untapped.
+                let mut s = scene();
+                let land = put(&mut s, p, name, Zone::Battlefield);
+                s.objects.get_mut(land).tapped = false;
+                let (mut own, mut native) = pair(s);
+                act(
+                    &mut own,
+                    &mut native,
+                    |a| matches!(a, A::ActivateManaAbility { source, mana_choice: Some(selected), .. } if source.arena_id == land.0 && selected == color),
+                );
+                assert!(own.fixture_state().objects.get(land).tapped);
+                assert_eq!(
+                    own.fixture_state().players[p.index()].mana_pool[color.pool_index()],
+                    1
+                );
+                assert_eq!(
+                    own.fixture_state().players[p.index()]
+                        .mana_pool
+                        .iter()
+                        .copied()
+                        .map(u16::from)
+                        .sum::<u16>(),
+                    1
+                );
+                assert_eq!(own.fixture_state().players[p.index()].life, 20);
+            }
+        }
+    }
+}
+
 fn complete(own: &mut KaitoSession, native: &mut FastActorSessionV1) {
     for _ in 0..512 {
         let FastActorResponseV1::Decision(h) = own.current_response() else {

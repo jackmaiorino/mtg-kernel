@@ -314,6 +314,28 @@ fn counter_cast_root(id: u16, d: &CardDef) -> Result<Option<CounterCastRoot>> {
     }))
 }
 
+fn gain_land_colors(name: &str) -> Option<&'static [crate::mana::ManaColor]> {
+    use crate::mana::ManaColor::*;
+    Some(match name {
+        "Blossoming Sands" => &[G, W],
+        "Thornwood Falls" => &[G, U],
+        "Bloodfell Caves" => &[B, R],
+        "Dismal Backwater" => &[U, B],
+        "Jungle Hollow" => &[B, G],
+        "Rugged Highlands" => &[R, G],
+        "Scoured Barrens" => &[W, B],
+        "Swiftwater Cliffs" => &[U, R],
+        "Tranquil Cove" => &[W, U],
+        "Wind-Scarred Crag" => &[R, W],
+        _ => return None,
+    })
+}
+pub(super) fn is_gain_land(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| gain_land_colors(d.name).is_some())
+}
+
 pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
@@ -367,6 +389,42 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let goldvein = goldvein_printing(id, d)?;
     let hart = burnished_hart_printing(id, d)?;
     let growth_or_druid = growth_or_druid_printing(id, d)?;
+    let gain_land = gain_land_colors(d.name);
+    if let Some(colors) = gain_land {
+        let triggers = crate::trigger::triggers_for(id);
+        if crate::card_def::card_id_by_name(d.name) != Some(id)
+            || !d.is_land
+            || d.is_token
+            || d.types != [CardType::Land]
+            || !d.subtypes.is_empty()
+            || !d.supertypes.is_empty()
+            || !d.colors.is_empty()
+            || d.power.is_some()
+            || d.toughness.is_some()
+            || d.mana_value != 0
+            || d.cost != crate::mana::Cost::zero()
+            || d.target_spec != TargetSpec::None
+            || d.keywords != crate::card_def::Keywords::NONE
+            || !d.enters_battlefield_tapped
+            || d.produces_mana != colors
+            || d.mana_ability_choices != colors
+            || (d.mana_ability)().is_some()
+            || (d.spell_effect)().is_some()
+            || triggers.len() != 1
+            || triggers[0].condition != crate::trigger::TriggerCondition::Etb
+            || triggers[0].home_zone != Zone::Battlefield
+            || triggers[0].face_index != 0
+            || triggers[0].intervening_if_kicked
+            || triggers[0].intervening_if_controls_another_source_card
+            || (triggers[0].effect)()
+                != (EffectOp::GainLife {
+                    player: PlayerRef::Controller,
+                    amount: 1,
+                })
+        {
+            return Err(Error::UnsupportedPrintedRoot(id));
+        }
+    }
     let diregraf = d.name == "Diregraf Ghoul";
     if diregraf
         && (crate::card_def::card_id_by_name("Diregraf Ghoul") != Some(id)
@@ -480,7 +538,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.madness_cost.is_none()
         && d.kicked_target_spec.is_none()
         && d.escape.is_none()
-        && (!d.enters_battlefield_tapped || diregraf)
+        && (!d.enters_battlefield_tapped || diregraf || gain_land.is_some())
         && (d.mana_ability_def.is_none() || treasure)
         && d.minimum_blockers == 1
         && d.omen.is_none()
@@ -509,9 +567,28 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
         && (d.other_controlled_nontoken_death_v1.is_none() && d.creature_type_entry_v1.is_none())
-        && (crate::trigger::triggers_for(id).is_empty() || goldvein.is_some()))
+        && (crate::trigger::triggers_for(id).is_empty()
+            || goldvein.is_some()
+            || gain_land.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    if let Some(colors) = gain_land {
+        return Ok(json!({"card_id":id,"gain_land_printing":{
+            "schema":"printed-gain-land/v1",
+            "types":["Land"],"subtypes":[],"supertypes":[],"colors":[],"mana_value":0,"token":false,
+            "ordinary_play":{"origin":"OwnHand","timing":"OwnMainPhaseEmptyStackWithPriority",
+                "consumes_land_play_allowance":1,"uses_stack":false,"is_cast":false,
+                "entry_controller":"PlayerPlayingTheLand","enters_tapped":true,
+                "other_permissions_require_current_candidate_authority":true},
+            "mana_ability":{"ordered_costs":["TapThisPermanent"],"colors":colors,"choose_exactly_one":true,
+                "amount":1,"recipient":"CurrentController","uses_stack":false,
+                "tap_cost_checks_summoning_sickness_if_currently_a_creature":true},
+            "entry_trigger":{"event":"ThisPermanentEntersBattlefield","home_zone":"Battlefield",
+                "controller":"CapturedControllerAtEntry","mandatory":true,"targets":[],"uses_stack":true,
+                "ordered_resolution":[{"operation":"GainLife","recipient":"CapturedTriggerController","amount":1}],
+                "survives_source_departure_and_later_control_change":true,"normal_life_replacements_apply":true}
+        }}));
     }
     if let Some(printing) = goldvein {
         return Ok(printing);
@@ -1102,6 +1179,9 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if is_gain_land(id) {
+        return baseline_recipe(id, d).map(Some);
+    }
     let keywords = match d.name {
         "Kellan, Planar Trailblazer" => return kellan_printing::printing(id, d),
         "Soulstone Sanctuary" => return soulstone_printing::printing(id, d),

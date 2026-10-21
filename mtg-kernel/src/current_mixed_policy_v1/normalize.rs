@@ -597,7 +597,11 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         {
             continue;
         }
-        meanings.push(roots::baseline(*id)?);
+        // The complete gainland printing is added once by the mandatory
+        // supplement below, even if a catalog family already covered its ID.
+        if !roots::is_gain_land(*id) {
+            meanings.push(roots::baseline(*id)?);
+        }
     }
     // A family fact/root is not a complete ordinary printing descriptor.
     // These mandatory supplements are independent of `covered`, including
