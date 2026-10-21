@@ -2761,11 +2761,13 @@ mod next_five_native_label_tests {
 
         let mut state = ready(actor);
         crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
-        for _ in 0..3 {
-            put(&mut state, actor, "Island", Zone::Battlefield);
-        }
+        // Native automatic generic payment takes earlier sources. Keep the
+        // Islands for Bind's U and Replication's UU after paying for Season.
         for _ in 0..10 {
             put(&mut state, actor, "Forest", Zone::Battlefield);
+        }
+        for _ in 0..3 {
+            put(&mut state, actor, "Island", Zone::Battlefield);
         }
         let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
         let other_host = put(&mut state, actor, "Axgard Cavalry", Zone::Battlefield);
@@ -3619,8 +3621,11 @@ mod next_five_native_label_tests {
             )
             .unwrap();
             assert!(label.contains("bottom to top"), "{label}");
+            assert_eq!(label.matches("Infernal Vessel [").count(), 2, "{label}");
             assert_eq!(
-                label.matches("Infernal Vessel trigger:").count(),
+                label
+                    .matches("trigger: return the original non-token card")
+                    .count(),
                 2,
                 "{label}"
             );
