@@ -14756,7 +14756,7 @@ fn validate_pending_trigger_for_stack(
     // producer/source/target metadata is still fully definition-validated.
     // Only this private placement probe uses the metadata path.
     validate_spell_stack_source(state, &candidate)?;
-    validated_stack_item_target_metadata(&candidate, state)?;
+    validated_stack_item_target_metadata(&candidate, state, false)?;
     Ok(())
 }
 
@@ -14824,7 +14824,7 @@ pub(crate) fn validate_pending_trigger_identity(
             ..StackStateV4::default()
         },
     };
-    let expected = triggered_stack_item_expected_target_spec(&candidate, state)?;
+    let expected = triggered_stack_item_expected_target_spec(&candidate, state, false)?;
     if expected != candidate.v4.target_spec {
         return Err("pending trigger target specification is not definition-owned".to_string());
     }
@@ -15364,6 +15364,7 @@ fn validate_bound_trigger_source_objects(
 fn triggered_stack_item_expected_target_spec(
     item: &StackItem,
     state: &GameState,
+    require_publication: bool,
 ) -> Result<Option<TargetSpec>, String> {
     if item.kind != StackItemKind::TriggeredAbility || item.v4.activated_ability_index.is_some() {
         return Err("triggered stack item carries incompatible producer metadata".to_string());
@@ -15537,8 +15538,12 @@ fn triggered_stack_item_expected_target_spec(
             if any_binding_for_item {
                 return Err("unpublished Niv-Mizzet trigger already has a stack binding".into());
             }
-        } else if published != 1 || !any_binding_for_item {
+        // The private placement probe reserves the next ID before this
+        // publication receipt can exist. Live/public validation requires it.
+        } else if require_publication && (published != 1 || !any_binding_for_item) {
             return Err("Niv-Mizzet trigger lost its exact stack-item binding".into());
+        } else if !require_publication && any_binding_for_item {
+            return Err("prospective Niv-Mizzet trigger already has a stack binding".into());
         }
         return Ok(None);
     }
@@ -15891,7 +15896,7 @@ pub(crate) fn validated_stack_item_target_spec(
     crate::ajani_full_v42::lifecycle::validate_item(state, item)?;
     crate::krenko_v1::validate_item(state, item)?;
     crate::fishing_pole_v39::lifecycle::validate_item(state, item)?;
-    validated_stack_item_target_metadata(item, state)
+    validated_stack_item_target_metadata(item, state, true)
 }
 
 /// Pure metadata portion shared by the private prospective placement probe.
@@ -15899,6 +15904,7 @@ pub(crate) fn validated_stack_item_target_spec(
 fn validated_stack_item_target_metadata(
     item: &StackItem,
     state: &GameState,
+    require_publication: bool,
 ) -> Result<Option<TargetSpec>, String> {
     if item.madness_offer != (item.kind == StackItemKind::MadnessOffer) {
         return Err("Madness-offer kind and flag disagree".to_string());
@@ -16036,7 +16042,7 @@ fn validated_stack_item_target_metadata(
                     "stacked triggered ability still carries its unselected modal root".into(),
                 );
             }
-            triggered_stack_item_expected_target_spec(item, state)?
+            triggered_stack_item_expected_target_spec(item, state, require_publication)?
         }
         StackItemKind::MadnessOffer => {
             if item.v4.hidden_ability_source.is_some() {

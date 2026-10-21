@@ -240,7 +240,25 @@ mod tests {
                 && *controller_before == actor
                 && departure.1.zone_change_count + 1 == state.objects.get(archer).zone_change_count
         ));
+        advance_to_archer_damage_trigger(actor, archer, state);
+        let item = state.stack.last().unwrap().clone();
+        assert_eq!(top_niv_damage_amount(state), Some(1));
+        engine::validated_stack_item_target_spec(&item, state).unwrap();
+        let before = state.clone();
+        let mut missing = state.clone();
+        missing.engine.event_history.retain(|event| {
+            !matches!(event, CommittedEvent::NivMizzetVisionaryTriggerStackedV1 {
+                stack_item_id, ..
+            } if *stack_item_id == item.v4.stack_item_id)
+        });
+        assert!(engine::validated_stack_item_target_spec(&item, &missing).is_err());
+        assert_eq!(*state, before);
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+        engine::validated_stack_item_target_spec(&item, &replay).unwrap();
         finish(state);
+        finish(&mut replay);
+        assert_eq!(*state, replay);
         assert_eq!(
             state.players[actor.index()].library.len(),
             16,
