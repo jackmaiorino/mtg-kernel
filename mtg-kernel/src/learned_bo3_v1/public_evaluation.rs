@@ -78,8 +78,8 @@ pub struct Command {
     pub cross_generation_evaluation: bool,
     pub capture_decisions: bool,
     /// Diagnostic only: with `capture_decisions`, each captured row also
-    /// carries the actor-visible observation and semantic action menu that
-    /// `visible_sha256` hashes. Play is unchanged; off keeps the old wire shape.
+    /// carries `visible_json`, the exact serialized observation and semantic
+    /// action menu that `visible_sha256` hashes. Play is unchanged; off keeps the old wire shape.
     #[serde(default, skip_serializing_if = "is_false")]
     pub capture_visible_v1: bool,
     /// Stop after the first natural physical game, including a draw.
@@ -400,14 +400,14 @@ impl PairedBo1PolicyV1 for Trace<'_> {
             } else {
                 input.diagnostic_visible_v1().map_err(diagnostic_error)?
             };
-            let visible =
-                hash(&serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?);
+            let bytes = serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?;
+            let visible = hash(&bytes);
             let d = input.decision();
             let mut row = json!({"game_index":self.resets.len(),"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep_index":d.substep_index,"actor":d.acting_player,"visible_sha256":visible,"legal_action_count":actions.len()});
             if self.visible {
-                row["observation"] = serde_json::to_value(&observation).map_err(|e| fail(error(e)))?;
-                row["actions"] = serde_json::to_value(&actions).map_err(|e| fail(error(e)))?;
+                // The exact hashed bytes, so a reader can authenticate them against visible_sha256.
+                row["visible_json"] = json!(String::from_utf8(bytes).map_err(|e| fail(error(e)))?);
             }
             Some(row)
         } else {
