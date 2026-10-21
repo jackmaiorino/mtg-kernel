@@ -324,10 +324,8 @@ fn paid_short_empty_and_no_eligible_library_decline_without_exposing_other_libra
             let other = s.players[p.opponent().index()].library.clone();
             let v = walker(&mut s, p);
             activate(&mut s, p, v, 0, None);
-            if lib == ["Forest"] {
-                assert_eq!(prompt(&mut s, p).len(), 1);
-                engine::step(&mut s, Action::FinishEffectSelection).unwrap();
-            }
+            assert_eq!(prompt(&mut s, p).len(), usize::from(lib == ["Forest"]));
+            engine::step(&mut s, Action::FinishEffectSelection).unwrap();
             finish(&mut s);
             assert!(s.players[p.index()].hand.is_empty());
             assert_eq!(s.players[p.index()].library.len(), lib.len());

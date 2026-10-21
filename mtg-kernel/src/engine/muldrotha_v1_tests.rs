@@ -536,6 +536,8 @@ fn erased_consumption_and_relabelled_finalized_route_are_readonly_refusals_both_
 fn printed_graveyard_route_remains_distinct_and_does_not_spend_muldrotha_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p, "Forest");
+        // Initial green resource for the Elf after the two six-mana payments.
+        put(&mut s, p, "Forest", Zone::Battlefield);
         let m = paid(&mut s, p);
         // Native counter-resource declaration. The printed route actually
         // removes all six counters, in addition to real six-mana payment.

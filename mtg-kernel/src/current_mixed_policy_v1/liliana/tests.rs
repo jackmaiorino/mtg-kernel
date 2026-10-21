@@ -8,7 +8,9 @@ fn act(own: &mut LilianaSession, native: &mut FastActorSessionV1, choose: impl F
     let FastActorResponseV1::Decision(h) = own.current_response() else {
         panic!("numeric V73 ended")
     };
+    eprintln!("Liliana numeric action step={}: encoding", h.step);
     let d = own.encode(h).unwrap();
+    eprintln!("Liliana numeric action step={}: encoded", h.step);
     let i = d
         .backend
         .actions()
@@ -16,16 +18,27 @@ fn act(own: &mut LilianaSession, native: &mut FastActorSessionV1, choose: impl F
         .position(choose)
         .unwrap_or_else(|| panic!("missing numeric V73 action: {:?}", d.backend.actions()));
     let original = d.backend.fixture_original_index_v73(i as u32).unwrap();
+    eprintln!("Liliana numeric action step={}: model forward", h.step);
     let scores = NativeModel::deterministic_fixture()
         .unwrap()
         .forward(d.packet())
         .unwrap();
+    eprintln!("Liliana numeric action step={}: model completed", h.step);
     assert_eq!(scores.len(), d.backend.actions().len());
     assert!(scores.iter().all(|v| v.is_finite()));
     assert_eq!(d.packet().source(), Source::LilianaV73);
+    let applied = own.apply(&d, i as u32).unwrap();
+    eprintln!(
+        "Liliana numeric action step={}: owning apply completed",
+        h.step
+    );
     assert_eq!(
-        own.apply(&d, i as u32).unwrap(),
+        applied,
         native.step(h.episode_id, h.step, original).unwrap()
+    );
+    eprintln!(
+        "Liliana numeric action step={}: native apply completed",
+        h.step
     );
     assert_eq!(own.fixture_state(), native.liliana_fixture_state());
     assert_eq!(
@@ -80,10 +93,13 @@ fn paid_numeric_all_three_original_loyalty_roots_and_native_choice_restore_both_
         for index in [0, 1, 2] {
             eprintln!("Liliana numeric root seat={p:?} ability={index}: setup");
             let (s, id) = owning_ready(p, index == 2, "Island");
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: ready");
             let mut native = FastActorSessionV1::from_liliana_v73_fixture_state(s.clone());
-            let mut own =
-                LilianaSession::from_session(FastActorSessionV1::from_liliana_v73_fixture_state(s))
-                    .unwrap();
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: native session ready");
+            let own_native = FastActorSessionV1::from_liliana_v73_fixture_state(s);
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: owning native ready");
+            let mut own = LilianaSession::from_session(own_native).unwrap();
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: owning session ready");
             act(
                 &mut own,
                 &mut native,

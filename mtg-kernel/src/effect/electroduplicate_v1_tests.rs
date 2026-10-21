@@ -98,8 +98,21 @@ fn cast_card(
     cost: usize,
 ) -> ObjectId {
     priority(s, p);
+    let decision = engine::advance_until_decision(s);
     assert!(
-        matches!(engine::advance_until_decision(s),Decision::CastSpellOrPass{castable_spells,..} if castable_spells.contains(&card))
+        matches!(&decision,Decision::CastSpellOrPass{castable_spells,..} if castable_spells.contains(&card)),
+        "{} not castable during {:?}: {decision:?}; untapped lands: {:?}",
+        s.objects.get(card).name,
+        s.step,
+        s.players[p.index()]
+            .battlefield
+            .iter()
+            .filter_map(|id| {
+                let live = s.objects.get(*id);
+                (!live.tapped && card_def::CARD_DEFS[live.card_def as usize].is_land)
+                    .then_some(&live.name)
+            })
+            .collect::<Vec<_>>()
     );
     let before = taps(s, p);
     engine::step(s, Action::CastSpell(card)).unwrap();
@@ -1031,6 +1044,10 @@ fn nightmare_copy_primitive(s: &mut GameState, p: PlayerId, name: &str) -> Objec
 fn native_nightmare_entry_primitive_paid_copy_of_copy_and_season_keep_copiable_type_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(actor);
+        // Initial blue resources cover the generic payments before the final U.
+        for _ in 0..3 {
+            put(&mut s, actor, "Island", Zone::Battlefield);
+        }
         let original = nightmare_copy_primitive(&mut s, actor, "Homunculus Horde");
         paid(&mut s, actor, "Doubling Season", 5);
         let reflection = cast(

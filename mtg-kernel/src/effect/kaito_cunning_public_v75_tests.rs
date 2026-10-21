@@ -287,7 +287,8 @@ fn genuine_paid_declared_and_source_departing_combat_have_only_bound_native_occu
                 let held = capture(&s, p);
                 assert_eq!(held.combats.len(), 1);
                 assert!(held.combats[0].observer.current_original_source.is_none());
-                assert_eq!(held.triggers[0].stage, facts::StageV75::Captured);
+                assert_eq!(held.triggers[0].stage, facts::StageV75::Held);
+                assert!(held.triggers[0].native_position.is_some());
                 for _ in 0..32 {
                     let d = next(&mut s);
                     if s.stack.iter().any(|r| {

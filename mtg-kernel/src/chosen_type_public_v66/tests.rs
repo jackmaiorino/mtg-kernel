@@ -289,6 +289,15 @@ fn paid_banner_current_control_type_suppression_full_counter_width_and_departure
         // Every native counter width is represented on a noncreature storage
         // primitive, avoiding an unrelated checked PT overflow.
         let store = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
+        // Bait uses the native transfer ledger even in this counter-storage
+        // primitive. A raw nonzero field would invalidate subsequent gameplay.
+        let bait_input = crate::doubling_season_v48::record_bait_transfer_input(
+            &mut state,
+            store,
+            actor,
+            i32::MAX,
+        )
+        .unwrap();
         {
             let live = state.objects.get_mut(store);
             live.counters = Counters {
@@ -314,6 +323,7 @@ fn paid_banner_current_control_type_suppression_full_counter_width_and_departure
                 ..Default::default()
             });
         }
+        crate::doubling_season_v48::record_bait_transfer_applied(&mut state, bait_input).unwrap();
         let planeswalker = put(
             &mut state,
             actor,
