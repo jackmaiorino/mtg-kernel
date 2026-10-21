@@ -163,6 +163,7 @@ fn validate_state_in_frame(state: &GameState) -> Result<(), String> {
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     crate::ravenous_observation_v51::validate_state_complete_next_five_v59(state)?;
     crate::graveyard_return_public_v61::require_legacy_visible(state, None)?;
+    crate::graveyard_return_public_v61::require_call_legacy_visible_v62(state, None)?;
     crate::elenda_public_v52::capture(state).map_err(|e| e.0)?;
     crate::drake_public_v53::capture(state).map_err(|e| e.0)?;
     crate::spinner_public_v54::capture(state)?;
