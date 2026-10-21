@@ -454,6 +454,10 @@ fn paid_witness_then_moon_timestamp_sba_departure_and_new_incarnation_both_seats
 fn paid_copy_before_override_is_copiable_original_and_later_native_animation_layers_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p, "Forest");
+        // The two Auras follow a six-mana Reflection in this same turn.
+        for _ in 0..2 {
+            put(&mut s, p, "Island", Zone::Battlefield);
+        }
         let host = spell(&mut s, p, "Llanowar Elves", &[], 1);
         spell(&mut s, p, "Self-Reflection", &[Target::Object(host)], 6);
         let copy = *s.players[p.index()]
@@ -678,6 +682,9 @@ fn paid_malformed_attachment_readonly_and_independent_hidden_worlds_both_seats()
 fn paid_replication_copied_moon_season_real_host_choice_and_restore_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p, "Forest");
+        // Moon and Season spend seven blue sources through native auto-pay;
+        // Replication still needs its two actual blue pips afterwards.
+        put(&mut s, p, "Island", Zone::Battlefield);
         let elf = spell(&mut s, p, "Llanowar Elves", &[], 1);
         let original = moon(&mut s, p, elf);
         spell(&mut s, p, "Doubling Season", &[], 5);

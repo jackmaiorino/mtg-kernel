@@ -523,7 +523,14 @@ fn genuine_paid_wave_as_enters_and_season_replacements_finish_one_entry_batch_bo
         assert_eq!(s.objects.get(original[1]).zone, Zone::Battlefield);
         assert_eq!(s.objects.get(original[1]).counters.revival, 0);
         let cast_familiar = paid(&mut s, p, "Nine-Lives Familiar", None, 3);
-        finish(&mut s, cast_familiar);
+        for _ in 0..16 {
+            let d = next(&mut s);
+            if s.objects.get(cast_familiar).zone == Zone::Battlefield && s.stack.is_empty() {
+                break;
+            }
+            pass(&mut s, d);
+        }
+        assert_eq!(s.objects.get(cast_familiar).zone, Zone::Battlefield);
         assert_eq!(s.objects.get(cast_familiar).counters.revival, 16);
     }
 }

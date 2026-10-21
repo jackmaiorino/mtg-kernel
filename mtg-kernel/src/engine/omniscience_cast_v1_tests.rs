@@ -458,6 +458,11 @@ fn source_removal_after_payment_preserves_spell_but_future_hand_graveyard_exile_
 ) {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p, "Forest");
+        // Two genuine ten-mana casts occur before the next untap. Native
+        // generic payment may use blue, so declare those sources up front.
+        for _ in 0..5 {
+            put(&mut s, p, "Island", Zone::Battlefield);
+        }
         let omni = paid(&mut s, p);
         let gy = put(&mut s, p, "Lightning Bolt", Zone::Graveyard);
         let exile = put(&mut s, p, "Lightning Bolt", Zone::Hand);

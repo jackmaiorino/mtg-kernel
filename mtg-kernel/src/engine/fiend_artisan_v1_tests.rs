@@ -748,6 +748,11 @@ fn paid_battlefield_only_graveyard_cards_count_control_suppression_and_checked_b
 fn paid_closed_copies_season_copy_of_copy_and_native_virtual_ancestry_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p, "Forest");
+        // Season's generic cost and both Reflections share the same turn.
+        // Preserve enough initial blue sources after automatic generic payment.
+        for _ in 0..4 {
+            put(&mut s, p, "Island", Zone::Battlefield);
+        }
         let source = paid(&mut s, p);
         cast(
             &mut s,
