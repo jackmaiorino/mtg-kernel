@@ -751,6 +751,7 @@ fn genuine_paid_restore_forgery_refusals_and_consumed_row_cleanup_both_seats() {
                 assert_eq!(forged.stack.pop(), Some(ready_item.clone()));
             }
             let before = serde_json::to_vec(&forged).unwrap();
+            assert!(crate::effect::validate_pending_effect_choice(&forged).is_err());
             assert!(acquire_resume(&forged, &ready_item).is_err());
             assert!(crate::effect::resume_resumable_resolution(&mut forged).is_err());
             assert_eq!(serde_json::to_vec(&forged).unwrap(), before);

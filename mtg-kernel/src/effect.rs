@@ -441,6 +441,13 @@ pub(crate) mod perforating_artist_v1 {
         if !requires_stage(pending) {
             return Ok(());
         }
+        let mut rows = state
+            .stack
+            .iter()
+            .filter(|row| row.v4.stack_item_id == pending.resolving_item.v4.stack_item_id);
+        if rows.next() != Some(&pending.resolving_item) || rows.next().is_some() {
+            return Err("Artist continuation lost its unique native public row".into());
+        }
         validate_origin(state, &pending.resolving_item)?;
         let item = &pending.resolving_item;
         let expected_ctx = ExecCtx {
