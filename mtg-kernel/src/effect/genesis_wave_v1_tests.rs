@@ -228,6 +228,71 @@ fn players() -> [PlayerId; 2] {
 }
 
 #[test]
+fn native_cast_announcement_is_not_a_paid_published_wave_before_x_and_payment_both_seats() {
+    for p in players() {
+        let mut s = ready(p, &["Forest"; 12], 12, "Island");
+        let spell = put(&mut s, p, "Genesis Wave", Zone::Hand);
+        priority(&mut s, p);
+        let before = tapped(&s, p);
+        engine::step(&mut s, Action::CastSpell(spell)).unwrap();
+        match next(&mut s) {
+            Decision::ChooseFullRangeCastXValueV59 {
+                player,
+                spell: source,
+            }
+            | Decision::ChooseEffectOption { player, source, .. } => {
+                assert_eq!((player, source), (p, spell));
+            }
+            d => panic!("native cast X choice absent: {d:?}"),
+        }
+        assert!(s.engine.pending_cast.is_some());
+        assert_eq!(tapped(&s, p), before);
+        let snapshot = restore(&s);
+        for viewer in players() {
+            let facts = public_facts_v69(&s, viewer).unwrap();
+            assert!(facts.waves.is_empty());
+            assert_eq!(facts, public_facts_v69(&snapshot, viewer).unwrap());
+        }
+        // These are read-only corruptions of a genuine native announcement.
+        for mode in 0..4 {
+            let mut bad = s.clone();
+            match mode {
+                0 => {
+                    bad.stack.last_mut().unwrap().v4.target_spec = Some(card_def::TargetSpec::None)
+                }
+                1 => bad.engine.pending_cast = None,
+                2 => bad.stack.push(bad.stack.last().unwrap().clone()),
+                3 => bad.stack.last_mut().unwrap().controller = p.opponent(),
+                _ => unreachable!(),
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(public_facts_v69(&bad, p).is_err(), "corruption {mode}");
+            assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+        }
+        let mut replay = snapshot;
+        for world in [&mut s, &mut replay] {
+            engine::step(world, Action::ChooseEffectOption(4)).unwrap();
+            assert!(matches!(next(world), Decision::CastSpellOrPass { player, .. } if player == p));
+            assert!(world.engine.pending_cast.is_none());
+            assert_eq!(tapped(world, p) - before, 7);
+            assert_eq!(world.players[p.index()].mana_pool, [0; 6]);
+            for viewer in players() {
+                let facts = public_facts_v69(world, viewer).unwrap();
+                let [wave] = facts.waves.as_slice() else {
+                    panic!("paid Wave absent")
+                };
+                assert_eq!(
+                    wave.stage,
+                    crate::genesis_wave_public_v69::StageV69::Published
+                );
+                assert_eq!(wave.x_value, 4);
+            }
+        }
+        assert_eq!(s, replay);
+    }
+}
+
+#[test]
 fn genuine_paid_wave_selects_all_permanent_types_by_printed_mana_value_both_seats() {
     for p in players() {
         let mut s = ready(

@@ -1809,6 +1809,17 @@ pub(crate) fn public_facts_v69(
 ) -> Result<crate::genesis_wave_public_v69::FactsV69, String> {
     use crate::genesis_wave_public_v69::{self as public, AttachmentV69, StageV69, WaveV69};
     validate_state(state)?;
+    // The native cast placeholder already has its source contract, but X and
+    // payment are still pending. It belongs to the common cast observation,
+    // not the inventory of paid, published Wave operations below.
+    let announcing = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|pending| definition(pending.source_contract.card_def));
+    if let Some(pending) = announcing {
+        crate::engine::validate_pending_cast(state, pending)?;
+    }
     // A genuine as-enters checkpoint holds the original answered continuation
     // under the existing full enclosing operation. Recover only its public
     // subset/host values; never re-execute it or export that private world.
@@ -1899,6 +1910,14 @@ pub(crate) fn public_facts_v69(
         }
     }
     for item in &state.stack {
+        if announcing
+            .is_some_and(|pending| item.v4.source_contract == Some(pending.source_contract))
+        {
+            if ids.contains_key(&item.v4.stack_item_id) {
+                return Err("V69 announcing cast reused a published Wave occurrence".into());
+            }
+            continue;
+        }
         if selected(state, item) && !ids.contains_key(&item.v4.stack_item_id) {
             crate::engine::validated_stack_item_target_spec(item, state)?;
             if !printed_row_shape(item) {
