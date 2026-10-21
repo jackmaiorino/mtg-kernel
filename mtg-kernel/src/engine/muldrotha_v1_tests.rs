@@ -232,7 +232,16 @@ fn exact_printing_paid_six_mana_and_full_consumer_refusal_both_seats() {
         );
         assert!(card_def::preflight_fully_supported_deck(&[489]).is_err());
         assert!(require_legacy(&s, Some(p)).is_err());
-        assert!(crate::optional_trigger_public_v1::validate_state_checked(&s).is_err());
+        assert!(crate::rl::observe_policy_v6(
+            &s,
+            &crate::policy_surface_v5::PolicySurfaceV5::new_for_session(),
+            p,
+            0,
+            0,
+            0,
+            1,
+        )
+        .is_err());
         assert!(active(&s, AbilitySourceContractV4::capture(&s, m), p));
         assert!(s.players[p.index()].mana_pool.iter().all(|n| *n == 0));
         validate_state(&restore(&s)).unwrap();
