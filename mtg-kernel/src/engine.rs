@@ -10238,7 +10238,7 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
-    if time_stop_v1::validate(state)
+    if let Err(_error) = time_stop_v1::validate(state)
         .and_then(|_| ordinary_cleanup_v1::validate(state))
         .and_then(|()| effect::genesis_wave_v1::validate_state(state))
         .and_then(|()| {
@@ -10249,8 +10249,9 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         .and_then(|()| effect::liliana_dreadhorde_v1::validate_state(state))
         .and_then(|()| muldrotha_v1::validate_state(state))
         .and_then(|()| tinybones_v72::validate_state(state))
-        .is_err()
     {
+        #[cfg(test)]
+        eprintln!("Native prework validation rejected: {_error}");
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         state.engine.halted = Some((mechanic, ObjectId(0)));
         return Decision::Halted {

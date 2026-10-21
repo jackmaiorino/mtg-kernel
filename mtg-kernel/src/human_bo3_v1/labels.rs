@@ -2617,6 +2617,7 @@ mod next_five_native_label_tests {
         session.step_v59(&decision, index).unwrap();
     }
 
+    #[track_caller]
     fn owned_human_prompt(
         session: &mut crate::human_bo3_v1::HumanNextFiveSessionV59,
         projector: &mut crate::human_bo3_v1::HumanNextFiveProjectorV59,
