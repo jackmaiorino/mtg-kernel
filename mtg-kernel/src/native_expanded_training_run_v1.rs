@@ -1618,9 +1618,12 @@ pub fn run_native_expanded_training_v1(
 mod tests {
     use super::*;
     /// The final state of `portable_math_run_trains_one_state_on_every_system_and_worker_count`,
-    /// the same on every system.
+    /// the same on every system. Native236 and CI39598628050 observe this CPU
+    /// regression state after the CR 117.3c/117.5 caster-priority correction.
+    /// Paired inputs first differ at an off-turn Mystic trigger in iteration1;
+    /// iteration0 and initialization match. Frozen experiment artifacts remain separate.
     const PORTABLE_PARALLEL_RUN_STATE_SHA256_V1: &str =
-        "211d70c71aa594df0d138e7a037e8d6b8328dd075527c6a57479b21c33286400";
+        "af94495eac0f2c8bd390173327afda86fd007cb81c69ac03cb2a945e80d29439";
 
     fn temporary_directory(label: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
