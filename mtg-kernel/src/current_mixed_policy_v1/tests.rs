@@ -1302,6 +1302,109 @@ mod paid {
     }
 
     #[test]
+    fn growth_and_druid_printings_preserve_exact_cost_boost_duration_mana_and_conditional_hexproof()
+    {
+        use crate::card_def::{CardType, Keywords};
+        use crate::effect::{EffectOp, PlayerRef};
+        use crate::mana::{Cost, ManaColor, Pip};
+        fn wrong_program() -> Option<EffectOp> {
+            Some(EffectOp::GainLife {
+                player: PlayerRef::Controller,
+                amount: 1,
+            })
+        }
+        for name in ["Giant Growth", "Paradise Druid"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let growth = name == "Giant Growth";
+            let value = roots::baseline(id).unwrap();
+            assert_eq!(
+                roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                value
+            );
+            let printing = &value["primitive_printing"];
+            let cast = &printing["ordered_cast_roots"][0];
+            assert_eq!(
+                cast["ordered_costs"],
+                json!([{"PrintedMana":Cost {
+                    generic: if growth { 0 } else { 1 },
+                    pips: &[Pip::Colored(ManaColor::G)], x_count: 0
+                }}])
+            );
+            if growth {
+                assert_eq!(printing["types"], json!([CardType::Instant]));
+                assert_eq!(cast["timing"], "InstantWithPriority");
+                assert_eq!(cast["target_count"], 1);
+                assert_eq!(
+                    cast["target_filter"],
+                    json!(crate::card_def::TargetSpec::Creature)
+                );
+                assert_eq!(cast["target_may_be_own_or_opposing"], true);
+                assert_eq!(
+                    cast["requires_exact_live_battlefield_target_incarnation"],
+                    true
+                );
+                assert_eq!(cast["duration"], "UntilEndOfTurn");
+                assert_eq!(cast["places_no_counters"], true);
+                assert_eq!(
+                    cast["ordered_resolution"],
+                    json!([(crate::card_def::CARD_DEFS[usize::from(id)].spell_effect)().unwrap()])
+                );
+                assert_eq!(printing["ordered_mana_roots"], json!([]));
+                assert_eq!(printing["ordered_static_roots"], json!([]));
+            } else {
+                assert_eq!(printing["types"], json!([CardType::Creature]));
+                assert_eq!(
+                    (printing["power"].as_i64(), printing["toughness"].as_i64()),
+                    (Some(2), Some(1))
+                );
+                assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+                let mana = &printing["ordered_mana_roots"][0];
+                assert_eq!(mana["ordered_costs"], json!(["TapOriginalSource"]));
+                assert_eq!(
+                    mana["controller_chooses_exactly_one_color"],
+                    json!([
+                        ManaColor::W,
+                        ManaColor::U,
+                        ManaColor::B,
+                        ManaColor::R,
+                        ManaColor::G
+                    ])
+                );
+                assert_eq!(mana["requires_control_since_turn_began_or_haste"], true);
+                assert_eq!(mana["uses_stack"], false);
+                assert_eq!(mana["mana_amount"], 1);
+                let keyword = &printing["ordered_static_roots"][0];
+                assert_eq!(keyword["condition"], "ThisSourceIsUntapped");
+                assert_eq!(keyword["keyword"], "Hexproof");
+                assert_eq!(keyword["requires_printed_abilities_active"], true);
+                assert_eq!(
+                    keyword["opposing_spells_and_abilities_cannot_target_this"],
+                    true
+                );
+            }
+            for mode in 0..9 {
+                let mut changed = ordinary_recipe(id);
+                match mode {
+                    0 => changed.cost.generic += 1,
+                    1 => changed.types = &[CardType::Sorcery],
+                    2 => changed.colors = &[ManaColor::R],
+                    3 => changed.power = Some(9),
+                    4 => changed.mana_ability_choices = &[ManaColor::G],
+                    5 => changed.keywords = Keywords::FLYING,
+                    6 => changed.spell_cannot_be_countered = true,
+                    7 => changed.spell_effect = wrong_program,
+                    8 => changed.produces_mana = &[ManaColor::G],
+                    _ => unreachable!(),
+                }
+                assert!(
+                    matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(actual)) if actual==id),
+                    "{name}: mutation {mode}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn burnished_hart_printing_preserves_artifact_creature_paid_sacrifice_and_optional_basic_search(
     ) {
         use crate::card_def::{CardType, CostComponent};

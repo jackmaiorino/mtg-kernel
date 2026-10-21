@@ -366,6 +366,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
     let hart = burnished_hart_printing(id, d)?;
+    let growth_or_druid = growth_or_druid_printing(id, d)?;
     let diregraf = d.name == "Diregraf Ghoul";
     if diregraf
         && (crate::card_def::card_id_by_name("Diregraf Ghoul") != Some(id)
@@ -518,6 +519,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     if let Some(printing) = hart {
         return Ok(printing);
     }
+    if let Some(printing) = growth_or_druid {
+        return Ok(printing);
+    }
     if let Some(roots) = ordinary_removal {
         return Ok(json!({"card_id":id,"primitive_printing":{
             "cost":d.cost,"types":d.types.iter().map(|v|*v as u8).collect::<Vec<_>>(),
@@ -629,6 +633,139 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         "ordered_instructions":[instruction],
         "mana_ability":mana.map(|colors|json!({"cost":"TapSelf","recipient":"Controller","colors":colors,"amount":1}))
     }}))
+}
+
+/// Both recipes pass the common exclusion guard before publication. The Druid's
+/// conditional native keyword is separate from its empty printed keyword bits.
+fn growth_or_druid_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{Keywords, Subtype};
+    use crate::mana::{Cost, ManaColor, Pip};
+    if !matches!(d.name, "Giant Growth" | "Paradise Druid") {
+        return Ok(None);
+    }
+    let growth = d.name == "Giant Growth";
+    let cost = Cost {
+        generic: if growth { 0 } else { 1 },
+        pips: &[Pip::Colored(ManaColor::G)],
+        x_count: 0,
+    };
+    let program = if growth {
+        EffectOp::PumpTargetUntilEndOfTurnDynamic {
+            target: crate::effect::TargetRef::Target(0),
+            power: crate::card_def::DynamicValueDef::Fixed(3),
+            toughness: crate::card_def::DynamicValueDef::Fixed(3),
+        }
+    } else {
+        EffectOp::MoveObject {
+            object: ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield,
+        }
+    };
+    let colors = [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ];
+    let types: &[CardType] = if growth {
+        &[CardType::Instant]
+    } else {
+        &[CardType::Creature]
+    };
+    let subtypes: &[Subtype] = if growth {
+        &[]
+    } else {
+        &[Subtype::Elf, Subtype::Druid]
+    };
+    let produced: &[ManaColor] = if growth { &[] } else { &colors };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != if growth { 1 } else { 2 }
+        || d.types != types
+        || d.subtypes != subtypes
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::G]
+        || d.power != if growth { None } else { Some(2) }
+        || d.toughness != if growth { None } else { Some(1) }
+        || d.keywords != Keywords::NONE
+        || d.target_spec
+            != if growth {
+                TargetSpec::Creature
+            } else {
+                TargetSpec::None
+            }
+        || d.is_land
+        || d.is_token
+        || (d.spell_effect)() != Some(program.clone())
+        || (d.mana_ability)().is_some()
+        || d.produces_mana != produced
+        || d.mana_ability_choices != produced
+        || !growth
+            && crate::engine::static_untapped_self_keyword_for(d.name) != Some(Keywords::HEXPROOF)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let cast = if growth {
+        json!({
+            "method":crate::state::CastMethodV4::Normal,
+            "ordinary_route":crate::state::SpellCastRouteV4::Hand,
+            "ordinary_origin":Zone::Hand,"timing":BaselineTiming::InstantWithPriority,
+            "ordered_costs":[BaselineManaCost::PrintedMana(cost)],
+            "target_count":1,"target_filter":TargetSpec::Creature,
+            "target_may_be_own_or_opposing":true,
+            "requires_exact_live_battlefield_target_incarnation":true,
+            "all_targets_illegal_skips_entire_resolution":true,
+            "ordered_resolution":[program],"duration":"UntilEndOfTurn",
+            "power_and_toughness_are_additive_modifiers":true,"places_no_counters":true,
+            "physical_stack_departure":BaselineDeparture::GraveyardAfterResolutionOrCounter,
+            "virtual_spell_copy_ceases":true,"countering_does_not_refund_payment":true,
+            "other_cast_permissions_require_current_candidate_authority":true
+        })
+    } else {
+        serde_json::to_value(OrdinaryPermanentCastRoot {
+            method: crate::state::CastMethodV4::Normal,
+            ordinary_route: crate::state::SpellCastRouteV4::Hand,
+            ordinary_origin: Zone::Hand,
+            timing: PermanentTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets: PermanentTargets::None,
+            ordered_costs: [BaselineManaCost::PrintedMana(cost)],
+            ordered_resolution: [
+                PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl,
+            ],
+            physical_departure: PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority: true,
+            zone_replacements_still_apply: true,
+        })
+        .map_err(|_| Error::UnsupportedPrintedRoot(id))?
+    };
+    let mana = if growth {
+        json!([])
+    } else {
+        json!([{
+            "activation_zone":Zone::Battlefield,"ordered_costs":["TapOriginalSource"],
+            "requires_control_since_turn_began_or_haste":true,"uses_stack":false,
+            "targets":[],"controller_chooses_exactly_one_color":colors,
+            "mana_amount":1,"mana_recipient":"Controller","spending_restriction":"Unrestricted"
+        }])
+    };
+    let statics = if growth {
+        json!([])
+    } else {
+        json!([{
+            "requires_printed_abilities_active":true,"condition":"ThisSourceIsUntapped",
+            "keyword":"Hexproof","recipient":"ThisSource",
+            "opposing_spells_and_abilities_cannot_target_this":true,
+            "condition_rechecked_from_current_tap_state":true,
+            "does_not_prevent_damage_or_untargeted_effects":true
+        }])
+    };
+    Ok(Some(json!({"card_id":id,"primitive_printing":{
+        "cost":d.cost,"types":d.types,"subtypes":d.subtypes,"supertypes":[],
+        "colors":d.colors,"power":d.power,"toughness":d.toughness,
+        "keywords":d.keywords.0,"mana_value":d.mana_value,"token":false,
+        "ordered_cast_roots":[cast],"ordered_mana_roots":mana,"ordered_static_roots":statics
+    }})))
 }
 
 /// Exact ordinary Equipment recipe. These roots describe the existing native
