@@ -106,10 +106,21 @@ fn genuine_paid_sampling_preserves_archives_discard_restore_and_second_stop_both
                 .position(|a| matches!(a, ActionSemanticV1::Discard { .. }))
                 .unwrap() as u32;
             assert_eq!(a.candidates_v68(), b.candidates_v68());
-            assert_eq!(
-                sampled.step_v68(&a, index).unwrap(),
-                replay.step_v68(&b, index).unwrap()
-            );
+            let actual = sampled.step_v68(&a, index).unwrap();
+            let expected = replay.step_v68(&b, index).unwrap();
+            match (actual, expected) {
+                (
+                    FastActorResponseV1::Decision(actual),
+                    FastActorResponseV1::Decision(mut expected),
+                ) => {
+                    // Restoring gives this owner a fresh authority revision.
+                    // Every logical decision field still matches the replay.
+                    assert!(actual.environment_revision > expected.environment_revision);
+                    expected.environment_revision = actual.environment_revision;
+                    assert_eq!(actual, expected);
+                }
+                (actual, expected) => assert_eq!(actual, expected),
+            }
             assert_eq!(sampled.inner.state, replay.inner.state);
         }
         assert!(sampled.inner.state.engine.pending_discard.is_none());

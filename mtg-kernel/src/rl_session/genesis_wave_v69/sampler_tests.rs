@@ -126,7 +126,9 @@ fn genuine_paid_wave_sampler_pre_reveal_and_active_subset_keep_public_slots_and_
 fn genuine_paid_wave_sampler_aura_remainder_terminal_and_history_order_independence_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let (mut pair, wave, host) = scene(p);
-        pair.cast(wave, p, 2);
+        // Select only the Aura out of three genuinely revealed cards, leaving
+        // two distinct cards for an actual native graveyard-order decision.
+        pair.cast(wave, p, 3);
         pair.advance_to_subset();
         pair.act(|a|matches!(a,A::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.card_db_id==crate::card_def::card_id_by_name("Witness Protection").unwrap()));
         pair.act(|a| matches!(a, A::FinishEffectSelection { .. }));
@@ -171,7 +173,7 @@ fn genuine_paid_wave_sampler_aura_remainder_terminal_and_history_order_independe
         // a fixed seed depends on the current canonical pool, never its old
         // private ordering. No receipt or already revealed slot is rewritten.
         let mut reordered = pair.own.sampled_clone_v69(&original, 0).unwrap();
-        reordered.inner.state.players[p.index()].library.swap(2, 3);
+        reordered.inner.state.players[p.index()].library.swap(3, 4);
         let history = reordered.inner.state.engine.event_history.clone();
         let d = reordered.decision_v69().unwrap();
         let same = reordered.sampled_clone_v69(&d, 8172).unwrap();
