@@ -4,6 +4,90 @@ use crate::{
     effect::kaito_cunning_v75::tests::owner_v75_tests::owning_ready, ids::PlayerId,
     kaito_public_v75::StageV75, rl::ActionSemanticV1 as A,
 };
+
+/// Full-pool opening-hand coverage is distinct from paid branch qualification.
+/// Every frozen printing must survive the current owning projection and numeric
+/// encoder, even when it has no legal cast target in this initial mana scene.
+#[test]
+fn every_frozen_fdn_printing_in_own_hand_has_current_numeric_coverage_both_seats() {
+    fn check(name: &str, p: PlayerId, model: &NativeModel) -> std::result::Result<(), String> {
+        use crate::{
+            policy_observation_v6::tests::put,
+            state::{GameState, Step, Zone},
+        };
+        let id = crate::card_def::card_id_by_name(name).ok_or("unregistered frozen printing")?;
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let island = crate::card_def::card_id_by_name("Island").unwrap();
+        let mut s = GameState::new_from_libraries_with_starting_player_v1(
+            &[forest; 40],
+            &[island; 40],
+            crate::rl::card_name,
+            110_286,
+            p,
+        );
+        s.step = Step::Main1;
+        // Initial mana resources, not a fabricated payment or paid owner.
+        for land in ["Plains", "Island", "Swamp", "Mountain", "Forest"] {
+            for _ in 0..3 {
+                put(&mut s, p, land, Zone::Battlefield);
+            }
+        }
+        let card = put(&mut s, p, name, Zone::Hand);
+        let own = KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(s))
+            .map_err(|e| format!("owning session: {e}"))?;
+        let FastActorResponseV1::Decision(h) = own.current_response() else {
+            return Err(format!("no owning decision: {:?}", own.current_response()));
+        };
+        let d = own.encode(h).map_err(|e| format!("numeric encode: {e}"))?;
+        if !d
+            .backend
+            .observation()
+            .common
+            .common
+            .own_hand
+            .iter()
+            .any(|c| {
+                c.stable.arena_id == card.0 && c.stable.card_db_id == id && c.card_name == name
+            })
+        {
+            return Err("issued observation omitted the actual own-hand printing".into());
+        }
+        let scores = model
+            .forward(d.packet())
+            .map_err(|e| format!("model forward: {e}"))?;
+        if d.packet().source() != Source::KaitoV75
+            || scores.len() != d.backend.actions().len()
+            || scores.is_empty()
+            || scores.iter().any(|score| !score.is_finite())
+        {
+            return Err("model did not score every original candidate finitely".into());
+        }
+        Ok(())
+    }
+    let target: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../data/limited/fdn_v1/booster_pool_v1.json"
+    )))
+    .unwrap();
+    let names = target["card_names"].as_array().unwrap();
+    assert_eq!(names.len(), 286);
+    let model = NativeModel::deterministic_fixture().unwrap();
+    let mut failures = Vec::new();
+    for name in names {
+        let name = name.as_str().unwrap();
+        for p in [PlayerId::P0, PlayerId::P1] {
+            if let Err(error) = check(name, p, &model) {
+                failures.push(format!("{name} {p:?}: {error}"));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "full286 opening-hand coverage gaps:\n{}",
+        failures.join("\n")
+    );
+}
+
 fn act(own: &mut KaitoSession, native: &mut FastActorSessionV1, choose: impl Fn(&A) -> bool) {
     let FastActorResponseV1::Decision(h) = own.current_response() else {
         panic!("numeric V75 ended")
