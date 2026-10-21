@@ -15110,11 +15110,7 @@ fn neutral_face_down_projection_does_not_select_hidden_tutelage_or_aberration() 
     let island = crate::card_def::card_id_by_name("Island").unwrap();
     for owner in [PlayerId::P0, PlayerId::P1] {
         let mut public_rows = None;
-        for name in [
-            "Flourishing Bloom-Kin",
-            "Sphinx's Tutelage",
-            "Consuming Aberration",
-        ] {
+        for name in ["Forest", "Sphinx's Tutelage", "Consuming Aberration"] {
             let mut state =
                 GameState::new_from_libraries(&[island; 8], &[island; 8], card_name, 110_467);
             let object = put(&mut state, owner, name, crate::state::Zone::Battlefield);
@@ -15145,7 +15141,7 @@ fn neutral_face_down_projection_does_not_select_hidden_tutelage_or_aberration() 
                 public_rows = Some(rows);
             }
             state.objects.get_mut(object).v4.face_down_v1 = None;
-            if name != "Flourishing Bloom-Kin" {
+            if name != "Forest" {
                 assert!(require_legacy_public_counter_schema(&state, object).is_err());
                 assert!(
                     crate::optional_trigger_public_v1::validate_state_for_consumer(
@@ -15155,6 +15151,16 @@ fn neutral_face_down_projection_does_not_select_hidden_tutelage_or_aberration() 
                     )
                     .is_err()
                 );
+            } else {
+                // The face-up reference is an ordinary supported land. The
+                // hidden views above must erase even that type distinction.
+                require_legacy_public_counter_schema(&state, object).unwrap();
+                crate::optional_trigger_public_v1::validate_state_for_consumer(
+                    &state,
+                    false,
+                    crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+                )
+                .unwrap();
             }
         }
     }

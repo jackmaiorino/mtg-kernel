@@ -439,7 +439,14 @@ fn independent_hidden_worlds_neutral_face_down_and_all17_counter_storage_primiti
             face.card.identity,
             public::IdentityV1::FaceDown { .. }
         ));
-        assert_eq!(face.form.power, Some(2));
+        // This scene uses the neutral face-down card form (disguised=false),
+        // not the distinct anonymous 2/2 creature form. Neither hidden
+        // printing contributes power, toughness or a public card type.
+        assert_eq!(face.form.base_power, None);
+        assert_eq!(face.form.base_toughness, None);
+        assert_eq!(face.form.power, None);
+        assert_eq!(face.form.toughness, None);
+        assert!(face.form.types.is_empty());
         assert!(face.form.names.is_empty());
         let land = state.players[actor.index()]
             .battlefield
