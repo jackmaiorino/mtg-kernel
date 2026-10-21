@@ -36,7 +36,10 @@ fn act(own: &mut LilianaSession, native: &mut FastActorSessionV1, choose: impl F
 fn complete(own: &mut LilianaSession, native: &mut FastActorSessionV1) {
     for _ in 0..512 {
         let FastActorResponseV1::Decision(h) = own.current_response() else {
-            panic!()
+            panic!(
+                "numeric V73 ended before native completion: {:?}",
+                own.current_response()
+            )
         };
         let d = own.encode(h).unwrap();
         if d.backend

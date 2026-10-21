@@ -14,6 +14,7 @@ mod shared_ordinary;
 impl NextFiveSession {
     fn decision_v59(&self) -> Result<NextFiveDecision> {
         let FastActorResponseV1::Decision(expected) = self.current_response() else {
+            eprintln!("numeric V59 has no decision: {:?}", self.current_response());
             return Err(Error::NoDecision);
         };
         self.encode(expected)
