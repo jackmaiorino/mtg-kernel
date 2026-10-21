@@ -29,6 +29,8 @@ mod ordinary_removal_printing;
 pub(super) mod rallier_bloom_printing;
 #[path = "soulstone_printing.rs"]
 pub(super) mod soulstone_printing;
+#[path = "targeted_spell_printing.rs"]
+mod targeted_spell_printing;
 #[path = "tyrant_herald_printing.rs"]
 pub(super) mod tyrant_herald_printing;
 
@@ -344,6 +346,12 @@ pub(super) fn is_untargeted_spell(id: u16) -> bool {
         )
     })
 }
+pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
+    is_untargeted_spell(id)
+        || CARD_DEFS
+            .get(usize::from(id))
+            .is_some_and(|d| targeted_spell_printing::handles(d.name))
+}
 
 pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
@@ -395,6 +403,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
+    let targeted_spell = targeted_spell_printing::printing(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
     let hart = burnished_hart_printing(id, d)?;
     let growth_or_druid = growth_or_druid_printing(id, d)?;
@@ -606,6 +615,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = growth_or_druid {
+        return Ok(printing);
+    }
+    if let Some(printing) = targeted_spell {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
@@ -1171,7 +1183,7 @@ pub(super) fn registered_spell_printing(id: u16) -> Result<Option<Value>> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
-    if is_untargeted_spell(id) {
+    if is_mandatory_ordinary_spell(id) {
         return baseline_recipe(id, d).map(Some);
     }
     match d.name {

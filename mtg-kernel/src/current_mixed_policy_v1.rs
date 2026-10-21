@@ -106,6 +106,8 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/canonical_semantic_booleans.rs"),
             include_str!("current_mixed_policy_v1/divine_printing.rs"),
             include_str!("current_mixed_policy_v1/roots.rs"),
+            include_str!("current_mixed_policy_v1/ordinary_removal_printing.rs"),
+            include_str!("current_mixed_policy_v1/targeted_spell_printing.rs"),
             include_str!("current_mixed_policy_v1/eaten_printing.rs"),
             include_str!("current_mixed_policy_v1/enchantment_hunter_printing.rs"),
             include_str!("current_mixed_policy_v1/faebloom_printing.rs"),

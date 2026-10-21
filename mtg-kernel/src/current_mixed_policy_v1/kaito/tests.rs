@@ -389,6 +389,217 @@ fn five_untargeted_printings_actual_paid_cast_resolution_numeric_parity_and_rest
     }
 }
 
+#[test]
+fn eight_targeted_printings_paid_target_payment_resolution_and_pending_restore_both_seats() {
+    use crate::{
+        engine,
+        policy_observation_v6::tests::put,
+        state::{GameState, Step, Zone},
+    };
+    let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+    for name in [
+        "Stab",
+        "Fleeting Distraction",
+        "Sure Strike",
+        "Snakeskin Veil",
+        "Hero's Downfall",
+        "Broken Wings",
+        "Make Your Move",
+        "Zombify",
+    ] {
+        for p in [PlayerId::P0, PlayerId::P1] {
+            let mut s = GameState::new_from_libraries_with_starting_player_v1(
+                &[forest; 40],
+                &[forest; 40],
+                crate::rl::card_name,
+                110_288,
+                p,
+            );
+            s.step = Step::Main1;
+            let land = match name {
+                "Stab" | "Hero's Downfall" | "Zombify" => "Swamp",
+                "Fleeting Distraction" => "Island",
+                "Sure Strike" => "Mountain",
+                "Make Your Move" => "Plains",
+                _ => "Forest",
+            };
+            for _ in 0..5 {
+                put(&mut s, p, land, Zone::Battlefield);
+            }
+            let friendly = put(&mut s, p, "Llanowar Elves", Zone::Battlefield);
+            let opposing = put(&mut s, p.opponent(), "Llanowar Elves", Zone::Battlefield);
+            let target = match name {
+                "Broken Wings" => put(&mut s, p.opponent(), "Serra Angel", Zone::Battlefield),
+                "Make Your Move" => put(&mut s, p.opponent(), "Serra Angel", Zone::Battlefield),
+                "Zombify" => put(&mut s, p, "Llanowar Elves", Zone::Graveyard),
+                "Sure Strike" | "Snakeskin Veil" => friendly,
+                _ => opposing,
+            };
+            let spell = put(&mut s, p, name, Zone::Hand);
+            let library_before = s.players[p.index()].library.len();
+            let mut native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
+            let mut own =
+                KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(s))
+                    .unwrap();
+            act(
+                &mut own,
+                &mut native,
+                |a| matches!(a,A::CastSpell{source,..}if source.arena_id==spell.0),
+            );
+            let saved = own.snapshot();
+            let raw = native.snapshot_v1();
+            let mut completed = None;
+            for replay in [false, true] {
+                if replay {
+                    own.restore(&saved).unwrap();
+                    native.kaito_restore_v75(&raw).unwrap();
+                }
+                if matches!(name, "Snakeskin Veil" | "Broken Wings" | "Make Your Move") {
+                    let FastActorResponseV1::Decision(h) = own.current_response() else {
+                        panic!()
+                    };
+                    let d = own.encode(h).unwrap();
+                    assert!(!d.backend.actions().iter().any(|a|matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.arena_id==opposing.0)));
+                }
+                act(
+                    &mut own,
+                    &mut native,
+                    |a| matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.arena_id==target.0),
+                );
+                assert!(own.fixture_state().engine.pending_cast.is_none());
+                assert_eq!(own.fixture_state().objects.get(spell).zone, Zone::Stack);
+                let def = &crate::card_def::CARD_DEFS
+                    [usize::from(crate::card_def::card_id_by_name(name).unwrap())];
+                let tapped = own.fixture_state().players[p.index()]
+                    .battlefield
+                    .iter()
+                    .filter(|&&id| own.fixture_state().objects.get(id).tapped)
+                    .count();
+                assert_eq!(tapped, usize::from(def.cost.generic) + def.cost.pips.len());
+                settle(&mut own, &mut native);
+                assert_eq!(own.fixture_state().objects.get(spell).zone, Zone::Graveyard);
+                match name {
+                    "Stab" | "Hero's Downfall" | "Broken Wings" | "Make Your Move" => assert_eq!(
+                        own.fixture_state().objects.get(target).zone,
+                        Zone::Graveyard
+                    ),
+                    "Fleeting Distraction" => {
+                        assert_eq!(
+                            engine::checked_effective_pt(own.fixture_state(), target).unwrap(),
+                            (0, 1)
+                        );
+                        assert_eq!(
+                            own.fixture_state().players[p.index()].library.len(),
+                            library_before - 1
+                        );
+                    }
+                    "Sure Strike" => {
+                        assert_eq!(
+                            engine::checked_effective_pt(own.fixture_state(), target).unwrap(),
+                            (4, 1)
+                        );
+                        assert!(engine::has_effective_keyword(
+                            own.fixture_state(),
+                            target,
+                            crate::card_def::Keywords::FIRST_STRIKE
+                        ));
+                    }
+                    "Snakeskin Veil" => {
+                        assert_eq!(
+                            engine::checked_effective_pt(own.fixture_state(), target).unwrap(),
+                            (2, 2)
+                        );
+                        assert_eq!(
+                            own.fixture_state().objects.get(target).counters.plus1_plus1,
+                            1
+                        );
+                        assert!(engine::has_effective_keyword(
+                            own.fixture_state(),
+                            target,
+                            crate::card_def::Keywords::HEXPROOF
+                        ));
+                    }
+                    "Zombify" => {
+                        assert_eq!(
+                            own.fixture_state().objects.get(target).zone,
+                            Zone::Battlefield
+                        );
+                        assert_eq!(own.fixture_state().objects.get(target).controller, p);
+                        assert_eq!(own.fixture_state().objects.get(target).zone_change_count, 1);
+                    }
+                    _ => unreachable!(),
+                }
+                if let Some(expected) = &completed {
+                    assert_eq!(own.fixture_state(), expected);
+                } else {
+                    completed = Some(own.fixture_state().clone());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn paid_fleeting_distraction_skips_draw_after_real_stab_removes_its_only_target_both_seats() {
+    use crate::{
+        policy_observation_v6::tests::put,
+        state::{GameState, Step, Zone},
+    };
+    let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = GameState::new_from_libraries_with_starting_player_v1(
+            &[forest; 40],
+            &[forest; 40],
+            crate::rl::card_name,
+            110_289,
+            p,
+        );
+        s.step = Step::Main1;
+        put(&mut s, p, "Island", Zone::Battlefield);
+        put(&mut s, p.opponent(), "Swamp", Zone::Battlefield);
+        let target = put(&mut s, p.opponent(), "Llanowar Elves", Zone::Battlefield);
+        let spell = put(&mut s, p, "Fleeting Distraction", Zone::Hand);
+        let response = put(&mut s, p.opponent(), "Stab", Zone::Hand);
+        let mut native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
+        let mut own =
+            KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(s))
+                .unwrap();
+        let choose_target = |a: &A| matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.arena_id==target.0);
+        act(
+            &mut own,
+            &mut native,
+            |a| matches!(a,A::CastSpell{source,..}if source.arena_id==spell.0),
+        );
+        act(&mut own, &mut native, choose_target);
+        act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
+        act(
+            &mut own,
+            &mut native,
+            |a| matches!(a,A::CastSpell{source,..}if source.arena_id==response.0),
+        );
+        act(&mut own, &mut native, choose_target);
+        assert_eq!(own.fixture_state().stack.len(), 2);
+        let saved = own.snapshot();
+        let raw = native.snapshot_v1();
+        settle(&mut own, &mut native);
+        assert_eq!(
+            own.fixture_state().objects.get(target).zone,
+            Zone::Graveyard
+        );
+        assert_eq!(own.fixture_state().players[p.index()].library.len(), 40);
+        assert_eq!(own.fixture_state().objects.get(spell).zone, Zone::Graveyard);
+        assert_eq!(
+            own.fixture_state().objects.get(response).zone,
+            Zone::Graveyard
+        );
+        let expected = own.fixture_state().clone();
+        own.restore(&saved).unwrap();
+        native.kaito_restore_v75(&raw).unwrap();
+        settle(&mut own, &mut native);
+        assert_eq!(own.fixture_state(), &expected);
+    }
+}
+
 fn complete(own: &mut KaitoSession, native: &mut FastActorSessionV1) {
     for _ in 0..512 {
         let FastActorResponseV1::Decision(h) = own.current_response() else {
