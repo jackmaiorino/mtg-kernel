@@ -594,8 +594,6 @@ fn genuine_no_attack_and_paid_source_departure_reentry_preserve_original_trigger
         );
         let bounce = put(&mut state, actor, "Run Away Together", Zone::Hand);
         mana(&mut state, actor, "Island", 2);
-        mana(&mut state, actor, "Swamp", 1);
-        mana(&mut state, actor, "Mountain", 2);
         engine::step(&mut state, Action::CastSpell(bounce)).unwrap();
         assert!(
             matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(artist)))
@@ -608,6 +606,10 @@ fn genuine_no_attack_and_paid_source_departure_reentry_preserve_original_trigger
         resolve_response(&mut state, bounce);
         assert_eq!(state.objects.get(artist).zone, Zone::Hand);
         priority(&mut state, actor);
+        // Float the recast's BR only after the bounce has paid its generic
+        // cost, so that payment cannot consume Artist's only black unit.
+        mana(&mut state, actor, "Swamp", 1);
+        mana(&mut state, actor, "Mountain", 2);
         engine::step(&mut state, Action::CastSpell(artist)).unwrap();
         for _ in 0..16 {
             let decision = next(&mut state);
@@ -634,10 +636,16 @@ fn genuine_no_attack_and_paid_source_departure_reentry_preserve_original_trigger
     }
 }
 
-fn refuses_readonly(mut state: GameState) {
+fn refuses_readonly(mut state: GameState, label: &str) {
     let before = serde_json::to_vec(&state).unwrap();
-    assert!(crate::effect::validate_pending_effect_choice(&state).is_err());
-    assert!(crate::effect::resume_resumable_resolution(&mut state).is_err());
+    assert!(
+        crate::effect::validate_pending_effect_choice(&state).is_err(),
+        "{label}"
+    );
+    assert!(
+        crate::effect::resume_resumable_resolution(&mut state).is_err(),
+        "{label}"
+    );
     assert_eq!(serde_json::to_vec(&state).unwrap(), before);
 }
 
@@ -729,7 +737,7 @@ fn genuine_paid_restore_forgery_refusals_and_consumed_row_cleanup_both_seats() {
                 9 => pending.ctx.x_value = pending.ctx.x_value.saturating_add(1),
                 _ => unreachable!(),
             }
-            refuses_readonly(forged);
+            refuses_readonly(forged, &format!("waiting forgery mode {mode}"));
         }
         engine::step(&mut state, Action::FinishEffectSelection).unwrap();
         let mut answered = restored(&state);
@@ -739,7 +747,7 @@ fn genuine_paid_restore_forgery_refusals_and_consumed_row_cleanup_both_seats() {
             .as_mut()
             .unwrap()
             .answered_choice_guard = None;
-        refuses_readonly(answered);
+        refuses_readonly(answered, "answered sacrifice guard erased");
         payment(&mut state, payer);
         let mut forged = restored(&state);
         let pending = forged.engine.pending_effect.as_mut().unwrap();
@@ -753,7 +761,7 @@ fn genuine_paid_restore_forgery_refusals_and_consumed_row_cleanup_both_seats() {
         };
         *path = vec![0];
         choice.path = vec![0];
-        refuses_readonly(forged);
+        refuses_readonly(forged, "discard path changed");
         engine::step(&mut state, Action::FinishEffectSelection).unwrap();
         let item = state
             .engine
