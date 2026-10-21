@@ -7,6 +7,9 @@
 //!   Spy-focal games, the earliest cast-Spy and Spy-self-target-available
 //!   decisions before any Spy self-target, with replay keys. Rows carry no
 //!   outcome. `tools/stage4a/freeze_roots.py` freezes the roots.
+//! - `s4a-wm-dump`: the same plain games, one row per game with the exact
+//!   game facts at every decision and the outcome (`stage4a/wm_dump.rs`;
+//!   collab LANES/world-model-probe-20261020).
 //! - `s4a-run`: for each frozen root in `ROOTS`, selection by E, A and D
 //!   under the transition ceiling, then 16 paired evaluation worlds per arm.
 //!   One row per root; a root already present in `out` is skipped (resume).
@@ -76,6 +79,7 @@ mod seeds;
 mod sharing;
 mod tree;
 mod utility_root;
+mod wm_dump;
 #[cfg(feature = "gameplay-decision-trace-v1")]
 pub(crate) use utility_root::{authenticated_roots_v1, validate_searched_game_v1, SearchedRootV1};
 #[cfg(feature = "viewer-recording-v1")]
@@ -105,6 +109,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
         "s4a-corpus"
+            | "s4a-wm-dump"
             | "s4a-run"
             | "s4a-diag"
             | "s4a-bank"
@@ -243,7 +248,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         }
         Err(_) => Limits::FORMAL,
     };
-    let roots = if cfg.mode != "s4a-corpus" {
+    let roots = if !plain_games(&cfg.mode) {
         let path = std::env::var("ROOTS").map_err(|_| "ROOTS names no roots file")?;
         std::fs::read_to_string(&path)
             .map_err(|e| format!("{path}: {e}"))?
@@ -461,6 +466,12 @@ fn set_replay_forward(roles: &mut Roles, fast_forward: bool) {
     for opponent in &mut roles.opps {
         opponent.set_fast_search_forward_v1(fast_forward);
     }
+}
+
+/// Modes that play numbered plain games (`first_game`, `games`) instead of
+/// frozen roots.
+fn plain_games(mode: &str) -> bool {
+    mode == "s4a-corpus" || mode == "s4a-wm-dump"
 }
 
 fn write_line(sink: &Mutex<std::fs::File>, row: &Value) -> Result<(), String> {
@@ -1614,7 +1625,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     } else {
         "s4a_root"
     };
-    let done: HashSet<String> = if cfg.mode != "s4a-corpus" {
+    let done: HashSet<String> = if !plain_games(&cfg.mode) {
         let bytes = match std::fs::read(&cfg.out) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -1650,7 +1661,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
             .open(&cfg.out)
             .map_err(|e| e.to_string())?,
     );
-    let (first, end) = if cfg.mode != "s4a-corpus" {
+    let (first, end) = if !plain_games(&cfg.mode) {
         (0, shared.roots.len() as u64)
     } else {
         (cfg.first_game, cfg.first_game + cfg.games)
@@ -1679,6 +1690,8 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
                     }
                     let result = if cfg.mode == "s4a-corpus" {
                         corpus_game(cfg, shared, &mut roles.focal, &mut roles.opps, item, sink)
+                    } else if cfg.mode == "s4a-wm-dump" {
+                        wm_dump::wm_dump_game(cfg, shared, &mut roles.focal, &mut roles.opps, item, sink)
                     } else {
                         let root = &shared.roots[item as usize];
                         let id = root["root_id"].as_str().unwrap_or("").to_owned();
