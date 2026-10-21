@@ -3,7 +3,7 @@
 //!   brewing_b0_candidates_v1 singles --deck ID --in-cards IN.json --out OUT.json
 //!   brewing_b0_candidates_v1 multi --deck ID --singles SINGLES.json --parents I,J,... --out OUT.json
 //!
-//! IN.json is `{"in_cards": [{"card_id": u16, "primary": bool}, ...]}`. `multi`
+//! IN.json holds `{"in_cards": [{"card_id": u16, "primary": bool}, ...]}` plus optional metadata. `multi`
 //! takes M2 parents as M1 indices in rank order. Outputs are written once
 //! (never overwritten) and list complete executable registrations.
 
@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::io::Write;
 
+/// The eligibility file also carries descriptive metadata (names, exposure-limited list, input
+/// pins); only `in_cards` drives enumeration.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct InCards {
     in_cards: Vec<PoolInCardV1>,
 }
