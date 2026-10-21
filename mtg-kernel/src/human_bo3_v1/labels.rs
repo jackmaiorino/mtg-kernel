@@ -2507,7 +2507,7 @@ mod next_five_native_label_tests {
         human: PlayerSeatV1,
         facts: &crate::next_five_public_v59::FactsV59,
     ) -> Result<String, Error> {
-        let handles = Handles::from_parts(
+        let mut handles = Handles::from_parts(
             &observation.common.common.projection,
             &observation.common.common.own_hand,
             &observation.common.common.known_hand_cards,
@@ -2519,6 +2519,9 @@ mod next_five_native_label_tests {
                 .decision_local_library
                 .as_ref(),
         )?;
+        // Match the owning projector: retained public death/trigger sources
+        // need their own handles after the battlefield incarnation departs.
+        super::super::next_five_v59::register(facts, &mut handles)?;
         let parts = super::super::life_ward_v8::ProjectionPartsV8 {
             projection: &observation.common.common.projection,
             own_hand: &observation.common.common.own_hand,
@@ -3603,7 +3606,21 @@ mod next_five_native_label_tests {
         use crate::rl_session::FastActorResponseV1;
 
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let (state, vessels) = paid_infernal_pair(actor);
+            let (mut state, vessels) = paid_infernal_pair(actor);
+            // The casts above are paid gameplay. Commit the same explicit
+            // simultaneous-death primitive used by the native label case.
+            crate::event::propose_and_commit_batch(
+                &mut state,
+                vessels
+                    .into_iter()
+                    .map(|vessel| crate::event::ProposedEvent::zone_change(vessel, Zone::Graveyard))
+                    .collect(),
+            );
+            assert!(matches!(
+                crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::OrderTriggers { player, pending }
+                    if player == actor && pending.len() == 2
+            ));
             let inner = FastActorSessionV1::from_next_five_v59_fixture_state(state);
             let mut session =
                 crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(inner, actor.into())
