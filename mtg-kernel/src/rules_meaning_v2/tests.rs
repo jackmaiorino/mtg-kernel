@@ -220,7 +220,7 @@ mod fdn {
         let precise_successors = crate::card_def::CARD_DEFS
             .iter()
             .enumerate()
-            .filter(|(_, def)| {
+            .filter(|(id, def)| {
                 !def.starting_life_self_bonuses_v1.is_empty()
                     || def.source_type_hexproof_v1.is_some()
                     || def.other_controlled_nontoken_death_v1.is_some()
@@ -231,6 +231,18 @@ mod fdn {
                     || def.creature_type_entry_v1.is_some()
                     || def.chosen_color_creature_boost_v1.is_some()
                     || def.keywords.has(crate::card_def::Keywords::SHROUD)
+                    || matches!(
+                        (def.spell_effect)(),
+                        Some(crate::effect::EffectOp::DealXDamageThenCreateTokensForExcess { .. })
+                    )
+                    || crate::trigger::triggers_for(*id as u16).iter().any(|trigger| {
+                        matches!(
+                            (trigger.effect)(),
+                            crate::effect::EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+                                | crate::effect::EffectOp::ReturnSourceAsDemonWithTwoCountersV1
+                                | crate::effect::EffectOp::DealXDamageThenCreateTokensForExcess { .. }
+                        )
+                    })
                     || def.activated_abilities.iter().any(|ability| {
                         ability.cost.iter().any(|cost| {
                             matches!(

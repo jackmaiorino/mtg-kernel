@@ -612,7 +612,13 @@ fn redeterminize_with_library_plan_inner(
     {
         return Err(Error::UnsupportedActionContract);
     }
-    let mut rng = SplitMix64::seed(seed);
+    let observer = actor.opponent();
+    if !state.hand_knowledge[observer.index()][observer.index()].is_empty() {
+        return Err(Error::HiddenStateContract);
+    }
+    // Validate both owners against the original world before changing either
+    // pool. A historical reference in the second pool must refuse read-only.
+    let mut pools = Vec::with_capacity(2);
     for owner in [PlayerId::P0, PlayerId::P1] {
         // Slots are canonical: owner order, then hand indices, then library indices.
         let slots = current_unknown_slots(state, actor, owner);
@@ -657,16 +663,16 @@ fn redeterminize_with_library_plan_inner(
                 return Err(Error::HiddenStateContract);
             }
         }
+        pools.push((owner, slots, pool));
+    }
+    let mut rng = SplitMix64::seed(seed);
+    for (owner, slots, mut pool) in pools {
         for i in (1..pool.len()).rev() {
             let j = draw(&mut rng, (i + 1) as u64);
             pool.swap(i, j);
         }
         // Only library knowledge needs rebinding: own-hand knowledge is implicit,
         // and the other observer's knowledge of actor's hand is never pooled.
-        let observer = actor.opponent();
-        if !state.hand_knowledge[observer.index()][observer.index()].is_empty() {
-            return Err(Error::HiddenStateContract);
-        }
         for ((zone, i, old), new) in slots.iter().copied().zip(pool.iter().copied()) {
             let old_generation = state.objects.get(old).zone_change_count;
             let new_generation = state.objects.get(new).zone_change_count;
