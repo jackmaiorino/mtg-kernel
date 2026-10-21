@@ -178,7 +178,53 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     let [a, b, c, d] = library.as_slice() else {
         unreachable!()
     };
+    let cast_history_start = state.engine.event_history.len();
+    let origin_generation = state.objects.get(brainstorm).zone_change_count;
     cast_brainstorm(&mut state, brainstorm);
+    let identities: Vec<_> = state.engine.event_history[cast_history_start..]
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| match event {
+            CommittedEvent::PublishedCastIdentityV1 { receipt } if receipt.spell == brainstorm => {
+                Some((offset, receipt))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(identities.len(), 1);
+    let (offset, receipt) = identities[0];
+    assert_eq!(receipt.owner, PlayerId::P0);
+    assert_eq!(receipt.controller, PlayerId::P0);
+    assert_eq!(receipt.origin_zone, Zone::Hand);
+    assert_eq!(receipt.origin_zone_change_count, origin_generation);
+    assert_eq!(
+        Some(receipt.stack_zone_change_count),
+        origin_generation.checked_add(1)
+    );
+    assert_eq!(
+        receipt.stack_zone_change_count,
+        state.objects.get(brainstorm).zone_change_count
+    );
+    assert_eq!(
+        receipt.public_identity,
+        mtg_kernel::cast_identity_v1::PublicIdentityV1::Known {
+            card_def: state.objects.get(brainstorm).card_def,
+        }
+    );
+    let cast_index = cast_history_start + offset + 1;
+    assert_eq!(
+        receipt.spell_cast_history_index,
+        u64::try_from(cast_index).unwrap()
+    );
+    assert!(
+        matches!(state.engine.event_history.get(cast_index), Some(CommittedEvent::SpellCast {
+        spell, controller: PlayerId::P0,
+    }) if *spell == brainstorm)
+    );
+    assert!(state
+        .stack
+        .iter()
+        .any(|item| item.source == brainstorm && item.v4.stack_item_id == receipt.stack_item_id));
 
     let first = next_brainstorm_choice(&mut state, brainstorm);
     let history_start = state
@@ -369,13 +415,17 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     // Check the complete golden together after both private puts and every
     // restore have run. A history-schema change then reports all four
     // native values without weakening any action, order or replay check.
+    // PublishedCastIdentityV1 is now committed history, checked above. Both
+    // Linux and Windows at73c8b5a11 reached this assertion after every original
+    // rule/history/restore check and reported these same four unit baselines.
+    // CI39678248305 jobs119493749287/119493749409; no experimental artifact changes.
     assert_eq!(
         [first_hash, answered_hash, second_hash, expected_hash],
         [
-            0x5b1b_3fdc_abbe_f2ba,
-            0x8945_08d2_063e_dcc6,
-            0xaf2c_7cf7_da44_4e01,
-            0xdee1_a67a_2cfe_56b0,
+            0xf129_03c1_1451_d506,
+            0xad79_919a_edd4_11fa,
+            0xa8cf_e886_8223_0d23,
+            0x3436_a27f_a661_152e,
         ],
         "schema-v4 Brainstorm native state golden"
     );
