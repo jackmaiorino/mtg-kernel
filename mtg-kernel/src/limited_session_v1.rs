@@ -563,9 +563,9 @@ mod tests {
             let current = json!({"request_type":"current", "schema_version":schema,"request_id":"same-current"});
             let before = handle(&current.to_string());
             for name in [
-                "Midnight Snack",
                 "Alesha, Who Laughs at Fate",
                 "Nine-Lives Familiar",
+                "Valkyrie's Call",
             ] {
                 let mut bad = reset.clone();
                 bad["request_id"] = json!(name);

@@ -3148,11 +3148,11 @@ mod tests {
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five unaccepted Full candidates retain ids 452-456,
-        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, Curator of Destinies, Loot, Kykar, its distinct Spirit, Quilled Greatwurm, Sphinx of Forgotten Lore, Omniscience, Abyssal Harvester, Progenitus, Etali, Primal Storm Leyline Axe, Fiend Artisan and Imprisoned in the Moon and Thousand-Year Storm and Time Stop and Genesis Wave Partial registrations at 457-487.
+        // followed by Partial registrations through Kaito and Ninja Token at 495.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                491
+                496
             } else {
                 192
             }
@@ -3357,8 +3357,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v88_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x0d46_66d3_7951_a4fc;
+    fn card_db_hash_full_pool_provisional_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x30b0_6c76_c3a3_70a6;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -3638,6 +3638,11 @@ mod tests {
                 (488, "Vivien Reid"),
                 (489, "Muldrotha, the Gravetide"),
                 (490, "Tinybones, Bauble Burglar"),
+                (491, "Liliana, Dreadhorde General"),
+                (492, "Zombie Token"),
+                (493, "Chandra, Flameshaper"),
+                (494, "Kaito, Cunning Infiltrator"),
+                (495, "Ninja Token"),
             ]
         } else {
             &[]
