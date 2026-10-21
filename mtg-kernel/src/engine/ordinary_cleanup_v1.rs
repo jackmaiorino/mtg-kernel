@@ -272,7 +272,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 || state.engine.pending_effect.is_some()
                 || state.engine.pending_cast.is_some()
                 || state.engine.pending_activation.is_some()
-                || state.engine.priority_passes != [true, true]
+                || state.engine.priority_passes != [false, false]
             {
                 return Err("ordinary cleanup expiration preceded its hand discard".into());
             }
@@ -371,6 +371,10 @@ pub(crate) fn begin(state: &mut GameState) -> Result<(), String> {
     start_discard(state)
 }
 fn start_discard(state: &mut GameState) -> Result<(), String> {
+    // The completed End/cleanup priority window belongs to the previous
+    // boundary. Preserve the ordinary step-entry reset before a discard DTO
+    // is exposed; this does not grant priority during CR 514.1/514.2.
+    reset_priority(state);
     let count = discard_count(state);
     let player = state.active_player;
     if count > 0 {
