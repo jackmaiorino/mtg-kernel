@@ -412,6 +412,8 @@ fn paid_emblem_cost_source_departure_season_copy_and_current_control_restore_bot
             Keywords::INDESTRUCTIBLE,
         ] {
             assert!(engine::has_effective_keyword(&s, elf, kw));
+            assert_eq!(engine::effective_keywords(&s, elf, kw), kw);
+            assert_eq!(engine::effective_keywords(&replay, elf, kw), kw);
         }
         let before = s.objects.len();
         paid(&mut s, p, "Self-Reflection", &[Target::Object(elf)], 6);
@@ -433,6 +435,10 @@ fn paid_emblem_cost_source_departure_season_copy_and_current_control_restore_bot
         s.objects.get_mut(elf).controller = p.opponent();
         assert_eq!(engine::checked_effective_pt(&s, elf).unwrap(), (1, 1));
         assert!(!engine::has_effective_keyword(&s, elf, Keywords::TRAMPLE));
+        assert_eq!(
+            engine::effective_keywords(&s, elf, Keywords::TRAMPLE),
+            Keywords::NONE
+        );
         validate_state(&restore(&s)).unwrap();
         assert!(require_legacy(&s, Some(p)).is_err());
     }
@@ -474,6 +480,9 @@ fn paid_emblem_timestamp_witness_suppression_and_later_creatures_both_seats() {
                 Keywords::INDESTRUCTIBLE,
             ] {
                 assert_eq!(engine::has_effective_keyword(&s, elf, kw), aura_first);
+                let expected = if aura_first { kw } else { Keywords::NONE };
+                assert_eq!(engine::effective_keywords(&s, elf, kw), expected);
+                assert_eq!(engine::effective_keywords(&restore(&s), elf, kw), expected);
             }
             let hawk = paid(&mut s, p, "Healer's Hawk", &[], 1);
             finish(&mut s);

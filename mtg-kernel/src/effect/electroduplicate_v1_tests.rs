@@ -416,6 +416,20 @@ fn genuine_paid_copy_of_copy_and_self_reflection_inherit_instances_and_countered
             .find(|id| !before.contains(id))
             .unwrap();
         assert_eq!(s.objects.get(third).v4.copied_end_step_sacrifices_v1, 2);
+        for object in [first, second, third] {
+            assert_eq!(
+                engine::effective_keywords(&s, object, Keywords::HASTE),
+                Keywords::HASTE
+            );
+            assert_eq!(
+                engine::effective_keywords(&restore(&s), object, Keywords::HASTE),
+                Keywords::HASTE
+            );
+            assert_eq!(
+                engine::effective_keywords(&s, object, Keywords::VIGILANCE),
+                Keywords::NONE
+            );
+        }
         let d = end_priority(&mut s);
         let mut r = restore(&s);
         let rows = publish_end(&mut s, d.clone());

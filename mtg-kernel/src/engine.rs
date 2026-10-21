@@ -20034,6 +20034,9 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
         return Keywords(found.0 & wanted.0);
     }
     let printed_active = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
+    if printed_active && obj.v4.copied_end_step_sacrifices_v1 != 0 {
+        found = found | Keywords::HASTE;
+    }
     let bestowed = Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0);
     if wanted.has(bestowed) {
         for aura in obj.attachments.iter().copied() {
@@ -20050,6 +20053,7 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
             }
         }
     }
+    found = found | effect::vivien_reid_v1::granted_keywords(state, id);
     found = found | crate::controlled_creature_grants_v1::granted_keywords(state, id);
     if asks(Keywords::TRAMPLE)
         && crate::garruks_uprising_v1::grants_keyword(state, id, Keywords::TRAMPLE)

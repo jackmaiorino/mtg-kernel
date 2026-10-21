@@ -698,26 +698,32 @@ pub(crate) fn bonus(state: &GameState, id: ObjectId) -> i128 {
         .fold(0_i128, |n, _| n + 2)
 }
 pub(crate) fn grants_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> bool {
-    let Some(o) = state
-        .objects
-        .try_get(id)
-        .filter(|o| o.zone == Zone::Battlefield)
-    else {
-        return false;
-    };
-    if ![
+    [
         Keywords::VIGILANCE,
         Keywords::TRAMPLE,
         Keywords::INDESTRUCTIBLE,
     ]
     .contains(&kw)
-        || !crate::engine::object_has_type(state, id, CardType::Creature)
-    {
-        return false;
+        && granted_keywords(state, id).has(kw)
+}
+pub(crate) fn granted_keywords(state: &GameState, id: ObjectId) -> Keywords {
+    let Some(o) = state
+        .objects
+        .try_get(id)
+        .filter(|o| o.zone == Zone::Battlefield)
+    else {
+        return Keywords::NONE;
+    };
+    if !crate::engine::object_has_type(state, id, CardType::Creature) {
+        return Keywords::NONE;
     }
-    emblems(state).any(|(p, t)| {
+    if emblems(state).any(|(p, t)| {
         p == o.controller && crate::continuous_characteristics_v1::grant_survives(state, id, t)
-    })
+    }) {
+        Keywords::VIGILANCE | Keywords::TRAMPLE | Keywords::INDESTRUCTIBLE
+    } else {
+        Keywords::NONE
+    }
 }
 pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
     validate_state(state)?;
