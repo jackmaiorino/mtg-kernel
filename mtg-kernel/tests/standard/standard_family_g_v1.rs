@@ -1480,16 +1480,7 @@ fn kellan_upgrades_replace_types_keep_the_impulse_trigger_and_reset_on_zone_chan
     assert_eq!(state.objects.get(top).zone, Zone::Exile);
     assert_eq!(state.engine.exile_play_permissions.len(), 1);
     state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
-    state.step = Step::End;
-    for _ in 0..20 {
-        if state.active_player == PlayerId::P1 {
-            break;
-        }
-        match next(&mut state) {
-            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
-            other => panic!("unexpected {other:?}"),
-        }
-    }
+    finish_current_turn(&mut state);
     assert!(state.engine.exile_play_permissions.is_empty());
     assert!(engine::has_effective_keyword(
         &state,
@@ -1661,16 +1652,7 @@ fn tough_cookie_makes_food_animates_only_own_noncreature_artifacts_and_expires()
     );
     assert!(engine::has_effective_subtype(&state, food, Subtype::Food));
     state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
-    state.step = Step::End;
-    for _ in 0..20 {
-        if state.active_player == PlayerId::P1 {
-            break;
-        }
-        match next(&mut state) {
-            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
-            other => panic!("unexpected {other:?}"),
-        }
-    }
+    finish_current_turn(&mut state);
     assert!(!engine::object_has_type(
         &state,
         food,
@@ -1881,16 +1863,7 @@ fn sandstorm_salvager_boosts_only_current_controlled_creature_tokens() {
         late,
         Keywords::TRAMPLE
     ));
-    state.step = Step::End;
-    for _ in 0..20 {
-        if state.active_player == PlayerId::P1 {
-            break;
-        }
-        match next(&mut state) {
-            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
-            other => panic!("unexpected {other:?}"),
-        }
-    }
+    finish_current_turn(&mut state);
     assert!(!engine::has_effective_keyword(
         &state,
         golem,
