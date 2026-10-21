@@ -1910,9 +1910,11 @@ pub(crate) fn public_facts_v69(
         }
     }
     for item in &state.stack {
-        if announcing
-            .is_some_and(|pending| item.v4.source_contract == Some(pending.source_contract))
-        {
+        if announcing.is_some_and(|pending| {
+            item.kind == crate::state::StackItemKind::Spell
+                && item.source == pending.spell
+                && item.v4.source_contract == Some(pending.source_contract)
+        }) {
             if ids.contains_key(&item.v4.stack_item_id) {
                 return Err("V69 announcing cast reused a published Wave occurrence".into());
             }

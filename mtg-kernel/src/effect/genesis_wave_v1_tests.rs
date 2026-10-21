@@ -254,7 +254,7 @@ fn native_cast_announcement_is_not_a_paid_published_wave_before_x_and_payment_bo
             assert_eq!(facts, public_facts_v69(&snapshot, viewer).unwrap());
         }
         // These are read-only corruptions of a genuine native announcement.
-        for mode in 0..4 {
+        for mode in 0..5 {
             let mut bad = s.clone();
             match mode {
                 0 => {
@@ -263,6 +263,13 @@ fn native_cast_announcement_is_not_a_paid_published_wave_before_x_and_payment_bo
                 1 => bad.engine.pending_cast = None,
                 2 => bad.stack.push(bad.stack.last().unwrap().clone()),
                 3 => bad.stack.last_mut().unwrap().controller = p.opponent(),
+                4 => {
+                    let mut foreign = bad.stack.last().unwrap().clone();
+                    foreign.kind = crate::state::StackItemKind::ActivatedAbility;
+                    foreign.v4.stack_item_id = StackItemId::default();
+                    foreign.inline_effect = Some(EffectOp::GenesisWaveV1);
+                    bad.stack.insert(0, foreign);
+                }
                 _ => unreachable!(),
             }
             let bytes = serde_json::to_vec(&bad).unwrap();
