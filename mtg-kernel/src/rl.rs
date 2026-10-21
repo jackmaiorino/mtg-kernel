@@ -11911,7 +11911,20 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PendingEffectSemanticV4> {
-    if crate::effect::blasphemous_edict_v1::selected(state, &pending.resolving_item) {
+    let liliana_sacrifice = matches!(
+        prepared_scope,
+        Some(
+            CommonProjectionScopeV42::LilianaV73
+                | CommonProjectionScopeV42::ChandraV74
+                | CommonProjectionScopeV42::KaitoV75
+        )
+    ) && crate::effect::liliana_dreadhorde_v1::sacrifice_selected(
+        state,
+        &pending.resolving_item,
+    );
+    if crate::effect::blasphemous_edict_v1::selected(state, &pending.resolving_item)
+        && !liliana_sacrifice
+    {
         return Err(RlContractError(
             "Blasphemous Edict requires its distinct complete consumer".into(),
         ));
