@@ -900,6 +900,7 @@ mod tests {
                 .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
                 .unwrap();
         }
+        assert_eq!(trace.rows.len(), plain_rows.len());
         for (mut row, plain) in trace.rows.drain(..).zip(&plain_rows) {
             let bytes = row["visible_json"].as_str().unwrap().as_bytes().to_vec();
             assert_eq!(row["visible_sha256"], json!(hash(&bytes)));
