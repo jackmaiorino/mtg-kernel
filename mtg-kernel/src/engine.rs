@@ -11744,7 +11744,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         };
     let crystal_owner = match effect::crystal_prevention_v1::acquire_owner(state, &item, false) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Crystal resumed ownership rejected: {_error}");
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return None;
@@ -17176,7 +17178,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let crystal_owner = if targets_legal {
         match effect::crystal_prevention_v1::acquire_owner(state, item, true) {
             Ok(owner) => owner,
-            Err(_) => {
+            Err(_error) => {
+                #[cfg(test)]
+                eprintln!("Crystal initial ownership rejected: {_error}");
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
