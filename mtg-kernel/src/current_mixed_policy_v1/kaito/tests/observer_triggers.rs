@@ -94,6 +94,11 @@ fn paid_observer(name: &str) {
         for _ in 0..5 {
             put(&mut state, p.opponent(), "Swamp", Zone::Battlefield);
         }
+        if name == "Youthful Valkyrie" {
+            // The first1W payment may tap both original Plains. Preserve a
+            // real white source for the later2W Angel cast after the Elf.
+            put(&mut state, p, "Plains", Zone::Battlefield);
+        }
         if draw_observer {
             put(&mut state, p, "Island", Zone::Battlefield);
             for _ in 0..2 {
