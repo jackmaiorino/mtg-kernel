@@ -293,7 +293,7 @@ pub(crate) fn parts_for_common_scope_with_common(
     let (scope, state) = request;
     let (substep_index, substep_count) = substep;
 
-    validate_projection_authority(state)?;
+    validate_projection_authority_for_scope(state, scope)?;
     let restrictions = restrictions(state)?;
     let base = crate::rl::common_family_observation_storage_from_borrowed(
         (scope, state),
@@ -424,6 +424,12 @@ fn source_ref(source: crate::state::AbilitySourceContractV4) -> CardStableRefV1 
     }
 }
 pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlContractError> {
+    validate_projection_authority_for_scope(state, crate::rl::CommonProjectionScopeV42::ExistingV40)
+}
+pub(crate) fn validate_projection_authority_for_scope(
+    state: &GameState,
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<(), RlContractError> {
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
     crate::vampire_gourmand_dispatch_v2::validate(state, None).map_err(RlContractError)?;
     let owned = state
@@ -440,6 +446,14 @@ pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlC
         })
         .filter(|marker| state.engine.until_end_of_turn.contains(marker))
         .count();
+    let kaito_owned = if matches!(scope, crate::rl::CommonProjectionScopeV42::KaitoV75) {
+        crate::effect::kaito_cunning_v75::validate_state(state).map_err(RlContractError)?;
+        crate::effect::kaito_cunning_v75::captured_evasion_markers(state)
+            .filter(|marker| state.engine.until_end_of_turn.contains(marker))
+            .count()
+    } else {
+        0
+    };
     let markers = state
         .engine
         .until_end_of_turn
@@ -451,7 +465,7 @@ pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlC
             )
         })
         .count();
-    if owned != markers {
+    if owned + kaito_owned != markers {
         return Err(RlContractError(
             "Gourmand successor refuses foreign unclassified evasion".into(),
         ));

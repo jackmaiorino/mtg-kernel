@@ -1406,6 +1406,25 @@ pub(crate) fn record_not_resolved(
     );
     Ok(())
 }
+/// Native markers reconstructed from the original journal. The caller must
+/// validate this journal before using them to classify inherited evasion.
+pub(crate) fn captured_evasion_markers(
+    state: &GameState,
+) -> impl Iterator<Item = UntilEndOfTurnEffect> + '_ {
+    rows(state).filter_map(|(_, journal)| match journal {
+        JournalV75::Evasion {
+            target: Some(target),
+            timestamp: Some(timestamp),
+            ..
+        } => Some(UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 {
+            object_id: target.object,
+            object_zone_change_count: target.expected_zone_change_count,
+            timestamp: *timestamp,
+            duration: EffectDuration::EndOfTurn,
+        }),
+        _ => None,
+    })
+}
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if state.engine.event_log.iter().any(|e|matches!(e,E::KaitoCunningV75{journal}if !matches!(journal.as_ref(),JournalV75::Combat{..}|JournalV75::Cast{..}))){return Err("Kaito private journal entered event dispatch".into())}
     let mut log_indices = std::collections::BTreeSet::new();

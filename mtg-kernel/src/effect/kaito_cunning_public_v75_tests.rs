@@ -79,6 +79,50 @@ fn genuine_paid_optional_target_draw_private_discard_full_counters_and_restore_b
             assert_eq!(initial.activations[0].targets.len(), usize::from(selected));
             assert_eq!(initial.activations[0].stage, facts::StageV75::Published);
             let choices = discard_prompt(&mut s, p);
+            let before_scope = s.clone();
+            let scope = crate::rl::CommonProjectionScopeV42::KaitoV75;
+            crate::gourmand_public_v1::validate_projection_authority_for_scope(&s, scope).unwrap();
+            crate::gourmand_public_v1::validate_projection_authority_for_scope(&restore(&s), scope)
+                .unwrap();
+            if selected {
+                assert!(crate::gourmand_public_v1::validate_projection_authority(&s).is_err());
+                assert!(
+                    crate::gourmand_public_v1::validate_projection_authority_for_scope(
+                        &s,
+                        crate::rl::CommonProjectionScopeV42::ChandraV74
+                    )
+                    .is_err()
+                );
+                let marker = captured_evasion_markers(&s).next().unwrap();
+                let mut duplicate = restore(&s);
+                duplicate.engine.until_end_of_turn.push(marker.clone());
+                assert!(
+                    crate::gourmand_public_v1::validate_projection_authority_for_scope(
+                        &duplicate, scope
+                    )
+                    .is_err()
+                );
+                let mut changed = restore(&s);
+                let original = changed
+                    .engine
+                    .until_end_of_turn
+                    .iter_mut()
+                    .find(|effect| **effect == marker)
+                    .unwrap();
+                let UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { timestamp, .. } =
+                    original
+                else {
+                    unreachable!()
+                };
+                *timestamp += 1;
+                assert!(
+                    crate::gourmand_public_v1::validate_projection_authority_for_scope(
+                        &changed, scope
+                    )
+                    .is_err()
+                );
+            }
+            assert_eq!(s, before_scope);
             let own = capture(&s, p);
             let other = capture(&s, p.opponent());
             assert_eq!(own.activations[0].stage, facts::StageV75::WaitingDiscard);
