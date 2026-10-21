@@ -27,6 +27,76 @@ impl Scan<'_> {
             || a.attached_to
                 .is_some_and(|x| self.same(x.object, x.zone_change_count))
     }
+    fn historical_ability(&self, source: &AbilitySourceContractV4) -> bool {
+        self.raw(source.source) || source.attached_to.is_some_and(|link| self.raw(link.object))
+    }
+    fn historical_object(&self, object: &crate::state::GameObject) -> bool {
+        object.attachments.iter().any(|id| self.raw(*id))
+            || object
+                .spell_copy_origin
+                .is_some_and(|origin| self.raw(origin.parent))
+            || object
+                .v4
+                .attached_to
+                .is_some_and(|link| self.raw(link.object))
+            || object
+                .v4
+                .exiled_by
+                .is_some_and(|link| self.raw(link.object))
+            || object.v4.finalized_cast_binding.is_some_and(|binding| {
+                binding
+                    .chosen_creature_cost
+                    .is_some_and(|cost| self.raw(cost.object))
+                    || binding.mandatory_additional_cost.is_some_and(|paid| {
+                        paid.original_creature
+                            .is_some_and(|creature| self.raw(creature.object))
+                            || paid
+                                .paid_creature
+                                .is_some_and(|creature| self.raw(creature.object))
+                    })
+            })
+            || object.v4.creature_upgrade.as_ref().is_some_and(|upgrade| {
+                upgrade
+                    .suppressed_by
+                    .iter()
+                    .any(|effect| self.raw(effect.source.object))
+                    || upgrade
+                        .combat_impulse_source
+                        .as_ref()
+                        .is_some_and(|source| self.historical_ability(source))
+                    || upgrade
+                        .combat_impulse_donor
+                        .as_ref()
+                        .is_some_and(|source| self.historical_ability(source))
+            })
+            || object
+                .v4
+                .melira_protection_v1
+                .as_ref()
+                .is_some_and(|sources| sources.iter().any(|source| self.historical_ability(source)))
+            || object.v4.face_down_v1.is_some_and(|face| {
+                face.hidden_by.is_some_and(|link| self.raw(link.object))
+                    || face
+                        .hidden_by_source
+                        .as_ref()
+                        .is_some_and(|source| self.historical_ability(source))
+            })
+    }
+    fn color_departure(
+        &self,
+        snapshot: &crate::controlled_creature_grants_v1::DepartureColorV1,
+    ) -> bool {
+        let Ok(object) =
+            serde_json::from_str::<crate::state::GameObject>(&snapshot.private_snapshot_json)
+        else {
+            return true;
+        };
+        self.historical_ability(&snapshot.source)
+            || self.historical_object(&object)
+            || snapshot
+                .source_type_input_v1
+                .references_objects_v1(|id| self.raw(id), |object| self.historical_object(object))
+    }
     fn creature_choice(
         &self,
         kind: &crate::standard_creature_choices_v1::CreatureChoiceV1,
@@ -1300,6 +1370,22 @@ fn conflicts_in_scope(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     scope: ReferenceScopeV68,
 ) -> bool {
+    let s = Scan { state, pool, scope };
+    if crate::controlled_creature_grants_v1::validate_color_history(state).is_err()
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
+            .iter()
+            .any(|event| match event {
+                crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 {
+                    snapshot, ..
+                } => s.color_departure(snapshot),
+                _ => false,
+            })
+    {
+        return true;
+    }
     if scope != ReferenceScopeV68::Legacy
         && state
             .engine
@@ -1501,7 +1587,6 @@ fn conflicts_in_scope(
             EventKindV1::EquipmentDamagePreparedV4,
             EventKindV1::EquipmentDamageClosedV4,
             EventKindV1::EquipmentDamageCounterRemovalV4,
-            EventKindV1::ProtectionSourceColorDepartureV1,
             EventKindV1::ZulAshurPublishedV1,
             EventKindV1::ZulAshurRemovedV1,
             EventKindV1::ZulAshurInstalledV1,
@@ -1611,7 +1696,6 @@ fn conflicts_in_scope(
                     | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
                     | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
                     | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
-                    | crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
                     | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
                     | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
                     | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
@@ -1670,7 +1754,6 @@ fn conflicts_in_scope(
     {
         return true;
     }
-    let s = Scan { state, pool, scope };
     if state
         .engine
         .event_history
@@ -1931,6 +2014,14 @@ fn conflicts_in_scope(
             }
             CerberusPublishedV1 { item, .. } => s.raw(item.source),
             CerberusOperationV1 { source, .. } => s.raw(source.source),
+            ProtectionSourceColorDepartureV1 { snapshot, departure_history_index } => {
+                s.color_departure(snapshot)
+                    || usize::try_from(*departure_history_index)
+                        .ok()
+                        .and_then(|at| at.checked_sub(1))
+                        .and_then(|at| state.engine.event_history.get(at))
+                        .is_none_or(|original| original != event)
+            }
             ArahboEntryObservationV1 { entry, sources, .. } => {
                 !sources.is_empty() || s.raw(entry.object)
             }
@@ -2012,7 +2103,6 @@ fn conflicts_in_scope(
             | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
-                | crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
             | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
             | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
             | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }

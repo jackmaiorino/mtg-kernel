@@ -713,6 +713,33 @@ mod tests {
             assert!(!crate::arahbo_v1::requires_successor(&state));
             assert!(!crate::garruks_uprising_v1::requires_successor(&state));
             let history = state.engine.event_history.clone();
+            assert!(history.iter().any(|event| matches!(
+                event,
+                CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
+            )));
+            assert!(!super::super::effect_refs::conflicts(&state, &[], None));
+            assert!(super::super::effect_refs::conflicts(&state, &[elf], None));
+            let mut malformed = restore(&state);
+            let snapshot = malformed
+                .engine
+                .event_history
+                .iter_mut()
+                .find_map(|event| {
+                    if let CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event
+                    {
+                        Some(snapshot)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            snapshot.private_snapshot_json = "{}".into();
+            let unchanged = malformed.clone();
+            assert_eq!(
+                redeterminize_with_library_plan_classified(&mut malformed, actor, 8177, None),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(malformed, unchanged);
             let mut sampled = restore(&state);
             let mut repeat = restore(&state);
             redeterminize_with_library_plan_classified(&mut sampled, actor, 8177, None).unwrap();

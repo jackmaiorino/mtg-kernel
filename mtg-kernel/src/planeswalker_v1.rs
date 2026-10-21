@@ -21,6 +21,17 @@ pub struct PlaneswalkersV1 {
     loyalty: BTreeMap<ObjectId, LoyaltyV1>,
 }
 
+impl PlaneswalkersV1 {
+    pub(crate) fn references_objects_v1(
+        &self,
+        mut referenced: impl FnMut(ObjectId) -> bool,
+    ) -> bool {
+        self.loyalty
+            .iter()
+            .any(|(id, entry)| referenced(*id) || referenced(entry.permanent.object))
+    }
+}
+
 pub fn loyalty(state: &GameState, object: ObjectId) -> Option<u32> {
     let live = state.objects.try_get(object)?;
     if live.zone != Zone::Battlefield {
