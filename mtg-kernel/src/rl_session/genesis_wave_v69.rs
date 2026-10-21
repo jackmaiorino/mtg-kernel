@@ -72,17 +72,33 @@ pub(super) fn normalized_origin(
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
-    observation::validate_state(&session.state)
-        .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+    observation::validate_state(&session.state).map_err(|_| {
+        super::ravenous_v51::diagnose_origin_error(
+            "genesis_wave_v69.normalized.state",
+            FlatActionDecisionSliceErrorV1::CorruptCurrentBinding,
+        )
+    })?;
     let actual = super::genesis_wave_candidates_v69(
         &current.origin_decision,
         &session.state,
         &session.surface,
     )
-    .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    .map_err(|_| {
+        super::ravenous_v51::diagnose_origin_error(
+            "genesis_wave_v69.normalized.actual_candidates",
+            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+        )
+    })?;
     let mut original = current.clone();
     original.candidates = actual;
-    flat_validate_current_binding_header_akroma_inner(session, &original, true)?;
+    flat_validate_current_binding_header_akroma_inner(session, &original, true).map_err(
+        |error| {
+            super::ravenous_v51::diagnose_origin_error(
+                "genesis_wave_v69.normalized.binding_header",
+                error,
+            )
+        },
+    )?;
     session
         .surface
         .scan_context_for_owned_revision_v1(
@@ -90,7 +106,12 @@ pub(super) fn normalized_origin(
             current.actor,
             session.environment_revision,
         )
-        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+        .map_err(|_| {
+            super::ravenous_v51::diagnose_origin_error(
+                "genesis_wave_v69.normalized.scan_context",
+                FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+            )
+        })?;
     // Nonscan origins were issued by this private revision's native advance.
     // Re-advancing here would append a genuine Drake Enclosing receipt.
     Ok(original.candidates)
@@ -112,7 +133,12 @@ pub(super) fn prepare_current(
         current.physical_decision_id,
         (current.substep_index, current.substep_count),
     )
-    .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    .map_err(|_| {
+        super::ravenous_v51::diagnose_origin_error(
+            "genesis_wave_v69.prepare.observation",
+            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
+        )
+    })?;
     Ok(())
 }
 impl FastActorSessionV1 {
