@@ -10237,6 +10237,15 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
             .lookers |= 1u8 << controller.index();
     }
 }
+#[inline]
+fn native_validation_stage<T, E>(_stage: &'static str, result: Result<T, E>) -> Result<T, E> {
+    #[cfg(test)]
+    if result.is_err() {
+        eprintln!("native_validation::{_stage}");
+    }
+    result
+}
+
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if let Err(_error) = time_stop_v1::validate(state)
         .and_then(|_| ordinary_cleanup_v1::validate(state))
@@ -10259,7 +10268,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
             source: ObjectId(0),
         };
     }
-    if crate::leyline_axe_v1::validate(state).is_err() {
+    if native_validation_stage("leyline", crate::leyline_axe_v1::validate(state)).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -10269,7 +10278,8 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         let (mechanic, source) = state.engine.halted.expect("PT refusal halted");
         return Decision::Halted { mechanic, source };
     }
-    if crate::drake_hatcher_v1::custody::validate(state).is_err() {
+    if native_validation_stage("drake", crate::drake_hatcher_v1::custody::validate(state)).is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -10313,7 +10323,12 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
-    if crate::controlled_creature_grants_v1::validate_color_history(state).is_err() {
+    if native_validation_stage(
+        "color_history",
+        crate::controlled_creature_grants_v1::validate_color_history(state),
+    )
+    .is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -10331,18 +10346,42 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         return Decision::Halted { mechanic, source };
     }
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
-    if crate::source_power_activation_v1::validate_state(state).is_err()
-        || crate::raid_entry_v1::validate_state(state).is_err()
-        || crate::gorehorn_damage_v1::validate_state(state).is_err()
-        || crate::equipment_damage_source_v4::validate_state(state).is_err()
-        || crate::zul_ashur_v1::validate_state(state).is_err()
-        || effect::validate_inspiration_resolution(state).is_err()
-        || effect::crystal_prevention_v1::validate(state).is_err()
-        || effect::validate_vampire_gourmand_state(state).is_err()
-        || crate::arahbo_v1::validate_state(state).is_err()
-        || crate::ajani_full_v42::lifecycle::validate_state(state).is_err()
-        || crate::krenko_v1::validate_state(state).is_err()
-        || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
+    if native_validation_stage(
+        "source_power",
+        crate::source_power_activation_v1::validate_state(state),
+    )
+    .is_err()
+        || native_validation_stage("raid_entry", crate::raid_entry_v1::validate_state(state))
+            .is_err()
+        || native_validation_stage("gorehorn", crate::gorehorn_damage_v1::validate_state(state))
+            .is_err()
+        || native_validation_stage(
+            "equipment_damage",
+            crate::equipment_damage_source_v4::validate_state(state),
+        )
+        .is_err()
+        || native_validation_stage("zul_ashur", crate::zul_ashur_v1::validate_state(state)).is_err()
+        || native_validation_stage(
+            "inspiration",
+            effect::validate_inspiration_resolution(state),
+        )
+        .is_err()
+        || native_validation_stage("crystal", effect::crystal_prevention_v1::validate(state))
+            .is_err()
+        || native_validation_stage("gourmand", effect::validate_vampire_gourmand_state(state))
+            .is_err()
+        || native_validation_stage("arahbo", crate::arahbo_v1::validate_state(state)).is_err()
+        || native_validation_stage(
+            "ajani",
+            crate::ajani_full_v42::lifecycle::validate_state(state),
+        )
+        .is_err()
+        || native_validation_stage("krenko", crate::krenko_v1::validate_state(state)).is_err()
+        || native_validation_stage(
+            "fishing",
+            crate::fishing_pole_v39::lifecycle::validate_state(state),
+        )
+        .is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -11809,6 +11848,15 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    #[cfg(test)]
+    if item.inline_effect == Some(effect::chandra_flameshaper_v1::minus_four()) {
+        eprintln!(
+            "Chandra ready owners: edict={}, top_batch={}, tutelage={}, hunter={}, alesha={}, artist={}, spinner={}, inspiration={}, crystal={}, chandra={}",
+            edict_owner.is_some(), top_batch_owner.is_some(), tutelage_owner.is_some(),
+            hunter_owner.is_some(), alesha_owner.is_some(), artist_owner.is_some(),
+            spinner_owner.is_some(), inspiration_owner.is_some(), crystal_owner.is_some(), chandra_owner.is_some()
+        );
+    }
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())

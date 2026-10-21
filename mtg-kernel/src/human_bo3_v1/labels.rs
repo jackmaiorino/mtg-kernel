@@ -682,7 +682,15 @@ pub(super) fn label_parts_v59(
             return Err(Error::UnsupportedPrompt);
         }
     }
-    label_parts_next_five(action, observation, handles, human, facts)
+    let result = label_parts_next_five(action, observation, handles, human, facts);
+    #[cfg(test)]
+    if result.is_err() {
+        eprintln!(
+            "Human V59 label rejected action {:?}",
+            std::mem::discriminant(action)
+        );
+    }
+    result
 }
 
 pub(super) fn label_parts_call_v62(

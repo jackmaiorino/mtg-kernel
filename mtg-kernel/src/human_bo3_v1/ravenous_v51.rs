@@ -1730,6 +1730,8 @@ fn project_with_handles(
         return Err(Error::NotHumanTurn);
     }
     if actions.is_empty() {
+        #[cfg(test)]
+        eprintln!("Human V51 projection has no native actions");
         return Err(Error::UnsupportedPrompt);
     }
     if let Some(obs) = call {
@@ -2237,6 +2239,8 @@ fn project_with_handles(
         .collect::<Result<Vec<_>, Error>>()?;
     choices.sort_by(|a, b| a.0.cmp(&b.0));
     if choices.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        #[cfg(test)]
+        eprintln!("Human V51 projection has duplicate action labels");
         return Err(Error::UnsupportedPrompt);
     }
     let indexes = choices.iter().map(|(_, index)| *index).collect();

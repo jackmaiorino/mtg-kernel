@@ -2128,6 +2128,13 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             execution: Box::new(execution),
         });
     record(state, owner, None)?;
+    #[cfg(test)]
+    if owner.root == super::chandra_flameshaper_v1::minus_four() {
+        eprintln!(
+            "Chandra Crystal drive: suspended={suspended}, selected={}",
+            super::chandra_flameshaper_v1::selected(state, &owner.expected)
+        );
+    }
     if !suspended {
         super::chandra_flameshaper_v1::finish_crystal(state, owner, &owner.expected)?;
         if let Some(gorehorn) = owner.gorehorn.as_ref() {
