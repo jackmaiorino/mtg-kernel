@@ -71,8 +71,16 @@ fn genuine_paid_stash_complete_eighteen_counter_prefixes_and_readonly_freshness_
         assert!(!candidates.owning_consumer_admitted);
         assert!(!candidates.candidates.is_empty());
         let mut unknown = serde_json::to_value(&value).unwrap();
-        unknown["common"]["common"]["projection"]["surface"]["battlefield"][p.index()][0]
-            ["stable"]["unknown_alias"] = serde_json::json!(true);
+        let stable = unknown
+            .pointer_mut(&format!(
+                "/common/common/projection/battlefield/{}/0/stable",
+                p.index()
+            ))
+            .and_then(|value| value.as_object_mut())
+            .expect("actual flattened stable reference");
+        assert!(stable
+            .insert("unknown_alias".into(), serde_json::json!(true))
+            .is_none());
         assert!(serde_json::from_value::<observation::TinybonesObservationV72>(unknown).is_err());
         let row = value.tinybones.battlefield[p.index()]
             .iter()
