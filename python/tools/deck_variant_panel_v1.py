@@ -810,13 +810,16 @@ def member_reader(plan_dir: Path, archive_dirs: list[Path]):
                 for out in outs:
                     index[out] = (zip_path, f"{name}/{Path(out).name}")
 
+    opened: dict[Path, zipfile.ZipFile] = {}  # one open handle per chunk, not one per match
+
     def read(output: str, filename: str) -> bytes:
         path = Path(output) / filename
         if path.exists():
             return path.read_bytes()
         zip_path, prefix = index[str(output).replace("\\", "/")]
-        with zipfile.ZipFile(zip_path) as zf:
-            return zf.read(f"{prefix}/{filename}")
+        if zip_path not in opened:
+            opened[zip_path] = zipfile.ZipFile(zip_path)
+        return opened[zip_path].read(f"{prefix}/{filename}")
 
     return read
 
