@@ -290,7 +290,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     Ok(Some(json!({"card_id":id,"observer_trigger_printing":{
         "schema":"printed-battlefield-observer/v1","cost":cost,"types":d.types,"subtypes":d.subtypes,
-        "supertypes":d.supertypes,"colors":d.colors,"power":power,"toughness":toughness,
+        "supertypes":if supertypes.is_empty() { json!([]) } else { json!(["Legendary"]) },"colors":d.colors,"power":power,"toughness":toughness,
         "keywords":keywords.0,"mana_value":d.mana_value,"token":false,
         "ordinary_cast":{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
             "timing":if keywords.has(Keywords::FLASH) {"InstantWithPriority"} else {"OwnMainPhaseEmptyStackWithPriority"},"ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],

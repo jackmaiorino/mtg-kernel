@@ -264,8 +264,10 @@ fn paid_observer(name: &str) {
                     assert_eq!(
                         crate::engine::checked_effective_pt(state, source).unwrap(),
                         (
-                            def.power.unwrap() + i32::from(source_counter) + boost_power,
-                            def.toughness.unwrap() + i32::from(source_counter) + boost_toughness
+                            i32::from(def.power.unwrap()) + i32::from(source_counter) + boost_power,
+                            i32::from(def.toughness.unwrap())
+                                + i32::from(source_counter)
+                                + boost_toughness
                         )
                     );
                 }
