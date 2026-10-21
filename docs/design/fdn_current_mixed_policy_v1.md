@@ -109,9 +109,28 @@ so it does not establish an engine setup hang. Earlier 300- and 900-second
 timeouts remain failures, with their outputs retained.
 
 [PR308](https://github.com/jackmaiorino/mtg-kernel/pull/308) is the canonical
-draft integration. Native232 qualifies the committed fixture repairs and finer
-same-120-second Liliana diagnostic. The new full286 opening-hand audit is
-excluded from that already running binary and still needs execution. The
+draft integration. At published `73c8b5a11`, the full286 opening-hand audit
+reports159 gaps per seat:134 missing printing meanings and25 owning refusals.
+Native241 passed all11 affected short cases and the unchanged full native
+Liliana scene in733.391 seconds; its full numeric scene timed out at1800 seconds.
+Native242 passed all12 affected checks, including exact scalar/model bit parity
+after the zero-feature sign-mask optimization. Its unchanged full numeric scene
+is pending. Published73c8 hosted Linux CI still records1800-second numeric
+Liliana and Genesis Wave X256 timeouts; Human Liliana passed in1315.94 seconds.
+No scene, candidate, observation or deadline was reduced to obtain a pass.
+
+Additional committed source supplies closed Flight/Pie/Joust printings and
+repairs scoped sampler, restore, target-order and native-characteristic fixtures.
+Corrected Native244 candidate `d0216adf8` contains22 affected cases; the earlier
+Native243 candidate was superseded before launch after source review caught a
+test's token-storage field mistake. Newer source adds six closed life-gain,
+other-creature/Angel-entry and landfall observers, including exact original
+source/controller binding, per-event counts, ordered outcomes, and mandatory
+numeric printing supplements. Six paid both-seat cases exercise real Food
+activations, creature casts or land plays, source removal in response, and
+repeated native/model replay. The observer source is included in the producer
+identity. These newer source additions are unrun and do not change the observed
+159-gap count. The
 [current checkpoint](https://github.com/jackmaiorino/mtg-kernel/issues/110#issuecomment-6097999838)
 records exact current sources, live jobs, retained results and remaining work.
 Issue110 remains open through full gameplay/consumer/model coverage, fair
