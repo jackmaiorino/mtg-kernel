@@ -400,7 +400,8 @@ impl PairedBo1PolicyV1 for Trace<'_> {
             } else {
                 input.diagnostic_visible_v1().map_err(diagnostic_error)?
             };
-            let bytes = serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?;
+            let bytes =
+                serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?;
             let visible = hash(&bytes);
             let d = input.decision();
             let mut row = json!({"game_index":self.resets.len(),"step":d.step,"physical_decision_id":d.physical_decision_id,
