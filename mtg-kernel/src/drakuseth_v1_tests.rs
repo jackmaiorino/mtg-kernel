@@ -364,8 +364,36 @@ fn paid_attack_crystal_replacement_requires_successor_before_damage_or_trigger_r
             "Crystal Barricade",
             Zone::Battlefield,
         );
+        let protected = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
         attack(&mut state, source, actor);
-        choose(&mut state, source, &[Target::Player(actor)]);
+        choose(&mut state, source, &[Target::Object(protected)]);
+        // Crystal alone applies its ordinary prevention without an ordering
+        // choice. The unsupported case needs both eligible prevention families.
+        let mut ordinary = state.clone();
+        settle(&mut ordinary);
+        assert_eq!(ordinary.objects.get(protected).zone, Zone::Battlefield);
+        assert_eq!(ordinary.objects.get(protected).damage, 0);
+        assert!(ordinary.stack.is_empty());
+        assert!(state.engine.active_replacements.is_empty());
+        // Labelled native finite-shield primitive, installed after actual turn
+        // progression so cleanup cannot expire the intended mixed operand.
+        state
+            .engine
+            .active_replacements
+            .push(crate::event::ActiveReplacement {
+                id: 1,
+                source: protected,
+                kind: crate::event::ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Object(protected),
+                    remaining: 2,
+                },
+            });
+        let shields = state.engine.active_replacements.clone();
         let original = state.stack.last().unwrap().clone();
         let start = state.engine.event_history.len();
         let mut refused = false;
@@ -382,6 +410,9 @@ fn paid_attack_crystal_replacement_requires_successor_before_damage_or_trigger_r
         assert!(damage_since(&state, start, source).is_empty());
         assert_eq!(state.stack.last(), Some(&original));
         assert_eq!(state.players[actor.index()].life, 20);
+        assert_eq!(state.objects.get(protected).damage, 0);
+        assert_eq!(state.objects.get(protected).zone, Zone::Battlefield);
+        assert_eq!(state.engine.active_replacements, shields);
     }
 }
 
