@@ -129,6 +129,8 @@ def action_features(sem, me_actor, focal):
                     tok(f"{path}:hidden")
                 else:
                     idx.add(ROLES.index(role) * C + v["card_db_id"])
+                    if "[" in path:  # bind a list element's identity to its position
+                        tok(f"{path}:card={v['card_db_id']}")
                 return
             for k, x in v.items():
                 if k in ("action_kind", "actor") or k.endswith("_id"):
@@ -136,9 +138,10 @@ def action_features(sem, me_actor, focal):
                 r = role if role is not None else (k.rstrip("s") if k.rstrip("s") in ROLES[:-1] else "other")
                 walk(x, f"{path}.{k}" if path else k, r)
         elif isinstance(v, list):
+            # Positions are kept (orders and permutations are choices); long tails share one slot.
             tok(f"{path}:len={min(len(v), 8)}")
-            for x in v:
-                walk(x, path, role)
+            for i, x in enumerate(v):
+                walk(x, f"{path}[{min(i, 8)}]", role)
         else:
             if isinstance(v, str) and v in ("p0", "p1"):
                 v = rel(v)
