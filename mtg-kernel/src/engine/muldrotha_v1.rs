@@ -956,22 +956,36 @@ pub(crate) fn public_facts_v71(
         state,
         viewer,
         crate::optional_trigger_public_v1::CounterScopeV61::CallV62,
+        crate::optional_trigger_public_v1::ConsumerV1::Legacy,
     )
 }
 pub(crate) fn public_facts_tinybones_compat_v72(
     state: &GameState,
     viewer: PlayerId,
 ) -> Result<crate::muldrotha_public_v71::FactsV71, String> {
+    public_facts_tinybones_for_consumer_v72(
+        state,
+        viewer,
+        crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+    )
+}
+pub(crate) fn public_facts_tinybones_for_consumer_v72(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: crate::optional_trigger_public_v1::ConsumerV1,
+) -> Result<crate::muldrotha_public_v71::FactsV71, String> {
     public_facts_counter_scope_v72(
         state,
         viewer,
         crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
+        consumer,
     )
 }
 fn public_facts_counter_scope_v72(
     state: &GameState,
     viewer: PlayerId,
     scope: crate::optional_trigger_public_v1::CounterScopeV61,
+    consumer: crate::optional_trigger_public_v1::ConsumerV1,
 ) -> Result<crate::muldrotha_public_v71::FactsV71, String> {
     use crate::{muldrotha_public_v71::*, optional_trigger_public_v1 as public};
     validate_state(state)?;
@@ -981,17 +995,13 @@ fn public_facts_counter_scope_v72(
         .filter_map(|(id, _)| public::reference(state, id, Some(viewer)))
         .filter(|r| matches!(r.identity, public::IdentityV1::Known { card_id: 489 }))
         .collect();
-    let current = match scope {
-        crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72 => {
-            crate::valkyries_call_public_v62::capture_tinybones_compat_v72(state, viewer)?
-        }
-        _ => crate::valkyries_call_public_v62::capture(state, viewer)?,
-    }
-    .battlefield
-    .into_iter()
-    .flatten()
-    .filter(|r| matches!(r.card.identity, public::IdentityV1::Known { card_id: 489 }))
-    .collect();
+    let current =
+        crate::valkyries_call_public_v62::capture_for_consumer(state, viewer, scope, consumer)?
+            .battlefield
+            .into_iter()
+            .flatten()
+            .filter(|r| matches!(r.card.identity, public::IdentityV1::Known { card_id: 489 }))
+            .collect();
     let mut budgets = Vec::new();
     for (id, o) in state.objects.iter() {
         if o.zone != Zone::Battlefield || o.v4.face_down_v1.is_some() || !definition(o.card_def) {

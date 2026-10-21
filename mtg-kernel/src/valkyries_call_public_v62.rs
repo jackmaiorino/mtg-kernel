@@ -405,7 +405,7 @@ fn capture_scoped(
         crate::optional_trigger_public_v1::ConsumerV1::Legacy,
     )
 }
-fn capture_for_consumer(
+pub(crate) fn capture_for_consumer(
     state: &GameState,
     viewer: PlayerId,
     scope: public::CounterScopeV61,

@@ -524,11 +524,16 @@ pub(crate) fn observe_parts_v75(
             .map_err(RlContractError)?,
         genesis_wave: crate::genesis_wave_public_v69::capture(state, actor_and_origin.0)
             .map_err(RlContractError)?,
-        vivien: crate::vivien_public_v70::capture_tinybones_compat_v72(state, actor_and_origin.0)
-            .map_err(RlContractError)?,
-        muldrotha: crate::muldrotha_public_v71::capture_tinybones_compat_v72(
+        vivien: crate::vivien_public_v70::capture_tinybones_for_consumer_v72(
             state,
             actor_and_origin.0,
+            crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+        )
+        .map_err(RlContractError)?,
+        muldrotha: crate::muldrotha_public_v71::capture_tinybones_for_consumer_v72(
+            state,
+            actor_and_origin.0,
+            crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
         )
         .map_err(RlContractError)?,
         tinybones: crate::tinybones_public_v72::capture(state, actor_and_origin.0)

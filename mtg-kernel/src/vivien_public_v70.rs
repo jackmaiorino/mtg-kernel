@@ -98,12 +98,25 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV70, String> {
     crate::effect::vivien_reid_v1::public_facts_v70(s, v)
 }
 pub(crate) fn capture_tinybones_compat_v72(s: &GameState, v: PlayerId) -> Result<FactsV70, String> {
-    let mut facts = crate::effect::vivien_reid_v1::public_facts_tinybones_compat_v72(s, v)?;
+    Ok(tinybones_schema(
+        crate::effect::vivien_reid_v1::public_facts_tinybones_compat_v72(s, v)?,
+    ))
+}
+pub(crate) fn capture_tinybones_for_consumer_v72(
+    s: &GameState,
+    v: PlayerId,
+    consumer: crate::optional_trigger_public_v1::ConsumerV1,
+) -> Result<FactsV70, String> {
+    Ok(tinybones_schema(
+        crate::effect::vivien_reid_v1::public_facts_tinybones_for_consumer_v72(s, v, consumer)?,
+    ))
+}
+fn tinybones_schema(mut facts: FactsV70) -> FactsV70 {
     facts.schema = format!(
         "{}/compat/vivien_reid_v1",
         crate::tinybones_observation_v72::SCHEMA
     );
-    Ok(facts)
+    facts
 }
 pub fn validate(v: &FactsV70) -> Result<(), String> {
     validate_with_schema_v72(v, SCHEMA)
