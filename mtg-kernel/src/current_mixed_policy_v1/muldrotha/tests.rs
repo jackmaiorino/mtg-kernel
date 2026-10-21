@@ -100,10 +100,24 @@ fn paid_numeric_derived_owner_preserves_packet_actual_payment_and_foreign_refusa
         };
         let d = own.encode(expected).unwrap();
         let original = own.fixture_state().clone();
+        assert!(!crate::arahbo_v1::requires_successor(&original));
+        assert!(!crate::garruks_uprising_v1::requires_successor(&original));
+        assert!(original.engine.event_history.iter().any(|event| {
+            matches!(event, crate::event::CommittedEvent::ArahboEntryObservationV1 { sources, .. }
+                if sources.is_empty())
+        }));
+        assert!(original.engine.event_history.iter().any(|event| {
+            matches!(event, crate::event::CommittedEvent::GarrukEntryObservationV1 { sources, .. }
+                if sources.is_empty())
+        }));
         let mut clone = own.sampled_clone(&d, 8177).unwrap();
         let repeat = own.sampled_clone(&d, 8177).unwrap();
         assert_eq!(clone.fixture_state(), repeat.fixture_state());
         assert_eq!(own.fixture_state(), &original);
+        assert_eq!(
+            clone.fixture_state().engine.event_history,
+            original.engine.event_history
+        );
         let fresh = clone.encode(expected).unwrap();
         assert_eq!(fresh.packet(), d.packet());
         assert!(clone.apply(&d, 0).is_err());

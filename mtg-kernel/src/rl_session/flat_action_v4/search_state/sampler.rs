@@ -59,20 +59,13 @@ fn conflicts_in_scope(
     if crate::krenko_v1::requires_successor(state) {
         return true;
     }
-    if crate::arahbo_v1::requires_successor(state)
-        || state
-            .engine
-            .event_history
-            .iter()
-            .any(crate::arahbo_v1::is_history)
-    {
-        return true;
-    }
-    if state
-        .engine
-        .event_history
-        .iter()
-        .any(crate::garruks_uprising_v1::is_history)
+    // Every ordinary entry has both observation records, even without an
+    // observer. Validate those passive records; the reference walk below
+    // still protects their physical objects. Actual roots remain unsupported.
+    if crate::arahbo_v1::validate_state(state).is_err()
+        || crate::garruks_uprising_v1::validate_state(state).is_err()
+        || crate::arahbo_v1::requires_successor(state)
+        || crate::garruks_uprising_v1::requires_successor(state)
     {
         return true;
     }
@@ -684,6 +677,58 @@ fn redeterminize_with_library_plan_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn paid_observerless_entries_allow_sampling_but_keep_history_objects_and_actual_observers_bound(
+    ) {
+        use crate::engine::time_stop_v1::tests::{cast, finish, ready, restore};
+        use crate::event::{propose_and_commit, CommittedEvent, ProposedEvent};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let elf = cast(&mut state, actor, "Llanowar Elves", &[], 1);
+            finish(&mut state);
+            assert!(!crate::arahbo_v1::requires_successor(&state));
+            assert!(!crate::garruks_uprising_v1::requires_successor(&state));
+            let history = state.engine.event_history.clone();
+            let mut sampled = restore(&state);
+            let mut repeat = restore(&state);
+            redeterminize_with_library_plan_classified(&mut sampled, actor, 8177, None).unwrap();
+            redeterminize_with_library_plan_classified(&mut repeat, actor, 8177, None).unwrap();
+            assert_eq!(sampled, repeat);
+            assert_eq!(sampled.engine.event_history, history);
+
+            let mut departed = restore(&state);
+            propose_and_commit(
+                &mut departed,
+                ProposedEvent::zone_change(elf, Zone::Library),
+            );
+            assert!(conflicts(&departed, &[elf], None));
+
+            let mut malformed = restore(&state);
+            malformed
+                .engine
+                .event_history
+                .retain(|event| !matches!(event, CommittedEvent::GarrukEntryObservationV1 { .. }));
+            let before = malformed.clone();
+            assert_eq!(
+                redeterminize_with_library_plan_classified(&mut malformed, actor, 8177, None),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(malformed, before);
+
+            cast(&mut state, actor, "Garruk's Uprising", &[], 3);
+            finish(&mut state);
+            let before = state.clone();
+            assert_eq!(
+                redeterminize_with_library_plan_classified(&mut state, actor, 8177, None),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(state, before);
+        }
+    }
     #[test]
     fn retained_soul_world_refuses_before_any_hidden_owner_permutation_both_seats() {
         use crate::{

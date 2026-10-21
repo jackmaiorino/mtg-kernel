@@ -1931,15 +1931,19 @@ fn conflicts_in_scope(
             }
             CerberusPublishedV1 { item, .. } => s.raw(item.source),
             CerberusOperationV1 { source, .. } => s.raw(source.source),
-            ArahboEntryObservationV1 { .. }
-            | ArahboTokenCaptureV1 { .. }
+            ArahboEntryObservationV1 { entry, sources, .. } => {
+                !sources.is_empty() || s.raw(entry.object)
+            }
+            ArahboTokenCaptureV1 { .. }
             | ArahboTokenCollectedV1 { .. }
             | ArahboTokenPublishedV1 { .. }
             | ArahboTokenRemovedV1 { .. }
             | ArahboTokenCompletedV1 { .. }
             | ArahboCounterInputV1 { .. } => true,
-            GarrukEntryObservationV1 { .. }
-            | GarrukDrawCaptureV1 { .. }
+            GarrukEntryObservationV1 { entry, sources, .. } => {
+                !sources.is_empty() || s.raw(entry.object)
+            }
+            GarrukDrawCaptureV1 { .. }
             | GarrukDrawCollectedV1 { .. }
             | GarrukDrawPublishedV1 { .. }
             | GarrukDrawRemovedV1 { .. }
