@@ -457,6 +457,7 @@ pub(crate) struct ForwardRowCacheV1 {
     layers: [RowLayerCacheV1; 5],
     gather: Vec<f32>,
     miss_rows: Vec<usize>,
+    miss_hashes: Vec<u64>,
     miss_output: Vec<f32>,
 }
 
@@ -490,11 +491,34 @@ impl ForwardRowCacheV1 {
     }
 }
 
+/// The row index's hasher: its keys are already `row_hash_v1` values, so it
+/// passes them through instead of hashing them again.
+#[derive(Default)]
+struct RowHashPassThroughV1(u64);
+
+impl std::hash::Hasher for RowHashPassThroughV1 {
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(byte)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type RowIndexV1 = HashMap<u64, u32, std::hash::BuildHasherDefault<RowHashPassThroughV1>>;
+
 #[derive(Default)]
 struct RowLayerCacheV1 {
     width: usize,
     out: usize,
-    index: HashMap<u64, u32>,
+    index: RowIndexV1,
     keys: Vec<u32>,
     outputs: Vec<f32>,
     hashes: Vec<u64>,
@@ -506,13 +530,48 @@ struct RowLayerCacheV1 {
     misses: u64,
 }
 
+/// A hash of a row's bits that picks its index slot. Only the slot depends
+/// on it: a hit still compares the whole stored row. Four independent lanes
+/// over pairs of values keep the multiplies off one dependency chain, and a
+/// final mix spreads every bit (the index uses the hash as is).
 fn row_hash_v1(row: &[f32]) -> u64 {
-    let mut hash = 0x9e37_79b9_7f4a_7c15_u64 ^ row.len() as u64;
-    for value in row {
-        hash =
-            (hash.rotate_left(5) ^ u64::from(value.to_bits())).wrapping_mul(0x517c_c1b7_2722_0a95);
+    const K: [u64; 4] = [
+        0x9e37_79b9_7f4a_7c15,
+        0xc2b2_ae3d_27d4_eb4f,
+        0x1656_67b1_9e37_79f9,
+        0x85eb_ca77_c2b2_ae63,
+    ];
+    let mut lanes = [row.len() as u64, K[1], K[2], K[3]];
+    let pair =
+        |values: &[f32]| u64::from(values[0].to_bits()) | (u64::from(values[1].to_bits()) << 32);
+    let mut blocks = row.chunks_exact(8);
+    for block in &mut blocks {
+        for (lane, (k, values)) in lanes.iter_mut().zip(K.iter().zip(block.chunks_exact(2))) {
+            *lane = (*lane ^ pair(values)).wrapping_mul(*k).rotate_left(29);
+        }
     }
-    hash ^ (hash >> 31)
+    // Up to seven values remain; they cycle through the lanes.
+    for (i, value) in blocks.remainder().iter().enumerate() {
+        let lane = i % 4;
+        lanes[lane] = (lanes[lane] ^ u64::from(value.to_bits()))
+            .wrapping_mul(K[lane])
+            .rotate_left(29);
+    }
+    let mut hash =
+        lanes[0] ^ lanes[1].rotate_left(17) ^ lanes[2].rotate_left(31) ^ lanes[3].rotate_left(47);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    hash ^ (hash >> 33)
+}
+
+/// Whether `stored` holds exactly the bits of `row`. No early exit, so the
+/// comparison vectorizes; equal lengths are the caller's invariant.
+fn row_bits_equal_v1(stored: &[u32], row: &[f32]) -> bool {
+    stored.iter().zip(row).fold(0u32, |differ, (&bits, value)| {
+        differ | (bits ^ value.to_bits())
+    }) == 0
 }
 
 impl RowLayerCacheV1 {
@@ -529,10 +588,7 @@ impl RowLayerCacheV1 {
     fn get(&self, hash: u64, row: &[f32]) -> Option<&[f32]> {
         let slot = *self.index.get(&hash)? as usize;
         let key = &self.keys[slot * self.width..(slot + 1) * self.width];
-        key.iter()
-            .zip(row)
-            .all(|(&stored, value)| stored == value.to_bits())
-            .then(|| &self.outputs[slot * self.out..(slot + 1) * self.out])
+        row_bits_equal_v1(key, row).then(|| &self.outputs[slot * self.out..(slot + 1) * self.out])
     }
 
     fn insert(&mut self, hash: u64, row: &[f32], output: &[f32]) {
@@ -588,6 +644,7 @@ fn two_layer_cached_v1(
         layers,
         gather,
         miss_rows,
+        miss_hashes,
         miss_output,
         ..
     } = cache;
@@ -597,8 +654,10 @@ fn two_layer_cached_v1(
     output.resize(rows * out, 0.0);
     gather.clear();
     miss_rows.clear();
+    miss_hashes.clear();
     for (r, row) in input.chunks_exact(width).take(rows).enumerate() {
-        match layer.get(row_hash_v1(row), row) {
+        let hash = row_hash_v1(row);
+        match layer.get(hash, row) {
             Some(stored) => {
                 output[r * out..(r + 1) * out].copy_from_slice(stored);
                 #[cfg(test)]
@@ -608,6 +667,7 @@ fn two_layer_cached_v1(
             }
             None => {
                 miss_rows.push(r);
+                miss_hashes.push(hash);
                 gather.extend_from_slice(row);
             }
         }
@@ -620,11 +680,11 @@ fn two_layer_cached_v1(
         layer.misses += miss_rows.len() as u64;
     }
     two_layer_into(encoder, gather, miss_rows.len(), mode, hidden, miss_output);
-    for (m, &r) in miss_rows.iter().enumerate() {
+    for (m, (&r, &hash)) in miss_rows.iter().zip(miss_hashes.iter()).enumerate() {
         let computed = &miss_output[m * out..(m + 1) * out];
         output[r * out..(r + 1) * out].copy_from_slice(computed);
         let row = &input[r * width..(r + 1) * width];
-        layer.insert(row_hash_v1(row), row, computed);
+        layer.insert(hash, row, computed);
     }
 }
 
@@ -633,4 +693,42 @@ fn two_layer_cached_v1(
 fn row_cache_check_v1() -> bool {
     static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CHECK.get_or_init(|| std::env::var("MTG_KERNEL_ROW_CACHE_CHECK").is_ok_and(|v| v == "1"))
+}
+
+#[cfg(test)]
+mod row_cache_lookup_tests {
+    use super::{row_bits_equal_v1, row_hash_v1};
+
+    #[test]
+    fn row_lookup_compares_bits_and_hash_sees_every_value() {
+        let row: Vec<f32> = (0..259).map(|i| (i as f32 * 0.37).sin()).collect();
+        let bits: Vec<u32> = row.iter().map(|x| x.to_bits()).collect();
+        assert!(row_bits_equal_v1(&bits, &row));
+        // Equal as numbers but not as bits: never a hit.
+        let mut zero = row.clone();
+        zero[200] = 0.0;
+        let mut negative = row.clone();
+        negative[200] = -0.0;
+        let zero_bits: Vec<u32> = zero.iter().map(|x| x.to_bits()).collect();
+        assert!(!row_bits_equal_v1(&zero_bits, &negative));
+        let nan = f32::from_bits(0x7fc0_0001);
+        let mut other_nan = row.clone();
+        other_nan[0] = f32::from_bits(0x7fc0_0002);
+        let mut first_nan = row.clone();
+        first_nan[0] = nan;
+        let first_bits: Vec<u32> = first_nan.iter().map(|x| x.to_bits()).collect();
+        assert!(!row_bits_equal_v1(&first_bits, &other_nan));
+        // A change at any position, including the unpaired tail, moves the hash.
+        let base = row_hash_v1(&row);
+        for width in [1, 7, 8, 9, 114, 169, 259] {
+            let short = &row[..width];
+            let h = row_hash_v1(short);
+            for i in 0..width {
+                let mut changed = short.to_vec();
+                changed[i] = f32::from_bits(changed[i].to_bits() ^ 1);
+                assert_ne!(row_hash_v1(&changed), h, "width {width} position {i}");
+            }
+        }
+        assert_ne!(row_hash_v1(&row[..258]), base);
+    }
 }
