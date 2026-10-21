@@ -565,7 +565,10 @@ fn first_lifegain_real_next_turn_resets_both_seats_and_own_turn_gate() {
     assert!(state.stack.is_empty());
     assert!(state.engine.pending_triggers.is_empty());
     state.objects.get_mut(p0_seraph).damage = 1;
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(&mut state, active, Step::End);
+    }
     state.priority_player = PlayerId::P0;
     state.engine.priority_passes = [false, false];
     for _ in 0..8 {

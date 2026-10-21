@@ -233,7 +233,10 @@ fn fleeting_distraction_reduces_either_players_creature_then_draws_and_expires()
         assert_eq!(state.players[0].library.len(), library_before - 1);
         assert_eq!(state.players[0].hand.len(), 1);
         assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
-        state.step = Step::End;
+        {
+            let active = state.active_player;
+            super::fixture_turn_v1::reach(&mut state, active, Step::End);
+        }
         state.engine.priority_passes = [false, false];
         apply(&mut surface, &mut state, Action::Pass);
         priority(&mut surface, &mut state);
@@ -562,7 +565,10 @@ fn snarespinner_counters_only_friendly_creatures_repeat_without_tapping_and_pers
     assert_eq!(engine::effective_toughness(&state, spider), 5);
     assert!(!state.objects.get(spider).tapped);
     assert_eq!(state.players[0].mana_pool, [0; 6]);
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(&mut state, active, Step::End);
+    }
     state.engine.priority_passes = [false, false];
     apply(&mut surface, &mut state, Action::Pass);
     priority(&mut surface, &mut state);

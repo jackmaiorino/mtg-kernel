@@ -373,7 +373,10 @@ fn balmors_effect_samples_resolution_creatures_and_preserves_incarnations() {
         departed,
         Keywords::TRAMPLE
     ));
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(&mut state, active, Step::End);
+    }
     state.engine.priority_passes = [false, false];
     priority(&mut state);
     engine::step(&mut state, Action::Pass).unwrap();
