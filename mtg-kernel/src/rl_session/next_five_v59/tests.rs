@@ -221,6 +221,7 @@ fn all_five_genuine_paid_casts_use_sealed_native_order_and_distinct_artifacts_bo
             "Giada, Font of Hope",
             "Goblin Negotiation",
         ] {
+            eprintln!("V59 paid five {actor:?} {name}: initial setup");
             let mut raw = ready(actor);
             let target = put(
                 &mut raw,
@@ -234,18 +235,22 @@ fn all_five_genuine_paid_casts_use_sealed_native_order_and_distinct_artifacts_bo
                 card_def::preflight_fully_supported_deck(&[id]).is_ok(),
                 "{name} is Full in the current native catalog"
             );
+            eprintln!("V59 paid five {actor:?} {name}: owning projection");
             let mut owner = own(raw);
             check_artifact(&owner);
             let is_goblin = name == "Goblin Negotiation";
+            eprintln!("V59 paid five {actor:?} {name}: paid cast");
             cast(
                 &mut owner,
                 spell,
                 is_goblin.then_some(target),
                 is_goblin.then_some(3),
             );
+            eprintln!("V59 paid five {actor:?} {name}: pending artifact and snapshot");
             check_artifact(&owner);
             let snapshot = owner.snapshot_v59();
             let old = owner.decision_v59().unwrap();
+            eprintln!("V59 paid five {actor:?} {name}: resolve native stack");
             drain(&mut owner);
             let result = gameplay(&owner);
             assert_eq!(
@@ -268,6 +273,7 @@ fn all_five_genuine_paid_casts_use_sealed_native_order_and_distinct_artifacts_bo
                     1
                 );
             }
+            eprintln!("V59 paid five {actor:?} {name}: restore and replay");
             owner.restore_v59(&snapshot).unwrap();
             assert!(
                 owner
@@ -280,6 +286,7 @@ fn all_five_genuine_paid_casts_use_sealed_native_order_and_distinct_artifacts_bo
             assert!(owner.step_v59(&old, 0).is_err());
             drain(&mut owner);
             assert_eq!(gameplay(&owner), result);
+            eprintln!("V59 paid five {actor:?} {name}: complete");
         }
     }
 }
