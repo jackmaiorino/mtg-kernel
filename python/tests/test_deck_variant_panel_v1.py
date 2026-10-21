@@ -223,6 +223,21 @@ class Execution(Fixture):
                                raw_root=self.tmp)
         self.assertEqual(outcome, "complete")
 
+    def test_backpressure_also_counts_raw_bytes(self):
+        self.plan()
+        archive = self.tmp / "archive" / "M1a"
+        outcome = dvp.dispatch(self.tmp / "plan", str(self.exe), 1, self.ledger(), None, self.tmp / "STOP", [], 0, 0,
+                               archive_dir=archive, seal_seconds=0, max_files=10**6, max_bytes=20000,
+                               ack_wait_seconds=0, raw_root=self.tmp)
+        self.assertEqual(outcome, "yielded: awaiting archive acknowledgement")
+
+    def test_a_transient_cap_refusal_is_retried_after_in_flight_work_settles(self):
+        self.plan(size=40)
+        # Cap fits one 40-match request at a time by projection (0.03 each), and measured CPU is small.
+        ledger = self.ledger(cap=2.0, per=0.03)
+        outcome = dvp.dispatch(self.tmp / "plan", str(self.exe), 2, ledger, None, self.tmp / "STOP", [], 0, 0)
+        self.assertEqual(outcome, "complete")
+
     def test_qualification_parity_and_label_invariance(self):
         decks = self.decks + [dict(self.decks[0], label="B0/alias", role="alias")]
         cases = dvp.stage_cases(7, "qual", "Burn", 1, ["g115", "a48"], "all")  # shared: same matches per pilot

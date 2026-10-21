@@ -477,12 +477,14 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
                if not Path(item["request"]["path"]).with_suffix(".state.json").exists()]
     lock, running, errors, capped = threading.Lock(), set(), [], []
     by_name = {item["name"]: item for item in plan["requests"]}
-    gated_since = None
+    gated_since, cap_refusals = None, 0
 
     def one(item):
         try:
             execute_request(executable, plan_dir, item, ledger)
         except CapReached as error:
+            with lock:
+                pending.insert(0, item)  # not lost: retried once in-flight work has settled
             capped.append(str(error))
         except BaseException as error:  # surfaced after in-flight work drains
             errors.append(f"{item['name']}: {error}")
@@ -496,14 +498,27 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
             for stage_archive in sorted(p for p in Path(archive_dir).parent.iterdir() if p.is_dir()):
                 free_acknowledged(stage_archive, stage_archive)
 
-    def raw_backlog() -> int:
-        """Raw match files not yet freed under ``raw_root`` (every stage's native output) plus the
-        matches of in-flight requests."""
-        files = sum(len([f for f in names if f.startswith("match-") and f.endswith(".json")])
-                    for _, _, names in os.walk(raw_root))
+    def raw_backlog() -> tuple[int, int, int]:
+        """Raw match files and bytes not yet freed under ``raw_root`` (every stage's native output)
+        and the matches of in-flight requests."""
+        files = size = 0
+        for folder, _, names in os.walk(raw_root):
+            for name in names:
+                if name.startswith("match-") and name.endswith(".json"):
+                    files += 1
+                    try:
+                        size += os.path.getsize(os.path.join(folder, name))
+                    except OSError:
+                        pass
         with lock:
             inflight = sum(len(by_name[name]["items"]) for name in running)
-        return files + inflight
+        return files, size, inflight
+
+    def over_two_chunks(next_matches: int) -> bool:
+        files, size, inflight = raw_backlog()
+        per_match = size / files if files else 64 * 1024  # projected bytes for not-yet-written output
+        projected_files = files + inflight + next_matches
+        return projected_files > 2 * max_files or size + (inflight + next_matches) * per_match > 2 * max_bytes
 
     reason, last_check, last_seal, threads = None, 0.0, time.monotonic(), []
     while pending or running:
@@ -512,14 +527,25 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
                                   interactive_threshold=interactive_threshold)
             last_check = time.monotonic()
         if capped and not reason:
-            reason = "CPU cap reached"
+            with lock:
+                busy = bool(running)
+            if not busy:
+                # Everything in flight has settled. Retry admission once; a second refusal with nothing
+                # running means the cap itself is reached.
+                cap_refusals += 1
+                capped.clear()
+                if cap_refusals >= 2:
+                    reason = "CPU cap reached"
+            else:
+                time.sleep(0.5)
+                continue
         if time.monotonic() - last_seal >= seal_seconds:
             seal()
             last_seal = time.monotonic()
         with lock:
             free = workers - len(running)
         if not reason and not errors and pending and free > 0 and raw_root is not None \
-                and raw_backlog() + len(pending[0]["items"]) > 2 * max_files:
+                and over_two_chunks(len(pending[0]["items"])):
             # Backpressure: at most two chunks of raw output. Wait briefly for acknowledgements, then
             # yield the claim rather than hold idle cores.
             gated_since = gated_since or time.monotonic()
