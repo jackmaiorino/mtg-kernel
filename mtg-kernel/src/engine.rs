@@ -26955,7 +26955,20 @@ mod tests {
             trigger.controller,
             if ward { caster.opponent() } else { caster }
         );
-        assert!(trigger.v4.source_contract.is_some());
+        assert_eq!(
+            state.stack[0]
+                .v4
+                .source_contract
+                .map(|source| source.source),
+            Some(spell)
+        );
+        assert_eq!(
+            trigger.v4.ability_source_contract,
+            Some(crate::state::AbilitySourceContractV4::capture(
+                &state,
+                trigger_source
+            ))
+        );
 
         // CR 117.3c/117.5: neither the trigger's controller nor APNAP
         // placement transfers the caster's pending priority to the active player.
