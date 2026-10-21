@@ -5,7 +5,7 @@
 //! probe applies the focal player's visibility itself.
 use super::play::acting;
 use super::{drive, game_setup, write_line, CensusConfigV1, Shared};
-use crate::card_def::{CardType, CARD_DEFS};
+use crate::card_def::CardType;
 use crate::ids::{ObjectId, PlayerId};
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::RUNTIME_DECKS;
@@ -18,13 +18,15 @@ fn card(state: &GameState, id: ObjectId) -> u16 {
     state.objects.get(id).card_def
 }
 
+/// Effective type (transformed, bestowed, animated and face-down objects
+/// included), as the engine itself answers it.
 fn has_type(state: &GameState, id: ObjectId, t: CardType) -> bool {
-    CARD_DEFS[card(state, id) as usize].types.contains(&t)
+    crate::engine::object_has_type(state, id, t)
 }
 
 /// Per-seat facts and zone contents. Battlefield entries are
 /// `[card, tapped, power, toughness]` (power and toughness 0 for
-/// non-creatures by printed type).
+/// non-creatures).
 fn seat(state: &GameState, p: usize) -> Value {
     let ps = &state.players[p];
     let (mut creatures, mut lands, mut power, mut toughness, mut untapped_lands) = (0, 0, 0, 0, 0);
@@ -67,7 +69,9 @@ fn facts(state: &GameState) -> Value {
         "seats":[seat(state, 0), seat(state, 1)],"exile":exile,"stack":stack})
 }
 
-/// The chosen action's kind and every card it names, in serialization order.
+/// The chosen action: its kind, every card it names in serialization order,
+/// and the full semantic (choices, roles, target players, indices) so the
+/// probe can apply per-field visibility itself.
 fn action(s: &FastActorSessionV1, a: u32) -> Result<Value, String> {
     let sem = s
         .diagnostic_current_action_semantics()
@@ -87,7 +91,7 @@ fn action(s: &FastActorSessionV1, a: u32) -> Result<Value, String> {
     }
     let mut cards = Vec::new();
     walk(&v, &mut cards);
-    Ok(json!({"kind":v["action_kind"],"cards":cards}))
+    Ok(json!({"kind":v["action_kind"],"cards":cards,"semantic":v}))
 }
 
 pub(super) fn wm_dump_game(
