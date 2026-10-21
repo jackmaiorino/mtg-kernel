@@ -670,7 +670,7 @@ fn genuine_paid_restore_forgery_refusals_and_consumed_row_cleanup_both_seats() {
         )
         .is_err());
         assert_eq!(serde_json::to_vec(&raw_begin).unwrap(), before);
-        for mode in 0..10 {
+        for mode in [0, 1, 2, 3, 4, 5, 6, 9] {
             let mut forged = restored(&state);
             let pending = forged.engine.pending_effect.as_mut().unwrap();
             match mode {
@@ -727,20 +727,42 @@ fn genuine_paid_restore_forgery_refusals_and_consumed_row_cleanup_both_seats() {
                         .unwrap()
                         .expected_zone_change_count += 1;
                 }
-                7 => {
-                    let row = forged.stack.last().unwrap().clone();
-                    forged.stack.push(row);
-                }
-                8 => {
-                    forged.stack.pop();
-                }
                 9 => pending.ctx.x_value = pending.ctx.x_value.saturating_add(1),
                 _ => unreachable!(),
             }
             refuses_readonly(forged, &format!("waiting forgery mode {mode}"));
         }
         engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        // The private native handoff authenticates unique ownership of the
+        // ready public row. A duplicate still has a structurally valid top
+        // row, so test that rejection at the actual acquisition boundary.
+        let ready_item = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .resolving_item
+            .clone();
+        for duplicate in [false, true] {
+            let mut forged = restored(&state);
+            if duplicate {
+                forged.stack.push(ready_item.clone());
+            } else {
+                assert_eq!(forged.stack.pop(), Some(ready_item.clone()));
+            }
+            let before = serde_json::to_vec(&forged).unwrap();
+            assert!(acquire_resume(&forged, &ready_item).is_err());
+            assert!(crate::effect::resume_resumable_resolution(&mut forged).is_err());
+            assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+        }
         let mut answered = restored(&state);
+        assert!(answered
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .answered_choice_guard
+            .is_some());
         answered
             .engine
             .pending_effect
