@@ -198,6 +198,31 @@ class Execution(Fixture):
                      archive_dir=archive, seal_seconds=0, max_files=60)
         self.assertTrue(list(archive.glob("chunk-*.zip")))
 
+    def test_an_interrupted_seal_is_rebuilt_from_raw_output(self):
+        self.plan()
+        dvp.dispatch(self.tmp / "plan", str(self.exe), 2, self.ledger(), None, self.tmp / "STOP", [], 0, 0)
+        archive = self.tmp / "archive"
+        archive.mkdir()
+        (archive / "chunk-0000.zip.partial").write_bytes(b"truncated")
+        made = dvp.seal_chunks(self.tmp / "plan", archive, max_files=10**6, max_bytes=2**40, final=True)
+        self.assertEqual(len(made), 1)
+        self.assertFalse((archive / "chunk-0000.zip.partial").exists())
+
+    def test_backpressure_yields_when_raw_output_is_not_acknowledged(self):
+        self.plan()
+        archive = self.tmp / "archive" / "M1a"
+        outcome = dvp.dispatch(self.tmp / "plan", str(self.exe), 1, self.ledger(), None, self.tmp / "STOP", [], 0, 0,
+                               archive_dir=archive, seal_seconds=0, max_files=15, ack_wait_seconds=0,
+                               raw_root=self.tmp)
+        self.assertEqual(outcome, "yielded: awaiting archive acknowledgement")
+        for manifest in archive.glob("chunk-*.json"):
+            sha = json.loads(manifest.read_text())["zip"]["sha256"]
+            manifest.with_suffix(".ack").write_text(json.dumps({"zip_sha256": sha}))
+        outcome = dvp.dispatch(self.tmp / "plan", str(self.exe), 1, self.ledger(), None, self.tmp / "STOP", [], 0, 0,
+                               archive_dir=archive, seal_seconds=0, max_files=10**6, ack_wait_seconds=0,
+                               raw_root=self.tmp)
+        self.assertEqual(outcome, "complete")
+
     def test_qualification_parity_and_label_invariance(self):
         decks = self.decks + [dict(self.decks[0], label="B0/alias", role="alias")]
         cases = dvp.stage_cases(7, "qual", "Burn", 1, ["g115", "a48"], "all")  # shared: same matches per pilot

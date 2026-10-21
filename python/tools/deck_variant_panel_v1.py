@@ -39,7 +39,8 @@ SEED_DOMAIN = b"kernel-b0-case-seed/v1"
 MAX_DECISIONS = 10000
 MAX_POLICY_STEPS = 200000
 OPPONENTS = 9
-YIELD_EXIT = 75
+YIELD_EXIT = 75  # temporary: the host is wanted elsewhere; retry later
+CAP_EXIT = 76  # terminal: the cumulative CPU cap is reached
 LANE = "brewing-b0"
 
 
@@ -465,7 +466,8 @@ def yield_reason(slots_tool: str | None, stop_file: Path, footprint_roots: list[
 def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slots_tool: str | None,
              stop_file: Path, footprint_roots: list[Path], footprint_limit: int, check_seconds: float = 15.0,
              interactive_threshold: float = 0.0, archive_dir: Path | None = None, seal_seconds: float = 60.0,
-             max_files: int = 20000, max_bytes: int = int(1.5 * 2**30)) -> str:
+             max_files: int = 20000, max_bytes: int = int(1.5 * 2**30), ack_wait_seconds: float = 180.0,
+             raw_root: Path | None = None) -> str:
     """Admit requests while nothing else wants the host; on a yield signal (or the CPU cap) admit
     nothing more, let in-flight requests finish (bounded by their size) and return 'yielded: ...'.
     Between batches, completed requests are sealed into verified chunks and raw output of
@@ -474,6 +476,8 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
     pending = [item for item in plan["requests"]
                if not Path(item["request"]["path"]).with_suffix(".state.json").exists()]
     lock, running, errors, capped = threading.Lock(), set(), [], []
+    by_name = {item["name"]: item for item in plan["requests"]}
+    gated_since = None
 
     def one(item):
         try:
@@ -489,7 +493,17 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
     def seal():
         if archive_dir is not None:
             seal_chunks(plan_dir, archive_dir, max_files, max_bytes, final=False)
-            free_acknowledged(archive_dir, archive_dir)
+            for stage_archive in sorted(p for p in Path(archive_dir).parent.iterdir() if p.is_dir()):
+                free_acknowledged(stage_archive, stage_archive)
+
+    def raw_backlog() -> int:
+        """Raw match files not yet freed under ``raw_root`` (every stage's native output) plus the
+        matches of in-flight requests."""
+        files = sum(len([f for f in names if f.startswith("match-") and f.endswith(".json")])
+                    for _, _, names in os.walk(raw_root))
+        with lock:
+            inflight = sum(len(by_name[name]["items"]) for name in running)
+        return files + inflight
 
     reason, last_check, last_seal, threads = None, 0.0, time.monotonic(), []
     while pending or running:
@@ -504,6 +518,17 @@ def dispatch(plan_dir: Path, executable: str, workers: int, ledger: Ledger, slot
             last_seal = time.monotonic()
         with lock:
             free = workers - len(running)
+        if not reason and not errors and pending and free > 0 and raw_root is not None \
+                and raw_backlog() + len(pending[0]["items"]) > 2 * max_files:
+            # Backpressure: at most two chunks of raw output. Wait briefly for acknowledgements, then
+            # yield the claim rather than hold idle cores.
+            gated_since = gated_since or time.monotonic()
+            if time.monotonic() - gated_since >= ack_wait_seconds:
+                reason = "awaiting archive acknowledgement"
+            else:
+                time.sleep(5)
+            continue
+        gated_since = None
         if not reason and not errors and pending and free > 0:
             item = pending.pop(0)
             with lock:
@@ -683,6 +708,9 @@ def seal_chunks(plan_dir: Path, archive_dir: Path, max_files: int, max_bytes: in
     def seal(entries):
         number = len(list(archive_dir.glob("chunk-*.json")))
         stem = archive_dir / f"chunk-{number:04d}"
+        stale = Path(f"{stem}.zip.partial")
+        if stale.exists():  # an interrupted seal never published; its raw output is still intact
+            stale.unlink()
         members = []
         with zipfile.ZipFile(f"{stem}.zip.partial", "x", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
             for name, outs in entries:
@@ -842,7 +870,8 @@ def main(argv: list[str] | None = None) -> int:
                  "--remote", "--remote-dir", "--pilot-checkpoints"):
         add(name)
     for name in ("--cards", "--pool", "--audit", "--out", "--decks", "--field", "--cases", "--sources", "--plan",
-                 "--root", "--ledger", "--stop-file", "--archive-dir", "--local-copy-dir", "--receipt"):
+                 "--root", "--ledger", "--stop-file", "--archive-dir", "--local-copy-dir", "--receipt",
+                 "--raw-root"):
         add(name, type=Path)
     add("--master-seed", type=int); add("--blocks", type=int); add("--request-size", type=int, default=240)
     add("--native-root"); add("--workers", default="1,2,4,8"); add("--sample-per-request", type=int)
@@ -888,9 +917,12 @@ def main(argv: list[str] | None = None) -> int:
         roots = [Path(p) for p in a.footprint_roots.split(";") if p]
         outcome = dispatch(a.plan, a.executable, receipt["selected_workers"], ledger, a.slots_tool, a.stop_file,
                            roots, a.footprint_limit, interactive_threshold=a.interactive_threshold,
-                           archive_dir=a.archive_dir, max_files=a.max_files, max_bytes=a.max_bytes)
+                           archive_dir=a.archive_dir, max_files=a.max_files, max_bytes=a.max_bytes,
+                           raw_root=a.raw_root)
         print(json.dumps({"outcome": outcome, "ledger_cpu_seconds": ledger.spent()}))
-        return 0 if outcome == "complete" else YIELD_EXIT
+        if outcome == "complete":
+            return 0
+        return CAP_EXIT if outcome == "yielded: CPU cap reached" else YIELD_EXIT
     elif args.op == "archive":
         made = seal_chunks(a.plan, a.archive_dir, a.max_files, a.max_bytes, a.final)
         freed = free_acknowledged(a.archive_dir, a.local_copy_dir) if a.local_copy_dir else []
