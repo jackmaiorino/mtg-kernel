@@ -676,7 +676,7 @@ fn capture_for_consumer(
         producer_sha256: producer_sha256(),
         viewer: viewer.into(),
         meanings,
-        snack: crate::midnight_snack_public_v58::capture(state, viewer)?,
+        snack: crate::midnight_snack_public_v58::capture_for_consumer(state, viewer, consumer)?,
         wide_life: crate::snack_wide_public_v59::capture(state).map_err(|e| e.0)?,
         authorized,
         current,

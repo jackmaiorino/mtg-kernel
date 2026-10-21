@@ -8,6 +8,8 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
             player, false, "Island",
         );
         validate_copy_prefix_for_mode_v1(&kaito, Mode::KaitoV75Artifact).unwrap();
+        crate::next_five_public_v59::capture_kaito_compat_v75(&kaito, player).unwrap();
+        assert!(crate::midnight_snack_public_v58::capture(&kaito, player).is_err());
         for mode in [
             Mode::FullArtifact,
             Mode::TinybonesV72Artifact,
@@ -24,6 +26,9 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
             );
         validate_copy_prefix_for_mode_v1(&chandra, Mode::ChandraV74Artifact).unwrap();
         validate_copy_prefix_for_mode_v1(&chandra, Mode::KaitoV75Artifact).unwrap();
+        crate::next_five_public_v59::capture_chandra_compat_v74(&chandra, player).unwrap();
+        crate::next_five_public_v59::capture_kaito_compat_v75(&chandra, player).unwrap();
+        assert!(crate::midnight_snack_public_v58::capture(&chandra, player).is_err());
         for mode in [
             Mode::FullArtifact,
             Mode::TinybonesV72Artifact,

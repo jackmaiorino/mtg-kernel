@@ -129,9 +129,18 @@ fn turn_inputs(state: &GameState) -> Result<([bool; 2], [GainTotalV58; 2]), Stri
     ))
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV58, String> {
+    capture_for_consumer(state, viewer, public::ConsumerV1::Legacy)
+}
+/// The complete enclosing consumer retains its private copy/walker scope.
+/// Standalone V58 capture and validation keep their predecessor refusals.
+pub(crate) fn capture_for_consumer(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<FactsV58, String> {
     let id = crate::card_def::card_id_by_name("Midnight Snack").ok_or("Snack printing absent")?;
     let meaning = meaning::printed_meaning(id)?;
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
     let (attacked_this_turn, gained_this_turn) = turn_inputs(state)?;
     let mut authorized_printings = vec![];
     for (object, _) in state.objects.iter() {
