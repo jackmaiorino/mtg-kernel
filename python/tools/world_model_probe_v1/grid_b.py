@@ -17,7 +17,7 @@ results = []
 for g in GRID:
     tag = f"set-d{g['hidden']}-u{g['unroll']}"
     run('train', '--data', ROOT / 'data', '--out', ROOT / 'models' / tag, '--arch', 'set', '--hidden', g['hidden'],
-        '--unroll', g['unroll'], '--lr', '5e-4')
+        '--unroll', g['unroll'], '--lr', '5e-4', '--batch', 512)
     out = ROOT / 'validation' / f'{tag}.json'
     run('eval', '--data', ROOT / 'data', '--model', ROOT / 'models' / tag, '--split', 'validation', '--out', out)
     rep = json.loads(out.read_text())

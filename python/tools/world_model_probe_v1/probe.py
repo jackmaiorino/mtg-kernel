@@ -433,20 +433,21 @@ def train(args):
             t = torch.from_numpy(idx).to(dev)
             a = torch.from_numpy(tr.action_of_state[idx]).to(dev)
             cur = tr.state(t)
-            loss = 0.0
+            opt.zero_grad(set_to_none=True)
+            step_total = 0.0
             for j in range(args.unroll):
                 out = net(cur, tr.a_kind[a + j], tr.a_me[a + j], tr.a_cards_h[a + j].float())
                 nxt = t + j + 1
-                loss = loss + step_loss(lay, cur, out, tr.state(nxt), tr.over[nxt], tr.win_me[nxt], tr.legal[nxt],
-                                        scalar_weight)
-                # Later steps start from the model's own most likely state (no gradient through the feed).
+                loss = step_loss(lay, cur, out, tr.state(nxt), tr.over[nxt], tr.win_me[nxt], tr.legal[nxt],
+                                 scalar_weight) / args.unroll
+                # Later steps start from the model's own most likely state with no gradient through the
+                # feed, so each step's backward is independent: same gradient, one step's graph at a time.
                 cur = assemble(lay, cur, out).detach()
-            loss = loss / args.unroll
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
+                loss.backward()
+                step_total += loss.item()
             nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             opt.step(); sched.step()
-            total += loss.item()
+            total += step_total
         log.append(dict(epoch=epoch, loss=total / steps_per_epoch, seconds=round(time.time() - t0, 1)))
         print(json.dumps(log[-1]), flush=True)
     out = Path(args.out)
