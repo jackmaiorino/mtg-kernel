@@ -78,6 +78,7 @@ fn complete(own: &mut LilianaSession, native: &mut FastActorSessionV1) {
 fn paid_numeric_all_three_original_loyalty_roots_and_native_choice_restore_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         for index in [0, 1, 2] {
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: setup");
             let (s, id) = owning_ready(p, index == 2, "Island");
             let mut native = FastActorSessionV1::from_liliana_v73_fixture_state(s.clone());
             let mut own =
@@ -88,6 +89,7 @@ fn paid_numeric_all_three_original_loyalty_roots_and_native_choice_restore_both_
                 &mut native,
                 |a| matches!(a,A::ActivateAbility{source,ability_index,..}if source.arena_id==id.0&&*ability_index==index),
             );
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: activated");
             let FastActorResponseV1::Decision(h) = own.current_response() else {
                 panic!()
             };
@@ -95,6 +97,7 @@ fn paid_numeric_all_three_original_loyalty_roots_and_native_choice_restore_both_
             let saved = own.snapshot();
             let raw = native.snapshot_v1();
             complete(&mut own, &mut native);
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: completed");
             let expected = own.fixture_state().clone();
             let FastActorResponseV1::Decision(h) = own.current_response() else {
                 panic!()
@@ -111,10 +114,12 @@ fn paid_numeric_all_three_original_loyalty_roots_and_native_choice_restore_both_
             }
             own.restore(&saved).unwrap();
             native.liliana_restore_v73(&raw).unwrap();
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: restored");
             let before = own.fixture_state().clone();
             assert!(own.apply(&old, 0).is_err());
             assert_eq!(own.fixture_state(), &before);
             complete(&mut own, &mut native);
+            eprintln!("Liliana numeric root seat={p:?} ability={index}: replay completed");
             assert_eq!(own.fixture_state(), &expected);
         }
     }
