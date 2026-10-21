@@ -118,6 +118,8 @@ fn supported_v1_card_ids() -> Vec<u16> {
             expected.push(card_id("Infernal Vessel"));
             expected.push(card_id("Giada, Font of Hope"));
             expected.push(card_id("Goblin Negotiation"));
+            expected.push(card_id("Banner of Kinship"));
+            expected.push(card_id("Secluded Courtyard"));
         }
         assert_eq!(excluded, expected);
         assert!(matches!(
@@ -906,9 +908,18 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    // Native occurrence/source binding stays outside the frozen V1 vocabulary.
+    "Extravagant Replication",
+    "Tinybones, Bauble Burglar",
+    "Midnight Snack",
+    "Alesha, Who Laughs at Fate",
+    "Nine-Lives Familiar",
+    "Valkyrie's Call",
+    "Infernal Vessel",
+    "Niv-Mizzet, Visionary",
     "Curator of Destinies",
     "Lathril, Blade of the Elves",
-    // Native own-cast template is walked; reveal-until mill remains opaque.
+    // Native own-cast template is walked; reveal-until mill has typed atoms.
     "Consuming Aberration",
     // Native per-successful-controller-draw template and captured target
     // are walked; the repeat-mill body remains opaque in frozen v1.
@@ -1166,6 +1177,19 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("engine.rs", "Alesha, Who Laughs at Fate", "exact native source-incarnation power and departure LKI authentication; frozen V1 root remains opaque"),
+    ("engine.rs", "Nine-Lives Familiar", "exact native captured counters and deferred return source binding; frozen V1 root remains opaque"),
+    ("engine.rs", "Valkyrie's Call", "exact native death capture and returned creature incarnation; frozen V1 root remains opaque"),
+    ("engine.rs", "Niv-Mizzet, Visionary", "exact native noncombat damage receipt and trigger-stack binding; frozen V1 root remains opaque"),
+    ("effect.rs", "Perforating Artist", "native Raid choice and departure source authentication; frozen V1 root remains opaque"),
+    ("effect.rs", "Alesha, Who Laughs at Fate", "native optional return continuation and pre-removal source loan; frozen V1 root remains opaque"),
+    ("effect.rs", "Valkyrie's Call", "native exact death capture and returned creature upgrade; frozen V1 root remains opaque"),
+    ("effect.rs", "Nine-Lives Familiar", "native exact departure counters and delayed return; frozen V1 root remains opaque"),
+    ("effect.rs", "Extravagant Replication", "closed native nonland token-copy source guard; frozen V1 extractor refuses"),
+    ("effect.rs", "Self-Reflection", "closed native creature-copy spell source guard; typed copy root selects its successor"),
+    ("event.rs", "Niv-Mizzet, Visionary", "native exact committed noncombat damage and trigger publication receipt; frozen V1 root remains opaque"),
+    ("event.rs", "Nine-Lives Familiar", "native exact departure counter LKI and future return occurrence; frozen V1 root remains opaque"),
+    ("event.rs", "Alesha, Who Laughs at Fate", "native source power capture before departure; frozen V1 root remains opaque"),
     ("effect/kaito_cunning_v75.rs", "Ninja Token", "exact private Kaito/copy permit dependency; raw creation and legacy consumers refuse"),
     ("effect/kaito_cunning_v75.rs", "Kaito, Cunning Infiltrator", "exact native loyalty, combat/casting occurrences and independent emblem; legacy Opaque and consumer refusal"),
     ("effect/chandra_flameshaper_v1.rs", "Chandra, Flameshaper", "exact native loyalty allocation, exile permission and copiable token abilities; legacy Opaque and consumer refusal"),
@@ -1665,7 +1689,7 @@ fn registered_partial_season_still_refuses_frozen_v1_extraction() {
 ))]
 #[test]
 #[should_panic(
-    expected = "nonland token copy with Aura entry choice requires its precise successor"
+    expected = "nonland token copy or departed-subtype death return requires its precise successor"
 )]
 fn replication_partial_still_refuses_frozen_rules_vector_v1() {
     card_rules(card_id("Extravagant Replication"));
@@ -1720,7 +1744,7 @@ fn tutelage_native_draw_trigger_and_captured_target_keep_repeat_opaque_in_frozen
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-fn aberration_own_cast_untargeted_mill_and_all_zone_cda_remain_truthfully_opaque() {
+fn aberration_own_cast_untargeted_mill_is_typed_and_all_zone_cda_remains_opaque() {
     let id = card_id("Consuming Aberration");
     let [trigger] = crate::trigger::triggers_for(id) else {
         panic!("one printed cast trigger");
@@ -1742,10 +1766,19 @@ fn aberration_own_cast_untargeted_mill_and_all_zone_cda_remain_truthfully_opaque
         .abilities
         .iter()
         .any(|a| a.ctx == CtxF::Static && a.atoms.contains(&Atom::Opaque)));
-    assert!(actual
-        .abilities
-        .iter()
-        .any(|a| a.ctx == CtxF::Trigger && a.atoms.contains(&Atom::Opaque)));
+    let triggered = effects(&actual, Some(CtxF::Trigger));
+    let mut reveal = EffectAtom::new(EvF::Reveal)
+        .player(RelF::Opponent)
+        .obj(ObjF::AnyCard)
+        .amount(AmtF::UntilType(CardTypeF::Land));
+    reveal.from = Some(ZoneF::Library);
+    assert!(triggered.contains(&reveal));
+    assert!(triggered.contains(
+        &EffectAtom::moving(Some(ZoneF::Library), ZoneF::Graveyard)
+            .player(RelF::Opponent)
+            .obj(ObjF::AnyCard)
+            .amount(AmtF::UntilType(CardTypeF::Land))
+    ));
 }
 
 #[test]
