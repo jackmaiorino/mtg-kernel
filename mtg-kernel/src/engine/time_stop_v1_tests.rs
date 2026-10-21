@@ -92,6 +92,9 @@ pub(crate) fn cast(
     let mut chosen = 0;
     for _ in 0..32 {
         match next(state) {
+            Decision::OrderTriggers { pending, .. } => {
+                step(state, Action::OrderTriggers((0..pending.len()).collect())).unwrap();
+            }
             Decision::ChooseTargets {
                 player: p,
                 legal_targets,

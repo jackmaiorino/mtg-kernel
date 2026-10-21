@@ -84,7 +84,21 @@ pub(super) fn activate(
             }
             Decision::CastSpellOrPass { player, .. } => {
                 assert_eq!(player, p);
-                assert_eq!(answered, index == 0);
+                if index == 0 {
+                    assert!(
+                        answered
+                            || target.is_none()
+                                && engine::legal_targets_for_controller(
+                                    super::target(0),
+                                    &[],
+                                    p,
+                                    s
+                                )
+                                .is_empty()
+                    );
+                } else {
+                    assert!(!answered);
+                }
                 assert!(s.engine.pending_activation.is_none());
                 let row = s
                     .stack
