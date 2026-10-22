@@ -49,7 +49,9 @@ fn paid_team_static(name: &str) {
         );
         state.step = Step::Main1;
         for land in ["Plains", "Island", "Forest"] {
-            for _ in 0..4 {
+            // Each Eagle can spend two Plains (generic plus W). Keep two
+            // additional white sources for Flight and the later Hawk.
+            for _ in 0..if eagle && land == "Plains" { 6 } else { 4 } {
                 put(&mut state, p, land, Zone::Battlefield);
             }
         }
