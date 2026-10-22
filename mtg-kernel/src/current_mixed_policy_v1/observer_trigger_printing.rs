@@ -28,6 +28,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Erudite Wizard"
             | "Firespitter Whelp"
             | "Sanguine Syphoner"
+            | "Balmor, Battlemage Captain"
     )
 }
 
@@ -35,6 +36,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Balmor, Battlemage Captain" => (
+            0,
+            &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::R)][..],
+            &[ManaColor::U, ManaColor::R][..],
+            &[Subtype::Bird, Subtype::Wizard][..],
+            1,
+            3,
+            Keywords::FLYING,
+        ),
         "Sanguine Syphoner" => (
             1,
             &[Pip::Colored(ManaColor::B)][..],
@@ -185,7 +195,10 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         pips,
         x_count: 0,
     };
-    let supertypes = if d.name == "Tatyova, Benthic Druid" {
+    let supertypes = if matches!(
+        d.name,
+        "Tatyova, Benthic Druid" | "Balmor, Battlemage Captain"
+    ) {
         &[Supertype::Legendary][..]
     } else {
         &[][..]
@@ -235,6 +248,26 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Balmor, Battlemage Captain" => (
+            TriggerCondition::CastInstantOrSorcery,
+            json!({"event":"ObserverControllerCastsInstantOrSorcery","current_cast_characteristics":true,
+                "artifact_or_enchantment_only_casts_do_not_trigger":true,"creature_casts_including_flash_do_not_trigger":true,
+                "opponent_casts_and_copies_without_cast_do_not_trigger":true,"trigger_count_per_cast":1,
+                "trigger_does_not_require_cast_spell_to_resolve":true}),
+            EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+                power: 1,
+                toughness: 0,
+                keywords: Keywords::TRAMPLE,
+            },
+            vec![
+                json!({"operation":"ModifyCurrentControlledCreatureSet","controller":"CapturedTriggerController",
+                "samples_set_at_trigger_resolution":true,"binds_each_current_battlefield_incarnation":true,
+                "includes_source_if_still_a_controlled_creature":true,"does_not_require_source_to_remain":true,
+                "power_delta":1,"toughness_delta":0,"grant_keyword_bits":Keywords::TRAMPLE.0,
+                "places_no_counters":true,"later_entering_creatures_not_included":true,
+                "duration":"UntilCleanupExpirationAfterDiscard","normal_continuous_layers_and_timestamps_apply":true}),
+            ],
+        ),
         "Sanguine Syphoner" => (
             TriggerCondition::Attacks,
             json!({"event":"ThisSourceIsDeclaredAsAttacker","requires_actual_attack_declaration":true,

@@ -4,6 +4,7 @@ use crate::{
     effect::kaito_cunning_v75::tests::owner_v75_tests::owning_ready, ids::PlayerId,
     kaito_public_v75::StageV75, rl::ActionSemanticV1 as A,
 };
+mod balmor;
 mod bloodwitch;
 mod conditional_player_spell;
 mod cost_reduced_spell;
