@@ -105,6 +105,7 @@ pub(super) fn wait_selection(
                 .common
                 .common
                 .projection
+                .surface
                 .engine_context
                 .pending_effect
                 .as_ref()
