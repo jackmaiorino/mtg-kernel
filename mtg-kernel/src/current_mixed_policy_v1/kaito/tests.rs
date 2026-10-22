@@ -10,6 +10,7 @@ mod conditional_player_spell;
 mod cost_reduced_spell;
 mod creature_power_spell;
 mod dragon_observers;
+mod entry_branch;
 mod entry_destruction;
 mod entry_exile;
 mod graveyard_batch_spell;

@@ -23,6 +23,8 @@ pub(super) mod early_activation_printing;
 pub(super) mod eaten_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
+#[path = "entry_branch_printing.rs"]
+mod entry_branch_printing;
 #[path = "entry_destruction_printing.rs"]
 mod entry_destruction_printing;
 #[path = "entry_exile_printing.rs"]
@@ -411,6 +413,7 @@ pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
             || targeted_entry_printing::handles(d.name)
             || entry_destruction_printing::handles(d.name)
             || entry_exile_printing::handles(d.name)
+            || entry_branch_printing::handles(d.name)
     })
 }
 pub(super) fn is_ordinary_equipment(id: u16) -> bool {
@@ -497,6 +500,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
     let entry_destruction = entry_destruction_printing::printing(id, d)?;
     let entry_exile = entry_exile_printing::printing(id, d)?;
+    let entry_branch = entry_branch_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -720,6 +724,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || targeted_entry.is_some()
             || entry_destruction.is_some()
             || entry_exile.is_some()
+            || entry_branch.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -805,6 +810,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = entry_exile {
+        return Ok(printing);
+    }
+    if let Some(printing) = entry_branch {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
