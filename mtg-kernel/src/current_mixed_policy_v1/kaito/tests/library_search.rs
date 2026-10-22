@@ -78,7 +78,9 @@ pub(super) fn wait_entered(
 }
 fn scene(p: PlayerId, name: &str, empty: bool) -> GameState {
     let forest = crate::card_def::card_id_by_name("Forest").unwrap();
-    let cards = vec![forest; if empty { 7 } else { 40 }];
+    // This low-level constructor installs libraries without drawing a hand.
+    // The empty-library branch must start with no cards in that zone.
+    let cards = vec![forest; if empty { 0 } else { 40 }];
     let mut s = GameState::new_from_libraries_with_starting_player_v1(
         &cards,
         &cards,
