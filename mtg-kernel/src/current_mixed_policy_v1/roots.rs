@@ -81,6 +81,8 @@ mod targeted_entry_printing;
 mod targeted_spell_printing;
 #[path = "team_static_printing.rs"]
 mod team_static_printing;
+#[path = "threshold_loot_printing.rs"]
+mod threshold_loot_printing;
 #[path = "triggered_enchantment_printing.rs"]
 mod triggered_enchantment_printing;
 #[path = "tyrant_herald_printing.rs"]
@@ -432,6 +434,7 @@ pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
             || library_search_printing::handles_permanent(d.name)
             || solemn_printing::handles(d.name)
             || surveil_many_printing::handles(d.name)
+            || threshold_loot_printing::handles(d.name)
     })
 }
 pub(super) fn is_ordinary_equipment(id: u16) -> bool {
@@ -540,6 +543,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let evolving = evolving_printing::printing(id, d)?;
     let surveil_one = surveil_one_printing::printing(id, d)?;
     let surveil_many = surveil_many_printing::printing(id, d)?;
+    let threshold_loot = threshold_loot_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
@@ -778,6 +782,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || solemn.is_some()
             || surveil_one.is_some()
             || surveil_many.is_some()
+            || threshold_loot.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -869,6 +874,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = surveil_many {
+        return Ok(printing);
+    }
+    if let Some(printing) = threshold_loot {
         return Ok(printing);
     }
     if let Some(printing) = bloodwitch {

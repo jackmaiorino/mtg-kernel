@@ -33,6 +33,7 @@ mod surveil_one;
 mod syphoner;
 mod targeted_entry;
 mod team_statics;
+mod threshold_loot;
 mod triggered_enchantments;
 mod trufflesnout;
 

@@ -19146,6 +19146,15 @@ fn controls_an_artifact(controller: PlayerId, state: &GameState) -> bool {
 }
 
 pub(crate) fn static_self_boost_for(name: &str) -> Option<StaticSelfBoostDef> {
+    if let Some((power, toughness)) = static_graveyard_threshold_self_boost_for(name) {
+        return Some(StaticSelfBoostDef {
+            condition: controller_has_threshold_v1,
+            power,
+            toughness,
+            grant_haste: false,
+            battlefield_only: true,
+        });
+    }
     match name {
         "Goblin Tomb Raider" => Some(StaticSelfBoostDef {
             condition: controls_an_artifact,
@@ -19154,26 +19163,22 @@ pub(crate) fn static_self_boost_for(name: &str) -> Option<StaticSelfBoostDef> {
             grant_haste: true,
             battlefield_only: false,
         }),
-        "Billowing Shriekmass" => Some(StaticSelfBoostDef {
-            condition: controller_has_threshold_v1,
-            power: 2,
-            toughness: 1,
-            grant_haste: false,
-            battlefield_only: true,
-        }),
-        "Dreadwing Scavenger" => Some(StaticSelfBoostDef {
-            condition: controller_has_threshold_v1,
-            power: 1,
-            toughness: 1,
-            grant_haste: false,
-            battlefield_only: true,
-        }),
         _ => None,
     }
 }
 
+pub(crate) const GRAVEYARD_THRESHOLD_MINIMUM_V1: u16 = 7;
+/// Shared native data used by layer 7c and complete printed-rule projections.
+pub(crate) fn static_graveyard_threshold_self_boost_for(name: &str) -> Option<(i32, i32)> {
+    match name {
+        "Billowing Shriekmass" => Some((2, 1)),
+        "Dreadwing Scavenger" => Some((1, 1)),
+        _ => None,
+    }
+}
 fn controller_has_threshold_v1(controller: PlayerId, state: &GameState) -> bool {
-    crate::effect::controller_graveyard_card_count(state, controller) >= 7
+    crate::effect::controller_graveyard_card_count(state, controller)
+        >= usize::from(GRAVEYARD_THRESHOLD_MINIMUM_V1)
 }
 
 fn valid_bestow_attachment_host(state: &GameState, aura: ObjectId) -> Option<ObjectId> {
@@ -19726,8 +19731,8 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
 
 pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16, Keywords)> {
     match name {
-        "Cephalid Inkmage" => Some((7, Keywords::CANT_BE_BLOCKED)),
-        "Dreadwing Scavenger" => Some((7, Keywords::DEATHTOUCH)),
+        "Cephalid Inkmage" => Some((GRAVEYARD_THRESHOLD_MINIMUM_V1, Keywords::CANT_BE_BLOCKED)),
+        "Dreadwing Scavenger" => Some((GRAVEYARD_THRESHOLD_MINIMUM_V1, Keywords::DEATHTOUCH)),
         _ => None,
     }
 }

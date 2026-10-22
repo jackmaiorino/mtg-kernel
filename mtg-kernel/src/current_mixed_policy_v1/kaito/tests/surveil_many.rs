@@ -11,7 +11,11 @@ fn quiet(a: &A) -> bool {
         A::Pass { .. } | A::OrderTriggers { .. } | A::ChooseTriggerOrderNext { .. }
     )
 }
-fn scene(p: PlayerId, name: &str, size: usize) -> (GameState, ObjectId, ObjectId, ObjectId) {
+pub(super) fn scene(
+    p: PlayerId,
+    name: &str,
+    size: usize,
+) -> (GameState, ObjectId, ObjectId, ObjectId) {
     let basics = ["Forest", "Plains", "Island", "Mountain", "Swamp"]
         .map(|name| crate::card_def::card_id_by_name(name).unwrap());
     let own = (0..size)
@@ -45,14 +49,14 @@ fn scene(p: PlayerId, name: &str, size: usize) -> (GameState, ObjectId, ObjectId
     let removal = put(&mut s, p.opponent(), "Hero's Downfall", Zone::Hand);
     (s, source, counter, removal)
 }
-fn sessions(s: GameState) -> (KaitoSession, FastActorSessionV1) {
+pub(super) fn sessions(s: GameState) -> (KaitoSession, FastActorSessionV1) {
     let native = FastActorSessionV1::from_kaito_v75_fixture_state(s.clone());
     (
         KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(s)).unwrap(),
         native,
     )
 }
-fn checkpoint(own: &mut KaitoSession, native: &mut FastActorSessionV1) {
+pub(super) fn checkpoint(own: &mut KaitoSession, native: &mut FastActorSessionV1) {
     let saved = own.snapshot();
     let raw = native.snapshot_v1();
     let expected = own.fixture_state().clone();
@@ -63,7 +67,7 @@ fn checkpoint(own: &mut KaitoSession, native: &mut FastActorSessionV1) {
 fn target(a: &A, source: ObjectId, object: ObjectId) -> bool {
     matches!(a,A::ChooseEffectTarget{source:s,target:crate::rl::TargetRefV1::Object{object:o},..}if s.arena_id==source.0&&o.arena_id==object.0)
 }
-fn wait_selection(
+pub(super) fn wait_selection(
     own: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     source: ObjectId,
@@ -127,7 +131,7 @@ fn wait_selection(
     }
     panic!("actual private partition/order prompt absent");
 }
-fn order(
+pub(super) fn order(
     own: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     source: ObjectId,

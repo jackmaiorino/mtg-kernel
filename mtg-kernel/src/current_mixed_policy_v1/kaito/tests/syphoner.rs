@@ -5,7 +5,11 @@ use crate::{
     state::{GameState, Step, Zone},
 };
 
-fn declare_paid_source(own: &mut KaitoSession, native: &mut FastActorSessionV1, source: ObjectId) {
+pub(super) fn declare_paid_source(
+    own: &mut KaitoSession,
+    native: &mut FastActorSessionV1,
+    source: ObjectId,
+) {
     for _ in 0..128 {
         let s = own.fixture_state();
         if s.engine.combat.attackers.contains(&source) && !s.stack.is_empty() {
