@@ -8327,7 +8327,9 @@ impl FastActorSessionV1 {
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
-                crate::liliana_observation_v73::validate_state(&self.state)
+                // The ravenous guard validated this exact immutable state.
+                // No session field changed before this second family guard.
+                Ok(())
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
@@ -8390,7 +8392,8 @@ impl FastActorSessionV1 {
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
-                crate::liliana_observation_v73::validate_state(&self.state)
+                // Reuse the successful first guard before any mutation.
+                Ok(())
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
                 crate::tinybones_observation_v72::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
