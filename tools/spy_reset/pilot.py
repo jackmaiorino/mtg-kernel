@@ -53,7 +53,10 @@ TP1B_PANEL_NS = "tp1b-panel-20261019"
 TP1B2_PANEL_NS = "tp1b2-panel-20261020"
 # The no-state-digest plain-play panel (collab LANES/throughput-architecture-20261020/STEP5-PANEL-DRAFT.md).
 NSD5_PANEL_NS = "nsd5-panel-v1"
-PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS)
+# OH1 ordinary-RL headroom (collab LANES/ordinary-headroom-20261022, DESIGN.md section 3).
+OH1_PANEL_NS = "oh1-panel-20261022"
+PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS,
+                    OH1_PANEL_NS)
 
 
 def key(parts: list) -> bytes:
