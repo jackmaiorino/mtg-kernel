@@ -123,7 +123,7 @@ fn paid_sailor_opposing_turn_flash_repeat_draw_source_departure_counter_and_rest
                         own.fixture_state().players[p.index()].hand.len(),
                         hand + draws
                     );
-                    for &drawn in before.iter().rev().take(draws) {
+                    for &drawn in before.iter().take(draws) {
                         assert!(own.fixture_state().players[p.index()].hand.contains(&drawn));
                     }
                 }
