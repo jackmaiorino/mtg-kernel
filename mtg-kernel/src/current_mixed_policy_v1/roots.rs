@@ -5,6 +5,8 @@ use crate::effect::{EffectCond, EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+#[path = "conditional_player_spell_printing.rs"]
+mod conditional_player_spell_printing;
 #[path = "crystal_printing.rs"]
 pub(super) mod crystal_printing;
 #[path = "divine_printing.rs"]
@@ -361,6 +363,7 @@ pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
         || CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
             targeted_spell_printing::handles(d.name)
                 || ordinary_batch_spell_printing::handles(d.name)
+                || conditional_player_spell_printing::handles(d.name)
         })
 }
 
@@ -432,6 +435,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let targeted_spell = targeted_spell_printing::printing(id, d)?;
     let ordinary_batch_spell = ordinary_batch_spell_printing::printing(id, d)?;
+    let conditional_player_spell = conditional_player_spell_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -670,6 +674,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = ordinary_batch_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = conditional_player_spell {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
