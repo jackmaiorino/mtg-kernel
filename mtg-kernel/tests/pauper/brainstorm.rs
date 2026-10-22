@@ -181,6 +181,19 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     let cast_history_start = state.engine.event_history.len();
     let origin_generation = state.objects.get(brainstorm).zone_change_count;
     cast_brainstorm(&mut state, brainstorm);
+    // CastSpell announces a stack placeholder. Native advancement completes
+    // payment/finalization before the finalized identity receipt can exist.
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ));
+    assert!(state.engine.pending_cast.is_none());
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    assert_eq!(state.players[0].battlefield.len(), 1);
+    assert!(state.objects.get(state.players[0].battlefield[0]).tapped);
     let identities: Vec<_> = state.engine.event_history[cast_history_start..]
         .iter()
         .enumerate()
