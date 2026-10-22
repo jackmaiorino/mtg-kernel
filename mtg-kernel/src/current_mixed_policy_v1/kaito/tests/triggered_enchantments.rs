@@ -35,11 +35,7 @@ fn counter_spell(
 ) {
     act(own, native, |a| matches!(a, A::Pass { .. }));
     cast(own, native, counter);
-    act(
-        own,
-        native,
-        |a| matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::StackItem{source,..},..}if source.arena_id==spell.0),
-    );
+    act(own, native, |a| is_original_spell_target(a, spell));
 }
 fn quiet_to_own_upkeep_trigger(
     own: &mut KaitoSession,

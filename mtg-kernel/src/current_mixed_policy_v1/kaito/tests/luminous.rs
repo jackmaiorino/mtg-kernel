@@ -145,7 +145,7 @@ fn paid_luminous_regular_and_real_animated_targets_tap_discount_payment_counter_
                                 );
                                 act(&mut own, &mut native, |a| {
                                     if response == 1 {
-                                        matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::StackItem{source,..},..}if source.arena_id==spell.0)
+                                        is_original_spell_target(a, spell)
                                     } else {
                                         matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.arena_id==target.0)
                                     }

@@ -132,6 +132,28 @@ fn act(own: &mut KaitoSession, native: &mut FastActorSessionV1, choose: impl Fn(
     );
 }
 
+// Native spell-target menus may identify the physical spell as an Object in
+// Zone::Stack. A StackItem spelling must likewise identify an actual spell,
+// never an ability or a source permanent on the battlefield.
+fn is_original_spell_target(action: &A, original: crate::ids::ObjectId) -> bool {
+    match action {
+        A::ChooseTarget {
+            target: crate::rl::TargetRefV1::Object { object },
+            ..
+        } => object.arena_id == original.0 && object.zone == crate::state::Zone::Stack,
+        A::ChooseTarget {
+            target:
+                crate::rl::TargetRefV1::StackItem {
+                    source,
+                    kind: crate::rl::StackItemKindV2::Spell,
+                    ..
+                },
+            ..
+        } => source.arena_id == original.0 && source.zone == crate::state::Zone::Stack,
+        _ => false,
+    }
+}
+
 #[test]
 fn gainlands_actual_play_entry_life_and_each_native_mana_color_keep_numeric_parity_both_seats() {
     use crate::{

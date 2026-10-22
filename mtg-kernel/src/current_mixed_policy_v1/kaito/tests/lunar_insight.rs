@@ -109,8 +109,7 @@ fn paid_distinct_mana_values_zero_tokens_resolution_change_counter_and_restore_b
                         });
                         act(&mut own, &mut native, |a| {
                             if response == 1 {
-                                matches!(a, A::ChooseTarget { target: crate::rl::TargetRefV1::StackItem { source, .. }, .. }
-                                if source.arena_id == spell.0)
+                                is_original_spell_target(a, spell)
                             } else {
                                 matches!(a, A::ChooseTarget { target: crate::rl::TargetRefV1::Object { object }, .. }
                                 if object.arena_id == hawk.unwrap().0)

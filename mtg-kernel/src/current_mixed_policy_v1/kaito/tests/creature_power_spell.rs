@@ -94,11 +94,9 @@ fn paid_creature(name: &str) {
                     act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
                     if response == 1 {
                         cast(&mut own, &mut native, counter);
-                        act(
-                            &mut own,
-                            &mut native,
-                            |a| matches!(a,A::ChooseTarget{target:crate::rl::TargetRefV1::StackItem{source:actual,..},..}if actual.arena_id==spell.0),
-                        );
+                        act(&mut own, &mut native, |a| {
+                            is_original_spell_target(a, spell)
+                        });
                     } else {
                         if matches!(response, 2 | 5) {
                             cast(&mut own, &mut native, downfall);

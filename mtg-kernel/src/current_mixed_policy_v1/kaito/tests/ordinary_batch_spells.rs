@@ -139,11 +139,9 @@ fn paid_batch_spell(name: &str) {
                         &mut native,
                         |a| matches!(a,A::CastSpell { source, .. } if source.arena_id == counter.0),
                     );
-                    act(
-                        &mut own,
-                        &mut native,
-                        |a| matches!(a,A::ChooseTarget { target: crate::rl::TargetRefV1::StackItem { source, .. }, .. } if source.arena_id == spell.0),
-                    );
+                    act(&mut own, &mut native, |a| {
+                        is_original_spell_target(a, spell)
+                    });
                 } else if land_destroyed {
                     let removal = land_removal.unwrap();
                     let land = creature_land.unwrap();

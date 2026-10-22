@@ -91,8 +91,7 @@ fn paid_rite_exact_resolution_life_food_bolt_counter_and_pending_restore_both_pl
                             });
                             act(&mut own, &mut native, |a| {
                                 if response == 1 {
-                                    matches!(a, A::ChooseTarget { target: crate::rl::TargetRefV1::StackItem { source, .. }, .. }
-                                    if source.arena_id == spell.0)
+                                    is_original_spell_target(a, spell)
                                 } else {
                                     matches!(a, A::ChooseTarget { target: crate::rl::TargetRefV1::Player { player }, .. }
                                     if *player == crate::rl::PlayerSeatV1::from(target))

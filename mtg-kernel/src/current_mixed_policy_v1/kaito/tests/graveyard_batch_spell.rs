@@ -98,8 +98,7 @@ fn paid_graveyard_batch(name: &str) {
                     });
                     act(&mut own, &mut native, |a| {
                         if countered {
-                            matches!(a, A::ChooseTarget { target: crate::rl::TargetRefV1::StackItem { source, .. }, .. }
-                            if source.arena_id == spell.0)
+                            is_original_spell_target(a, spell)
                         } else {
                             matches!(a, A::ChooseTarget { target: crate::rl::TargetRefV1::Object { object }, .. }
                             if object.arena_id == live_hawk.0)
