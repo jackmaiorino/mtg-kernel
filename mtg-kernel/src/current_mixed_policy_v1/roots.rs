@@ -615,8 +615,31 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
                 controller_damage: 0,
                 max_activations_per_turn: None,
             });
+    // The catalog distinguishes the two Dragon token definitions by a lookup
+    // name. Their actual object name is shared; authenticate this exact variant
+    // before allowing that difference through the common guard.
+    let dragon_token = d.name == "Dragon 5/5 Token";
+    if dragon_token
+        && (crate::card_def::card_id_by_name(d.name) != Some(id)
+            || d.object_name != "Dragon Token"
+            || !d.is_token
+            || d.is_land
+            || d.cost != crate::mana::Cost::zero()
+            || d.mana_value != 0
+            || d.types != [CardType::Creature]
+            || d.subtypes != [crate::card_def::Subtype::Dragon]
+            || !d.supertypes.is_empty()
+            || d.colors != [crate::mana::ManaColor::R]
+            || d.power != Some(5)
+            || d.toughness != Some(5)
+            || d.keywords != crate::card_def::Keywords::FLYING
+            || d.target_spec != TargetSpec::None
+            || (d.spell_effect)().is_some())
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
     if !(d.capability == CardCapability::Full
-        && d.object_name == d.name
+        && (d.object_name == d.name || dragon_token)
         && (d.activated_abilities.is_empty()
             || goldvein.is_some()
             || hart.is_some()
@@ -862,7 +885,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         }
         _ => return Err(Error::UnsupportedPrintedRoot(id)),
     };
-    Ok(json!({"card_id":id,"primitive_printing":{
+    let mut value = json!({"card_id":id,"primitive_printing":{
         "cost":d.cost,"types":d.types.iter().map(|v|*v as u8).collect::<Vec<_>>(),
         "subtypes":d.subtypes.iter().map(|v|*v as u16).collect::<Vec<_>>(),
         "supertypes":d.supertypes.iter().map(|v|*v as u8).collect::<Vec<_>>(),
@@ -870,7 +893,11 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         "keywords":d.keywords.0,"mana_value":d.mana_value,"token":d.is_token,
         "ordered_instructions":[instruction],
         "mana_ability":mana.map(|colors|json!({"cost":"TapSelf","recipient":"Controller","colors":colors,"amount":1}))
-    }}))
+    }});
+    if dragon_token {
+        value["primitive_printing"]["object_name"] = json!(d.object_name);
+    }
+    Ok(value)
 }
 
 /// Both recipes pass the common exclusion guard before publication. The Druid's

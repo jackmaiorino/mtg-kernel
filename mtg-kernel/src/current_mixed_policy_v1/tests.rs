@@ -1302,6 +1302,74 @@ mod paid {
     }
 
     #[test]
+    fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
+        use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
+        use crate::effect::{EffectOp, PlayerRef};
+        use crate::mana::{Cost, ManaColor};
+
+        let id = crate::card_def::card_id_by_name("Dragon 5/5 Token").unwrap();
+        let token = roots::baseline(id).unwrap();
+        let p = &token["primitive_printing"];
+        assert_eq!(p["object_name"], "Dragon Token");
+        assert_eq!(p["power"], 5);
+        assert_eq!(p["toughness"], 5);
+        assert_eq!(p["keywords"], Keywords::FLYING.0);
+        assert_eq!(p["token"], true);
+        assert_eq!(p["ordered_instructions"][0]["not_cast_permission"], true);
+        let rite = crate::card_def::card_id_by_name("Rite of the Dragoncaller").unwrap();
+        assert_eq!(
+            roots::baseline(rite).unwrap()["triggered_enchantment_printing"]["ordered_triggers"][0]
+                ["ordered_resolution"][0]["token_definition"],
+            token
+        );
+        macro_rules! reject {
+            ($field:ident, $value:expr) => {{
+                let mut changed = ordinary_recipe(id);
+                changed.$field = $value;
+                assert!(matches!(roots::baseline_recipe(id, &changed),
+                    Err(Error::UnsupportedPrintedRoot(actual)) if actual == id), stringify!($field));
+            }};
+        }
+        reject!(object_name, "Different Dragon");
+        reject!(object_name, "Dragon 5/5 Token");
+        reject!(power, Some(4));
+        reject!(toughness, Some(4));
+        reject!(keywords, Keywords::NONE);
+        reject!(subtypes, &[Subtype::Bird]);
+        reject!(types, &[CardType::Artifact]);
+        reject!(colors, &[ManaColor::U]);
+        reject!(is_token, false);
+        reject!(mana_value, 1);
+        reject!(
+            cost,
+            Cost {
+                generic: 1,
+                ..Cost::zero()
+            }
+        );
+        reject!(target_spec, TargetSpec::AnyPlayer);
+        reject!(produces_mana, &[ManaColor::R]);
+        reject!(enters_battlefield_tapped, true);
+        reject!(
+            controlled_creature_grant,
+            Some(crate::controlled_creature_grants_v1::MEMORIAL)
+        );
+        reject!(spell_effect, || Some(EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1
+        }));
+        let other = crate::card_def::card_id_by_name("Dragon Token").unwrap();
+        assert!(
+            matches!(roots::baseline_recipe(other, &ordinary_recipe(id)),
+            Err(Error::UnsupportedPrintedRoot(actual)) if actual == other)
+        );
+        let mut foreign = ordinary_recipe(other);
+        foreign.object_name = "Different Dragon";
+        assert!(matches!(roots::baseline_recipe(other, &foreign),
+            Err(Error::UnsupportedPrintedRoot(actual)) if actual == other));
+    }
+
+    #[test]
     fn growth_and_druid_printings_preserve_exact_cost_boost_duration_mana_and_conditional_hexproof()
     {
         use crate::card_def::{CardType, Keywords};
