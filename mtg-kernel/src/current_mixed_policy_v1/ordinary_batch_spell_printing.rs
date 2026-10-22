@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 pub(super) fn handles(name: &str) -> bool {
     matches!(
         name,
-        "Seismic Rupture" | "Heroic Reinforcements" | "Brass's Bounty"
+        "Seismic Rupture" | "Heroic Reinforcements" | "Brass's Bounty" | "Lunar Insight"
     )
 }
 
@@ -21,10 +21,13 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     let heroic = d.name == "Heroic Reinforcements";
     let bounty = d.name == "Brass's Bounty";
+    let lunar = d.name == "Lunar Insight";
     let cost = Cost {
         generic: if bounty { 6 } else { 2 },
         pips: if heroic {
             &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::W)]
+        } else if lunar {
+            &[Pip::Colored(ManaColor::U)]
         } else {
             &[Pip::Colored(ManaColor::R)]
         },
@@ -32,10 +35,32 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     };
     let colors: &[ManaColor] = if heroic {
         &[ManaColor::R, ManaColor::W]
+    } else if lunar {
+        &[ManaColor::U]
     } else {
         &[ManaColor::R]
     };
-    let (program, ordered) = if !heroic && !bounty {
+    let (program, ordered) = if lunar {
+        (
+            EffectOp::DrawCardsDynamic {
+                player: PlayerRef::Controller,
+                count: DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents,
+            },
+            vec![
+                json!({"operation":"DrawCards","recipient":"CapturedSpellController",
+                "count":{"operation":"CountDistinctManaValuesAmongCurrentControlledNonlandPermanents",
+                    "zone":"Battlefield","controller":"CapturedSpellController",
+                    "exclude_current_land_type_even_if_also_creature_or_artifact":true,
+                    "mana_value":"CurrentNativeObjectManaValue","equal_values_count_once":true,
+                    "zero_is_an_ordinary_distinct_value":true,
+                    "tokens_are_not_excluded":true,
+                    "opponents_permanents_and_nonbattlefield_cards_excluded":true},
+                "count_sampled_once_at_resolution_before_drawing":true,
+                "empty_set_draws_zero":true,"full_native_integer_count":true,
+                "normal_individual_draw_events_replacements_and_empty_library_rules_apply":true}),
+            ],
+        )
+    } else if !heroic && !bounty {
         (
             EffectOp::DamageAllCreatures {
                 filter: CreatureFilter::WithoutKeyword(Keywords::FLYING),

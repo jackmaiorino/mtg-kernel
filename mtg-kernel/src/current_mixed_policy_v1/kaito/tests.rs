@@ -4,6 +4,7 @@ use crate::{
     effect::kaito_cunning_v75::tests::owner_v75_tests::owning_ready, ids::PlayerId,
     kaito_public_v75::StageV75, rl::ActionSemanticV1 as A,
 };
+mod lunar_insight;
 mod observer_triggers;
 mod ordinary_auras;
 mod ordinary_batch_spells;
