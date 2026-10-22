@@ -603,7 +603,10 @@ pub(crate) fn observe_parts_validated_v73(
     value.quandary.schema = format!("{SCHEMA}/compat/quandary-v55");
     value.next_five.schema = format!("{SCHEMA}/compat/next-five-v59");
     value.projection_sha256 = commitment(&value)?;
-    validate_artifact(&value)?;
+    // This owned value cannot change between computing its root commitment
+    // and validation. Keep every field and nested commitment check; avoid
+    // serializing the complete fresh root a second time solely to compare it.
+    validate_artifact_inner(&value, false)?;
     Ok((value, families))
 }
 /// Closed value checks are supplemental. validate_current recaptures from the
@@ -611,6 +614,15 @@ pub(crate) fn observe_parts_validated_v73(
 /// Standalone checks do not prove that an untrusted sender supplied every
 /// historical row or terminal. Neither function grants action or restore authority.
 pub fn validate_artifact(value: &LilianaObservationV73) -> Result<(), RlContractError> {
+    validate_artifact_inner(value, true)
+}
+
+// Only the constructor above may reuse its immediately computed root hash.
+// Supplied artifacts always enter through validate_artifact and are rehashed.
+fn validate_artifact_inner(
+    value: &LilianaObservationV73,
+    check_root_commitment: bool,
+) -> Result<(), RlContractError> {
     crate::muldrotha_public_v71::validate_tinybones_compat_v72(&value.muldrotha)
         .map_err(RlContractError)?;
     crate::vivien_public_v70::validate_tinybones_compat_v72(&value.vivien)
@@ -693,7 +705,7 @@ pub fn validate_artifact(value: &LilianaObservationV73) -> Result<(), RlContract
     }
     if value.schema != SCHEMA
         || value.producer_sha256 != producer_sha256()
-        || value.projection_sha256 != commitment(value)?
+        || (check_root_commitment && value.projection_sha256 != commitment(value)?)
         || value.common.schema != ELENDA_COMPAT_SCHEMA
         || value.common.producer_sha256 != producer_sha256()
         || value.common.projection_sha256

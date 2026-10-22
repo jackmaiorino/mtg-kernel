@@ -55,6 +55,29 @@ fn streamed_projection_commitments_preserve_original_exact_json_and_nested_hashe
         };
         let d = own.encode(h).unwrap();
         let mut candidates = d.backend.candidates_v73().clone();
+        // Fresh construction may reuse its own just-computed commitment.
+        // Supplied outer and nested hashes remain independent obligations.
+        let authentic = candidates.observation.clone();
+        crate::liliana_observation_v73::validate_artifact(&authentic).unwrap();
+        for layer in 0..3 {
+            let mut forged = authentic.clone();
+            let hash = match layer {
+                0 => &mut forged.projection_sha256,
+                1 => &mut forged.common.projection_sha256,
+                _ => &mut forged.common.common.projection_sha256,
+            };
+            let replacement = if hash.starts_with('0') { "1" } else { "0" };
+            hash.replace_range(..1, replacement);
+            if layer == 2 {
+                forged.common.projection_sha256 =
+                    crate::elenda_observation_v52::commitment(&forged.common).unwrap();
+            }
+            if layer != 0 {
+                forged.projection_sha256 =
+                    crate::liliana_observation_v73::commitment(&forged).unwrap();
+            }
+            assert!(crate::liliana_observation_v73::validate_artifact(&forged).is_err());
+        }
         candidates.projection_sha256.clear();
         assert_eq!(
             crate::liliana_candidates_v73::commitment(&candidates).unwrap(),
