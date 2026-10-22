@@ -6,6 +6,7 @@ use crate::{
 };
 mod observer_triggers;
 mod ordinary_auras;
+mod ordinary_batch_spells;
 mod ordinary_equipment;
 mod simple_triggers;
 

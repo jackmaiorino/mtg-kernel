@@ -23,7 +23,11 @@ fn choose_object(own: &mut KaitoSession, native: &mut FastActorSessionV1, id: Ob
     });
 }
 
-fn reach_main(own: &mut KaitoSession, native: &mut FastActorSessionV1, player: PlayerId) {
+pub(super) fn reach_main(
+    own: &mut KaitoSession,
+    native: &mut FastActorSessionV1,
+    player: PlayerId,
+) {
     for _ in 0..256 {
         let s = own.fixture_state();
         if s.active_player == player && s.step == Step::Main1 && s.stack.is_empty() {

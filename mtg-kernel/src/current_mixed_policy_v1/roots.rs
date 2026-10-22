@@ -27,6 +27,8 @@ mod legendary_printing;
 mod observer_trigger_printing;
 #[path = "ordinary_aura_printing.rs"]
 mod ordinary_aura_printing;
+#[path = "ordinary_batch_spell_printing.rs"]
+mod ordinary_batch_spell_printing;
 #[path = "ordinary_equipment_printing.rs"]
 mod ordinary_equipment_printing;
 #[path = "ordinary_removal_printing.rs"]
@@ -356,9 +358,10 @@ pub(super) fn is_untargeted_spell(id: u16) -> bool {
 }
 pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
     is_untargeted_spell(id)
-        || CARD_DEFS
-            .get(usize::from(id))
-            .is_some_and(|d| targeted_spell_printing::handles(d.name))
+        || CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+            targeted_spell_printing::handles(d.name)
+                || ordinary_batch_spell_printing::handles(d.name)
+        })
 }
 
 pub(super) fn baseline(id: u16) -> Result<Value> {
@@ -428,6 +431,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     // familiar name alone never admits a different cost, program or cast form.
     let ordinary_removal = ordinary_removal_printing::cast_roots(id, d)?;
     let targeted_spell = targeted_spell_printing::printing(id, d)?;
+    let ordinary_batch_spell = ordinary_batch_spell_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -663,6 +667,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = ordinary_aura {
+        return Ok(printing);
+    }
+    if let Some(printing) = ordinary_batch_spell {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
