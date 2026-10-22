@@ -7,6 +7,7 @@ use crate::{
 mod conditional_player_spell;
 mod cost_reduced_spell;
 mod creature_power_spell;
+mod dragon_observers;
 mod graveyard_batch_spell;
 mod luminous;
 mod lunar_insight;

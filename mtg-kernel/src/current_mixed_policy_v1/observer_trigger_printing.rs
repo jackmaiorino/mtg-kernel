@@ -26,6 +26,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Elfsworn Giant"
             | "Clinquant Skymage"
             | "Erudite Wizard"
+            | "Firespitter Whelp"
     )
 }
 
@@ -33,6 +34,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Firespitter Whelp" => (
+            2,
+            &[Pip::Colored(ManaColor::R)][..],
+            &[ManaColor::R][..],
+            &[Subtype::Dragon][..],
+            2,
+            2,
+            Keywords::FLYING,
+        ),
         "Clinquant Skymage" | "Erudite Wizard" => (
             if d.name == "Clinquant Skymage" { 3 } else { 2 },
             &[Pip::Colored(ManaColor::U)][..],
@@ -248,10 +258,21 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 boost_meaning(1, 1)
             }],
         ),
-        "Firebrand Archer" => (
-            TriggerCondition::CastNoncreatureSpell,
-            json!({"event":"ObserverControllerCastsNoncreatureSpell","copies_without_cast_do_not_count":true,
-                "current_spell_characteristics":true,"trigger_count_per_cast":1}),
+        "Firebrand Archer" | "Firespitter Whelp" => (
+            if d.name == "Firespitter Whelp" {
+                TriggerCondition::CastNoncreatureOrSubtype(Subtype::Dragon)
+            } else {
+                TriggerCondition::CastNoncreatureSpell
+            },
+            if d.name == "Firespitter Whelp" {
+                json!({"event":"ObserverControllerCastsSpell","copies_without_cast_do_not_count":true,
+                    "current_spell_characteristics":true,"matches_any_of":[{"lacks_type":"Creature"},{"has_subtype":"Dragon"}],
+                    "opponent_casts_do_not_trigger":true,"trigger_count_per_matching_cast":1,
+                    "matching_both_predicates_still_triggers_once":true})
+            } else {
+                json!({"event":"ObserverControllerCastsNoncreatureSpell","copies_without_cast_do_not_count":true,
+                    "current_spell_characteristics":true,"trigger_count_per_cast":1})
+            },
             EffectOp::DealDamage {
                 target: TargetRef::Opponent,
                 amount: 1,
