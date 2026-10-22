@@ -17,6 +17,7 @@ mod ordinary_batch_spells;
 mod ordinary_equipment;
 mod shivan;
 mod simple_triggers;
+mod syphoner;
 mod team_statics;
 mod triggered_enchantments;
 

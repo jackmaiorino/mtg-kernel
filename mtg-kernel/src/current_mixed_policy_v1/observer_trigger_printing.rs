@@ -27,6 +27,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Clinquant Skymage"
             | "Erudite Wizard"
             | "Firespitter Whelp"
+            | "Sanguine Syphoner"
     )
 }
 
@@ -34,6 +35,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Sanguine Syphoner" => (
+            1,
+            &[Pip::Colored(ManaColor::B)][..],
+            &[ManaColor::B][..],
+            &[Subtype::Vampire, Subtype::Warlock][..],
+            1,
+            3,
+            Keywords::NONE,
+        ),
         "Firespitter Whelp" => (
             2,
             &[Pip::Colored(ManaColor::R)][..],
@@ -225,6 +235,27 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Sanguine Syphoner" => (
+            TriggerCondition::Attacks,
+            json!({"event":"ThisSourceIsDeclaredAsAttacker","requires_actual_attack_declaration":true,
+                "entering_attacking_does_not_trigger":true,"trigger_count_per_declaration":1}),
+            EffectOp::Sequence(vec![
+                EffectOp::LoseLife {
+                    player: PlayerRef::Opponent,
+                    amount: 1,
+                },
+                EffectOp::GainLife {
+                    player: PlayerRef::Controller,
+                    amount: 1,
+                },
+            ]),
+            vec![
+                json!({"operation":"LoseLife","recipient":"OpponentOfCapturedTriggerController","amount":1,
+                    "is_damage":false,"does_not_target":true,"normal_life_loss_rules_apply":true}),
+                json!({"operation":"GainLife","recipient":"CapturedTriggerController","amount":1,
+                    "does_not_require_successful_opponent_life_loss":true,"normal_life_gain_replacements_apply":true}),
+            ],
+        ),
         "Clinquant Skymage" | "Erudite Wizard" => (
             if d.name == "Erudite Wizard" {
                 TriggerCondition::DrawNth(2)
