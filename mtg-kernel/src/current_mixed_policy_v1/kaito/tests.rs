@@ -37,6 +37,7 @@ mod team_statics;
 mod threshold_loot;
 mod triggered_enchantments;
 mod trufflesnout;
+mod unicorn;
 
 /// Full-pool opening-hand coverage is distinct from paid branch qualification.
 /// Every frozen printing must survive the current owning projection and numeric

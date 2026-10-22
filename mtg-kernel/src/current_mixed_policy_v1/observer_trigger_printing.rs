@@ -15,6 +15,7 @@ pub(super) fn handles(name: &str) -> bool {
         "Ajani's Pridemate"
             | "Marauding Blight-Priest"
             | "Dazzling Angel"
+            | "Good-Fortune Unicorn"
             | "Youthful Valkyrie"
             | "Spitfire Lagac"
             | "Tatyova, Benthic Druid"
@@ -37,6 +38,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Good-Fortune Unicorn" => (
+            1,
+            &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::W)][..],
+            &[ManaColor::W, ManaColor::G][..],
+            &[Subtype::Unicorn][..],
+            2,
+            2,
+            Keywords::NONE,
+        ),
         "Eager Trufflesnout" => (
             2,
             &[Pip::Colored(ManaColor::G)][..],
@@ -401,7 +411,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 ]
             },
         ),
-        "Dazzling Angel" | "Youthful Valkyrie" | "Beast-Kin Ranger" => (
+        "Dazzling Angel" | "Youthful Valkyrie" | "Beast-Kin Ranger" | "Good-Fortune Unicorn" => (
             TriggerCondition::OtherControlledCreatureEnters {
                 subtype: if d.name == "Youthful Valkyrie" {
                     Some(Subtype::Angel)
@@ -414,6 +424,8 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 "current_effective_entry_characteristics":true,"tokens_count":true,"trigger_count_per_entering_creature":1}),
             if d.name == "Dazzling Angel" {
                 gain()
+            } else if d.name == "Good-Fortune Unicorn" {
+                EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
             } else if d.name == "Beast-Kin Ranger" {
                 EffectOp::BindTemporaryBoostToTriggerSource {
                     power: 1,
@@ -424,6 +436,10 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             },
             if d.name == "Dazzling Angel" {
                 vec![gain_meaning()]
+            } else if d.name == "Good-Fortune Unicorn" {
+                vec![
+                    json!({"operation":"PutPlusOnePlusOneCounter","count":1,"recipient":"OriginalEnteringCreatureIncarnation","binding":"CapturedEventObjectAndBattlefieldIncarnation","not_a_target":true,"does_not_require_source_still_present":true,"current_controller_change_does_not_change_recipient":true,"missing_or_reentered_entrant_gets_no_counter":true,"normal_counter_replacements_and_triggers_apply":true}),
+                ]
             } else if d.name == "Beast-Kin Ranger" {
                 vec![boost_meaning(1, 0)]
             } else {
