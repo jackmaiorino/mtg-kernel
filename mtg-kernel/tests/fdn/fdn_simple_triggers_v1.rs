@@ -307,7 +307,7 @@ fn rune_scarred_demon_tutors_any_card_into_hand_unrevealed() {
     };
     assert_eq!(
         (player, min_targets, max_targets, can_finish),
-        (PlayerId::P0, 0, 1, true)
+        (PlayerId::P0, 1, 1, false)
     );
     assert_eq!(legal_targets.len(), state.players[0].library.len());
     assert!(legal_targets.contains(&Target::Object(stab)));

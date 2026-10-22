@@ -309,9 +309,9 @@ fn grim_tutor_finds_any_card_unrevealed_and_costs_three_life() {
         Decision::ChooseEffectTargets {
             player: PlayerId::P0,
             legal_targets,
-            min_targets: 0,
+            min_targets: 1,
             max_targets: 1,
-            can_finish: true,
+            can_finish: false,
             ..
         } => {
             for card in [land, burst, boots] {
@@ -336,7 +336,7 @@ fn grim_tutor_finds_any_card_unrevealed_and_costs_three_life() {
 }
 
 #[test]
-fn grim_tutor_may_fail_to_find_and_still_costs_life() {
+fn grim_tutor_cannot_fail_to_find_in_a_nonempty_library() {
     let mut state = ready();
     let land = put(&mut state, PlayerId::P0, "Plains", Zone::Library);
     let tutor = put(&mut state, PlayerId::P0, "Grim Tutor", Zone::Hand);
@@ -348,9 +348,45 @@ fn grim_tutor_may_fail_to_find_and_still_costs_life() {
         settle(&mut state),
         Decision::ChooseEffectTargets { .. }
     ));
+    let unchanged = state.clone();
+    let mut forged = state.clone();
+    let Some(mtg_kernel::effect::PendingEffectChoice::SelectTargets { min_targets, .. }) = forged
+        .engine
+        .pending_effect
+        .as_mut()
+        .and_then(|p| p.choice.as_mut())
+    else {
+        panic!("genuine search prompt absent")
+    };
+    *min_targets = 0;
+    assert!(
+        mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(),
+        "erasing the mandatory count must not authorize failing to find"
+    );
+    assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+    assert_eq!(state, unchanged);
+    engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(land))).unwrap();
+    settle_to_priority(&mut state);
+    assert_eq!(state.objects.get(land).zone, Zone::Hand);
+    assert_eq!(life(&state, PlayerId::P0), 17);
+}
+
+#[test]
+fn grim_tutor_empty_library_finishes_without_a_card_and_still_costs_life() {
+    let mut state = ready();
+    let tutor = put(&mut state, PlayerId::P0, "Grim Tutor", Zone::Hand);
+    mana(&mut state, PlayerId::P0, ManaColor::B, 2);
+    mana(&mut state, PlayerId::P0, ManaColor::C, 1);
+    next(&mut state);
+    engine::step(&mut state, Action::CastSpell(tutor)).unwrap();
+    assert!(
+        matches!(settle(&mut state),Decision::ChooseEffectTargets {min_targets:0,max_targets:1,can_finish:true,ref legal_targets,..} if legal_targets.is_empty())
+    );
     engine::step(&mut state, Action::FinishEffectSelection).unwrap();
     settle_to_priority(&mut state);
-    assert_eq!(state.objects.get(land).zone, Zone::Library);
+    assert_eq!(state.objects.get(tutor).zone, Zone::Graveyard);
+    assert!(state.players[0].library.is_empty());
+    assert!(state.players[0].hand.is_empty());
     assert_eq!(life(&state, PlayerId::P0), 17);
 }
 

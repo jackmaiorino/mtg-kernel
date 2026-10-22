@@ -1609,10 +1609,11 @@ pub enum EffectOp {
         player: PlayerRef,
         count: u8,
     },
-    /// Search `player`'s library for zero or one physical card matching the
-    /// typed filter, put the chosen card into hand, reveal it publicly, then
-    /// shuffle. The optional zero-card result is rules-correct fail-to-find,
-    /// even while matches exist. Zero matches still suspend on a uniform
+    /// Search `player`'s library for one physical card matching the typed
+    /// filter, put it into hand, reveal it when the filter requires it, then
+    /// shuffle. A stated quality permits failing to find even while matches
+    /// exist. AnyCard requires finding a card in a nonempty library (CR701.23d).
+    /// Zero matches still suspend on a uniform
     /// private Finish-only prompt, preventing continuation presence from
     /// leaking match existence. Candidate identity remains chooser-private
     /// until the selected card reaches hand and is revealed.
@@ -6623,8 +6624,12 @@ fn complete_resumable_target_selection(
             if path != canonical_path {
                 return Err("library-search prompt structural path changed".to_string());
             }
-            if objects.len() > 1 {
-                return Err("library search selected more than one card".to_string());
+            if objects.len() > 1
+                || (filter == LibraryCardFilter::AnyCard
+                    && !original_library.is_empty()
+                    && objects.is_empty())
+            {
+                return Err("library search selected an invalid number of cards".to_string());
             }
             continuation.frames.push(EffectFrame::SearchLibraryToHand {
                 player,
@@ -11331,7 +11336,14 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     if *filter_fingerprint != library_filter_fingerprint(*filter) {
                         return Err("library-search filter fingerprint changed".to_string());
                     }
-                    if *min_targets != 0 || *max_targets != 1 || *ordered || !selected.is_empty() {
+                    let minimum = u16::from(
+                        *filter == LibraryCardFilter::AnyCard && !original_library.is_empty(),
+                    );
+                    if *min_targets != minimum
+                        || *max_targets != 1
+                        || *ordered
+                        || !selected.is_empty()
+                    {
                         return Err("library-search prompt has a noncanonical shape".to_string());
                     }
                     validate_library_search_live_metadata(
@@ -13706,6 +13718,12 @@ fn drive_resumable_inner_with_native_row_v1(
                     )?;
                     let candidates =
                         library_search_candidates(state, player, filter, &original_library)?;
+                    if filter == LibraryCardFilter::AnyCard
+                        && !candidates.is_empty()
+                        && selected.is_none()
+                    {
+                        return Err("mandatory unrestricted library search omitted its card".into());
+                    }
                     if let Some(binding) = &selected {
                         if !candidates.contains(binding) {
                             return Err("library-search result is outside the canonical match set"
@@ -15559,10 +15577,9 @@ fn drive_resumable_inner_with_native_row_v1(
                 validate_library_search_live_metadata(state, player, filter, &original_library)?;
                 let candidates =
                     library_search_candidates(state, player, filter, &original_library)?;
-                // Always suspend on the same private, Finish-capable prompt,
-                // even when there are zero matches. Auto-resolving the empty
-                // case would let a nonacting observer distinguish zero from
-                // nonzero matches by the mere presence of a continuation.
+                // Always suspend on a private prompt, even with zero matches.
+                // Quality-filtered searches permit fail-to-find. AnyCard must
+                // select one when nonempty; library size is already public.
                 stage_library_search_choice(
                     &mut continuation,
                     player,
@@ -17669,6 +17686,7 @@ fn stage_library_search_choice(
     candidates: Vec<EffectObjectBinding>,
     canonical_path: Vec<u16>,
 ) {
+    let min_targets = u16::from(filter == LibraryCardFilter::AnyCard && !candidates.is_empty());
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player,
         path: canonical_path.clone(),
@@ -17680,7 +17698,7 @@ fn stage_library_search_choice(
                 expected_object: Some(binding),
             })
             .collect(),
-        min_targets: 0,
+        min_targets,
         max_targets: 1,
         ordered: false,
         purpose: EffectTargetSelectionPurpose::SearchLibraryToHand {

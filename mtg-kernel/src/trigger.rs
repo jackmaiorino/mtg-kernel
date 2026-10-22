@@ -2812,13 +2812,20 @@ fn solemn_simulacrum_etb_effect() -> EffectOp {
 
 fn campus_guide_etb_effect() -> EffectOp {
     // "When this creature enters, you may search your library for a basic
-    // land card, reveal it, then shuffle and put that card on top." The
-    // zero-card selection is the "may".
-    EffectOp::SearchLibraryCardsToDestination {
-        player: PlayerRef::Controller,
-        filter: crate::effect::LibraryCardFilter::BasicLand,
-        max_targets: 1,
-        destination: crate::effect::LibrarySearchDestinationV1::LibraryTopAfterShuffle,
+    // land card, reveal it, then shuffle and put that card on top."
+    // Declining does not search or shuffle. Accepting still permits failing
+    // to find a basic land, in which case the library must be shuffled.
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: crate::effect::LibraryCardFilter::BasicLand,
+                max_targets: 1,
+                destination: crate::effect::LibrarySearchDestinationV1::LibraryTopAfterShuffle,
+            },
+        ],
     }
 }
 
