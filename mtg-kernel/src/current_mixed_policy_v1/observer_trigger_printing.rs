@@ -29,6 +29,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Firespitter Whelp"
             | "Sanguine Syphoner"
             | "Balmor, Battlemage Captain"
+            | "Eager Trufflesnout"
     )
 }
 
@@ -36,6 +37,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Eager Trufflesnout" => (
+            2,
+            &[Pip::Colored(ManaColor::G)][..],
+            &[ManaColor::G][..],
+            &[Subtype::Boar][..],
+            4,
+            2,
+            Keywords::TRAMPLE,
+        ),
         "Balmor, Battlemage Captain" => (
             0,
             &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::R)][..],
@@ -248,6 +258,29 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Eager Trufflesnout" => {
+            let food = crate::card_def::card_id_by_name("Food Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            let definition = super::super::next_five::printing(food)?
+                .ok_or(Error::UnsupportedPrintedRoot(food))?;
+            (
+                TriggerCondition::DealsCombatDamageToPlayer,
+                json!({"event":"ThisSourceActuallyDealsCombatDamageToPlayer",
+                    "requires_positive_dealt_damage":true,"attacking_without_player_damage_does_not_trigger":true,
+                    "noncombat_damage_and_damage_to_creatures_or_planeswalkers_do_not_trigger":true,
+                    "replaced_or_prevented_damage_does_not_count_as_dealt":true,
+                    "trigger_count_per_matching_damage_event":1,"does_not_scale_with_damage_amount":true}),
+                EffectOp::CreateToken {
+                    token_def: food,
+                    controller: PlayerRef::Controller,
+                },
+                vec![
+                    json!({"operation":"CreateToken","controller":"CapturedTriggerController","count":1,
+                    "token_definition":definition,"entry_tapped":false,
+                    "does_not_require_source_to_remain":true,"normal_token_replacements_and_entry_triggers_apply":true}),
+                ],
+            )
+        }
         "Balmor, Battlemage Captain" => (
             TriggerCondition::CastInstantOrSorcery,
             json!({"event":"ObserverControllerCastsInstantOrSorcery","current_cast_characteristics":true,

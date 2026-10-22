@@ -23,6 +23,7 @@ mod simple_triggers;
 mod syphoner;
 mod team_statics;
 mod triggered_enchantments;
+mod trufflesnout;
 
 /// Full-pool opening-hand coverage is distinct from paid branch qualification.
 /// Every frozen printing must survive the current owning projection and numeric
