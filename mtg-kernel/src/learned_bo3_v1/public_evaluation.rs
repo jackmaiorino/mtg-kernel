@@ -77,6 +77,11 @@ pub struct Command {
     pub matches: Vec<Match>,
     pub cross_generation_evaluation: bool,
     pub capture_decisions: bool,
+    /// Diagnostic only: with `capture_decisions`, each captured row also
+    /// carries `visible_json`, the exact serialized observation and semantic
+    /// action menu that `visible_sha256` hashes. Play is unchanged; off keeps the old wire shape.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub capture_visible_v1: bool,
     /// Stop after the first natural physical game, including a draw.
     /// The result is a game-one record, never a completed match reward.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -318,6 +323,7 @@ fn load(source: &ModelSource) -> Result<(Play, Value), String> {
 struct Trace<'a> {
     base: &'a mut dyn PairedBo1PolicyV1,
     capture: bool,
+    visible: bool,
     spell_adapter: [bool; 2],
     generations: [PlayPolicyGenerationV1; 2],
     diagnostic_repairs: [u64; 2],
@@ -394,13 +400,17 @@ impl PairedBo1PolicyV1 for Trace<'_> {
             } else {
                 input.diagnostic_visible_v1().map_err(diagnostic_error)?
             };
-            let visible =
-                hash(&serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?);
+            let bytes =
+                serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?;
+            let visible = hash(&bytes);
             let d = input.decision();
-            Some(
-                json!({"game_index":self.resets.len(),"step":d.step,"physical_decision_id":d.physical_decision_id,
-                "substep_index":d.substep_index,"actor":d.acting_player,"visible_sha256":visible,"legal_action_count":actions.len()}),
-            )
+            let mut row = json!({"game_index":self.resets.len(),"step":d.step,"physical_decision_id":d.physical_decision_id,
+                "substep_index":d.substep_index,"actor":d.acting_player,"visible_sha256":visible,"legal_action_count":actions.len()});
+            if self.visible {
+                // The exact hashed bytes, so a reader can authenticate them against visible_sha256.
+                row["visible_json"] = json!(String::from_utf8(bytes).map_err(|e| fail(error(e)))?);
+            }
+            Some(row)
         } else {
             None
         };
@@ -607,6 +617,7 @@ pub fn run(command: Command) -> Result<Value, String> {
             let mut trace = Trace {
                 base: &mut router,
                 capture: command.capture_decisions,
+                visible: command.capture_decisions && command.capture_visible_v1,
                 spell_adapter,
                 generations: generation_ids,
                 diagnostic_repairs: [0; 2],
@@ -793,6 +804,7 @@ mod tests {
         let mut trace = Trace {
             base: &mut base,
             capture: true,
+            visible: false,
             spell_adapter: [false; 2],
             generations: [PlayPolicyGenerationV1::V3; 2],
             diagnostic_repairs: [0; 2],
@@ -836,6 +848,7 @@ mod tests {
         let mut trace = Trace {
             base: &mut v4,
             capture: true,
+            visible: false,
             spell_adapter: [false; 2],
             generations: [PlayPolicyGenerationV1::V4; 2],
             diagnostic_repairs: [0; 2],
@@ -861,6 +874,39 @@ mod tests {
         }
         assert_eq!(trace.rows.len(), 8);
         assert_eq!(trace.diagnostic_repairs, [0; 2]);
+        assert_eq!(session.current_response(), response);
+        let plain_rows = std::mem::take(&mut trace.rows);
+        drop(trace);
+        // Opt-in visible capture: same selections and rows, plus bytes that hash to visible_sha256.
+        let mut v4 = FrozenPlayPolicyV1::training_fixture_v4();
+        let mut trace = Trace {
+            base: &mut v4,
+            capture: true,
+            visible: true,
+            spell_adapter: [false; 2],
+            generations: [PlayPolicyGenerationV1::V4; 2],
+            diagnostic_repairs: [0; 2],
+            resets: vec![],
+            rows: vec![],
+            decisions: 0,
+            terminal_audit: false,
+            terminal_counts: Default::default(),
+            terminal_roots: vec![],
+            terminal_branches: 0,
+        };
+        trace.reset_for_game_v1([123, 456]).unwrap();
+        for _ in 0..8 {
+            trace
+                .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                .unwrap();
+        }
+        assert_eq!(trace.rows.len(), plain_rows.len());
+        for (mut row, plain) in trace.rows.drain(..).zip(&plain_rows) {
+            let bytes = row["visible_json"].as_str().unwrap().as_bytes().to_vec();
+            assert_eq!(row["visible_sha256"], json!(hash(&bytes)));
+            row.as_object_mut().unwrap().remove("visible_json");
+            assert_eq!(&row, plain);
+        }
         assert_eq!(session.current_response(), response);
     }
 
