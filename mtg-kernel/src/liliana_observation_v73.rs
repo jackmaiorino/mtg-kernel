@@ -201,8 +201,14 @@ pub(crate) fn streamed_commitment(value: &impl Serialize) -> Result<String, RlCo
             Ok(())
         }
     }
-    let mut writer = HashWriter(Sha256::new());
+    // serde_json emits many tiny writes. Batch those bytes before SHA-256
+    // without retaining the complete serialized observation or changing it.
+    let mut writer = std::io::BufWriter::with_capacity(8192, HashWriter(Sha256::new()));
     serde_json::to_writer(&mut writer, value).map_err(|e| RlContractError(e.to_string()))?;
+    // into_inner flushes the final partial block before exposing the hasher.
+    let writer = writer
+        .into_inner()
+        .map_err(|e| RlContractError(e.to_string()))?;
     Ok(writer
         .0
         .finalize()

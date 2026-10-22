@@ -45,6 +45,16 @@ fn streamed_projection_commitments_preserve_original_exact_json_and_nested_hashe
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
     }
+    // Exercise both the buffered blocks and the final partial write, including
+    // JSON escaping and multibyte text. The original full observations below
+    // continue to check all actual nested fields in both seats.
+    for size in [0, 8191, 8192, 8193, 16384] {
+        let value = serde_json::json!({"prefix":"\"\\\nλ","payload":"x".repeat(size)});
+        assert_eq!(
+            crate::liliana_observation_v73::streamed_commitment(&value).unwrap(),
+            original_hash(&value)
+        );
+    }
     for p in [PlayerId::P0, PlayerId::P1] {
         let (s, _) = owning_ready(p, false, "Island");
         let own =
