@@ -2803,10 +2803,17 @@ fn goldvein_pick_combat_damage_effect() -> EffectOp {
 fn solemn_simulacrum_etb_effect() -> EffectOp {
     // "When this creature enters, you may search your library for a basic
     // land card, put that card onto the battlefield tapped, then shuffle."
-    // The zero-card selection is the "may".
-    EffectOp::SearchLibraryToBattlefieldTapped {
-        player: PlayerRef::Controller,
-        filter: crate::effect::LibraryCardFilter::BasicLand,
+    // Declining the optional instruction performs no shuffle. An accepted
+    // search still permits failing to find, followed by the required shuffle.
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::SearchLibraryToBattlefieldTapped {
+                player: PlayerRef::Controller,
+                filter: crate::effect::LibraryCardFilter::BasicLand,
+            },
+        ],
     }
 }
 

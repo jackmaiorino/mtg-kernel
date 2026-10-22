@@ -646,6 +646,10 @@ fn solemn_simulacrum_entry_fetches_a_basic_land_tapped() {
     let forest = put(&mut state, PlayerId::P0, "Forest", Zone::Library);
     let wilds = put(&mut state, PlayerId::P0, "Evolving Wilds", Zone::Library);
     let solemn = cast_solemn(&mut state);
+    assert!(
+        matches!(settle(&mut state), Decision::ChooseEffectOption {source,option_count:2,..} if source==solemn)
+    );
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
     match settle(&mut state) {
         Decision::ChooseEffectTargets {
             player: PlayerId::P0,
@@ -670,6 +674,47 @@ fn solemn_simulacrum_entry_fetches_a_basic_land_tapped() {
     assert_eq!(state.objects.get(forest).zone, Zone::Battlefield);
     assert!(state.objects.get(forest).tapped);
     assert_eq!(state.objects.get(wilds).zone, Zone::Library);
+}
+
+#[test]
+fn solemn_optional_decline_preserves_library_and_rng_but_accepted_zero_shuffles() {
+    for accept in [false, true] {
+        let mut state = ready();
+        for name in ["Plains", "Island", "Swamp", "Forest"] {
+            put(&mut state, PlayerId::P0, name, Zone::Library);
+        }
+        let solemn = cast_solemn(&mut state);
+        assert!(
+            matches!(settle(&mut state),Decision::ChooseEffectOption {source,option_count:2,..} if source==solemn)
+        );
+        let before = state.clone();
+        engine::step(&mut state, Action::ChooseEffectOption(u16::from(accept))).unwrap();
+        if accept {
+            assert!(matches!(
+                settle(&mut state),
+                Decision::ChooseEffectTargets {
+                    min_targets: 0,
+                    can_finish: true,
+                    ..
+                }
+            ));
+            engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        }
+        settle_to_priority(&mut state);
+        if accept {
+            assert_ne!(state.legacy_rng(), before.legacy_rng());
+        } else {
+            assert_eq!(state.legacy_rng(), before.legacy_rng());
+            assert_eq!(state.players[0].library, before.players[0].library);
+            assert_eq!(state.library_knowledge, before.library_knowledge);
+        }
+        assert_eq!(state.players[0].hand, before.players[0].hand);
+        assert_eq!(
+            state.players[0].library.len(),
+            before.players[0].library.len()
+        );
+        assert_eq!(state.objects.get(solemn).zone, Zone::Battlefield);
+    }
 }
 
 #[test]

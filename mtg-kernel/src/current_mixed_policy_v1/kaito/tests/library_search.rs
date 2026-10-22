@@ -21,7 +21,7 @@ fn targets(a: &A, source: ObjectId) -> Option<ObjectId> {
         _ => None,
     }
 }
-fn optional(
+pub(super) fn optional(
     own: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     source: ObjectId,
@@ -47,7 +47,11 @@ fn optional(
     }
     panic!("genuine optional search absent");
 }
-fn finish_zero(own: &mut KaitoSession, native: &mut FastActorSessionV1, source: ObjectId) {
+pub(super) fn finish_zero(
+    own: &mut KaitoSession,
+    native: &mut FastActorSessionV1,
+    source: ObjectId,
+) {
     for _ in 0..128 {
         if actions(own).iter().any(|a|matches!(a,A::FinishEffectSelection{source:s,selected_count:0,..} if s.arena_id==source.0)) {
             let saved=own.snapshot();let raw=native.snapshot_v1();
@@ -58,7 +62,11 @@ fn finish_zero(own: &mut KaitoSession, native: &mut FastActorSessionV1, source: 
     }
     panic!("actual empty search finish absent");
 }
-fn wait_entered(own: &mut KaitoSession, native: &mut FastActorSessionV1, source: ObjectId) {
+pub(super) fn wait_entered(
+    own: &mut KaitoSession,
+    native: &mut FastActorSessionV1,
+    source: ObjectId,
+) {
     for _ in 0..128 {
         if own.fixture_state().objects.get(source).zone == Zone::Battlefield {
             assert!(!own.fixture_state().stack.is_empty());

@@ -26,6 +26,7 @@ mod paladin;
 mod sailor;
 mod shivan;
 mod simple_triggers;
+mod solemn;
 mod syphoner;
 mod targeted_entry;
 mod team_statics;
