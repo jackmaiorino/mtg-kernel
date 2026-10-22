@@ -269,16 +269,16 @@ pub(super) fn collect_parallel_v1(
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .extend(entries);
             // Publish directly from each private worker. The published bytes,
-            // at most one batch of them, wait for idle workers to parse them
-            // ahead of validation and the update (`trajectory_parse_ahead_v1`).
+            // at most one batch of them, are kept with the trajectory they were
+            // serialized from for validation and the update
+            // (`trajectory_parse_ahead_v1`).
             let bytes = serde_json::to_vec(&trajectory).map_err(err)?;
-            drop(trajectory);
             let pin = publish_json_bytes_v1(
                 &output_directory,
                 &format!("episode-{index:04}.json"),
                 &bytes,
             )?;
-            trajectory_parse_ahead_v1::offer_v1(&pin.sha256, bytes);
+            trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             Ok(pin)
         },
         trajectory_parse_ahead_v1::start_helper_v1,
