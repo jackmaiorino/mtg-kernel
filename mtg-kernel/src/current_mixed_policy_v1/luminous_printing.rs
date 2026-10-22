@@ -54,6 +54,18 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
+    let cast_resolution = json!([{"operation":"DestroyPermanent","target_slot":0,
+                "normal_indestructible_and_zone_replacements_apply":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"InstantWithPriority",
+            "ordered_costs":[{"operation":"PayNativeAdjustedPrintedMana","printed_cost":cost,"apply_checked_target_discount":true}],
+            "target_count":1,"target_slot":0,"target_zone":"Battlefield","target_type":"CurrentEffectiveCreature",
+            "target_controller_relation":"EitherPlayerIncludingCaster","untapped_creatures_remain_legal_targets":true,
+            "original_target_incarnation_and_creature_type_rechecked_at_resolution":true,
+            "tapped_status_is_not_a_resolution_legality_requirement":true,
+            "all_targets_illegal_skips_entire_resolution":true,
+            "ordered_resolution":cast_resolution,
+            "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard","virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+            "countering_does_not_refund_cost":true,"other_cast_permissions_require_current_candidate_authority":true}]);
     Ok(Some(json!({"card_id":id,"luminous_rebuke_printing":{
         "schema":"printed-target-tap-discount-spell/v1","cost":cost,"mana_value":5,"types":d.types,
         "subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
@@ -63,16 +75,6 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "normal_cost_increases_and_other_modifiers_apply":true,"floor_generic_at_zero":true,
             "colored_pip_and_printed_mana_value_unchanged":true,
             "later_tap_or_untap_during_payment_or_after_finalization_does_not_reprice_cast":true},
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"InstantWithPriority",
-            "ordered_costs":[{"operation":"PayNativeAdjustedPrintedMana","printed_cost":cost,"apply_checked_target_discount":true}],
-            "target_count":1,"target_slot":0,"target_zone":"Battlefield","target_type":"CurrentEffectiveCreature",
-            "target_controller_relation":"EitherPlayerIncludingCaster","untapped_creatures_remain_legal_targets":true,
-            "original_target_incarnation_and_creature_type_rechecked_at_resolution":true,
-            "tapped_status_is_not_a_resolution_legality_requirement":true,
-            "all_targets_illegal_skips_entire_resolution":true,
-            "ordered_resolution":[{"operation":"DestroyPermanent","target_slot":0,
-                "normal_indestructible_and_zone_replacements_apply":true}],
-            "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard","virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
-            "countering_does_not_refund_cost":true,"other_cast_permissions_require_current_candidate_authority":true}]
+        "ordered_cast_roots":cast_roots
     }})))
 }

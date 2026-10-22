@@ -59,20 +59,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"creature_power_spell_printing":{
-        "schema":"printed-two-target-creature-power-spell/v1","cost":cost,"mana_value":d.mana_value,
-        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,
-        "toughness":null,"keywords":0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand",
-            "timing":if felling{"OwnMainPhaseEmptyStackWithPriority"}else{"InstantWithPriority"},
-            "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],"target_count":2,
-            "ordered_targets":[{"slot":0,"zone":"Battlefield","type":"Creature","controller":"Caster"},
-                {"slot":1,"zone":"Battlefield","types_any_of":if felling{json!(["Creature"])}else{json!(["Creature","Planeswalker"])},"controller":"OpponentOfCaster"}],
-            "target_types_and_control_use_current_effective_characteristics":true,
-            "each_original_target_incarnation_and_filter_rechecked_at_resolution":true,
-            "illegal_target_slots_are_not_compacted_or_reassigned":true,
-            "all_targets_illegal_skips_entire_resolution":true,
-            "ordered_resolution":[{"operation":"CreaturePowerDamage",
+    let cast_resolution = json!([{"operation":"CreaturePowerDamage",
                 "creature_source_slot":0,"damage_recipient_slot":1,
                 "when_original_source_target_still_legal":{"add_plus_one_plus_one_counters":i32::from(felling),
                     "normal_counter_replacements_apply":true,"counter_addition_does_not_require_legal_recipient":true,
@@ -81,10 +68,25 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                         "damage_class":"Noncombat","zero_power_deals_no_damage_event":true,
                         "normal_source_keywords_replacements_prevention_and_state_based_actions_apply":true}},
                 "illegal_source_cannot_deal_damage_or_receive_counter":true,
-                "no_retaliation_or_fight_damage":true,"no_priority_between_counter_and_damage":true}],
+                "no_retaliation_or_fight_damage":true,"no_priority_between_counter_and_damage":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand",
+            "timing":if felling{"OwnMainPhaseEmptyStackWithPriority"}else{"InstantWithPriority"},
+            "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],"target_count":2,
+            "ordered_targets":[{"slot":0,"zone":"Battlefield","type":"Creature","controller":"Caster"},
+                {"slot":1,"zone":"Battlefield","types_any_of":if felling{json!(["Creature"])}else{json!(["Creature","Planeswalker"])},"controller":"OpponentOfCaster"}],
+            "target_types_and_control_use_current_effective_characteristics":true,
+            "each_original_target_incarnation_and_filter_rechecked_at_resolution":true,
+            "illegal_target_slots_are_not_compacted_or_reassigned":true,
+            "all_targets_illegal_skips_entire_resolution":true,
+            "ordered_resolution":cast_resolution,
             "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
             "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","countering_skips_all_resolution_instructions":true,
             "countering_does_not_refund_cost":true,"other_cast_permissions_require_current_candidate_authority":true,
-            "normal_zone_replacements_apply":true}]
+            "normal_zone_replacements_apply":true}]);
+    Ok(Some(json!({"card_id":id,"creature_power_spell_printing":{
+        "schema":"printed-two-target-creature-power-spell/v1","cost":cost,"mana_value":d.mana_value,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,
+        "toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":cast_roots
     }})))
 }

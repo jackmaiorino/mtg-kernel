@@ -52,31 +52,33 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(
-        json!({"card_id":id,"conditional_player_spell_printing":{
-            "schema":"printed-conditional-player-spell/v1","cost":cost,"mana_value":4,
-            "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
-            "power":null,"toughness":null,"keywords":0,"token":false,
-            "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand",
+    let cast_resolution = json!([{"operation":"Conditional",
+                    "predicate":{"operation":"TargetPlayerCurrentLifeEquals","target_slot":0,"value":10,
+                        "sample_time":"Resolution","exact_full_native_signed_integer_equality":true},
+                    "then":[{"operation":"DealNoncombatDamage","target_slot":0,"amount":10,
+                        "source":"OriginalResolvingSpell","normal_damage_replacements_and_prevention_apply":true}],
+                    "else":[],"condition_is_not_a_cast_or_target_selection_restriction":true,
+                    "no_priority_between_predicate_and_damage":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand",
                 "timing":"InstantWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
                 "target_count":1,"target_slot":0,"target_kind":"Player",
                 "target_controller_relation":"EitherPlayerIncludingCaster",
                 "target_has_no_life_total_restriction_at_cast":true,
                 "recheck_original_player_target_legality_at_resolution":true,
                 "all_targets_illegal_skips_entire_resolution":true,
-                "ordered_resolution":[{"operation":"Conditional",
-                    "predicate":{"operation":"TargetPlayerCurrentLifeEquals","target_slot":0,"value":10,
-                        "sample_time":"Resolution","exact_full_native_signed_integer_equality":true},
-                    "then":[{"operation":"DealNoncombatDamage","target_slot":0,"amount":10,
-                        "source":"OriginalResolvingSpell","normal_damage_replacements_and_prevention_apply":true}],
-                    "else":[],"condition_is_not_a_cast_or_target_selection_restriction":true,
-                    "no_priority_between_predicate_and_damage":true}],
+                "ordered_resolution":cast_resolution,
                 "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
                 "zone_destination_applies_when_game_continues":true,
                 "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
                 "countering_skips_all_resolution_instructions":true,"countering_does_not_refund_cost":true,
                 "other_cast_permissions_require_current_candidate_authority":true,
-                "normal_zone_replacements_and_state_based_actions_apply":true}]
+                "normal_zone_replacements_and_state_based_actions_apply":true}]);
+    Ok(Some(
+        json!({"card_id":id,"conditional_player_spell_printing":{
+            "schema":"printed-conditional-player-spell/v1","cost":cost,"mana_value":4,
+            "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+            "power":null,"toughness":null,"keywords":0,"token":false,
+            "ordered_cast_roots":cast_roots
         }}),
     ))
 }

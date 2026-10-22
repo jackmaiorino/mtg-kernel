@@ -55,13 +55,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"graveyard_batch_spell_printing":{
-        "schema":"printed-graveyard-batch-spell/v1","cost":cost,"mana_value":d.mana_value,
-        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,
-        "toughness":null,"keywords":0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand",
-            "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
-            "targets":[],"ordered_resolution":[{"operation":"ReturnCurrentGraveyardCreatureCardSetToBattlefield",
+    let cast_resolution = json!([{"operation":"ReturnCurrentGraveyardCreatureCardSetToBattlefield",
                 "graveyards":if rise {"BothPlayers"} else {"CapturedSpellController"},
                 "filter":{"type":"CreatureCard","characteristics":"CurrentGraveyardCardCharacteristics",
                     "mana_value_at_most":if rise {Value::Null} else {json!(2)},
@@ -74,12 +68,20 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 "entry_batch":"SimultaneousBeforeEntryTriggerCollection",
                 "all_returned_cards_are_new_battlefield_incarnations":true,
                 "ordinary_zone_change_reset_of_counters_tapped_state_and_summoning_sickness":true,
-                "normal_entry_replacements_trigger_collection_and_state_based_actions_apply":true}],
+                "normal_entry_replacements_trigger_collection_and_state_based_actions_apply":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand",
+            "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+            "targets":[],"ordered_resolution":cast_resolution,
             "normal_trigger_order_and_resolution_follow_completed_entry_batch":true,
             "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
             "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
             "countering_skips_all_resolution_instructions":true,"countering_does_not_refund_cost":true,
             "other_cast_permissions_require_current_candidate_authority":true,
-            "normal_zone_replacements_apply":true}]
+            "normal_zone_replacements_apply":true}]);
+    Ok(Some(json!({"card_id":id,"graveyard_batch_spell_printing":{
+        "schema":"printed-graveyard-batch-spell/v1","cost":cost,"mana_value":d.mana_value,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,
+        "toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":cast_roots
     }})))
 }

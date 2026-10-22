@@ -70,11 +70,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"ordinary_aura_printing":{
-        "schema":"printed-creature-aura/v1","cost":cost,"mana_value":3,"types":d.types,
-        "subtypes":d.subtypes,"supertypes":[],"colors":d.colors,"power":null,"toughness":null,
-        "keywords":d.keywords.0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand",
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand",
             "timing":if armor {"OwnMainPhaseEmptyStackWithPriority"} else {"InstantWithPriority"},
             "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
             "target_slot":0,"target_filter":{"type":"Creature","zone":"Battlefield","controller":"EitherPlayer"},
@@ -83,14 +79,20 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 "controller":"Caster","requires_original_target_still_legal":true}],
             "all_targets_illegal_skips_entire_resolution":true,"failed_spell_destination":"OwnersGraveyard",
             "countering_or_target_loss_does_not_refund_cost":true,
-            "normal_zone_replacements_apply":true,"other_cast_permissions_require_current_candidate_authority":true}],
-        "ordered_static_roots":[{"recipient":"CurrentExactEnchantedCreature","requires_active_printed_abilities":true,
+            "normal_zone_replacements_apply":true,"other_cast_permissions_require_current_candidate_authority":true}]);
+    let static_roots = json!([{"recipient":"CurrentExactEnchantedCreature","requires_active_printed_abilities":true,
             "power_delta":grant.power,"toughness_delta":grant.toughness,"keyword_bits":grant.keywords.0,
             "multiplier":if armor { json!({"operation":"CountCurrentControlledSubtype","controller":"AuraController","subtype":"Forest","tapped_status_irrelevant":true}) } else {json!({"operation":"Fixed","value":1})},
             "power_and_toughness_are_additive_modifiers":true,"places_no_counters":true,
             "normal_continuous_layers_and_timestamped_ability_removal_apply":true,
             "rechecked_from_current_aura_controller_attachment_and_battlefield":true,
-            "ends_when_attachment_ends_or_source_leaves":true}],
+            "ends_when_attachment_ends_or_source_leaves":true}]);
+    Ok(Some(json!({"card_id":id,"ordinary_aura_printing":{
+        "schema":"printed-creature-aura/v1","cost":cost,"mana_value":3,"types":d.types,
+        "subtypes":d.subtypes,"supertypes":[],"colors":d.colors,"power":null,"toughness":null,
+        "keywords":d.keywords.0,"token":false,
+        "ordered_cast_roots":cast_roots,
+        "ordered_static_roots":static_roots,
         "attachment_legality":{"host":"Creature","normal_protection_and_state_based_actions_apply":true,
             "aura_without_legal_attached_host_goes_to_owners_graveyard":true}
     }})))

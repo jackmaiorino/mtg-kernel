@@ -88,6 +88,14 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "later_entering_creatures_not_included":true,"duration":"UntilCleanupExpirationAfterDiscard",
             "normal_continuous_layers_apply":true})
     };
+    let cast_resolution = json!([resolution]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"InstantWithPriority",
+            "ordered_costs":[{"operation":"PayNativeAdjustedPrintedMana","printed_cost":cost,
+                "apply_checked_printed_generic_reduction":true}],"targets":[],
+            "ordered_resolution":cast_resolution,"physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
+            "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","countering_skips_all_resolution_instructions":true,
+            "countering_does_not_refund_cost":true,"other_cast_permissions_require_current_candidate_authority":true,
+            "normal_zone_replacements_apply":true}]);
     Ok(Some(json!({"card_id":id,"cost_reduced_spell_printing":{
         "schema":"printed-cost-reduced-spell/v1","cost":cost,"mana_value":5,
         "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
@@ -99,12 +107,6 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "normal_cost_increases_and_other_modifiers_apply":true,"floor_generic_at_zero":true,
             "colored_pips_unchanged":true,"printed_mana_value_unchanged":true,
             "later_subtype_control_or_zone_changes_do_not_reprice_finalized_cast":true},
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"InstantWithPriority",
-            "ordered_costs":[{"operation":"PayNativeAdjustedPrintedMana","printed_cost":cost,
-                "apply_checked_printed_generic_reduction":true}],"targets":[],
-            "ordered_resolution":[resolution],"physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
-            "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","countering_skips_all_resolution_instructions":true,
-            "countering_does_not_refund_cost":true,"other_cast_permissions_require_current_candidate_authority":true,
-            "normal_zone_replacements_apply":true}]
+        "ordered_cast_roots":cast_roots
     }})))
 }

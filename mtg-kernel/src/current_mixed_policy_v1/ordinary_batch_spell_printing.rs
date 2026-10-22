@@ -153,11 +153,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"ordinary_batch_spell_printing":{
-        "schema":"printed-untargeted-spell/v1","cost":cost,"mana_value":d.mana_value,
-        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
-        "power":null,"toughness":null,"keywords":0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand",
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand",
             "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
             "targets":[],"ordered_resolution":ordered,"no_priority_between_ordered_instructions":true,
             "normal_queued_triggers_publish_after_resolution":true,
@@ -165,6 +161,11 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
             "countering_skips_all_resolution_instructions":true,"countering_does_not_refund_cost":true,
             "other_cast_permissions_require_current_candidate_authority":true,
-            "normal_zone_replacements_apply":true}]
+            "normal_zone_replacements_apply":true}]);
+    Ok(Some(json!({"card_id":id,"ordinary_batch_spell_printing":{
+        "schema":"printed-untargeted-spell/v1","cost":cost,"mana_value":d.mana_value,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+        "power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":cast_roots
     }})))
 }
