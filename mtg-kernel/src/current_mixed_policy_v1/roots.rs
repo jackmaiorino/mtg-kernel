@@ -21,6 +21,8 @@ pub(super) mod enchantment_hunter_printing;
 pub(super) mod faebloom_printing;
 #[path = "fiery_printing.rs"]
 pub(super) mod fiery_printing;
+#[path = "graveyard_batch_spell_printing.rs"]
+mod graveyard_batch_spell_printing;
 #[path = "kellan_printing.rs"]
 pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
@@ -364,6 +366,7 @@ pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
             targeted_spell_printing::handles(d.name)
                 || ordinary_batch_spell_printing::handles(d.name)
                 || conditional_player_spell_printing::handles(d.name)
+                || graveyard_batch_spell_printing::handles(d.name)
         })
 }
 
@@ -436,6 +439,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let targeted_spell = targeted_spell_printing::printing(id, d)?;
     let ordinary_batch_spell = ordinary_batch_spell_printing::printing(id, d)?;
     let conditional_player_spell = conditional_player_spell_printing::printing(id, d)?;
+    let graveyard_batch_spell = graveyard_batch_spell_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -677,6 +681,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = conditional_player_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = graveyard_batch_spell {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
