@@ -94,18 +94,22 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             return Err(Error::UnsupportedPrintedRoot(id));
         }
     }
-    Ok(Some(json!({"card_id":id,"solemn_simulacrum_printing":{
-        "schema":"printed-optional-entry-search-death-draw/v1","cost":cost,"mana_value":4,"types":d.types,"subtypes":d.subtypes,"supertypes":[],"colors":[],"power":2,"toughness":2,"keywords":0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,"timing":"OwnMainPhaseEmptyStackWithPriority","targets":[],"ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],"ordered_resolution":[{"operation":"MoveOriginalSpellToBattlefield","controller":"Caster"}],"countering_skips_entry_and_does_not_refund_cost":true,"countering_spell_creates_no_death_trigger":true,"normal_zone_replacements_and_entry_triggers_apply":true,"other_cast_permissions_require_current_candidate_authority":true}],
-        "ordered_triggers":[
-            {"event":"ThisPermanentEntersBattlefield","home_zone":"Battlefield","source_face":0,"controller":"CapturedSourceControllerAtEntry","requires_active_printed_ability_at_capture":true,"mandatory_trigger":true,"uses_stack":true,"targets":[],"survives_source_departure_and_later_control_change":true,
-            "ordered_resolution":[{"operation":"ChooseWhetherToSearch","chooser":"CapturedTriggerController","at":"TriggerResolution","options":[
+    let entry_resolution = json!([{"operation":"ChooseWhetherToSearch","chooser":"CapturedTriggerController","at":"TriggerResolution","options":[
                 {"index":0,"ordered_instructions":[],"searches":false,"shuffles":false,"preserves_library_order_knowledge_and_randomness":true},
                 {"index":1,"ordered_instructions":[{"operation":"SearchOwnLibrary","player":"CapturedTriggerController","choice_visibility":"ChooserOnly","filter":"BasicLandCard","minimum":0,"maximum":1,"may_fail_to_find_even_when_matches_exist":true,"selection_is_not_targeting":true,"binds_original_live_selected_incarnation":true},
                     {"operation":"MoveSelectedCardToBattlefieldTappedIfAny","controller":"CapturedTriggerController","normal_zone_change_entry_replacements_and_triggers_apply":true,"selected_card_becomes_public":true},
-                    {"operation":"ShuffleOwnLibrary","required_even_when_no_card_found":true}]}]}]},
-            {"event":"OriginalSourceLeavesBattlefieldForGraveyard","home_zone":"Graveyard","source_face":0,"controller":"CapturedSourceControllerBeforeDeparture","requires_active_printed_ability_before_departure":true,"uses_departure_last_known_information":true,"mandatory_trigger":true,"uses_stack":true,"targets":[],"other_departure_destinations_do_not_trigger":true,"survives_original_source_leaving_graveyard":true,
-            "ordered_resolution":[{"operation":"ChooseWhetherToDraw","chooser":"CapturedTriggerController","at":"TriggerResolution","options":[{"index":0,"ordered_instructions":[]},{"index":1,"ordered_instructions":[{"operation":"DrawCards","recipient":"CapturedTriggerController","count":1,"normal_draw_replacements_and_empty_library_rules_apply":true,"drawn_identity_is_visible_only_to_authorized_viewers":true}]}]}]}
-        ]
+                    {"operation":"ShuffleOwnLibrary","required_even_when_no_card_found":true}]}]}]);
+    let death_resolution = json!([{"operation":"ChooseWhetherToDraw","chooser":"CapturedTriggerController","at":"TriggerResolution","options":[{"index":0,"ordered_instructions":[]},{"index":1,"ordered_instructions":[{"operation":"DrawCards","recipient":"CapturedTriggerController","count":1,"normal_draw_replacements_and_empty_library_rules_apply":true,"drawn_identity_is_visible_only_to_authorized_viewers":true}]}]}]);
+    let casts = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,"timing":"OwnMainPhaseEmptyStackWithPriority","targets":[],"ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],"ordered_resolution":[{"operation":"MoveOriginalSpellToBattlefield","controller":"Caster"}],"countering_skips_entry_and_does_not_refund_cost":true,"countering_spell_creates_no_death_trigger":true,"normal_zone_replacements_and_entry_triggers_apply":true,"other_cast_permissions_require_current_candidate_authority":true}]);
+    let triggers = json!([
+        {"event":"ThisPermanentEntersBattlefield","home_zone":"Battlefield","source_face":0,"controller":"CapturedSourceControllerAtEntry","requires_active_printed_ability_at_capture":true,"mandatory_trigger":true,"uses_stack":true,"targets":[],"survives_source_departure_and_later_control_change":true,
+        "ordered_resolution":entry_resolution},
+        {"event":"OriginalSourceLeavesBattlefieldForGraveyard","home_zone":"Graveyard","source_face":0,"controller":"CapturedSourceControllerBeforeDeparture","requires_active_printed_ability_before_departure":true,"uses_departure_last_known_information":true,"mandatory_trigger":true,"uses_stack":true,"targets":[],"other_departure_destinations_do_not_trigger":true,"survives_original_source_leaving_graveyard":true,
+        "ordered_resolution":death_resolution}
+    ]);
+    Ok(Some(json!({"card_id":id,"solemn_simulacrum_printing":{
+        "schema":"printed-optional-entry-search-death-draw/v1","cost":cost,"mana_value":4,"types":d.types,"subtypes":d.subtypes,"supertypes":[],"colors":[],"power":2,"toughness":2,"keywords":0,"token":false,
+        "ordered_cast_roots":casts,
+        "ordered_triggers":triggers
     }})))
 }
