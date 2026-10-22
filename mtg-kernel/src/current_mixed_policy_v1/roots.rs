@@ -71,6 +71,8 @@ mod simple_trigger_printing;
 mod solemn_printing;
 #[path = "soulstone_printing.rs"]
 pub(super) mod soulstone_printing;
+#[path = "surveil_one_printing.rs"]
+mod surveil_one_printing;
 #[path = "targeted_entry_printing.rs"]
 mod targeted_entry_printing;
 #[path = "targeted_spell_printing.rs"]
@@ -464,6 +466,11 @@ pub(super) fn is_evolving_permanent(id: u16) -> bool {
         .get(usize::from(id))
         .is_some_and(|d| evolving_printing::handles(d.name))
 }
+pub(super) fn is_surveil_one_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| surveil_one_printing::handles(d.name))
+}
 pub(super) fn is_paladin_permanent(id: u16) -> bool {
     CARD_DEFS
         .get(usize::from(id))
@@ -528,6 +535,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let library_search = library_search_printing::printing(id, d)?;
     let solemn = solemn_printing::printing(id, d)?;
     let evolving = evolving_printing::printing(id, d)?;
+    let surveil_one = surveil_one_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
@@ -696,6 +704,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || sailor.is_some()
             || lookout.is_some()
             || evolving.is_some()
+            || surveil_one.is_some()
             || ordinary_equipment.is_some())
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
@@ -763,6 +772,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || entry_branch.is_some()
             || library_search.is_some()
             || solemn.is_some()
+            || surveil_one.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -848,6 +858,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = evolving {
+        return Ok(printing);
+    }
+    if let Some(printing) = surveil_one {
         return Ok(printing);
     }
     if let Some(printing) = bloodwitch {
@@ -1464,6 +1477,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         || is_sailor_permanent(id)
         || is_lookout_permanent(id)
         || is_evolving_permanent(id)
+        || is_surveil_one_permanent(id)
         || is_paladin_permanent(id)
     {
         return baseline_recipe(id, d).map(Some);

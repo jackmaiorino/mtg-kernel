@@ -34,7 +34,11 @@ impl LilianaDecision {
 // The raw artifact path remains fully checked, including nested hashes.
 // Production takes the sealed decision path below, whose immutable private
 // binding was already completely validated at construction.
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn packet_inputs(
     candidates: &crate::liliana_candidates_v73::LilianaCandidatesV73,
     actions: &[crate::rl::ActionSemanticV1],
