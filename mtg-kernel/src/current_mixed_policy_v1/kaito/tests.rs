@@ -15,6 +15,7 @@ mod observer_triggers;
 mod ordinary_auras;
 mod ordinary_batch_spells;
 mod ordinary_equipment;
+mod shivan;
 mod simple_triggers;
 mod team_statics;
 mod triggered_enchantments;
