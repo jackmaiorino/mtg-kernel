@@ -15,6 +15,7 @@ mod ordinary_auras;
 mod ordinary_batch_spells;
 mod ordinary_equipment;
 mod simple_triggers;
+mod team_statics;
 
 /// Full-pool opening-hand coverage is distinct from paid branch qualification.
 /// Every frozen printing must survive the current owning projection and numeric

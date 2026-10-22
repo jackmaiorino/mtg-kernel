@@ -118,6 +118,7 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/cost_reduced_spell_printing.rs"),
             include_str!("current_mixed_policy_v1/creature_power_spell_printing.rs"),
             include_str!("current_mixed_policy_v1/luminous_printing.rs"),
+            include_str!("current_mixed_policy_v1/team_static_printing.rs"),
             include_str!("current_mixed_policy_v1/eaten_printing.rs"),
             include_str!("current_mixed_policy_v1/enchantment_hunter_printing.rs"),
             include_str!("current_mixed_policy_v1/faebloom_printing.rs"),

@@ -51,6 +51,8 @@ mod simple_trigger_printing;
 pub(super) mod soulstone_printing;
 #[path = "targeted_spell_printing.rs"]
 mod targeted_spell_printing;
+#[path = "team_static_printing.rs"]
+mod team_static_printing;
 #[path = "tyrant_herald_printing.rs"]
 pub(super) mod tyrant_herald_printing;
 
@@ -401,6 +403,11 @@ pub(super) fn is_ordinary_aura(id: u16) -> bool {
         .get(usize::from(id))
         .is_some_and(|d| ordinary_aura_printing::handles(d.name))
 }
+pub(super) fn is_team_static_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| team_static_printing::handles(d.name))
+}
 
 pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     if d.name == "Divine Resilience" {
@@ -452,6 +459,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let cost_reduced_spell = cost_reduced_spell_printing::printing(id, d)?;
     let creature_power_spell = creature_power_spell_printing::printing(id, d)?;
     let luminous = luminous_printing::printing(id, d)?;
+    let team_static = team_static_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -707,6 +715,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = luminous {
+        return Ok(printing);
+    }
+    if let Some(printing) = team_static {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
@@ -1296,6 +1307,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         || is_simple_trigger_permanent(id)
         || is_ordinary_equipment(id)
         || is_ordinary_aura(id)
+        || is_team_static_permanent(id)
     {
         return baseline_recipe(id, d).map(Some);
     }
