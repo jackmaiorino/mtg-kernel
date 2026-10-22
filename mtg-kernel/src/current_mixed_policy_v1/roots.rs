@@ -45,6 +45,8 @@ mod ordinary_batch_spell_printing;
 mod ordinary_equipment_printing;
 #[path = "ordinary_removal_printing.rs"]
 mod ordinary_removal_printing;
+#[path = "paladin_printing.rs"]
+mod paladin_printing;
 #[path = "rallier_bloom_printing.rs"]
 pub(super) mod rallier_bloom_printing;
 #[path = "shivan_printing.rs"]
@@ -422,6 +424,11 @@ pub(super) fn is_shivan_permanent(id: u16) -> bool {
         .get(usize::from(id))
         .is_some_and(|d| shivan_printing::handles(d.name))
 }
+pub(super) fn is_paladin_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| paladin_printing::handles(d.name))
+}
 
 pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     if d.name == "Divine Resilience" {
@@ -477,6 +484,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let triggered_enchantment = triggered_enchantment_printing::printing(id, d)?;
     let shivan = shivan_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
+    let paladin = paladin_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -628,7 +636,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.starting_loyalty.is_none()
         && d.enters_with_plus_one_counters.is_none()
         && d.controlled_creature_grant.is_none()
-        && d.controlled_counter_keyword.is_none()
+        && (d.controlled_counter_keyword.is_none() || paladin.is_some())
         && d.game_outcome_protection_v1.is_none()
         && (d.generic_cost_reduction.is_none()
             || cost_reduced_spell.is_some()
@@ -747,6 +755,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = bloodwitch {
+        return Ok(printing);
+    }
+    if let Some(printing) = paladin {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
@@ -1338,6 +1349,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         || is_ordinary_aura(id)
         || is_team_static_permanent(id)
         || is_shivan_permanent(id)
+        || is_paladin_permanent(id)
     {
         return baseline_recipe(id, d).map(Some);
     }

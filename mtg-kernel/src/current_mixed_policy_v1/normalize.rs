@@ -605,6 +605,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             && !roots::is_ordinary_aura(*id)
             && !roots::is_team_static_permanent(*id)
             && !roots::is_shivan_permanent(*id)
+            && !roots::is_paladin_permanent(*id)
             && !roots::is_mandatory_ordinary_spell(*id)
         {
             meanings.push(roots::baseline(*id)?);
