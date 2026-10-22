@@ -607,6 +607,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             && !roots::is_shivan_permanent(*id)
             && !roots::is_sailor_permanent(*id)
             && !roots::is_lookout_permanent(*id)
+            && !roots::is_evolving_permanent(*id)
             && !roots::is_paladin_permanent(*id)
             && !roots::is_mandatory_ordinary_spell(*id)
         {

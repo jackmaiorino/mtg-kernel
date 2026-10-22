@@ -29,6 +29,8 @@ mod entry_branch_printing;
 mod entry_destruction_printing;
 #[path = "entry_exile_printing.rs"]
 mod entry_exile_printing;
+#[path = "evolving_printing.rs"]
+mod evolving_printing;
 #[path = "faebloom_printing.rs"]
 pub(super) mod faebloom_printing;
 #[path = "fiery_printing.rs"]
@@ -457,6 +459,11 @@ pub(super) fn is_lookout_permanent(id: u16) -> bool {
         .get(usize::from(id))
         .is_some_and(|d| lookout_printing::handles(d.name))
 }
+pub(super) fn is_evolving_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| evolving_printing::handles(d.name))
+}
 pub(super) fn is_paladin_permanent(id: u16) -> bool {
     CARD_DEFS
         .get(usize::from(id))
@@ -520,6 +527,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let lookout = lookout_printing::printing(id, d)?;
     let library_search = library_search_printing::printing(id, d)?;
     let solemn = solemn_printing::printing(id, d)?;
+    let evolving = evolving_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
@@ -687,6 +695,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || shivan.is_some()
             || sailor.is_some()
             || lookout.is_some()
+            || evolving.is_some()
             || ordinary_equipment.is_some())
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
@@ -836,6 +845,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = solemn {
+        return Ok(printing);
+    }
+    if let Some(printing) = evolving {
         return Ok(printing);
     }
     if let Some(printing) = bloodwitch {
@@ -1451,6 +1463,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         || is_shivan_permanent(id)
         || is_sailor_permanent(id)
         || is_lookout_permanent(id)
+        || is_evolving_permanent(id)
         || is_paladin_permanent(id)
     {
         return baseline_recipe(id, d).map(Some);

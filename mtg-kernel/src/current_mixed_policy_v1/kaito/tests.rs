@@ -13,6 +13,7 @@ mod dragon_observers;
 mod entry_branch;
 mod entry_destruction;
 mod entry_exile;
+mod evolving;
 mod graveyard_batch_spell;
 mod library_search;
 mod lookout;
