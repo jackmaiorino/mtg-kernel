@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 
 #[path = "conditional_player_spell_printing.rs"]
 mod conditional_player_spell_printing;
+#[path = "cost_reduced_spell_printing.rs"]
+mod cost_reduced_spell_printing;
 #[path = "crystal_printing.rs"]
 pub(super) mod crystal_printing;
 #[path = "divine_printing.rs"]
@@ -367,6 +369,7 @@ pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
                 || ordinary_batch_spell_printing::handles(d.name)
                 || conditional_player_spell_printing::handles(d.name)
                 || graveyard_batch_spell_printing::handles(d.name)
+                || cost_reduced_spell_printing::handles(d.name)
         })
 }
 
@@ -440,6 +443,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let ordinary_batch_spell = ordinary_batch_spell_printing::printing(id, d)?;
     let conditional_player_spell = conditional_player_spell_printing::printing(id, d)?;
     let graveyard_batch_spell = graveyard_batch_spell_printing::printing(id, d)?;
+    let cost_reduced_spell = cost_reduced_spell_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -592,7 +596,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.controlled_creature_grant.is_none()
         && d.controlled_counter_keyword.is_none()
         && d.game_outcome_protection_v1.is_none()
-        && d.generic_cost_reduction.is_none()
+        && (d.generic_cost_reduction.is_none() || cost_reduced_spell.is_some())
         && !d.spell_cannot_be_countered
         && !d.records_mana_spent
         && d.plot_cost.is_none()
@@ -684,6 +688,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = graveyard_batch_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = cost_reduced_spell {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
