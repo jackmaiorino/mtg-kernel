@@ -39,6 +39,8 @@ mod graveyard_batch_spell_printing;
 pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
+#[path = "library_search_printing.rs"]
+mod library_search_printing;
 #[path = "lookout_printing.rs"]
 mod lookout_printing;
 #[path = "luminous_printing.rs"]
@@ -398,6 +400,7 @@ pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
                 || cost_reduced_spell_printing::handles(d.name)
                 || creature_power_spell_printing::handles(d.name)
                 || luminous_printing::handles(d.name)
+                || library_search_printing::handles_spell(d.name)
         })
 }
 
@@ -418,6 +421,7 @@ pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
             || entry_destruction_printing::handles(d.name)
             || entry_exile_printing::handles(d.name)
             || entry_branch_printing::handles(d.name)
+            || library_search_printing::handles_permanent(d.name)
     })
 }
 pub(super) fn is_ordinary_equipment(id: u16) -> bool {
@@ -511,6 +515,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let shivan = shivan_printing::printing(id, d)?;
     let sailor = sailor_printing::printing(id, d)?;
     let lookout = lookout_printing::printing(id, d)?;
+    let library_search = library_search_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
@@ -743,6 +748,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || entry_destruction.is_some()
             || entry_exile.is_some()
             || entry_branch.is_some()
+            || library_search.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -819,6 +825,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = lookout {
+        return Ok(printing);
+    }
+    if let Some(printing) = library_search {
         return Ok(printing);
     }
     if let Some(printing) = bloodwitch {

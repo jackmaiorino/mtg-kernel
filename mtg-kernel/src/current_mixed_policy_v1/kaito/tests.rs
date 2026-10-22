@@ -14,6 +14,7 @@ mod entry_branch;
 mod entry_destruction;
 mod entry_exile;
 mod graveyard_batch_spell;
+mod library_search;
 mod lookout;
 mod luminous;
 mod lunar_insight;

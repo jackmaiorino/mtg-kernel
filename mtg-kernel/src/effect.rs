@@ -1616,7 +1616,8 @@ pub enum EffectOp {
     /// Zero matches still suspend on a uniform
     /// private Finish-only prompt, preventing continuation presence from
     /// leaking match existence. Candidate identity remains chooser-private
-    /// until the selected card reaches hand and is revealed.
+    /// until the selected card reaches hand; only quality-filtered results
+    /// are then revealed by this operation.
     ///
     /// This operation intentionally does not synthesize XMage's typed
     /// SEARCH_LIBRARY/LIBRARY_SEARCHED/SHUFFLE_LIBRARY event family yet;
