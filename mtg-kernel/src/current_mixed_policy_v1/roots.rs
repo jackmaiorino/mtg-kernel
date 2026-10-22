@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 mod conditional_player_spell_printing;
 #[path = "cost_reduced_spell_printing.rs"]
 mod cost_reduced_spell_printing;
+#[path = "creature_power_spell_printing.rs"]
+mod creature_power_spell_printing;
 #[path = "crystal_printing.rs"]
 pub(super) mod crystal_printing;
 #[path = "divine_printing.rs"]
@@ -370,6 +372,7 @@ pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
                 || conditional_player_spell_printing::handles(d.name)
                 || graveyard_batch_spell_printing::handles(d.name)
                 || cost_reduced_spell_printing::handles(d.name)
+                || creature_power_spell_printing::handles(d.name)
         })
 }
 
@@ -444,6 +447,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let conditional_player_spell = conditional_player_spell_printing::printing(id, d)?;
     let graveyard_batch_spell = graveyard_batch_spell_printing::printing(id, d)?;
     let cost_reduced_spell = cost_reduced_spell_printing::printing(id, d)?;
+    let creature_power_spell = creature_power_spell_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -691,6 +695,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = cost_reduced_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = creature_power_spell {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
