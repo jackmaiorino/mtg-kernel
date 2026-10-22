@@ -21,6 +21,7 @@ mod paladin;
 mod shivan;
 mod simple_triggers;
 mod syphoner;
+mod targeted_entry;
 mod team_statics;
 mod triggered_enchantments;
 mod trufflesnout;

@@ -55,6 +55,8 @@ mod shivan_printing;
 mod simple_trigger_printing;
 #[path = "soulstone_printing.rs"]
 pub(super) mod soulstone_printing;
+#[path = "targeted_entry_printing.rs"]
+mod targeted_entry_printing;
 #[path = "targeted_spell_printing.rs"]
 mod targeted_spell_printing;
 #[path = "team_static_printing.rs"]
@@ -402,6 +404,7 @@ pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
             || observer_trigger_printing::handles(d.name)
             || triggered_enchantment_printing::handles(d.name)
             || bloodwitch_printing::handles(d.name)
+            || targeted_entry_printing::handles(d.name)
     })
 }
 pub(super) fn is_ordinary_equipment(id: u16) -> bool {
@@ -485,6 +488,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let shivan = shivan_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
+    let targeted_entry = targeted_entry_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -705,6 +709,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || simple_trigger.is_some()
             || triggered_enchantment.is_some()
             || bloodwitch.is_some()
+            || targeted_entry.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -781,6 +786,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = paladin {
+        return Ok(printing);
+    }
+    if let Some(printing) = targeted_entry {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
