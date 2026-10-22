@@ -12,7 +12,7 @@ pub(crate) struct IssuedOriginV73<'a> {
     session: &'a FastActorSessionV1,
     current: &'a FastActorCurrentDecisionV1,
 }
-impl IssuedOriginV73<'_> {
+impl<'a> IssuedOriginV73<'a> {
     pub(crate) fn validate(
         &self,
         state: &GameState,
@@ -21,7 +21,13 @@ impl IssuedOriginV73<'_> {
         step: u64,
         physical: u64,
         substep: (u32, u32),
-    ) -> Result<(), RlContractError> {
+    ) -> Result<
+        (
+            observation::ValidatedStateV73<'a>,
+            Vec<CorePolicyActionCandidateV1>,
+        ),
+        RlContractError,
+    > {
         let current = self
             .session
             .current
@@ -39,11 +45,14 @@ impl IssuedOriginV73<'_> {
         {
             return Err(RlContractError("foreign V73 issued origin".into()));
         }
-        let actual = normalized_origin(self.session, current).map_err(binding_error)?;
+        let (actual, validated) =
+            normalized_origin_with_validated_state(self.session, current).map_err(binding_error)?;
         if actual != current.candidates {
             return Err(RlContractError("changed V73 issued native pairs".into()));
         }
-        Ok(())
+        // Carry this exact immutable state's validation and native pairs into
+        // projection. Neither can outlive the borrow or authorize a mutation.
+        Ok((validated, actual))
     }
 }
 fn binding_error(error: FlatActionDecisionSliceErrorV1) -> RlContractError {

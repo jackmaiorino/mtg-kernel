@@ -491,6 +491,11 @@ pub fn observe_v73(
 pub(crate) struct ValidatedStateV73<'a> {
     state: &'a GameState,
 }
+impl<'a> ValidatedStateV73<'a> {
+    pub(crate) fn state(&self) -> &'a GameState {
+        self.state
+    }
+}
 pub(crate) fn validate_state_for_observation_v73(
     state: &GameState,
 ) -> Result<ValidatedStateV73<'_>, String> {

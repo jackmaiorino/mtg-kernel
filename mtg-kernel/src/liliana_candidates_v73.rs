@@ -592,7 +592,7 @@ pub(crate) fn project_parts_v73(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(LilianaCandidatesV73, NativeCandidateProjectionV73), RlContractError> {
-    observation::validate_state(state).map_err(error)?;
+    let validated = observation::validate_state_for_observation_v73(state).map_err(error)?;
     // Exact-bound source surfaces authenticate their own private scan. Owned
     // revision surfaces do not gain authority through this source-only API.
     // Nonscan re-entry must also be genuinely idempotent. A native Drake
@@ -609,7 +609,14 @@ pub(crate) fn project_parts_v73(
             "V73 candidates require the actual already-current exact-bound surface",
         ));
     }
-    project_authenticated_parts_v73(state, surface, actor_and_origin, step, physical, substep)
+    project_authenticated_parts_v73(
+        (validated, None),
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+    )
 }
 
 pub(crate) fn project_issued_parts_v73(
@@ -621,23 +628,45 @@ pub(crate) fn project_issued_parts_v73(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(LilianaCandidatesV73, NativeCandidateProjectionV73), RlContractError> {
-    proof.validate(state, surface, actor_and_origin, step, physical, substep)?;
-    project_authenticated_parts_v73(state, surface, actor_and_origin, step, physical, substep)
+    let (validated, original) =
+        proof.validate(state, surface, actor_and_origin, step, physical, substep)?;
+    project_authenticated_parts_v73(
+        (validated, Some(original)),
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+    )
 }
 fn project_authenticated_parts_v73(
-    state: &GameState,
+    validated_origin: (
+        observation::ValidatedStateV73<'_>,
+        Option<Vec<crate::rl::CorePolicyActionCandidateV1>>,
+    ),
     surface: &PolicySurfaceV5,
     actor_and_origin: (PlayerId, &PolicyDecisionV5),
     step: u64,
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(LilianaCandidatesV73, NativeCandidateProjectionV73), RlContractError> {
-    let (observation, families) =
-        observation::observe_parts_v73(state, surface, actor_and_origin, step, physical, substep)?;
+    let (validated, original) = validated_origin;
+    let state = validated.state();
+    let (observation, families) = observation::observe_parts_validated_v73(
+        validated,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+    )?;
     let authorized = authorized_references(&observation)?;
     // No native action or original semantic enters the public value. Keep the
     // original vector intact so index i continues to bind its exact native pair.
-    let original = crate::rl_session::liliana_candidates_v73(actor_and_origin.1, state, surface)?;
+    let original = match original {
+        Some(original) => original,
+        None => crate::rl_session::liliana_candidates_v73(actor_and_origin.1, state, surface)?,
+    };
     let feasible = if matches!(
         actor_and_origin.1,
         PolicyDecisionV5::AttackerInclusion { .. } | PolicyDecisionV5::BlockerInclusion { .. }
