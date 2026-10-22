@@ -31,6 +31,8 @@ mod graveyard_batch_spell_printing;
 pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
+#[path = "luminous_printing.rs"]
+mod luminous_printing;
 #[path = "observer_trigger_printing.rs"]
 mod observer_trigger_printing;
 #[path = "ordinary_aura_printing.rs"]
@@ -373,6 +375,7 @@ pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
                 || graveyard_batch_spell_printing::handles(d.name)
                 || cost_reduced_spell_printing::handles(d.name)
                 || creature_power_spell_printing::handles(d.name)
+                || luminous_printing::handles(d.name)
         })
 }
 
@@ -448,6 +451,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let graveyard_batch_spell = graveyard_batch_spell_printing::printing(id, d)?;
     let cost_reduced_spell = cost_reduced_spell_printing::printing(id, d)?;
     let creature_power_spell = creature_power_spell_printing::printing(id, d)?;
+    let luminous = luminous_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -600,7 +604,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.controlled_creature_grant.is_none()
         && d.controlled_counter_keyword.is_none()
         && d.game_outcome_protection_v1.is_none()
-        && (d.generic_cost_reduction.is_none() || cost_reduced_spell.is_some())
+        && (d.generic_cost_reduction.is_none()
+            || cost_reduced_spell.is_some()
+            || luminous.is_some())
         && !d.spell_cannot_be_countered
         && !d.records_mana_spent
         && d.plot_cost.is_none()
@@ -698,6 +704,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = creature_power_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = luminous {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {

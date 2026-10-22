@@ -8,6 +8,7 @@ mod conditional_player_spell;
 mod cost_reduced_spell;
 mod creature_power_spell;
 mod graveyard_batch_spell;
+mod luminous;
 mod lunar_insight;
 mod observer_triggers;
 mod ordinary_auras;

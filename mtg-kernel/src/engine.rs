@@ -7869,9 +7869,7 @@ pub(crate) fn normal_cast_reduction_count(
                 state.objects.try_get(*id).is_some_and(|object| {
                     object.zone == Zone::Battlefield
                         && object.tapped
-                        && card_def::CARD_DEFS[object.card_def as usize]
-                            .types_for_face(object.v4.face_index)
-                            .contains(&CardType::Creature)
+                        && object_has_type(state, *id, CardType::Creature)
                 })
             }))
         }
