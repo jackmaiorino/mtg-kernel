@@ -764,7 +764,11 @@ fn project_authenticated_parts_v73(
         projection_sha256: String::new(),
     };
     value.projection_sha256 = commitment(&value)?;
-    validate_artifact(&value)?;
+    // The observation above was constructed and completely validated in this
+    // call. Nothing can mutate it after it moves into this owned envelope.
+    // Keep all candidate checks, reusing only that validation and the root
+    // commitment just computed here. Supplied DTOs take the full path below.
+    validate_artifact_inner(&value, false)?;
     Ok((
         value,
         NativeCandidateProjectionV73 {
@@ -778,13 +782,21 @@ fn project_authenticated_parts_v73(
 /// Supplemental closed-shape checks. Only validate_current authenticates this
 /// artifact against the native world; neither function grants execution/restore.
 pub fn validate_artifact(value: &LilianaCandidatesV73) -> Result<(), RlContractError> {
-    observation::validate_artifact(&value.observation)?;
+    validate_artifact_inner(value, true)
+}
+fn validate_artifact_inner(
+    value: &LilianaCandidatesV73,
+    supplied_artifact: bool,
+) -> Result<(), RlContractError> {
+    if supplied_artifact {
+        observation::validate_artifact(&value.observation)?;
+    }
     if value.schema != SCHEMA
         || value.producer_sha256 != producer_sha256()
         || value.owning_consumer_admitted
         || !value.alesha_optional_resolution_supported
         || value.candidates.is_empty()
-        || value.projection_sha256 != commitment(value)?
+        || (supplied_artifact && value.projection_sha256 != commitment(value)?)
     {
         return Err(error("V73 candidate artifact identity changed"));
     }

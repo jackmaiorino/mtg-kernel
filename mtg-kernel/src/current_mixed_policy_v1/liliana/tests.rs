@@ -17,6 +17,10 @@ fn split_numeric_inputs_retain_every_original_observation_and_candidate_field_bo
         let d = own.encode(h).unwrap();
         let original = d.backend.candidates_v73();
         let (mut state, actions) = packet_inputs(original, d.backend.actions()).unwrap();
+        assert_eq!(
+            packet_from_current(&d.backend).unwrap(),
+            normalize::encode(Source::LilianaV73, state.clone(), actions.clone()).unwrap()
+        );
         let fields = state.as_object_mut().unwrap();
         assert_eq!(
             fields.remove("candidate_count").unwrap(),
@@ -331,7 +335,7 @@ fn paid_numeric_foreign_forged_packet_and_action_refusals_leave_native_unchanged
         let mut forged = d.backend.candidates_v73().clone();
         forged.observation.liliana.activations.clear();
         forged.observation.liliana.authorized_printings.clear();
-        assert!(packet_from_current(&forged, d.backend.actions()).is_err());
+        assert!(packet_inputs(&forged, d.backend.actions()).is_err());
         assert!(a.apply(&d, u32::MAX).is_err());
         assert_eq!(a.fixture_state(), &before);
         assert_eq!(a.fixture_counts(), counts);

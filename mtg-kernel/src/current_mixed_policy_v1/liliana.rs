@@ -31,14 +31,22 @@ impl LilianaDecision {
         &self.packet
     }
 }
-// Pure normalization of the exact freshly validated backend input. This
-// function cannot capture another decision or acquire executable authority.
+// The raw artifact path remains fully checked, including nested hashes.
+// Production takes the sealed decision path below, whose immutable private
+// binding was already completely validated at construction.
+#[cfg(test)]
 fn packet_inputs(
     candidates: &crate::liliana_candidates_v73::LilianaCandidatesV73,
     actions: &[crate::rl::ActionSemanticV1],
 ) -> Result<(Value, Vec<Value>)> {
     crate::liliana_candidates_v73::validate_artifact(candidates)
         .map_err(|e| Error::Projection(e.to_string()))?;
+    packet_inputs_parts(candidates, actions)
+}
+fn packet_inputs_parts(
+    candidates: &crate::liliana_candidates_v73::LilianaCandidatesV73,
+    actions: &[crate::rl::ActionSemanticV1],
+) -> Result<(Value, Vec<Value>)> {
     if candidates.candidates.len() != actions.len()
         || candidates
             .candidates
@@ -69,11 +77,11 @@ fn packet_inputs(
         .map_err(|e| Error::Projection(e.to_string()))?;
     Ok((state, actions))
 }
-fn packet_from_current(
-    candidates: &crate::liliana_candidates_v73::LilianaCandidatesV73,
-    actions: &[crate::rl::ActionSemanticV1],
-) -> Result<Packet> {
-    let (state, actions) = packet_inputs(candidates, actions)?;
+fn packet_from_current(decision: &LilianaDecisionV73) -> Result<Packet> {
+    // There is no DTO constructor, deserializer or mutable projection getter
+    // for this backend capability. Every binding comes from the validating
+    // native constructor; apply also authenticates its current owner/revision.
+    let (state, actions) = packet_inputs_parts(decision.candidates_v73(), decision.actions())?;
     normalize::encode(Source::LilianaV73, state, actions)
 }
 impl LilianaSession {
@@ -119,11 +127,7 @@ impl LilianaSession {
         self.inner
             .validate_decision_v73(&decision.backend)
             .map_err(|_| Error::StaleBinding)?;
-        if packet_from_current(
-            decision.backend.candidates_v73(),
-            decision.backend.actions(),
-        )? != decision.packet
-        {
+        if packet_from_current(&decision.backend)? != decision.packet {
             return Err(Error::StaleBinding);
         }
         let inner = self
@@ -178,7 +182,7 @@ impl LilianaSession {
         if backend.expected() != expected {
             return Err(Error::StaleBinding);
         }
-        let packet = packet_from_current(backend.candidates_v73(), backend.actions())?;
+        let packet = packet_from_current(&backend)?;
         Ok(LilianaDecision {
             backend,
             packet,
@@ -203,8 +207,8 @@ impl LilianaSession {
         self.inner.step_with_current_check(
             &decision.backend,
             selected_index,
-            |candidates, actions| {
-                if packet_from_current(candidates, actions)? != decision.packet {
+            |current| {
+                if packet_from_current(current)? != decision.packet {
                     return Err(Error::StaleBinding);
                 }
                 Ok(())

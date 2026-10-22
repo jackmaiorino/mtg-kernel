@@ -645,13 +645,13 @@ impl LilianaSessionV73 {
         decision: &LilianaDecisionV73,
         index: u32,
     ) -> Result<FastActorResponseV1, RlContractError> {
-        self.step_with_current_check(decision, index, |_, _| Ok(()), |e| e, |e| e)
+        self.step_with_current_check(decision, index, |_| Ok(()), |e| e, |e| e)
     }
     pub(crate) fn step_with_current_check<E>(
         &mut self,
         decision: &LilianaDecisionV73,
         index: u32,
-        check: impl FnOnce(&LilianaCandidatesV73, &[ActionSemanticV1]) -> Result<(), E>,
+        check: impl FnOnce(&LilianaDecisionV73) -> Result<(), E>,
         binding_error: impl FnOnce(RlContractError) -> E,
         native_error: impl FnOnce(RlContractError) -> E,
     ) -> Result<FastActorResponseV1, E> {
@@ -663,7 +663,10 @@ impl LilianaSessionV73 {
         let fresh = self.validated_current(decision).map_err(binding_error)?;
         #[cfg(test)]
         eprintln!("V73 step={}: checking packet", fresh.expected.step);
-        check(&fresh.projection, &decision.actions)?;
+        // This sealed decision has just been compared against the complete
+        // current native binding. The callback cannot supply a replacement
+        // artifact or mutate the binding through its immutable borrow.
+        check(decision)?;
         #[cfg(test)]
         eprintln!("V73 step={}: packet checked", fresh.expected.step);
         let Some(original) = usize::try_from(index)
