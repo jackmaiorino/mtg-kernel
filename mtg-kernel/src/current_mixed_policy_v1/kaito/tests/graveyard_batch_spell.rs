@@ -22,6 +22,7 @@ fn paid_graveyard_batch(name: &str) {
         Some(meaning)
     );
     let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+    let cat = crate::card_def::card_id_by_name("Cat Token").unwrap();
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut state = GameState::new_from_libraries_with_starting_player_v1(
             &[forest; 40],
@@ -118,8 +119,22 @@ fn paid_graveyard_batch(name: &str) {
                         returned.push(live_hawk);
                     }
                 }
+                // Each returned Parent creates a Cat. Those later entries
+                // also trigger the newly returned Angel and both Pridemates.
+                let cats: Vec<_> = state
+                    .objects
+                    .iter()
+                    .filter(|(_, object)| {
+                        object.card_def == cat && object.zone == Zone::Battlefield
+                    })
+                    .collect();
+                assert_eq!(cats.len(), if rise && !countered { 2 } else { 0 });
+                for (_, token) in &cats {
+                    assert_eq!((token.owner, token.controller), (p, p));
+                    assert!(token.v4.is_token && token.summoning_sick && !token.tapped);
+                }
                 let gains = if rise && !countered {
-                    returned.len() - 1
+                    returned.len() - 1 + 2
                 } else {
                     0
                 };
