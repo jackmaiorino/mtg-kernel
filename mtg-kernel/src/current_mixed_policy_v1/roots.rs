@@ -5,6 +5,8 @@ use crate::effect::{EffectCond, EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+#[path = "bloodwitch_printing.rs"]
+mod bloodwitch_printing;
 #[path = "conditional_player_spell_printing.rs"]
 mod conditional_player_spell_printing;
 #[path = "cost_reduced_spell_printing.rs"]
@@ -397,6 +399,7 @@ pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
         simple_trigger_printing::handles(d.name)
             || observer_trigger_printing::handles(d.name)
             || triggered_enchantment_printing::handles(d.name)
+            || bloodwitch_printing::handles(d.name)
     })
 }
 pub(super) fn is_ordinary_equipment(id: u16) -> bool {
@@ -473,6 +476,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let team_static = team_static_printing::printing(id, d)?;
     let triggered_enchantment = triggered_enchantment_printing::printing(id, d)?;
     let shivan = shivan_printing::printing(id, d)?;
+    let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -669,6 +673,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || gain_land.is_some()
             || simple_trigger.is_some()
             || triggered_enchantment.is_some()
+            || bloodwitch.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -739,6 +744,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = shivan {
+        return Ok(printing);
+    }
+    if let Some(printing) = bloodwitch {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
