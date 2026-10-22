@@ -645,9 +645,26 @@ impl LilianaSessionV73 {
         decision: &LilianaDecisionV73,
         index: u32,
     ) -> Result<FastActorResponseV1, RlContractError> {
-        self.step_with_current_check(decision, index, |_| Ok(()), |e| e, |e| e)
+        self.step_with_current_check(decision, index, |_, _| Ok(()), |e| e, |e| e)
     }
     pub(crate) fn step_with_current_check<E>(
+        &mut self,
+        decision: &LilianaDecisionV73,
+        index: u32,
+        check: impl FnOnce(&LilianaCandidatesV73, &[ActionSemanticV1]) -> Result<(), E>,
+        binding_error: impl FnOnce(RlContractError) -> E,
+        native_error: impl FnOnce(RlContractError) -> E,
+    ) -> Result<FastActorResponseV1, E> {
+        // Preserve the existing Human, Limited and refusal-test callback API.
+        self.step_with_current_decision_check(
+            decision,
+            index,
+            |current| check(current.candidates_v73(), current.actions()),
+            binding_error,
+            native_error,
+        )
+    }
+    pub(crate) fn step_with_current_decision_check<E>(
         &mut self,
         decision: &LilianaDecisionV73,
         index: u32,

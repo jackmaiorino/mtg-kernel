@@ -208,7 +208,7 @@ impl LilianaSession {
         {
             return Err(Error::ActionRange);
         }
-        self.inner.step_with_current_check(
+        self.inner.step_with_current_decision_check(
             &decision.backend,
             selected_index,
             |current| {
