@@ -53,6 +53,8 @@ pub(super) mod soulstone_printing;
 mod targeted_spell_printing;
 #[path = "team_static_printing.rs"]
 mod team_static_printing;
+#[path = "triggered_enchantment_printing.rs"]
+mod triggered_enchantment_printing;
 #[path = "tyrant_herald_printing.rs"]
 pub(super) mod tyrant_herald_printing;
 
@@ -390,7 +392,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
 
 pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
     CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
-        simple_trigger_printing::handles(d.name) || observer_trigger_printing::handles(d.name)
+        simple_trigger_printing::handles(d.name)
+            || observer_trigger_printing::handles(d.name)
+            || triggered_enchantment_printing::handles(d.name)
     })
 }
 pub(super) fn is_ordinary_equipment(id: u16) -> bool {
@@ -460,6 +464,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let creature_power_spell = creature_power_spell_printing::printing(id, d)?;
     let luminous = luminous_printing::printing(id, d)?;
     let team_static = team_static_printing::printing(id, d)?;
+    let triggered_enchantment = triggered_enchantment_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -654,6 +659,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || goldvein.is_some()
             || gain_land.is_some()
             || simple_trigger.is_some()
+            || triggered_enchantment.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -718,6 +724,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = team_static {
+        return Ok(printing);
+    }
+    if let Some(printing) = triggered_enchantment {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
