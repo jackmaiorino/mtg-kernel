@@ -15,6 +15,7 @@ mod entry_destruction;
 mod entry_exile;
 mod evolving;
 mod graveyard_batch_spell;
+mod guarded_heir;
 mod library_search;
 mod lookout;
 mod luminous;

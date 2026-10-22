@@ -20,6 +20,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Resolute Reinforcements"
             | "Gleaming Barrier"
             | "Prideful Parent"
+            | "Guarded Heir"
     )
 }
 
@@ -27,6 +28,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// cast, static, activation or replacement field remains forbidden there.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Guarded Heir" => (
+            5,
+            &[Pip::Colored(ManaColor::W)][..],
+            &[ManaColor::W][..],
+            &[Subtype::Human, Subtype::Noble][..],
+            1,
+            1,
+            Keywords::LIFELINK,
+        ),
         "Helpful Hunter" => (
             1,
             &[Pip::Colored(ManaColor::W)][..],
@@ -172,6 +182,19 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 json!({"operation":"DiscardCards","recipient":"OpponentOfCapturedTriggerController","chooser":"DiscardingPlayer","count":1,"choose_from":"CurrentOwnHand","does_not_target":true}),
             ],
         ),
+        "Guarded Heir" => {
+            let token_def = crate::card_def::card_id_by_name("Knight Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            let token = EffectOp::CreateToken {
+                token_def,
+                controller: PlayerRef::Controller,
+            };
+            let meaning = json!({"operation":"CreateToken","controller":"CapturedTriggerController","count":1,"token_definition":super::baseline(token_def)?,"normal_token_replacements_and_entry_triggers_apply":true});
+            (
+                EffectOp::Sequence(vec![token.clone(), token]),
+                vec![meaning.clone(), meaning],
+            )
+        }
         name => {
             let token_name = match name {
                 "Infestation Sage" => "Insect Token",
