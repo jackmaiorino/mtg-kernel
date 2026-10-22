@@ -71,6 +71,8 @@ mod simple_trigger_printing;
 mod solemn_printing;
 #[path = "soulstone_printing.rs"]
 pub(super) mod soulstone_printing;
+#[path = "surveil_many_printing.rs"]
+mod surveil_many_printing;
 #[path = "surveil_one_printing.rs"]
 mod surveil_one_printing;
 #[path = "targeted_entry_printing.rs"]
@@ -429,6 +431,7 @@ pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
             || entry_branch_printing::handles(d.name)
             || library_search_printing::handles_permanent(d.name)
             || solemn_printing::handles(d.name)
+            || surveil_many_printing::handles(d.name)
     })
 }
 pub(super) fn is_ordinary_equipment(id: u16) -> bool {
@@ -536,6 +539,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let solemn = solemn_printing::printing(id, d)?;
     let evolving = evolving_printing::printing(id, d)?;
     let surveil_one = surveil_one_printing::printing(id, d)?;
+    let surveil_many = surveil_many_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
@@ -773,6 +777,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || library_search.is_some()
             || solemn.is_some()
             || surveil_one.is_some()
+            || surveil_many.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -861,6 +866,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = surveil_one {
+        return Ok(printing);
+    }
+    if let Some(printing) = surveil_many {
         return Ok(printing);
     }
     if let Some(printing) = bloodwitch {

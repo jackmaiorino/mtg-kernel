@@ -28,6 +28,7 @@ mod sailor;
 mod shivan;
 mod simple_triggers;
 mod solemn;
+mod surveil_many;
 mod surveil_one;
 mod syphoner;
 mod targeted_entry;
