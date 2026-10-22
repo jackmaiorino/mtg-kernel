@@ -66,6 +66,9 @@ fn paid_creature(name: &str) {
     );
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p);
+        // The both-illegal branch pays for Downfall and then Stab before
+        // either resolves. Four Swamps cover the real 3+1 payment sequence.
+        put(&mut s, p.opponent(), "Swamp", Zone::Battlefield);
         let source = put(&mut s, p, "Healer's Hawk", Zone::Battlefield);
         let victim = put(&mut s, p.opponent(), "Helpful Hunter", Zone::Battlefield);
         let spell = put(&mut s, p, name, Zone::Hand);
