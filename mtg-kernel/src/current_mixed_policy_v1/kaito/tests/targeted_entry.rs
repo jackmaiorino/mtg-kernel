@@ -23,19 +23,19 @@ fn target_is(a: &A, source: ObjectId, object: ObjectId) -> bool {
         _ => false,
     }
 }
-fn actions(own: &KaitoSession) -> Vec<A> {
+pub(super) fn actions(own: &KaitoSession) -> Vec<A> {
     let FastActorResponseV1::Decision(header) = own.current_response() else {
         panic!("entry work ended unexpectedly")
     };
     own.encode(header).unwrap().backend.actions().to_vec()
 }
-fn cast(own: &mut KaitoSession, native: &mut FastActorSessionV1, object: ObjectId) {
+pub(super) fn cast(own: &mut KaitoSession, native: &mut FastActorSessionV1, object: ObjectId) {
     if !actions(own).iter().any(|a| cast_is(a, object)) {
         act(own, native, |a| matches!(a, A::Pass { .. }));
     }
     act(own, native, |a| cast_is(a, object));
 }
-fn choose(
+pub(super) fn choose(
     own: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     source: ObjectId,
@@ -51,7 +51,7 @@ fn choose(
     }
     panic!("one-target selection did not finish");
 }
-fn wait_target(
+pub(super) fn wait_target(
     own: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     source: ObjectId,

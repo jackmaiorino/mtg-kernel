@@ -23,6 +23,8 @@ pub(super) mod early_activation_printing;
 pub(super) mod eaten_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
+#[path = "entry_destruction_printing.rs"]
+mod entry_destruction_printing;
 #[path = "faebloom_printing.rs"]
 pub(super) mod faebloom_printing;
 #[path = "fiery_printing.rs"]
@@ -405,6 +407,7 @@ pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
             || triggered_enchantment_printing::handles(d.name)
             || bloodwitch_printing::handles(d.name)
             || targeted_entry_printing::handles(d.name)
+            || entry_destruction_printing::handles(d.name)
     })
 }
 pub(super) fn is_ordinary_equipment(id: u16) -> bool {
@@ -489,6 +492,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
+    let entry_destruction = entry_destruction_printing::printing(id, d)?;
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
@@ -710,6 +714,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || triggered_enchantment.is_some()
             || bloodwitch.is_some()
             || targeted_entry.is_some()
+            || entry_destruction.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -789,6 +794,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = targeted_entry {
+        return Ok(printing);
+    }
+    if let Some(printing) = entry_destruction {
         return Ok(printing);
     }
     if let Some(roots) = ordinary_removal {
