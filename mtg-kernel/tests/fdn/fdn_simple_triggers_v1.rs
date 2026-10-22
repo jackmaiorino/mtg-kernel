@@ -268,14 +268,30 @@ fn zombify_returns_a_creature_card_from_its_controllers_graveyard() {
     assert!(!legal_targets.contains(&Target::Object(theirs)));
     engine::step(&mut state, Action::ChooseTarget(Target::Object(demon))).unwrap();
     // The returned Demon's enters trigger searches the library.
-    let Some(Decision::ChooseEffectTargets { .. }) = settle(&mut state) else {
+    let Some(Decision::ChooseEffectTargets {
+        legal_targets,
+        min_targets: 1,
+        max_targets: 1,
+        can_finish: false,
+        ..
+    }) = settle(&mut state)
+    else {
         panic!("expected the Demon's library search");
     };
-    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    let searched = match legal_targets.first() {
+        Some(Target::Object(card)) => *card,
+        _ => panic!("nonempty library must provide an actual search choice"),
+    };
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(searched)),
+    )
+    .unwrap();
     settled(&mut state);
     assert_eq!(state.objects.get(demon).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(demon).controller, PlayerId::P0);
     assert_eq!(state.objects.get(zombify).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(searched).zone, Zone::Hand);
 
     // With no creature card in its controller's graveyard it cannot be cast.
     let mut state = ready(Step::Main1);
