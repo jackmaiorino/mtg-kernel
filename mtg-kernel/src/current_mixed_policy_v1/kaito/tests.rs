@@ -21,6 +21,7 @@ mod ordinary_auras;
 mod ordinary_batch_spells;
 mod ordinary_equipment;
 mod paladin;
+mod sailor;
 mod shivan;
 mod simple_triggers;
 mod syphoner;

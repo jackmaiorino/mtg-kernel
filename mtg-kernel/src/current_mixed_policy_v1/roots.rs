@@ -55,6 +55,8 @@ mod ordinary_removal_printing;
 mod paladin_printing;
 #[path = "rallier_bloom_printing.rs"]
 pub(super) mod rallier_bloom_printing;
+#[path = "sailor_printing.rs"]
+mod sailor_printing;
 #[path = "shivan_printing.rs"]
 mod shivan_printing;
 #[path = "simple_trigger_printing.rs"]
@@ -436,6 +438,11 @@ pub(super) fn is_shivan_permanent(id: u16) -> bool {
         .get(usize::from(id))
         .is_some_and(|d| shivan_printing::handles(d.name))
 }
+pub(super) fn is_sailor_permanent(id: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| sailor_printing::handles(d.name))
+}
 pub(super) fn is_paladin_permanent(id: u16) -> bool {
     CARD_DEFS
         .get(usize::from(id))
@@ -495,6 +502,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let team_static = team_static_printing::printing(id, d)?;
     let triggered_enchantment = triggered_enchantment_printing::printing(id, d)?;
     let shivan = shivan_printing::printing(id, d)?;
+    let sailor = sailor_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
@@ -660,6 +668,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || goldvein.is_some()
             || hart.is_some()
             || shivan.is_some()
+            || sailor.is_some()
             || ordinary_equipment.is_some())
         && d.ward_cost.is_none()
         && d.alt_cost.is_none()
@@ -795,6 +804,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = shivan {
+        return Ok(printing);
+    }
+    if let Some(printing) = sailor {
         return Ok(printing);
     }
     if let Some(printing) = bloodwitch {
@@ -1408,6 +1420,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         || is_ordinary_aura(id)
         || is_team_static_permanent(id)
         || is_shivan_permanent(id)
+        || is_sailor_permanent(id)
         || is_paladin_permanent(id)
     {
         return baseline_recipe(id, d).map(Some);
