@@ -259,7 +259,7 @@ fn the_resolver_admits_exactly_the_whole_pairs_and_their_own_conversions() {
 /// and the loaded-source cache never holds the converted source.
 #[test]
 fn conversion_keeps_the_optimizer_and_every_kept_bit() {
-    on_large_stack(|| conversion_keeps_the_optimizer_and_every_kept_bit_v1());
+    on_large_stack(conversion_keeps_the_optimizer_and_every_kept_bit_v1);
 }
 
 fn conversion_keeps_the_optimizer_and_every_kept_bit_v1() {
@@ -461,7 +461,7 @@ fn conversion_keeps_the_optimizer_and_every_kept_bit_v1() {
 /// converted checkpoint.
 #[test]
 fn continuation_admits_only_this_conversion_with_clean_columns() {
-    on_large_stack(|| continuation_admits_only_this_conversion_with_clean_columns_v1());
+    on_large_stack(continuation_admits_only_this_conversion_with_clean_columns_v1);
 }
 
 fn continuation_admits_only_this_conversion_with_clean_columns_v1() {
@@ -601,7 +601,7 @@ fn continuation_admits_only_this_conversion_with_clean_columns_v1() {
 /// before loading anything else.
 #[test]
 fn inference_only_bases_keep_the_converted_inference_install() {
-    on_large_stack(|| inference_only_bases_keep_the_converted_inference_install_v1());
+    on_large_stack(inference_only_bases_keep_the_converted_inference_install_v1);
 }
 
 fn inference_only_bases_keep_the_converted_inference_install_v1() {
@@ -700,7 +700,7 @@ fn assert_same_converted_load(
 /// input fails a hit with the full load's error.
 #[test]
 fn converted_loads_are_served_exactly_by_the_loaded_source_cache() {
-    on_large_stack(|| converted_loads_are_served_exactly_by_the_loaded_source_cache_v1());
+    on_large_stack(converted_loads_are_served_exactly_by_the_loaded_source_cache_v1);
 }
 
 fn converted_loads_are_served_exactly_by_the_loaded_source_cache_v1() {
@@ -802,9 +802,7 @@ fn converted_loads_are_served_exactly_by_the_loaded_source_cache_v1() {
 /// setting, and a changed input fails the boundary check.
 #[test]
 fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache() {
-    on_large_stack(|| {
-        converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1()
-    });
+    on_large_stack(converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1);
 }
 
 fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1() {
