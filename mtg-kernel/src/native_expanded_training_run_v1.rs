@@ -1219,6 +1219,44 @@ fn update_command(
     }
 }
 
+/// A converted (no-state-digest) run's initial source, validated: its
+/// inference identity, its `input_contract` member and its converted digest.
+struct ConvertedInitialV1 {
+    identity: ExpandedInferenceIdentityV1,
+    record: Value,
+    contract_digest: String,
+}
+
+/// Never inlined: the loaded policy stays out of the driver's frame.
+#[inline(never)]
+fn load_converted_initial_v1(
+    config: &NativeExpandedTrainingRunV1,
+) -> Result<ConvertedInitialV1, String> {
+    let (policy, identity) =
+        load_expanded_inference_bound_v1(&config.initial_source, config.training_math)?;
+    let record = policy_contract_record_v1(&policy)?
+        .ok_or("a converted initial source loaded without its contract")?;
+    Ok(ConvertedInitialV1 {
+        identity,
+        record: value(&record)?,
+        contract_digest: policy
+            .input_contract_v1()
+            .ok_or("a converted initial source loaded without its contract")?
+            .to_owned(),
+    })
+}
+
+/// A fixed opponent's full load and its converted digest, if any. Never
+/// inlined: the loaded policy stays out of the driver's frame.
+#[inline(never)]
+fn load_opponent_contract_v1(
+    source: &ExpandedModelSourceV1,
+    training_math: TrainingMathV1,
+) -> Result<Option<String>, String> {
+    let (policy, _) = load_expanded_inference_bound_v1(source, training_math)?;
+    Ok(policy.input_contract_v1().map(str::to_owned))
+}
+
 /// Runs or resumes a declared schedule. The optional invocation limit pauses
 /// only at completed iteration boundaries; it never changes the saved plan.
 pub fn run_native_expanded_training_v1(
@@ -1253,15 +1291,11 @@ pub fn run_native_expanded_training_v1(
     // plan, which records its validated effective identity and contract. An
     // unconverted run keeps its plan bytes and loads afterwards, as before.
     let converted_initial = is_converted_source_v1(&config.initial_source)
-        .then(|| load_expanded_inference_bound_v1(&config.initial_source, config.training_math))
+        .then(|| load_converted_initial_v1(config))
         .transpose()?;
     let input_contract = converted_initial
         .as_ref()
-        .map(|(policy, _)| policy_contract_record_v1(policy))
-        .transpose()?
-        .flatten()
-        .map(|record| value(&record))
-        .transpose()?;
+        .map(|initial| initial.record.clone());
     let mut manifest = json!({"schema":SCHEMA, "config":config,
         "git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
         "tracked_tree_sha256":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
@@ -1269,10 +1303,10 @@ pub fn run_native_expanded_training_v1(
         "feature_encoding_digest":FEATURE_ENCODING_DIGEST_V3,
         "device":"cpu", "gpu_ordinal":null,
         "implementation_sha256":digest(include_bytes!("native_expanded_training_run_v1.rs"))});
-    if let (Some((_, identity)), Some(record)) = (&converted_initial, &input_contract) {
-        manifest["feature_contract_digest"] = json!(identity.model.feature_contract_digest);
-        manifest["feature_encoding_digest"] = json!(identity.model.feature_encoding_digest);
-        manifest["input_contract"] = record.clone();
+    if let Some(initial) = &converted_initial {
+        manifest["feature_contract_digest"] = json!(initial.identity.model.feature_contract_digest);
+        manifest["feature_encoding_digest"] = json!(initial.identity.model.feature_encoding_digest);
+        manifest["input_contract"] = initial.record.clone();
     }
     config.update_backend.record_run_execution_v1(&mut manifest);
     record_loss_selection_execution(config, &mut manifest);
@@ -1292,19 +1326,21 @@ pub fn run_native_expanded_training_v1(
     }
     let iterations_root = root.join("iterations");
     fs::create_dir_all(&iterations_root).map_err(err)?;
-    let (initial_policy, mut current_identity) = match converted_initial {
-        Some(loaded) => loaded,
-        None => load_expanded_inference_bound_v1(&config.initial_source, config.training_math)?,
+    let (mut current_identity, initial_contract) = match converted_initial {
+        Some(initial) => (initial.identity, Some(initial.contract_digest)),
+        None => {
+            let (_, identity) =
+                load_expanded_inference_bound_v1(&config.initial_source, config.training_math)?;
+            (identity, None)
+        }
     };
     // Validate the complete fixed roster before spending episode compute.
     for opponent in &config.opponents {
-        let (policy, _) = load_expanded_inference_bound_v1(&opponent.source, config.training_math)?;
         check(
-            policy.input_contract_v1() == initial_policy.input_contract_v1(),
+            load_opponent_contract_v1(&opponent.source, config.training_math)? == initial_contract,
             "fixed opponent and learner use different no-state-digest contracts",
         )?;
     }
-    drop(initial_policy);
     let mut current = config.initial_source.clone();
     let mut history = Vec::new();
     let mut receipts = Vec::new();
@@ -2583,6 +2619,17 @@ mod tests {
         let manifest: Value =
             read_json(&config.output_directory.join("run.json"), SMALL_CAP).unwrap();
         assert_eq!(manifest["loss_selection"]["kind"], "gae_advantage_value_v1");
+        // An unconverted run keeps its plan's historical digests and carries
+        // no no-state-digest contract member.
+        assert_eq!(
+            manifest["feature_contract_digest"],
+            FEATURE_CONTRACT_DIGEST_V3
+        );
+        assert_eq!(
+            manifest["feature_encoding_digest"],
+            FEATURE_ENCODING_DIGEST_V3
+        );
+        assert!(manifest.get("input_contract").is_none());
     }
 
     fn e_supported_run_config_v1(label: &str) -> NativeExpandedTrainingRunV1 {

@@ -355,6 +355,25 @@ pub(super) fn load_v1(
     Ok((policy, identity))
 }
 
+/// [`initialize_v1`] in the shape of the ordinary training loader, which
+/// returns it directly: no registry-transfer context.
+#[inline(never)]
+pub(super) fn initialize_training_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+) -> Result<
+    (
+        FrozenPlayPolicyV1,
+        NativePolicyValueTrainStateV1,
+        Option<super::TransferContextV1>,
+    ),
+    String,
+> {
+    let (policy, state) = initialize_v1(source, bytes, inputs)?;
+    Ok((policy, state, None))
+}
+
 /// The training loader of a [`NoStateDigestImportV1`] source, and its one
 /// admission rule. The base import loads through the ordinary path with the
 /// conversion's pinned base checkpoint and full optimizer state. A source

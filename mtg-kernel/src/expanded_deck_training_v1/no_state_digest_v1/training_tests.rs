@@ -540,6 +540,18 @@ fn read_value(pin: &Value) -> Value {
 /// the prepared opponent cache re-resolves a hit.
 #[test]
 fn a_converted_run_collects_updates_and_resumes_under_the_per_forward_check() {
+    // Real games, loaders and debug frames on one thread: a large stack, as
+    // the collection and preparation workers have.
+    let run = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(converted_run_end_to_end_v1)
+        .unwrap();
+    if let Err(payload) = run.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn converted_run_end_to_end_v1() {
     std::env::set_var("MTG_KERNEL_NO_STATE_DIGEST_CHECK", "1");
     let root = temp_root("run");
     let base = fresh_source(&root);
@@ -613,13 +625,16 @@ fn a_converted_run_collects_updates_and_resumes_under_the_per_forward_check() {
     assert_eq!(finished["complete"], true);
     let revalidated = run_native_expanded_training_v1(&parallel, None).unwrap();
     assert_eq!(revalidated, finished);
-    // The serial collection and update reach the same state.
+    // The serial collection and update reach the same state and model; only
+    // the checkpoint files differ, by the trajectory paths they name.
     let serial = run_config(&converted, 1, root.join("run-serial"));
     let serial_result = run_native_expanded_training_v1(&serial, None).unwrap();
-    assert_eq!(
-        serial_result["actual_identity"],
-        finished["actual_identity"]
-    );
+    for field in ["state_sha256", "model", "adam_step"] {
+        assert_eq!(
+            serial_result["actual_identity"][field],
+            finished["actual_identity"][field]
+        );
+    }
     assert_eq!(finished["actual_identity"]["adam_step"], 1 + 2);
 
     // Every record carries the contract.

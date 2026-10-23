@@ -1456,9 +1456,9 @@ fn initialize_from_source_bytes_v1(
     }
     if probe.get("schema").and_then(Value::as_str) == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
         // Never cached: the loaded-source cache keeps excluding converted
-        // sources (`loaded_source_cache_v1::remember_v1`).
-        let (policy, state) = no_state_digest_v1::initialize_v1(source, bytes, inputs)?;
-        return Ok((policy, state, None));
+        // sources (`loaded_source_cache_v1::remember_v1`). Returned directly,
+        // so its policy locals stay out of this frame.
+        return no_state_digest_v1::initialize_training_v1(source, bytes, inputs);
     }
     let mut policy = load_ordinary_policy_v1(source, bytes)?;
     // The validated policy already owns the exact contract model. A private
