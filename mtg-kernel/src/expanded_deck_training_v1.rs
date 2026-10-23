@@ -855,7 +855,7 @@ fn is_false_v1(value: &bool) -> bool {
     !*value
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandedEpisodeV1 {
     pub id: String,
@@ -1018,7 +1018,7 @@ impl ExpandedEpisodeV1 {
 
 /// Raw binary32 bits keep JSON round trips exact, including signed zero.
 /// All fields are actor-visible tensors. No private bindings or GameState.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TensorBitsV1 {
     state: Vec<u32>,
@@ -1121,7 +1121,7 @@ impl TensorBitsV1 {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DecisionRecordV1 {
     step: u64,
@@ -1213,7 +1213,7 @@ pub(crate) fn line_b_frozen_sha256_v1(source: &ExpandedModelSourceV1) -> Result<
     Ok(hex(&mask.frozen_sha256_v1(&snapshot)))
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExpandedTrajectoryV1 {
     schema: String,

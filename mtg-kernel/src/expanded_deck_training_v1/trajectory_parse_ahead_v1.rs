@@ -15,6 +15,10 @@
 //! parse would return. On any miss it parses as before, errors included. A
 //! reader whose bytes are being parsed waits for that parse instead of
 //! repeating it; one whose bytes are still queued parses them itself.
+//!
+//! A collection worker that serialized the trajectory itself hands both
+//! results over with the bytes instead (`offer_serialized_v1`), since parsing
+//! those bytes returns the same values; nothing is left for helpers to parse.
 
 use super::*;
 use std::collections::{HashMap, VecDeque};
@@ -57,6 +61,19 @@ impl CollectionTrajectoryFieldsV1 {
             learner_sampler: string("learner_sampler"),
             training_math: string("training_math"),
         }
+    }
+
+    /// [`Self::of_document_v1`] of the bytes `serde_json::to_vec(trajectory)`
+    /// writes, without parsing them: the episode holds only integers,
+    /// strings, booleans and paths, so its value tree equals the parsed one,
+    /// and the two strings are written exactly when present (training math
+    /// as its identity, omitted for the default).
+    fn of_trajectory_v1(trajectory: &ExpandedTrajectoryV1) -> Result<Self, String> {
+        Ok(Self {
+            episode: serde_json::to_value(&trajectory.episode).map_err(err)?,
+            learner_sampler: trajectory.learner_sampler.clone(),
+            training_math: trajectory.training_math.identity_v1().map(str::to_owned),
+        })
     }
 }
 
@@ -173,6 +190,73 @@ fn lock_v1(shared: &ParseAheadV1) -> MutexGuard<'_, StateV1> {
 
 /// Queues the bytes of a trajectory file just published under `sha256`.
 pub(super) fn offer_v1(sha256: &str, bytes: Vec<u8>) {
+    insert_v1(sha256, bytes, [SlotV1::Queued, SlotV1::Queued]);
+}
+
+/// Whether a collection worker hands over the trajectory it serialized
+/// instead of queueing its bytes for parsing: on unless
+/// `MTG_KERNEL_PARSE_AHEAD_SEED=0`. Either way readers receive the same values.
+fn seeding_enabled_v1() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("MTG_KERNEL_PARSE_AHEAD_SEED").map_or(true, |value| value != "0")
+    })
+}
+
+/// `MTG_KERNEL_PARSE_AHEAD_SEED_CHECK=1` also parses every handed-over file
+/// and fails the collection if either result differs from the handed-over one.
+fn seed_check_enabled_v1() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("MTG_KERNEL_PARSE_AHEAD_SEED_CHECK").is_ok_and(|value| value == "1")
+    })
+}
+
+/// [`offer_v1`] for `bytes` that are exactly `serde_json::to_vec(&trajectory)`:
+/// both results are stored ready instead of being parsed from the bytes.
+/// Every trajectory field is an integer, string, boolean, path or raw binary32
+/// bit pattern, so parsing the bytes returns `trajectory` itself. Readers
+/// still compare their own bytes with these in full before taking a result.
+pub(super) fn offer_serialized_v1(
+    sha256: &str,
+    bytes: Vec<u8>,
+    trajectory: ExpandedTrajectoryV1,
+) -> Result<(), String> {
+    if !seeding_enabled_v1() {
+        offer_v1(sha256, bytes);
+        return Ok(());
+    }
+    let fields = CollectionTrajectoryFieldsV1::of_trajectory_v1(&trajectory)?;
+    if seed_check_enabled_v1() {
+        let parsed_fields = match parse_v1(KindV1::CollectionFields, &bytes) {
+            Some(ParsedV1::CollectionFields(parsed)) => Some(parsed),
+            _ => None,
+        };
+        ensure(
+            parsed_fields.as_ref() == Some(&fields),
+            "parse-ahead seed check: collection fields differ from the parsed file",
+        )?;
+        let parsed_trajectory = match parse_v1(KindV1::Trajectory, &bytes) {
+            Some(ParsedV1::Trajectory(parsed)) => Some(parsed),
+            _ => None,
+        };
+        ensure(
+            parsed_trajectory.as_deref() == Some(&trajectory),
+            "parse-ahead seed check: trajectory differs from the parsed file",
+        )?;
+    }
+    insert_v1(
+        sha256,
+        bytes,
+        [
+            SlotV1::Ready(ParsedV1::CollectionFields(fields)),
+            SlotV1::Ready(ParsedV1::Trajectory(Box::new(trajectory))),
+        ],
+    );
+    Ok(())
+}
+
+fn insert_v1(sha256: &str, bytes: Vec<u8>, slots: [SlotV1; 2]) {
     let shared = shared_v1();
     let mut state = lock_v1(shared);
     if bytes.len() > PARSE_AHEAD_RETAINED_BYTES_V1 || state.entries.contains_key(sha256) {
@@ -188,14 +272,16 @@ pub(super) fn offer_v1(sha256: &str, bytes: Vec<u8>) {
     }
     state.retained_bytes += bytes.len();
     state.order.push_back(sha256.to_owned());
-    for queue in &mut state.queues {
-        queue.push_back(sha256.to_owned());
+    for (queue, slot) in state.queues.iter_mut().zip(&slots) {
+        if matches!(slot, SlotV1::Queued) {
+            queue.push_back(sha256.to_owned());
+        }
     }
     state.entries.insert(
         sha256.to_owned(),
         EntryV1 {
             bytes: Arc::new(bytes),
-            slots: [SlotV1::Queued, SlotV1::Queued],
+            slots,
         },
     );
     // A reader waiting on a dropped entry parses its bytes itself.
