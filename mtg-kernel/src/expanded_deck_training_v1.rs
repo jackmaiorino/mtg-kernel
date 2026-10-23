@@ -761,50 +761,69 @@ fn verify_collection_opponent_sources_v1(
         }
         let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
         let schema = probe.get("schema").and_then(Value::as_str);
-        if schema == Some(fresh_initialization_source::SOURCE_SCHEMA) {
-            let descriptor = fresh_initialization_source::parse_source_v1(&bytes)?;
-            read_pinned_bytes(&descriptor.initialization)?;
-            read_pinned_bytes(&descriptor.parameters)?;
-        } else if schema.is_none() {
-            let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
-            let metadata = read_pinned_bytes(&PinnedFileV1 {
-                path: import.export_directory.join("metadata.json"),
-                sha256: import.expected_metadata_sha256,
-            })?;
-            let metadata: Value = serde_json::from_slice(&metadata).map_err(err)?;
-            for (path, expected) in [
-                (
-                    import.source_run_path,
-                    metadata
-                        .pointer("/identity/loaded_run_sha256")
-                        .and_then(Value::as_str)
-                        .ok_or("source run pin missing")?
-                        .to_owned(),
-                ),
-                (
-                    import.source_registry_path,
-                    import.expected_source_registry_sha256,
-                ),
-                (
-                    import.export_directory.join("parameters.f32le"),
-                    metadata
-                        .pointer("/parameter_section_sha256")
-                        .and_then(Value::as_str)
-                        .ok_or("parameter pin missing")?
-                        .to_owned(),
-                ),
-            ] {
-                read_pinned_bytes(&PinnedFileV1 {
-                    path,
-                    sha256: expected,
-                })?;
-            }
+        // A converted source whose base trains verifies the conversion's
+        // pins and the base's own, then is served like its base.
+        let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
+            no_state_digest_v1::verify_source_pins_v1(source, &bytes)?
         } else {
+            verify_import_pins_v1(&bytes)?
+        };
+        if !verified_pins {
             continue;
         }
         verified.push(source.clone());
     }
     Ok(verified)
+}
+
+/// The external pins of a fresh-initialization source or an ordinary import,
+/// read once; `false` for any other schema, whose loader keeps its own full
+/// validation.
+fn verify_import_pins_v1(bytes: &[u8]) -> Result<bool, String> {
+    let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
+    let schema = probe.get("schema").and_then(Value::as_str);
+    if schema == Some(fresh_initialization_source::SOURCE_SCHEMA) {
+        let descriptor = fresh_initialization_source::parse_source_v1(bytes)?;
+        read_pinned_bytes(&descriptor.initialization)?;
+        read_pinned_bytes(&descriptor.parameters)?;
+    } else if schema.is_none() {
+        let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(bytes).map_err(err)?;
+        let metadata = read_pinned_bytes(&PinnedFileV1 {
+            path: import.export_directory.join("metadata.json"),
+            sha256: import.expected_metadata_sha256,
+        })?;
+        let metadata: Value = serde_json::from_slice(&metadata).map_err(err)?;
+        for (path, expected) in [
+            (
+                import.source_run_path,
+                metadata
+                    .pointer("/identity/loaded_run_sha256")
+                    .and_then(Value::as_str)
+                    .ok_or("source run pin missing")?
+                    .to_owned(),
+            ),
+            (
+                import.source_registry_path,
+                import.expected_source_registry_sha256,
+            ),
+            (
+                import.export_directory.join("parameters.f32le"),
+                metadata
+                    .pointer("/parameter_section_sha256")
+                    .and_then(Value::as_str)
+                    .ok_or("parameter pin missing")?
+                    .to_owned(),
+            ),
+        ] {
+            read_pinned_bytes(&PinnedFileV1 {
+                path,
+                sha256: expected,
+            })?;
+        }
+    } else {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1467,9 +1486,8 @@ fn initialize_from_source_bytes_v1(
         return Err(REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1.into());
     }
     if probe.get("schema").and_then(Value::as_str) == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
-        // Never cached: the loaded-source cache keeps excluding converted
-        // sources (`loaded_source_cache_v1::remember_v1`). Returned directly,
-        // so its policy locals stay out of this frame.
+        // Cached under its own exact reverification (the lookup above);
+        // returned directly, so its policy locals stay out of this frame.
         return no_state_digest_v1::initialize_training_v1(source, bytes, inputs);
     }
     let mut policy = load_ordinary_policy_v1(source, bytes)?;

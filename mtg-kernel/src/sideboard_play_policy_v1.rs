@@ -1415,6 +1415,12 @@ impl FrozenPlayPolicyV1 {
         Ok(())
     }
 
+    /// Test-only: whether the per-forward check model is kept.
+    #[cfg(test)]
+    pub(crate) fn has_no_state_digest_check_for_test_v1(&self) -> bool {
+        self.no_digest_check.is_some()
+    }
+
     /// The conversion record bound to the installed contract.
     pub(crate) fn input_contract_conversion_v1(
         &self,
