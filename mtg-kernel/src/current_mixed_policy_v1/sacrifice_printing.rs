@@ -127,7 +127,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let resolution = if firebrand {
         json!([{"operation":"DealDamage","amount":1,"recipient":"OriginalLegalTarget","damage_source":"CapturedOriginalSacrificedSource","uses_last_known_source_characteristics":true,"normal_damage_prevention_replacement_protection_and_lifelink_apply":true,"does_not_require_source_still_on_battlefield":true}])
     } else {
-        json!([{"operation":"DestroyOriginalLegalTarget","normal_destruction_replacements_and_regeneration_apply":true,"indestructible_prevents_destruction":true,"is_not_sacrifice_or_exile":true}])
+        json!([{"operation":"DestroyOriginalLegalTarget","normal_destruction_replacements_apply":true,"regenerate_if_shielded":true,"indestructible_prevents_destruction":true,"is_not_sacrifice_or_exile":true}])
     };
     let activation = json!({"ability_index":0,"source_zone":"Battlefield","requires_active_printed_ability":true,
         "timing":"WithPriorityOnEitherPlayersTurn","uses_stack":true,"controller":"CapturedAbilityControllerAtActivation",

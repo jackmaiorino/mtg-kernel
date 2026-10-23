@@ -56,7 +56,7 @@ fn paid(name: &str) {
                         put(&mut s, p, land, Zone::Battlefield);
                     }
                 }
-                for land in ["Island", "Forest"] {
+                for land in ["Island", "Forest", "Swamp"] {
                     for _ in 0..3 {
                         put(&mut s, q, land, Zone::Battlefield);
                     }
@@ -67,7 +67,7 @@ fn paid(name: &str) {
                     &mut s,
                     q,
                     if firebrand {
-                        "Unsummon"
+                        "Hero's Downfall"
                     } else {
                         "Broken Wings"
                     },
@@ -174,8 +174,6 @@ fn paid(name: &str) {
                             s.objects.get(target).zone,
                             if player_target {
                                 Zone::Battlefield
-                            } else if departed && firebrand {
-                                Zone::Hand
                             } else {
                                 Zone::Graveyard
                             }

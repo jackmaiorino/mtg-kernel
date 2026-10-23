@@ -51,7 +51,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "Good-Fortune Unicorn" => (
             1,
             &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::W)][..],
-            &[ManaColor::W, ManaColor::G][..],
+            &[ManaColor::G, ManaColor::W][..],
             &[Subtype::Unicorn][..],
             2,
             2,

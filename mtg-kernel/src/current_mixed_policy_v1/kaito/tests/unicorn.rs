@@ -53,13 +53,16 @@ fn paid_unicorn_other_entrant_exact_counter_source_or_entrant_departure_tokens_c
         for _ in 0..4 {
             put(&mut s, q, "Island", Zone::Battlefield);
         }
+        for _ in 0..3 {
+            put(&mut s, q, "Swamp", Zone::Battlefield);
+        }
         let source = put(&mut s, p, "Good-Fortune Unicorn", Zone::Hand);
         let entrant = put(&mut s, p, "Healer's Hawk", Zone::Hand);
         let tokens = put(&mut s, p, "Resolute Reinforcements", Zone::Hand);
         let land = put(&mut s, p, "Forest", Zone::Hand);
         let other = put(&mut s, q, "Spectral Sailor", Zone::Hand);
         let counter = put(&mut s, q, "Counterspell", Zone::Hand);
-        let remove = put(&mut s, q, "Unsummon", Zone::Hand);
+        let remove = put(&mut s, q, "Hero's Downfall", Zone::Hand);
         let (mut own, mut native) = sessions(s);
         cast(&mut own, &mut native, source);
         let paid = own.snapshot();
@@ -148,7 +151,7 @@ fn paid_unicorn_other_entrant_exact_counter_source_or_entrant_departure_tokens_c
                     assert_eq!(
                         s.objects.get(subject).zone,
                         if departed == Some(subject) {
-                            Zone::Hand
+                            Zone::Graveyard
                         } else {
                             Zone::Battlefield
                         }
