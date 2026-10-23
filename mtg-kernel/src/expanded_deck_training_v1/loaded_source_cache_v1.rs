@@ -40,7 +40,9 @@ use std::sync::Arc;
 mod tests;
 
 /// A native run needs one entry (the newest checkpoint); a second keeps the
-/// run's initial source or an alternating caller from evicting it.
+/// run's initial source or an alternating caller from evicting it. Converted
+/// (`no_state_digest_v1`) and fresh entries share the bound, so either kind
+/// can evict the other; a converted load also looks up its base's entry.
 const LOADED_SOURCE_CACHE_ENTRIES_V1: usize = 2;
 
 pub(super) struct RecordedInputsV1 {

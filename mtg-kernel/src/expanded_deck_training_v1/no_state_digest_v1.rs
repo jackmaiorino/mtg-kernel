@@ -468,8 +468,9 @@ pub(super) fn initialize_training_v1(
 
 /// What a converted full load restored, for the loaded-source cache: a run
 /// start, a continuation with its checkpoint's recorded update inputs, or a
-/// continuation the cache does not serve (its checkpoint names another
-/// file). The base bytes and the per-forward check setting come with it.
+/// load the cache does not serve (its base or continuation checkpoint names
+/// another file). The base bytes and whether the policy holds the
+/// per-forward check model come with it.
 pub(super) struct ConvertedLoadV1 {
     pub(super) kind: ConvertedLoadKindV1,
     pub(super) base_bytes: Vec<u8>,
@@ -535,15 +536,37 @@ pub(super) fn verify_source_pins_v1(
     if !super::verify_import_pins_v1(&base_bytes)? {
         return Ok(false);
     }
+    // A base or continuation checkpoint that names a further file (a
+    // phase-1 archive-distillation parent) keeps its full load, which reads
+    // that file; the cache would not.
     if let Some(pin) = &conversion.base_checkpoint {
-        read_pinned_bytes(pin)?;
+        if names_another_file_v1(&read_pinned_bytes(pin)?)? {
+            return Ok(false);
+        }
     }
     if source.checkpoint == conversion.base_checkpoint {
         if let Some(pin) = &conversion.converted_checkpoint {
             read_pinned_bytes(pin)?;
         }
+    } else if let Some(pin) = &source.checkpoint {
+        if names_another_file_v1(&read_pinned_bytes(pin)?)? {
+            return Ok(false);
+        }
     }
     Ok(true)
+}
+
+/// Whether checkpoint bytes name a further file a full load reads: a
+/// phase-1 archive-distillation parent. Neither cache serves such a
+/// converted source, so it always loads in full.
+fn names_another_file_v1(checkpoint: &[u8]) -> Result<bool, String> {
+    #[derive(Deserialize)]
+    struct ArchiveProbeV1 {
+        #[serde(default, deserialize_with = "super::present_value_v1")]
+        archive_distillation: Option<Value>,
+    }
+    let probe: ArchiveProbeV1 = serde_json::from_slice(checkpoint).map_err(err)?;
+    Ok(probe.archive_distillation.is_some())
 }
 
 /// The training loader of a [`NoStateDigestImportV1`] source, and its one
@@ -586,7 +609,7 @@ fn initialize_v1(
         "registry-transfer sources do not train under the no-state-digest contract",
     )?;
     let check = check_enabled_v1();
-    let (mut state, kind) = if run_start {
+    let (mut state, mut kind) = if run_start {
         (
             convert_state_v1(&mut policy, base_state, &conversion, check)?,
             ConvertedLoadKindV1::RunStart,
@@ -607,6 +630,14 @@ fn initialize_v1(
     state
         .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
         .map_err(err)?;
+    // A base checkpoint that names a further file keeps every load full.
+    if let Some(pin) = &conversion.base_checkpoint {
+        if names_another_file_v1(&read_pinned_bytes(pin)?)? {
+            kind = ConvertedLoadKindV1::NotCached;
+        }
+    }
+    // The cache's tag is the check model the policy actually holds.
+    let check = policy.no_state_digest_check_v1();
     Ok((
         policy,
         state,

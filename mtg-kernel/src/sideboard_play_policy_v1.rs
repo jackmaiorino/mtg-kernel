@@ -1415,9 +1415,9 @@ impl FrozenPlayPolicyV1 {
         Ok(())
     }
 
-    /// Test-only: whether the per-forward check model is kept.
-    #[cfg(test)]
-    pub(crate) fn has_no_state_digest_check_for_test_v1(&self) -> bool {
+    /// Whether the per-forward check model (`MTG_KERNEL_NO_STATE_DIGEST_CHECK`)
+    /// is kept: the caches tag converted entries with it.
+    pub(crate) fn no_state_digest_check_v1(&self) -> bool {
         self.no_digest_check.is_some()
     }
 

@@ -684,8 +684,8 @@ fn assert_same_converted_load(
         expected_policy.input_contract_conversion_v1()
     );
     assert_eq!(
-        policy.has_no_state_digest_check_for_test_v1(),
-        expected_policy.has_no_state_digest_check_for_test_v1()
+        policy.no_state_digest_check_v1(),
+        expected_policy.no_state_digest_check_v1()
     );
     assert_eq!(
         super::super::inference_identity_v1(source, policy, state).unwrap(),
@@ -714,7 +714,7 @@ fn converted_loads_are_served_exactly_by_the_loaded_source_cache_v1() {
         with_check_for_test_v1(check, || {
             for source in [&converted, &continuation] {
                 let full = bypassed_for_test_v1(|| initialize_any_math_v1(source)).unwrap();
-                assert_eq!(full.0.has_no_state_digest_check_for_test_v1(), check);
+                assert_eq!(full.0.no_state_digest_check_v1(), check);
                 let first = initialize_any_math_v1(source).unwrap();
                 let before = matches_for_test_v1();
                 let second = initialize_any_math_v1(source).unwrap();
@@ -728,7 +728,7 @@ fn converted_loads_are_served_exactly_by_the_loaded_source_cache_v1() {
         // An entry kept under the check is not served without it.
         let before = matches_for_test_v1();
         let (policy, _) = initialize_any_math_v1(&continuation).unwrap();
-        assert!(!policy.has_no_state_digest_check_for_test_v1());
+        assert!(!policy.no_state_digest_check_v1());
         assert!(
             matches_for_test_v1() <= before + 1,
             "at most the base's own hit"
@@ -837,7 +837,7 @@ fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1(
                     loaded.policy.input_contract_conversion_v1(),
                     full.0.input_contract_conversion_v1()
                 );
-                assert!(!loaded.policy.has_no_state_digest_check_for_test_v1());
+                assert!(!loaded.policy.no_state_digest_check_v1());
             }
         });
         with_check_for_test_v1(true, || {
@@ -847,7 +847,7 @@ fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1(
                 !hit,
                 "an entry kept without the check is not served with it"
             );
-            assert!(loaded.policy.has_no_state_digest_check_for_test_v1());
+            assert!(loaded.policy.no_state_digest_check_v1());
         });
     }
     // A changed input fails the boundary check, as it fails a full load.
@@ -869,6 +869,122 @@ fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1(
         verify_collection_opponent_sources_v1(&episodes).unwrap(),
         vec![converted.clone()]
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A converted source over a phase-1 archive-distillation base checkpoint
+/// (whose full load reads its named parent) is never served by either
+/// cache: its run start and its continuation load in full every time, the
+/// collection boundary leaves it to the full loader, and a corrupted or
+/// deleted parent is refused exactly as a full load refuses it.
+#[test]
+fn archive_distillation_bases_always_load_in_full() {
+    on_large_stack(archive_distillation_bases_always_load_in_full_v1);
+}
+
+fn archive_distillation_bases_always_load_in_full_v1() {
+    use crate::expanded_deck_training_v1::archive_distillation_v1::{
+        ArchiveDistillationArmV1, ArchiveDistillationProvenanceV1, PHASE1_LOSS_IDENTITY_V1,
+    };
+    let root = temp_root("archive-base");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let parent_pin = parent.checkpoint.clone().unwrap();
+    let parent_saved: ExpandedCheckpointV1 = read_pinned(&parent_pin).unwrap();
+    // A phase-1 checkpoint: the parent's optimizer state, moved parameters.
+    let (policy, state) = initialize_any_math_v1(&parent).unwrap();
+    let mut snapshot = state.snapshot_v1().unwrap();
+    tensor_mut(&mut snapshot.parameters, "value_head.2.bias")[0] += 0.0625;
+    let mut phase1 = checkpoint_of(&policy, &snapshot, None);
+    phase1.loss_identity = PHASE1_LOSS_IDENTITY_V1.into();
+    phase1.gamma_bits = None;
+    phase1.gae_lambda_bits = None;
+    phase1.entropy_coefficient_bits = None;
+    phase1.learning_rate_bits = 1e-4_f32.to_bits();
+    phase1.value_coefficient_bits = 0.0_f32.to_bits();
+    let pin = |name: &str, fill: char| PinnedFileV1 {
+        path: root.join(name),
+        sha256: fill.to_string().repeat(64),
+    };
+    phase1.archive_distillation = Some(ArchiveDistillationProvenanceV1 {
+        method: "spy-archive-distillation-phase1-v1".into(),
+        lineage: "r1".into(),
+        arm: ArchiveDistillationArmV1::Uniform,
+        parent: parent_pin.clone(),
+        parent_state_sha256: parent_saved.state_sha256.clone(),
+        games: pin("games.jsonl", 'd'),
+        archive_sources: vec![pin("ARCHIVE.jsonl", '5')],
+        bank: pin("bank.json", 'e'),
+        bank_rows_sha256: "f".repeat(64),
+        anchor_sha256: "1".repeat(64),
+        steps: 1,
+        learning_rate_bits: 1e-4_f32.to_bits(),
+        phase1_state_sha256: "2".repeat(64),
+        runtime_commit: "test".into(),
+        cell: None,
+        update_scope: Default::default(),
+        rules_pathway: None,
+    });
+    let directory = root.join("phase1");
+    fs::create_dir_all(&directory).unwrap();
+    let base = ExpandedModelSourceV1 {
+        checkpoint: Some(publish_json(&directory, "checkpoint.json", &phase1).unwrap()),
+        ..parent.clone()
+    };
+    initialize_any_math_v1(&base).unwrap();
+    let (_, converted) = convert(&root, &base, "conversion");
+    let continuation = with_continuation(&root, &converted);
+    let corrupt = |action: &str| {
+        let original = fs::read(&parent_pin.path).unwrap();
+        match action {
+            "changed" => {
+                let mut changed = original.clone();
+                changed[original.len() / 2] ^= 1;
+                fs::write(&parent_pin.path, changed).unwrap();
+            }
+            _ => fs::remove_file(&parent_pin.path).unwrap(),
+        }
+        original
+    };
+    with_check_for_test_v1(false, || {
+        for source in [&converted, &continuation] {
+            let bytes = read_pinned_bytes(&source.play_import).unwrap();
+            let reference = initialize_any_math_v1(source).unwrap();
+            let before = matches_for_test_v1();
+            let again = initialize_any_math_v1(source).unwrap();
+            assert_eq!(matches_for_test_v1(), before, "no cache served it");
+            assert_same_converted_load(&again, &reference, source);
+            assert!(loaded_source_cache_v1::lookup_v1(source, &bytes, None)
+                .unwrap()
+                .is_none());
+            // The collection boundary leaves it to the full loader.
+            let episodes = vec![episode("archive", 2_026_102_501, Some(source.clone()))];
+            let verified = verify_collection_opponent_sources_v1(&episodes).unwrap();
+            assert!(verified.is_empty());
+            let opponents = || super::super::OpponentCacheV1::for_collection(verified.clone());
+            opponents().load(source).unwrap();
+            for action in ["changed", "missing"] {
+                let original = corrupt(action);
+                let full = bypassed_for_test_v1(|| refusal(source));
+                assert_eq!(refusal(source), full, "{action}");
+                let opponent = match opponents().load(source) {
+                    Ok(_) => panic!("{action}: the opponent loaded"),
+                    Err(error) => error,
+                };
+                let full_opponent =
+                    match bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(source)) {
+                        Ok(_) => panic!("{action}: the full opponent load succeeded"),
+                        Err(error) => error,
+                    };
+                assert_eq!(opponent, full_opponent, "{action}");
+                fs::write(&parent_pin.path, &original).unwrap();
+            }
+            assert_same_converted_load(
+                &initialize_any_math_v1(source).unwrap(),
+                &reference,
+                source,
+            );
+        }
+    });
     fs::remove_dir_all(root).unwrap();
 }
 

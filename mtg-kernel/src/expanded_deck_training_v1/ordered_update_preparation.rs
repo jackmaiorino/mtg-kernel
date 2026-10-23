@@ -313,6 +313,8 @@ pub(super) fn read_trajectories_v1(
 /// fork that scored differently would fail the update rather than pass.
 /// Bounded and least-recently-used; entries are immutable once inserted. A
 /// policy that cannot be forked is used directly and never cached, as before.
+/// Converted (`no_state_digest_v1`) and ordinary entries share the bound, so
+/// either kind can evict the other.
 const OPPONENT_CACHE_ENTRIES: usize = 8;
 
 struct CachedOpponentV1 {
@@ -370,9 +372,12 @@ pub(super) fn load_opponent_cached_v1(
             true,
         ));
     }
-    let check = no_state_digest_v1::check_enabled_v1();
     let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
-    let no_state_digest_check = policy.input_contract_v1().map(|_| check);
+    // The tag is the check model the loaded policy actually holds, never a
+    // setting sampled apart from its load.
+    let no_state_digest_check = policy
+        .input_contract_v1()
+        .map(|_| policy.no_state_digest_check_v1());
     let behavior = ExpandedSeatBehaviorV1 {
         source: source.clone(),
         identity: identity.clone(),
