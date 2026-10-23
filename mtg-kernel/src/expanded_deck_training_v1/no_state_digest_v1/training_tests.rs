@@ -30,6 +30,9 @@ const DIGEST: std::ops::Range<usize> = STATE_DIGEST_COLUMNS_V1;
 /// One invariant violation written into a snapshot.
 type SnapshotEditV1 = fn(&mut NativePolicyValueTrainSnapshotV1);
 
+/// One edit of the 1,403-wide conversion artifact's document.
+type ArtifactEditV1 = fn(&mut Value);
+
 fn temp_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "no-state-digest-training-{label}-{}-{}",
@@ -327,7 +330,7 @@ fn conversion_keeps_the_optimizer_and_every_kept_bit() {
     }
     // An unchanged republication is admitted.
     initialize_any_math_v1(&tampered("unchanged", |_| {})).unwrap();
-    let cases: [(&str, fn(&mut Value), &str); 9] = [
+    let cases: [(&str, ArtifactEditV1, &str); 9] = [
         (
             "kept-bit",
             |d| {
