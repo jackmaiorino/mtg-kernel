@@ -162,6 +162,7 @@ pub(super) fn exact_parallel_backward_v1(
     value_coefficient: f32,
     workers: usize,
     math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
 ) -> Option<BackwardResultV1> {
     let substeps = groups.iter().map(|group| group.tapes.len()).sum::<usize>();
     let workers = workers.min(substeps / EXACT_BACKWARD_MIN_SUBSTEPS_PER_WORKER_V1);
@@ -177,6 +178,7 @@ pub(super) fn exact_parallel_backward_v1(
         value_coefficient,
         workers,
         math,
+        mxcsr,
     ))
 }
 
@@ -187,6 +189,7 @@ fn backward_v1(
     value_coefficient: f32,
     workers: usize,
     math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
 ) -> BackwardResultV1 {
     let controls = ControlsV1::current_v1();
     // The sequential arm's coefficients and visiting order.
@@ -231,7 +234,9 @@ fn backward_v1(
     let mut terms = Vec::new();
     for block in visits[..backward_end].chunks(controls.block_substeps_v1()) {
         terms.resize_with(block.len(), SubstepTermsV1::default);
-        let outcomes = record_block_v1(parameters, block, &mut terms, workers, controls, math);
+        let outcomes = record_block_v1(
+            parameters, block, &mut terms, workers, controls, math, mxcsr,
+        )?;
         for outcome in outcomes {
             match outcome {
                 PhaseAOutcomeV1::Completed(result) => result?,
@@ -242,11 +247,12 @@ fn backward_v1(
         drain_in_parallel_v1(
             blocks,
             workers,
+            mxcsr,
             || (),
             |_, block| {
                 replay_block_v1(block, &terms);
             },
-        );
+        )?;
     }
     if let Some((_, error)) = gauge_failure {
         return Err(error);
@@ -263,7 +269,8 @@ fn record_block_v1<'g>(
     workers: usize,
     controls: ControlsV1,
     math: TrainingMathV1,
-) -> Vec<PhaseAOutcomeV1> {
+    mxcsr: ThreadMxcsrCheckV1,
+) -> Result<Vec<PhaseAOutcomeV1>, NativePolicyTrainErrorV1> {
     let mut outcomes = Vec::with_capacity(visits.len());
     outcomes.resize_with(visits.len(), || PhaseAOutcomeV1::Completed(Ok(())));
     let chunk = visits
@@ -278,6 +285,7 @@ fn record_block_v1<'g>(
     drain_in_parallel_v1(
         items,
         workers,
+        mxcsr,
         ReverseWorkspaceV1::default,
         |workspace, ((visits, terms), outcomes)| {
             for ((visit, terms), outcome) in visits.iter().zip(terms).zip(outcomes) {
@@ -290,8 +298,8 @@ fn record_block_v1<'g>(
                 };
             }
         },
-    );
-    outcomes
+    )?;
+    Ok(outcomes)
 }
 
 fn record_substep_v1<'g>(
@@ -532,14 +540,19 @@ fn replay_block_body_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]
 /// scoped helpers, each thread with its own `state`. Items are independent,
 /// so which thread runs one changes no result. If a helper cannot be spawned
 /// the remaining threads take its share; a helper's panic resumes on the
-/// calling thread once every thread has stopped.
+/// calling thread once every thread has stopped. A helper outside the pinned
+/// MXCSR state (`mxcsr`) takes no item and its error is returned once every
+/// thread has stopped; the calling thread verifies before its own share.
 fn drain_in_parallel_v1<T: Send, S>(
     items: Vec<T>,
     workers: usize,
+    mxcsr: ThreadMxcsrCheckV1,
     state: impl Fn() -> S + Sync,
     work: impl Fn(&mut S, T) + Sync,
-) {
+) -> Result<(), NativePolicyTrainErrorV1> {
+    mxcsr.verify_v1()?;
     let queue = Mutex::new(items.into_iter());
+    let refused = Mutex::new(None);
     let next = || queue.lock().unwrap_or_else(PoisonError::into_inner).next();
     let drain = || {
         let mut state = state();
@@ -547,12 +560,21 @@ fn drain_in_parallel_v1<T: Send, S>(
             work(&mut state, item);
         }
     };
+    let helper = || match mxcsr.verify_worker_v1() {
+        Ok(()) => drain(),
+        Err(error) => {
+            refused
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get_or_insert(error);
+        }
+    };
     thread::scope(|scope| {
         let helpers = (1..workers)
             .filter_map(|index| {
                 thread::Builder::new()
                     .name(format!("native-gae-backward-{index}"))
-                    .spawn_scoped(scope, drain)
+                    .spawn_scoped(scope, helper)
                     .ok()
             })
             .collect::<Vec<_>>();
@@ -563,6 +585,10 @@ fn drain_in_parallel_v1<T: Send, S>(
             }
         }
     });
+    match refused.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// Test-only failure injection and block size, read on the calling thread;

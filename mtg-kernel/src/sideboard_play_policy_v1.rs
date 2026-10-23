@@ -237,14 +237,30 @@ pub struct FrozenPlayPolicyV1 {
     inference_key: Vec<u8>,
     /// Passive call probe for viewer captures; never shared by forks.
     inference_probe: Option<crate::inference_cache_v1::ProbeV1>,
-    /// The no-state-digest input contract (`no_state_digest_v1`): the
-    /// converted feature contract digest, or None for the original inputs.
-    /// Forks keep it.
-    input_contract: Option<String>,
+    /// The no-state-digest input contract (`no_state_digest_v1`), or None
+    /// for the original inputs. Forks keep it.
+    input_contract: Option<InputContractV1>,
     /// `MTG_KERNEL_NO_STATE_DIGEST_CHECK=1`: the unconverted model. Every
     /// forward is compared, bit for bit, with its forward on the same
     /// (zero-digest) inputs. Forks keep it.
     no_digest_check: Option<Box<NativePolicyValueNetV1>>,
+}
+
+/// An installed no-state-digest input contract (`no_state_digest_v1`).
+#[derive(Clone, Debug)]
+struct InputContractV1 {
+    /// The converted feature contract digest.
+    digest: String,
+    /// The zeroed state-digest input columns of `state_encoder.0.weight`.
+    columns: std::ops::Range<usize>,
+    /// The state encoder's input width.
+    input_width: usize,
+    /// The conversion record of a training source, which its training
+    /// records name; None until a loader binds it.
+    conversion: Option<crate::expanded_deck_training_v1::PinnedFileV1>,
+    /// With the check model: its original state-digest columns, row by row,
+    /// which every parameter replacement puts back into it.
+    original_columns: Option<Vec<f32>>,
 }
 
 #[derive(Default)]
@@ -1283,10 +1299,10 @@ impl FrozenPlayPolicyV1 {
             weights_sha256: format!("{:x}", weights.finalize()),
             model_parameter_sha256: self.model.parameter_manifest_sha256_v1(),
             embedding_table_sha256: format!("{:x}", embeddings.finalize()),
-            feature_contract_digest: self
-                .input_contract
-                .clone()
-                .unwrap_or_else(|| self.identity.feature_contract_digest_v1().to_owned()),
+            feature_contract_digest: self.input_contract.as_ref().map_or_else(
+                || self.identity.feature_contract_digest_v1().to_owned(),
+                |contract| contract.digest.clone(),
+            ),
             feature_encoding_digest: self.identity.feature_encoding_digest_v1().to_owned(),
             card_db_hash: self.identity.destination_card_db_hash_v1().to_owned(),
         }
@@ -1336,6 +1352,13 @@ impl FrozenPlayPolicyV1 {
                 && weight.values.len() == rows * width,
             "state encoder weight shape differs",
         )?;
+        let original_columns = check.then(|| {
+            weight
+                .values
+                .chunks_exact(width)
+                .flat_map(|row| row[columns.clone()].iter().copied())
+                .collect::<Vec<f32>>()
+        });
         for row in weight.values.chunks_exact_mut(width) {
             row[columns.clone()].fill(0.0);
         }
@@ -1355,7 +1378,13 @@ impl FrozenPlayPolicyV1 {
         self.inference_cache = None;
         self.inference_probe = None;
         self.row_cache = Default::default();
-        self.input_contract = Some(contract_digest);
+        self.input_contract = Some(InputContractV1 {
+            digest: contract_digest,
+            columns,
+            input_width,
+            conversion: None,
+            original_columns,
+        });
         self.no_digest_check = unconverted;
         Ok(())
     }
@@ -1363,7 +1392,36 @@ impl FrozenPlayPolicyV1 {
     /// The converted feature contract digest when the no-state-digest
     /// contract is installed.
     pub(crate) fn input_contract_v1(&self) -> Option<&str> {
-        self.input_contract.as_deref()
+        self.input_contract
+            .as_ref()
+            .map(|contract| contract.digest.as_str())
+    }
+
+    /// Binds the conversion record a training source pinned to the installed
+    /// contract, once; training records name it.
+    pub(crate) fn bind_input_contract_conversion_v1(
+        &mut self,
+        conversion: crate::expanded_deck_training_v1::PinnedFileV1,
+    ) -> Result<(), String> {
+        let contract = self
+            .input_contract
+            .as_mut()
+            .ok_or("no no-state-digest contract is installed")?;
+        require(
+            contract.conversion.is_none(),
+            "the no-state-digest conversion is already bound",
+        )?;
+        contract.conversion = Some(conversion);
+        Ok(())
+    }
+
+    /// The conversion record bound to the installed contract.
+    pub(crate) fn input_contract_conversion_v1(
+        &self,
+    ) -> Option<&crate::expanded_deck_training_v1::PinnedFileV1> {
+        self.input_contract
+            .as_ref()
+            .and_then(|contract| contract.conversion.as_ref())
     }
 
     pub(crate) fn replace_training_parameters_v3(
@@ -1374,13 +1432,74 @@ impl FrozenPlayPolicyV1 {
             self.successor.is_some() || self.fresh_successor.is_some(),
             "training requires explicit successor features",
         )?;
-        require(
-            self.input_contract.is_none(),
-            "training under the no-state-digest contract is not defined",
-        )?;
+        // Under the no-state-digest contract the parameters must already hold
+        // its invariants (never repaired here), and the check model follows
+        // them with its original digest columns.
+        let check_model = match &self.input_contract {
+            None => None,
+            Some(contract) => {
+                let weight = parameters
+                    .iter()
+                    .find(|parameter| parameter.name == "state_encoder.0.weight")
+                    .ok_or("state encoder weight is missing")?;
+                require(
+                    weight.shape.len() == 2
+                        && weight.shape[1] == contract.input_width
+                        && weight.values.len() == weight.shape[0] * contract.input_width,
+                    "state encoder weight shape differs",
+                )?;
+                require(
+                    crate::native_policy_train_step_v1::columns_are_positive_zero_v1(
+                        &weight.values,
+                        contract.input_width,
+                        contract.columns.clone(),
+                    ),
+                    "no-state-digest contract: a state-digest weight column is not +0.0",
+                )?;
+                let bias = parameters
+                    .iter()
+                    .find(|parameter| parameter.name == "state_encoder.0.bias")
+                    .ok_or("state encoder bias is missing")?;
+                require(
+                    no_negative_zero_v1(&bias.values),
+                    "a state encoder bias of -0.0 has no exact no-state-digest conversion",
+                )?;
+                match (&self.no_digest_check, &contract.original_columns) {
+                    (Some(check), Some(original)) => {
+                        let mut restored = parameters.to_vec();
+                        let weight = restored
+                            .iter_mut()
+                            .find(|parameter| parameter.name == "state_encoder.0.weight")
+                            .ok_or("state encoder weight is missing")?;
+                        let span = contract.columns.len();
+                        require(
+                            original.len() * contract.input_width == weight.values.len() * span,
+                            "no-state-digest check columns differ in shape",
+                        )?;
+                        for (row, columns) in weight
+                            .values
+                            .chunks_exact_mut(contract.input_width)
+                            .zip(original.chunks_exact(span))
+                        {
+                            row[contract.columns.clone()].copy_from_slice(columns);
+                        }
+                        let mut model = (**check).clone();
+                        model
+                            .replace_parameter_snapshot_v1(&restored)
+                            .map_err(|e| e.to_string())?;
+                        Some(Box::new(model))
+                    }
+                    (None, None) => None,
+                    _ => return Err("no-state-digest check model is incomplete".into()),
+                }
+            }
+        };
         self.model
             .replace_parameter_snapshot_v1(parameters)
             .map_err(|e| e.to_string())?;
+        if check_model.is_some() {
+            self.no_digest_check = check_model;
+        }
         // A cached prediction, cached rows and a probe namespace belong to the
         // old parameters.
         self.inference_cache = None;
@@ -1410,6 +1529,13 @@ impl FrozenPlayPolicyV1 {
             self.input_contract.is_none(),
             "stored tensors are not scored under the no-state-digest contract",
         )?;
+        self.forward_training_tensor_v3(tensor)
+    }
+
+    fn forward_training_tensor_v3(
+        &self,
+        tensor: &NativeFlatDecisionTensorV3,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
         let output = self
             .model
             .forward_feature_transfer_v3_mode(
@@ -1436,6 +1562,65 @@ impl FrozenPlayPolicyV1 {
             self.input_contract.is_none(),
             "stored tensors are not scored under the no-state-digest contract",
         )?;
+        self.forward_training_tensor_v4(tensor)
+    }
+
+    /// The update's replay of one stored training tensor of `generation`, its
+    /// single scoring boundary for the serial and prepared paths. Without the
+    /// no-state-digest contract this is exactly `score_training_tensor_v3` or
+    /// `_v4`. Under it, the calling thread must be in the pinned MXCSR state
+    /// and every state-digest input must be +0.0 (bits 0; -0.0 is refused
+    /// too), since zero weight columns would hide a nonzero input in the
+    /// forward but not in the weight gradient. Other readers of stored
+    /// tensors keep the contract's refusal.
+    pub(crate) fn score_replay_tensor_v1(
+        &self,
+        generation: FreshLineageGenerationV1,
+        common: NativeFlatDecisionTensorV2,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        let Some(contract) = &self.input_contract else {
+            return match generation {
+                FreshLineageGenerationV1::V3 => {
+                    self.score_training_tensor_v3(&NativeFlatDecisionTensorV3 { common })
+                }
+                FreshLineageGenerationV1::V4 => {
+                    self.score_training_tensor_v4(&NativeFlatDecisionTensorV4 { common })
+                }
+            };
+        };
+        match generation {
+            FreshLineageGenerationV1::V3 => require(
+                self.successor.is_some(),
+                "training requires explicit successor features",
+            )?,
+            FreshLineageGenerationV1::V4 => require(
+                self.fresh_successor.is_some(),
+                "training requires explicit V4 successor features",
+            )?,
+        }
+        crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
+            .map_err(|e| format!("no-state-digest contract: {e:?}"))?;
+        require(
+            common
+                .state
+                .get(contract.columns.clone())
+                .is_some_and(|digest| digest.iter().all(|value| value.to_bits() == 0)),
+            "no-state-digest contract: a stored state-digest input is not +0.0",
+        )?;
+        match generation {
+            FreshLineageGenerationV1::V3 => {
+                self.forward_training_tensor_v3(&NativeFlatDecisionTensorV3 { common })
+            }
+            FreshLineageGenerationV1::V4 => {
+                self.forward_training_tensor_v4(&NativeFlatDecisionTensorV4 { common })
+            }
+        }
+    }
+
+    fn forward_training_tensor_v4(
+        &self,
+        tensor: &NativeFlatDecisionTensorV4,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
         let output = self
             .model
             .forward_feature_transfer_v4_mode(

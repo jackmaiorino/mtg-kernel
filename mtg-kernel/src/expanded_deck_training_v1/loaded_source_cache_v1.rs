@@ -140,8 +140,10 @@ pub(super) fn remember_v1(
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
         return;
     }
+    // A converted (no-state-digest) policy is never cached.
     if source.checkpoint.is_some() != saved.is_some()
         || saved.is_some_and(|saved| saved.archive_distillation.is_some())
+        || policy.input_contract_v1().is_some()
     {
         return;
     }

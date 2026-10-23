@@ -345,6 +345,13 @@ pub(super) fn load_opponent_cached_v1(
         }
     };
     if let Some((policy, identity)) = cached {
+        // A hit bypasses loading, so the entry's effective input contract is
+        // resolved again: its receipt and its policy must still agree.
+        ensure(
+            identity.model.feature_contract_digest
+                == no_state_digest_v1::effective_contract_digest_v1(&policy),
+            "cached opponent no-state-digest contract differs from its receipt",
+        )?;
         return Ok((
             LoadedOpponentV1 {
                 policy: policy.fork_for_collection_v3()?,
@@ -455,6 +462,14 @@ where
                 loads += 1;
                 load(source)
             }
+            .and_then(|loaded| {
+                // Every opponent row is replayed under the learner's contract.
+                ensure(
+                    loaded.policy.input_contract_v1() == policy.input_contract_v1(),
+                    "learner and opponent use different no-state-digest contracts",
+                )?;
+                Ok(loaded)
+            })
         })
         .collect();
     let loading = loading_started.elapsed().as_secs_f64();
@@ -490,22 +505,13 @@ where
         } else {
             opponent.map_or(policy, |other| &other.policy)
         };
-        let generation = trajectory_generation_v1(trajectory);
+        let contract = trajectory_contract_v1(trajectory)?;
+        contract.require_policy_contract_v1(policy)?;
+        let generation = contract.generation;
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();
-            let output = match generation {
-                FreshLineageGenerationV1::V3 => {
-                    acting.score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
-                        common: common.clone(),
-                    })?
-                }
-                FreshLineageGenerationV1::V4 => {
-                    acting.score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
-                        common: common.clone(),
-                    })?
-                }
-            };
+            let output = acting.score_replay_tensor_v1(generation, common.clone())?;
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",

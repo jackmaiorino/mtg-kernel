@@ -6,6 +6,9 @@ use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
     ESupportedTeacherOptionsV1,
 };
+use crate::expanded_deck_training_v1::no_state_digest_v1::{
+    is_converted_source_v1, policy_contract_record_v1,
+};
 use crate::expanded_deck_training_v1::search_targets_v1::{
     continuation_identity as search_targets_continuation_identity_v1, SearchTargetsOpponentV1,
     SearchTargetsOptionsV1,
@@ -748,6 +751,9 @@ fn reverify_validated_collection(
     Ok(())
 }
 
+/// `input_contract` is the run's no-state-digest contract member
+/// (`no_state_digest_v1`), None for an unconverted run; the receipt and
+/// every trajectory must carry exactly it.
 fn validate_collection(
     collection: &PinnedFileV1,
     source: &ExpandedModelSourceV1,
@@ -755,6 +761,7 @@ fn validate_collection(
     before: &ExpandedInferenceIdentityV1,
     collection_sampler: CollectionSamplerV1,
     training_math: TrainingMathV1,
+    input_contract: Option<&Value>,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let document = read_pin(collection)?;
     check(
@@ -772,11 +779,16 @@ fn validate_collection(
         document.get("training_math").and_then(Value::as_str) == training_math.identity_v1(),
         "collection training math differs from the run config",
     )?;
+    check(
+        document.get("input_contract") == input_contract,
+        "collection no-state-digest contract differs from the run's",
+    )?;
     validate_collection_episodes_with_sampler_v1(
         &document,
         episodes,
         collection_sampler.identity_v1(),
         training_math,
+        input_contract,
     )
 }
 
@@ -798,17 +810,19 @@ fn validate_collection_episodes(
         episodes,
         None,
         TrainingMathV1::PlatformLibm,
+        None,
     )
 }
 
 /// Also binds every trajectory's `learner_sampler` to the configured
-/// collection sampler (absent for the legacy samplers), and its
-/// `training_math` to the run's.
+/// collection sampler (absent for the legacy samplers), its
+/// `training_math` to the run's, and its `input_contract` to the run's.
 fn validate_collection_episodes_with_sampler_v1(
     document: &Value,
     episodes: &[ExpandedEpisodeV1],
     learner_sampler: Option<&str>,
     training_math: TrainingMathV1,
+    input_contract: Option<&Value>,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(document["trajectories"].clone()).map_err(err)?;
@@ -876,6 +890,10 @@ fn validate_collection_episodes_with_sampler_v1(
             saved.training_math.as_deref() == training_math.identity_v1(),
             "collection trajectory training math differs from the run config",
         )?;
+        check(
+            saved.input_contract.as_ref() == input_contract,
+            "collection trajectory no-state-digest contract differs from the run's",
+        )?;
     }
     eprintln!(
         "collection validation: {} of {} trajectories parsed ahead",
@@ -940,8 +958,13 @@ fn validate_update(
     soft_q: Option<&SoftQTeacherOptionsV1>,
     search_targets: Option<(&SearchTargetsRunOptionsV1, usize)>,
     training_math: TrainingMathV1,
+    input_contract: Option<&Value>,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
+    check(
+        document.get("input_contract") == input_contract,
+        "update no-state-digest contract differs from the run's",
+    )?;
     validate_e_supported_update(&document, e_supported)?;
     validate_soft_q_update(&document, soft_q)?;
     validate_search_targets_update(&document, search_targets)?;
@@ -1226,6 +1249,19 @@ pub fn run_native_expanded_training_v1(
         .map_err(err)?;
     lock.try_lock()
         .map_err(|e| format!("run already has an active writer or cannot lock: {e}"))?;
+    // A converted (no-state-digest) run loads its initial source before the
+    // plan, which records its validated effective identity and contract. An
+    // unconverted run keeps its plan bytes and loads afterwards, as before.
+    let converted_initial = is_converted_source_v1(&config.initial_source)
+        .then(|| load_expanded_inference_bound_v1(&config.initial_source, config.training_math))
+        .transpose()?;
+    let input_contract = converted_initial
+        .as_ref()
+        .map(|(policy, _)| policy_contract_record_v1(policy))
+        .transpose()?
+        .flatten()
+        .map(|record| value(&record))
+        .transpose()?;
     let mut manifest = json!({"schema":SCHEMA, "config":config,
         "git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
         "tracked_tree_sha256":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
@@ -1233,6 +1269,11 @@ pub fn run_native_expanded_training_v1(
         "feature_encoding_digest":FEATURE_ENCODING_DIGEST_V3,
         "device":"cpu", "gpu_ordinal":null,
         "implementation_sha256":digest(include_bytes!("native_expanded_training_run_v1.rs"))});
+    if let (Some((_, identity)), Some(record)) = (&converted_initial, &input_contract) {
+        manifest["feature_contract_digest"] = json!(identity.model.feature_contract_digest);
+        manifest["feature_encoding_digest"] = json!(identity.model.feature_encoding_digest);
+        manifest["input_contract"] = record.clone();
+    }
     config.update_backend.record_run_execution_v1(&mut manifest);
     record_loss_selection_execution(config, &mut manifest);
     record_collection_execution(config, &mut manifest);
@@ -1251,12 +1292,19 @@ pub fn run_native_expanded_training_v1(
     }
     let iterations_root = root.join("iterations");
     fs::create_dir_all(&iterations_root).map_err(err)?;
-    let (_, mut current_identity) =
-        load_expanded_inference_bound_v1(&config.initial_source, config.training_math)?;
+    let (initial_policy, mut current_identity) = match converted_initial {
+        Some(loaded) => loaded,
+        None => load_expanded_inference_bound_v1(&config.initial_source, config.training_math)?,
+    };
     // Validate the complete fixed roster before spending episode compute.
     for opponent in &config.opponents {
-        load_expanded_inference_bound_v1(&opponent.source, config.training_math)?;
+        let (policy, _) = load_expanded_inference_bound_v1(&opponent.source, config.training_math)?;
+        check(
+            policy.input_contract_v1() == initial_policy.input_contract_v1(),
+            "fixed opponent and learner use different no-state-digest contracts",
+        )?;
     }
+    drop(initial_policy);
     let mut current = config.initial_source.clone();
     let mut history = Vec::new();
     let mut receipts = Vec::new();
@@ -1312,6 +1360,7 @@ pub fn run_native_expanded_training_v1(
                 &current_identity,
                 config.collection_sampler,
                 config.training_math,
+                input_contract.as_ref(),
             )?;
             let update = parse_pin(&receipt, "update")?;
             let (next, after) = validate_update(
@@ -1329,6 +1378,7 @@ pub fn run_native_expanded_training_v1(
                 sq_options.as_ref(),
                 config.search_targets.as_ref().map(|o| (o, index)),
                 config.training_math,
+                input_contract.as_ref(),
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -1397,6 +1447,7 @@ pub fn run_native_expanded_training_v1(
                     &current_identity,
                     config.collection_sampler,
                     config.training_math,
+                    input_contract.as_ref(),
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(candidate);
@@ -1417,6 +1468,7 @@ pub fn run_native_expanded_training_v1(
                     &current_identity,
                     config.collection_sampler,
                     config.training_math,
+                    input_contract.as_ref(),
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 let started = Instant::now();
@@ -1435,6 +1487,7 @@ pub fn run_native_expanded_training_v1(
                     sq_options.as_ref(),
                     config.search_targets.as_ref().map(|o| (o, index)),
                     config.training_math,
+                    input_contract.as_ref(),
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -1476,6 +1529,7 @@ pub fn run_native_expanded_training_v1(
                 &current_identity,
                 config.collection_sampler,
                 config.training_math,
+                input_contract.as_ref(),
             )?;
             collection_validation_seconds += started.elapsed().as_secs_f64();
             validated_trajectories = Some(trajectories.clone());
@@ -1524,6 +1578,7 @@ pub fn run_native_expanded_training_v1(
                 &current_identity,
                 config.collection_sampler,
                 config.training_math,
+                input_contract.as_ref(),
             )?
         };
         collection_validation_seconds += started.elapsed().as_secs_f64();
@@ -1543,6 +1598,7 @@ pub fn run_native_expanded_training_v1(
             sq_options.as_ref(),
             config.search_targets.as_ref().map(|o| (o, index)),
             config.training_math,
+            input_contract.as_ref(),
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -2130,6 +2186,7 @@ mod tests {
             &episodes,
             None,
             TrainingMathV1::PlatformLibm,
+            None,
         )
         .unwrap();
         validate_collection_episodes_with_sampler_v1(
@@ -2137,6 +2194,7 @@ mod tests {
             &episodes,
             Some(identity),
             TrainingMathV1::PlatformLibm,
+            None,
         )
         .unwrap();
         for (trajectory, expected) in [(&legacy, Some(identity)), (&unclamped, None)] {
@@ -2146,6 +2204,7 @@ mod tests {
                     &episodes,
                     expected,
                     TrainingMathV1::PlatformLibm,
+                    None,
                 )
                 .unwrap_err(),
                 "collection learner sampler differs from the run config"

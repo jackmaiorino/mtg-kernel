@@ -70,6 +70,7 @@ fn failed_parses_are_not_kept() {
             episode: json!({"id": "x"}),
             learner_sampler: None,
             training_math: None,
+            input_contract: None,
         })
     );
     assert!(take_trajectory_v1(key, &not_a_trajectory).is_none());
@@ -108,6 +109,7 @@ fn a_queued_parse_is_left_to_its_reader_and_a_running_one_is_awaited() {
                 episode: Value::Null,
                 learner_sampler: None,
                 training_math: None,
+                input_contract: None,
             })),
         );
         shared.changed.notify_all();

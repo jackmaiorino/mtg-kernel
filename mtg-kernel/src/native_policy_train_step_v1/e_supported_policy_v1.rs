@@ -29,6 +29,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<(NativePolicyTrainStepResultV1, Option<serde_json::Value>), NativePolicyTrainErrorV1>
     {
         self.require_platform_math_v1("E-supported")?;
+        self.require_no_input_contract_v1("E-supported")?;
         let invalid = |code| NativePolicyTrainErrorV1::LineBAuxiliary { code };
         if input.rows.len() > input.scheduled {
             return Err(invalid("e-supported-scheduled-count"));
@@ -151,6 +152,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<(NativePolicyTrainStepResultV1, Option<serde_json::Value>), NativePolicyTrainErrorV1>
     {
         self.require_platform_math_v1("SQ1 soft targets")?;
+        self.require_no_input_contract_v1("SQ1 soft targets")?;
         let invalid = |code| NativePolicyTrainErrorV1::LineBAuxiliary { code };
         if input.rows.len() > input.scheduled
             || input.scheduled == 0

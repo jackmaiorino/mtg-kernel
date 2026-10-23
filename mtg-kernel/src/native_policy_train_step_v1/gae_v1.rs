@@ -529,6 +529,26 @@ impl NativePolicyValueTrainStateV1 {
                 });
             }
         }
+        // The no-state-digest contract covers the ordinary objective only.
+        if self.no_state_digest_columns.is_some() {
+            if line_b.is_some() {
+                return Err(NativePolicyTrainErrorV1::NoStateDigestUnsupported {
+                    path: "auxiliary loss",
+                });
+            }
+            if exploration.is_some() {
+                return Err(NativePolicyTrainErrorV1::NoStateDigestUnsupported {
+                    path: "recovery loss",
+                });
+            }
+            if imitation {
+                return Err(NativePolicyTrainErrorV1::NoStateDigestUnsupported {
+                    path: "imitation",
+                });
+            }
+        }
+        let mxcsr = self.thread_mxcsr_check_v1();
+        mxcsr.verify_v1()?;
         validate_gae_inputs_v1(groups, value_targets, advantages)?;
         if !value_coefficient.is_finite()
             || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0))
@@ -557,6 +577,7 @@ impl NativePolicyValueTrainStateV1 {
             groups,
             forward_workers,
             math,
+            mxcsr,
         );
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
@@ -703,6 +724,7 @@ impl NativePolicyValueTrainStateV1 {
                     value_coefficient,
                     forward_workers,
                     math,
+                    mxcsr,
                 )
             }
             _ => None,
@@ -808,6 +830,7 @@ impl NativePolicyValueTrainStateV1 {
                         .collect::<Vec<_>>(),
                     &execution_context,
                     math,
+                    mxcsr,
                 )?;
                 drop(group_tapes);
                 (gradients, gauge_accumulator)
@@ -890,6 +913,11 @@ impl NativePolicyValueTrainStateV1 {
             &next_second_moments,
             self.scorer_bias_anchor_bits,
         )?;
+        self.check_no_state_digest_candidate_v1(
+            &next_parameters,
+            &next_first_moments,
+            &next_second_moments,
+        )?;
 
         let exploration_result = exploration.map(|(beta, update, _)| serde_json::json!({
             "schema":"native-uniform-kl-recovery/v1", "update_index":update,"beta_bits":beta.to_bits(),
@@ -943,6 +971,7 @@ fn precompute_encoded_forward_tapes_v1(
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     forward_workers: usize,
     math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
 ) -> Option<impl Iterator<Item = Result<Box<DecisionTapeV1>, NativePolicyTrainErrorV1>>> {
     let mut tasks = Vec::new();
     for group in groups {
@@ -966,6 +995,14 @@ fn precompute_encoded_forward_tapes_v1(
                 let spawned = thread::Builder::new()
                     .name(format!("native-gae-forward-{worker_index}"))
                     .spawn_scoped(scope, move || {
+                        // A worker outside the pinned MXCSR state fails each
+                        // of its substeps without computing them.
+                        if let Err(error) = mxcsr.verify_worker_v1() {
+                            return chunk
+                                .iter()
+                                .map(|_| GaeForwardOutcomeV1::Completed(Err(error.clone())))
+                                .collect();
+                        }
                         forward_encoded_chunk_v1(parameters, input_major, config, chunk, math)
                     });
                 (spawned, chunk)

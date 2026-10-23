@@ -43,12 +43,15 @@ pub(crate) struct CollectionTrajectoryFieldsV1 {
     pub(crate) episode: Value,
     pub(crate) learner_sampler: Option<String>,
     pub(crate) training_math: Option<String>,
+    /// The `input_contract` member as written (`no_state_digest_v1`).
+    pub(crate) input_contract: Option<Value>,
 }
 
 impl CollectionTrajectoryFieldsV1 {
     /// Validation's reads of a parsed document: a missing episode is `null`,
-    /// and a learner sampler or training math that is not a string counts as
-    /// absent.
+    /// a learner sampler or training math that is not a string counts as
+    /// absent, and an input contract is read as written (an explicit `null`
+    /// is not absent).
     pub(crate) fn of_document_v1(document: &Value) -> Self {
         let string = |field| {
             document
@@ -60,6 +63,7 @@ impl CollectionTrajectoryFieldsV1 {
             episode: document["episode"].clone(),
             learner_sampler: string("learner_sampler"),
             training_math: string("training_math"),
+            input_contract: document.get("input_contract").cloned(),
         }
     }
 
@@ -67,12 +71,19 @@ impl CollectionTrajectoryFieldsV1 {
     /// writes, without parsing them: the episode holds only integers,
     /// strings, booleans and paths, so its value tree equals the parsed one,
     /// and the two strings are written exactly when present (training math
-    /// as its identity, omitted for the default).
+    /// as its identity, omitted for the default), as is the input contract,
+    /// whose strings, integers and path form the same tree.
     fn of_trajectory_v1(trajectory: &ExpandedTrajectoryV1) -> Result<Self, String> {
         Ok(Self {
             episode: serde_json::to_value(&trajectory.episode).map_err(err)?,
             learner_sampler: trajectory.learner_sampler.clone(),
             training_math: trajectory.training_math.identity_v1().map(str::to_owned),
+            input_contract: trajectory
+                .input_contract
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(err)?,
         })
     }
 }
