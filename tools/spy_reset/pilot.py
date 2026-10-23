@@ -55,8 +55,13 @@ TP1B2_PANEL_NS = "tp1b2-panel-20261020"
 NSD5_PANEL_NS = "nsd5-panel-v1"
 # OH1 ordinary-RL headroom (collab LANES/ordinary-headroom-20261022, DESIGN.md section 3).
 OH1_PANEL_NS = "oh1-panel-20261022"
+# OH2 one more doubling (collab LANES/ordinary-scaling-oh2-20261023, DESIGN.md section 3): two panel namespaces of 12
+# seed families each (H plays both, 24 families), and the R3 headroom screen's namespace.
+OH2_PANEL_NS_A = "oh2-panel-20261024a"
+OH2_PANEL_NS_B = "oh2-panel-20261024b"
+OH2_SCREEN_NS = "oh2-screen-20261024"
 PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS,
-                    OH1_PANEL_NS)
+                    OH1_PANEL_NS, OH2_PANEL_NS_A, OH2_PANEL_NS_B, OH2_SCREEN_NS)
 
 
 def key(parts: list) -> bytes:
