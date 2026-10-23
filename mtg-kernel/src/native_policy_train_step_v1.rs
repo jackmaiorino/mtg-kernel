@@ -98,6 +98,8 @@ use line_b_auxiliary_v1::LineBPermutationKindV1;
 pub(crate) use line_b_auxiliary_v1::{
     line_b_permuted_input_v1, LineBAuxiliaryInputV1, LineBAuxiliaryResultV1, LineBAuxiliaryRootV1,
 };
+#[cfg(test)]
+mod no_state_digest_tests;
 pub(crate) mod retention_v1;
 mod weighted_v3;
 
@@ -935,6 +937,24 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     PortableMathUnsupported {
         path: &'static str,
     },
+    /// The no-state-digest input contract (`no_state_digest_v1`) covers only
+    /// the ordinary CPU learner: the terminal and GAE losses on canonical
+    /// inputs, with sequential or fixed-partition backward. Every other
+    /// learner path refuses a state that trains under it.
+    NoStateDigestUnsupported {
+        path: &'static str,
+    },
+    /// A no-state-digest invariant failed: a state-digest column of
+    /// `state_encoder.0.weight` or of either Adam moment is not +0.0 (bits
+    /// 0), or the state encoder bias holds -0.0. Never repaired.
+    NoStateDigestInvariant {
+        code: &'static str,
+    },
+    /// A thread of a no-state-digest train step is not in the pinned MXCSR
+    /// state (`deterministic_math_v1`); carries the observed register.
+    MxcsrPinnedState {
+        observed: u32,
+    },
 }
 
 impl Display for NativePolicyTrainErrorV1 {
@@ -982,6 +1002,118 @@ pub(crate) struct NativePolicyValueTrainStateV1 {
     /// Which tanh, exp and ln this state's train steps compute with. Not part
     /// of the state digest or snapshot: records carry it beside them.
     training_math: TrainingMathV1,
+    /// The no-state-digest input contract (`no_state_digest_v1`): the
+    /// state-digest columns of `state_encoder.0.weight`, or None. Not part of
+    /// the state digest or snapshot: records carry the contract beside them.
+    /// Under it every committed step keeps those columns of the parameters
+    /// and both moments at +0.0 and the state encoder bias free of -0.0, and
+    /// every thread of the step's arithmetic verifies the pinned MXCSR.
+    no_state_digest_columns: Option<std::ops::Range<usize>>,
+    /// Test-only: workers dirty their own MXCSR before verifying it.
+    #[cfg(test)]
+    dirty_worker_mxcsr_for_test: bool,
+}
+
+/// Which threads of a train step verify the pinned MXCSR state
+/// (`deterministic_math_v1`): none for an ordinary state, or the
+/// coordinating thread and every spawned worker under the no-state-digest
+/// contract, whose zeroed and removed columns agree only in that state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ThreadMxcsrCheckV1 {
+    Off,
+    Verify,
+    /// Test-only: a spawned worker sets its own flush-to-zero bit first.
+    #[cfg(test)]
+    DirtyWorkersForTest,
+}
+
+impl ThreadMxcsrCheckV1 {
+    /// Verifies the calling thread; never repairs it.
+    pub(crate) fn verify_v1(self) -> Result<(), NativePolicyTrainErrorV1> {
+        if self == Self::Off {
+            return Ok(());
+        }
+        crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|error| {
+            NativePolicyTrainErrorV1::MxcsrPinnedState {
+                observed: error.observed_v1(),
+            }
+        })
+    }
+
+    /// [`Self::verify_v1`] on entry to a spawned worker thread.
+    pub(crate) fn verify_worker_v1(self) -> Result<(), NativePolicyTrainErrorV1> {
+        #[cfg(all(test, target_arch = "x86_64"))]
+        if self == Self::DirtyWorkersForTest {
+            // The worker exits after its job, so the dirty register dies
+            // with it.
+            crate::deterministic_math_v1::write_mxcsr_v1(
+                crate::deterministic_math_v1::read_mxcsr_v1() | (1 << 15),
+            );
+        }
+        self.verify_v1()
+    }
+}
+
+/// Whether every value of the `columns` of a `[rows, width]` matrix is +0.0
+/// (bits 0; -0.0 fails).
+pub(crate) fn columns_are_positive_zero_v1(
+    values: &[f32],
+    width: usize,
+    columns: std::ops::Range<usize>,
+) -> bool {
+    width != 0
+        && columns.end <= width
+        && values.len().is_multiple_of(width)
+        && values.chunks_exact(width).all(|row| {
+            row[columns.clone()]
+                .iter()
+                .all(|value| value.to_bits() == 0)
+        })
+}
+
+/// The no-state-digest invariants of one state: the `columns` of
+/// `state_encoder.0.weight` and of both of its moments are +0.0 (bits 0),
+/// and the state encoder bias holds no -0.0, whose first-layer sums the
+/// zeroed columns would turn into +0.0 where removed ones would not.
+fn check_no_state_digest_state_v1(
+    columns: &std::ops::Range<usize>,
+    parameters: &[NativeNamedParameterV1],
+    first_moments: &[Vec<f32>],
+    second_moments: &[Vec<f32>],
+) -> Result<(), NativePolicyTrainErrorV1> {
+    let (Some(weight), Some(bias)) = (
+        parameters.get(STATE_FIRST_WEIGHT),
+        parameters.get(STATE_FIRST_BIAS),
+    ) else {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    };
+    if weight.name != EXPECTED_PARAMETER_NAMES[STATE_FIRST_WEIGHT]
+        || bias.name != EXPECTED_PARAMETER_NAMES[STATE_FIRST_BIAS]
+    {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
+    let clear = |values: Option<&Vec<f32>>| {
+        values.is_some_and(|values| {
+            columns_are_positive_zero_v1(values, STATE_ENCODER_INPUT, columns.clone())
+        })
+    };
+    let code =
+        if !columns_are_positive_zero_v1(&weight.values, STATE_ENCODER_INPUT, columns.clone()) {
+            "no-state-digest-weight-column-not-positive-zero"
+        } else if !clear(first_moments.get(STATE_FIRST_WEIGHT)) {
+            "no-state-digest-first-moment-column-not-positive-zero"
+        } else if !clear(second_moments.get(STATE_FIRST_WEIGHT)) {
+            "no-state-digest-second-moment-column-not-positive-zero"
+        } else if bias
+            .values
+            .iter()
+            .any(|value| value.to_bits() == 0x8000_0000)
+        {
+            "no-state-digest-negative-zero-state-encoder-bias"
+        } else {
+            return Ok(());
+        };
+    Err(NativePolicyTrainErrorV1::NoStateDigestInvariant { code })
 }
 
 #[derive(Clone, Copy)]
@@ -1010,6 +1142,9 @@ impl NativePolicyValueTrainStateV1 {
             second_moments,
             scorer_bias_anchor_bits,
             training_math: TrainingMathV1::PlatformLibm,
+            no_state_digest_columns: None,
+            #[cfg(test)]
+            dirty_worker_mxcsr_for_test: false,
         };
         state.validate_state_v1()?;
         Ok(state)
@@ -1044,6 +1179,9 @@ impl NativePolicyValueTrainStateV1 {
                 .collect(),
             scorer_bias_anchor_bits,
             training_math: TrainingMathV1::PlatformLibm,
+            no_state_digest_columns: None,
+            #[cfg(test)]
+            dirty_worker_mxcsr_for_test: false,
         };
         candidate.validate_state_v1()?;
         Ok(candidate)
@@ -1080,6 +1218,88 @@ impl NativePolicyValueTrainStateV1 {
             Ok(())
         } else {
             Err(NativePolicyTrainErrorV1::PortableMathUnsupported { path })
+        }
+    }
+
+    /// Trains under the no-state-digest input contract from now on: the
+    /// state-digest `columns` of `state_encoder.0.weight` stay +0.0 in the
+    /// parameters and both moments. The live state must already hold them
+    /// there, and its state encoder bias no -0.0; nothing is zeroed here.
+    pub(crate) fn install_no_state_digest_v1(
+        &mut self,
+        columns: std::ops::Range<usize>,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        if self.no_state_digest_columns.is_some() {
+            return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant {
+                code: "no-state-digest-contract-already-installed",
+            });
+        }
+        if columns.is_empty() || columns.end > STATE_ENCODER_INPUT {
+            return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant {
+                code: "no-state-digest-columns-out-of-range",
+            });
+        }
+        let parameters = self.model.parameter_snapshot_v1();
+        check_no_state_digest_state_v1(
+            &columns,
+            &parameters,
+            &self.first_moments,
+            &self.second_moments,
+        )?;
+        self.no_state_digest_columns = Some(columns);
+        Ok(())
+    }
+
+    /// The installed contract's state-digest columns, if any.
+    pub(crate) fn no_state_digest_columns_v1(&self) -> Option<std::ops::Range<usize>> {
+        self.no_state_digest_columns.clone()
+    }
+
+    /// Refuses a learner path the no-state-digest contract does not cover.
+    pub(crate) fn require_no_input_contract_v1(
+        &self,
+        path: &'static str,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        if self.no_state_digest_columns.is_none() {
+            Ok(())
+        } else {
+            Err(NativePolicyTrainErrorV1::NoStateDigestUnsupported { path })
+        }
+    }
+
+    /// Which threads of this state's train steps verify the pinned MXCSR.
+    pub(crate) fn thread_mxcsr_check_v1(&self) -> ThreadMxcsrCheckV1 {
+        #[cfg(test)]
+        if self.dirty_worker_mxcsr_for_test {
+            return ThreadMxcsrCheckV1::DirtyWorkersForTest;
+        }
+        if self.no_state_digest_columns.is_some() {
+            ThreadMxcsrCheckV1::Verify
+        } else {
+            ThreadMxcsrCheckV1::Off
+        }
+    }
+
+    /// Test-only: every worker of this state's later train steps dirties its
+    /// own MXCSR before verifying it.
+    #[cfg(test)]
+    pub(crate) fn dirty_worker_mxcsr_for_test_v1(&mut self) {
+        self.dirty_worker_mxcsr_for_test = true;
+    }
+
+    /// The candidate of a step about to commit must keep the contract's
+    /// invariants; a refusal leaves the live state unchanged.
+    fn check_no_state_digest_candidate_v1(
+        &self,
+        parameters: &[NativeNamedParameterV1],
+        first_moments: &[Vec<f32>],
+        second_moments: &[Vec<f32>],
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        match &self.no_state_digest_columns {
+            None => Ok(()),
+            Some(columns) => {
+                check_no_state_digest_state_v1(columns, parameters, first_moments, second_moments)
+            }
         }
     }
 
@@ -1154,6 +1374,13 @@ impl NativePolicyValueTrainStateV1 {
         self.validate_state_v1()?;
         let mut candidate = Self::from_snapshot_v1(self.model.clone(), snapshot)?;
         candidate.training_math = self.training_math;
+        if let Some(columns) = &self.no_state_digest_columns {
+            candidate.install_no_state_digest_v1(columns.clone())?;
+        }
+        #[cfg(test)]
+        {
+            candidate.dirty_worker_mxcsr_for_test = self.dirty_worker_mxcsr_for_test;
+        }
         *self = candidate;
         Ok(())
     }
@@ -1578,6 +1805,7 @@ impl NativePolicyValueTrainStateV1 {
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
+        self.require_no_input_contract_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v3(
             self,
             groups,
@@ -1606,6 +1834,7 @@ impl NativePolicyValueTrainStateV1 {
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
+        self.require_no_input_contract_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v4(
             self,
             groups,
@@ -1628,6 +1857,7 @@ impl NativePolicyValueTrainStateV1 {
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
+        self.require_no_input_contract_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v3(
             self,
             groups,
@@ -1651,6 +1881,7 @@ impl NativePolicyValueTrainStateV1 {
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
+        self.require_no_input_contract_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v4(
             self,
             groups,
@@ -1684,6 +1915,7 @@ impl NativePolicyValueTrainStateV1 {
         NativePolicyTrainErrorV1,
     > {
         self.require_platform_math_v1("cuda")?;
+        self.require_no_input_contract_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_line_b_v1(
             self,
             matches!(
@@ -1857,6 +2089,22 @@ impl NativePolicyValueTrainStateV1 {
                 path: "packed forward input",
             });
         }
+        // The no-state-digest contract covers canonical inputs only, and
+        // every thread below must run in the pinned MXCSR state.
+        let mxcsr = self.thread_mxcsr_check_v1();
+        if self.no_state_digest_columns.is_some()
+            && groups
+                .iter()
+                .flat_map(|group| group.substeps)
+                .any(|substep| {
+                    matches!(&substep.forward, NativePolicyForwardInputV1::Packed { .. })
+                })
+        {
+            return Err(NativePolicyTrainErrorV1::NoStateDigestUnsupported {
+                path: "packed forward input",
+            });
+        }
+        mxcsr.verify_v1()?;
 
         let parameters = self.model.parameter_snapshot_v1();
         validate_parameter_manifest(&parameters)?;
@@ -2129,6 +2377,7 @@ impl NativePolicyValueTrainStateV1 {
                     gradients,
                     &execution_context,
                     math,
+                    mxcsr,
                 )?;
                 drop(group_tapes);
                 (gradients, gauge_accumulator, ReverseWorkspaceV1::default())
@@ -2174,6 +2423,11 @@ impl NativePolicyValueTrainStateV1 {
             &next_first_moments,
             &next_second_moments,
             self.scorer_bias_anchor_bits,
+        )?;
+        self.check_no_state_digest_candidate_v1(
+            &next_parameters,
+            &next_first_moments,
+            &next_second_moments,
         )?;
 
         let gradient_snapshot = named_state_snapshot(&parameters, &gradients);
@@ -2297,6 +2551,7 @@ fn fixed_partition_backward_gradients_v1(
     mut reduced_gradients: Vec<Vec<f32>>,
     execution_context: &FixedPartitionBackwardExecutionContextV1,
     math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
 ) -> Result<Vec<Vec<f32>>, NativePolicyTrainErrorV1> {
     if worker_limit == 0 {
         return Err(NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerLimitZero);
@@ -2331,6 +2586,18 @@ fn fixed_partition_backward_gradients_v1(
                     thread::Builder::new()
                         .name(format!("native-fixed-backward-{worker_index}"))
                         .spawn_scoped(scope, move || {
+                            // A worker outside the pinned MXCSR state fails
+                            // each of its partitions without computing them.
+                            if let Err(error) = mxcsr.verify_worker_v1() {
+                                return chunk
+                                    .iter()
+                                    .map(|_| {
+                                        FixedPartitionBackwardOutcomeV1::Completed(Err(
+                                            error.clone()
+                                        ))
+                                    })
+                                    .collect();
+                            }
                             fixed_partition_backward_outcomes_v1(
                                 parameters,
                                 groups,

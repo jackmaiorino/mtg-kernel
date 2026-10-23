@@ -10,17 +10,42 @@
 //!
 //! A converted source keeps the ordinary source shape: its `play_import` is a
 //! [`NoStateDigestImportV1`] naming the original import and a pinned
-//! [`NoStateDigestConversionV1`]. The loader validates the original model
-//! exactly as before, installs the contract and checks the result against the
-//! conversion record. Training readers refuse the import schema, so nothing
-//! trains under this contract yet. `MTG_KERNEL_NO_STATE_DIGEST_CHECK=1` keeps
+//! [`NoStateDigestConversionV1`]. `MTG_KERNEL_NO_STATE_DIGEST_CHECK=1` keeps
 //! the unconverted model and compares every forward with it, bit for bit.
+//!
+//! Training (lane `no-digest-training-20261023`, DESIGN.md v2) keeps the
+//! padded layout: the digest columns of `state_encoder.0.weight` and of both
+//! Adam moments stay +0.0, and every scored row's digest inputs are +0.0
+//! bits. Backward then gives those columns signed-zero terms that leave +0.0
+//! accumulators at +0.0, Adam's exact-zero shortcut keeps W, m and v there,
+//! and the kept parameters follow the 1,403-wide model's arithmetic. Every
+//! invariant is checked and refused, never repaired. One admission rule,
+//! [`initialize_v1`], serves inference, opponents, training, the update's
+//! readback and the driver: at run start it converts the base checkpoint's
+//! full optimizer state, and a continuation admits only a checkpoint of the
+//! same conversion. Only an ordinary import or a fresh-initialization source
+//! trains; a converted BO3, registry-evolution, registry-transfer or
+//! terminal-teacher source keeps the inference-only install ([`load_v1`]).
+//! Records name the contract in an `input_contract` member
+//! ([`InputContractRecordV1`]), absent from every unconverted record.
 
 use super::{
-    ensure, err, load_expanded_inference_any_math_v1, publish_json_bytes_v1, read_pinned,
-    read_pinned_bytes, sha, ExpandedInferenceIdentityV1, ExpandedModelSourceV1, PinnedFileV1,
+    ensure, err, hex, identity_valid, initialize_from_source_bytes_v1,
+    load_expanded_inference_any_math_v1, ordinary_checkpoint_schema_v1, publish_json_bytes_v1,
+    read_ordinary_checkpoint_v1, read_pinned, read_pinned_bytes, restore_checkpoint_state_v1, sha,
+    CheckpointInputExpectationV1, DecisionRecordV1, ExpandedCheckpointV1,
+    ExpandedInferenceIdentityV1, ExpandedModelSourceV1, ParameterBitsV1, PinnedFileV1,
 };
-use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
+use crate::card_def::KERNEL_CARDDB_HASH;
+use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
+use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
+use crate::native_policy_train_step_v1::{
+    columns_are_positive_zero_v1, NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+};
+use crate::sideboard_play_policy_v1::{
+    no_negative_zero_v1, FreshLineageGenerationV1, FrozenPlayPolicyV1,
+};
+use crate::training_math_v1::TrainingMathV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -35,6 +60,7 @@ pub const STATE_DIGEST_COLUMNS_V1: std::ops::Range<usize> = 123..219;
 /// The original state encoder's input width.
 pub const STATE_ENCODER_INPUT_V1: usize = 1_499;
 const STATE_ENCODER_WEIGHT: &str = "state_encoder.0.weight";
+const STATE_ENCODER_BIAS: &str = "state_encoder.0.bias";
 
 /// A converted model's `play_import`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,24 +148,234 @@ fn install_v1(
     )
 }
 
-/// The loader branch for a [`NoStateDigestImportV1`] `play_import`. Never
-/// inlined: its policy locals must not enlarge the ordinary loader's frame,
-/// which several binaries still reach on a 1 MiB main thread.
+/// The `input_contract` member of a converted lineage's training records
+/// (trajectories, collection and update receipts, checkpoints, `run.json`).
+/// Absent from every unconverted record, which keeps its bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputContractRecordV1 {
+    pub contract: String,
+    /// `[start, end)` of the zeroed `state_encoder.0.weight` input columns.
+    pub state_digest_columns: [usize; 2],
+    /// The conversion record the lineage started from. Two conversions of
+    /// one import share the converted digest; this pin tells them apart.
+    pub conversion: PinnedFileV1,
+}
+
+impl InputContractRecordV1 {
+    fn of_conversion_v1(conversion: PinnedFileV1) -> Self {
+        Self {
+            contract: CONTRACT_V1.into(),
+            state_digest_columns: [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
+            conversion,
+        }
+    }
+}
+
+/// Absence keeps the original records' wire shape; an explicitly present
+/// `null` is not absence and stays invalid, as the strict readers refused
+/// the then unknown member before the contract existed.
+pub(super) fn deserialize_present_input_contract_v1<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<InputContractRecordV1>, D::Error> {
+    InputContractRecordV1::deserialize(deserializer).map(Some)
+}
+
+/// The contract a validated record or model runs under.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EffectiveContractV1 {
+    None,
+    NoStateDigest {
+        converted_digest: String,
+        conversion: PinnedFileV1,
+    },
+}
+
+/// A validated feature identity: the base generation and its digests, which
+/// dispatch replay, and the contract its inputs follow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResolvedContractV1 {
+    pub(crate) generation: FreshLineageGenerationV1,
+    pub(crate) base_contract_digest: &'static str,
+    pub(crate) base_encoding_digest: &'static str,
+    pub(crate) effective: EffectiveContractV1,
+}
+
+impl ResolvedContractV1 {
+    /// The converted digest under the contract, None otherwise.
+    pub(crate) fn input_contract_digest_v1(&self) -> Option<&str> {
+        match &self.effective {
+            EffectiveContractV1::None => None,
+            EffectiveContractV1::NoStateDigest {
+                converted_digest, ..
+            } => Some(converted_digest),
+        }
+    }
+
+    fn conversion_v1(&self) -> Option<&PinnedFileV1> {
+        match &self.effective {
+            EffectiveContractV1::None => None,
+            EffectiveContractV1::NoStateDigest { conversion, .. } => Some(conversion),
+        }
+    }
+
+    /// Requires the record's contract to be exactly `policy`'s: the same
+    /// converted digest and conversion, or neither.
+    pub(crate) fn require_policy_contract_v1(
+        &self,
+        policy: &FrozenPlayPolicyV1,
+    ) -> Result<(), String> {
+        ensure(
+            self.input_contract_digest_v1() == policy.input_contract_v1()
+                && self.conversion_v1() == policy.input_contract_conversion_v1(),
+            "record and model no-state-digest contracts differ",
+        )
+    }
+}
+
+/// The one resolver of a stored `(contract, encoding, cards)` identity and
+/// its `input_contract` member. Without the member it admits exactly the V3
+/// and V4 pairs, as [`identity_valid`] does; with it, exactly a converted
+/// digest `converted_contract_digest_v1(base)` beside its own base
+/// generation's encoding digest. The marker and the digest are checked
+/// together, so neither passes without the other.
+pub(crate) fn resolve_contract_v1(
+    contract: &str,
+    encoding: &str,
+    cards: &str,
+    input_contract: Option<&InputContractRecordV1>,
+) -> Result<ResolvedContractV1, String> {
+    let generations = [
+        (
+            FreshLineageGenerationV1::V3,
+            FEATURE_CONTRACT_DIGEST_V3,
+            FEATURE_ENCODING_DIGEST_V3,
+        ),
+        (
+            FreshLineageGenerationV1::V4,
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V4,
+        ),
+    ];
+    let Some(record) = input_contract else {
+        identity_valid(contract, encoding, cards)?;
+        let (generation, base_contract_digest, base_encoding_digest) = generations
+            .into_iter()
+            .find(|(_, base, _)| *base == contract)
+            .ok_or("successor feature identity differs")?;
+        return Ok(ResolvedContractV1 {
+            generation,
+            base_contract_digest,
+            base_encoding_digest,
+            effective: EffectiveContractV1::None,
+        });
+    };
+    ensure(
+        record.contract == CONTRACT_V1
+            && record.state_digest_columns
+                == [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
+        "unsupported no-state-digest input contract",
+    )?;
+    let (generation, base_contract_digest, base_encoding_digest) = generations
+        .into_iter()
+        .find(|(_, base, base_encoding)| {
+            *base_encoding == encoding && converted_contract_digest_v1(base) == contract
+        })
+        .ok_or("successor feature identity differs from its no-state-digest contract")?;
+    ensure(
+        cards == format!("{KERNEL_CARDDB_HASH:016x}"),
+        "successor card database differs",
+    )?;
+    Ok(ResolvedContractV1 {
+        generation,
+        base_contract_digest,
+        base_encoding_digest,
+        effective: EffectiveContractV1::NoStateDigest {
+            converted_digest: contract.to_owned(),
+            conversion: record.conversion.clone(),
+        },
+    })
+}
+
+/// Every stored row of a trajectory under the contract, opponent rows
+/// included, holds +0.0 (bits 0; -0.0 is refused too) in its state-digest
+/// inputs. With zero weight columns a nonzero input would still reproduce
+/// the recorded forward, but not the weight gradient's zero.
+pub(super) fn check_trajectory_rows_v1(decisions: &[DecisionRecordV1]) -> Result<(), String> {
+    ensure(
+        decisions.iter().all(|row| {
+            row.tensor
+                .state
+                .get(STATE_DIGEST_COLUMNS_V1)
+                .is_some_and(|digest| digest.iter().all(|bits| *bits == 0))
+        }),
+        "no-state-digest contract: a stored state-digest input is not +0.0",
+    )
+}
+
+/// The `input_contract` member `policy`'s training records carry: None for
+/// the original inputs. A converted model without a bound conversion (an
+/// in-memory conversion) writes no training records.
+pub(crate) fn policy_contract_record_v1(
+    policy: &FrozenPlayPolicyV1,
+) -> Result<Option<InputContractRecordV1>, String> {
+    if policy.input_contract_v1().is_none() {
+        return Ok(None);
+    }
+    let conversion = policy
+        .input_contract_conversion_v1()
+        .ok_or("a converted model without a pinned conversion writes no training records")?;
+    Ok(Some(InputContractRecordV1::of_conversion_v1(
+        conversion.clone(),
+    )))
+}
+
+/// Whether `source`'s `play_import` is a [`NoStateDigestImportV1`]. A read
+/// or parse failure counts as no: the loader reports it as before.
+pub(crate) fn is_converted_source_v1(source: &ExpandedModelSourceV1) -> bool {
+    fs::read(&source.play_import.path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .is_some_and(|probe| probe.get("schema").and_then(Value::as_str) == Some(IMPORT_SCHEMA_V1))
+}
+
+/// The feature contract digest `policy`'s records carry: the converted
+/// digest under the contract, its base generation's otherwise.
+pub(crate) fn effective_contract_digest_v1(policy: &FrozenPlayPolicyV1) -> String {
+    policy.input_contract_v1().map_or_else(
+        || {
+            policy
+                .feature_identity_v1()
+                .feature_contract_digest
+                .to_owned()
+        },
+        str::to_owned,
+    )
+}
+
+/// The inference branch for a [`NoStateDigestImportV1`] `play_import`. A
+/// base that trains (`base_trains_v1`) loads through the one admission rule
+/// of [`initialize_v1`], whose receipt describes the converted optimizer
+/// state. Any other base (BO3, registry-evolution, registry-transfer or
+/// terminal-teacher inference sources) keeps the inference-only install
+/// that predates training: the base loads through its own inference loader
+/// at the conversion's base checkpoint, the contract is installed on the
+/// policy alone, and no train state or training record exists for it.
+/// Never inlined: its policy locals must not enlarge the ordinary loader's
+/// frame, which several binaries still reach on a 1 MiB main thread.
 #[inline(never)]
 pub(super) fn load_v1(
     source: &ExpandedModelSourceV1,
     bytes: &[u8],
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
-    let import: NoStateDigestImportV1 = serde_json::from_slice(bytes).map_err(err)?;
+    let (import, conversion) = read_import_v1(bytes)?;
+    if base_trains_v1(&read_pinned_bytes(&import.base_play_import)?)? {
+        let (policy, state) = initialize_v1(source, bytes, None)?;
+        let identity = super::inference_identity_v1(source, &policy, &state)?;
+        return Ok((policy, identity));
+    }
     ensure(
-        import.schema == IMPORT_SCHEMA_V1,
-        "unsupported no-state-digest import",
-    )?;
-    let conversion: NoStateDigestConversionV1 = read_pinned(&import.conversion)?;
-    validate_conversion_v1(&conversion)?;
-    ensure(
-        conversion.base_play_import == import.base_play_import
-            && conversion.base_checkpoint == source.checkpoint,
+        conversion.base_checkpoint == source.checkpoint,
         "the conversion record names another base model",
     )?;
     let base = ExpandedModelSourceV1 {
@@ -151,6 +387,389 @@ pub(super) fn load_v1(
     install_v1(&mut policy, &conversion, check_enabled_v1())?;
     identity.model = policy.actual_model_identity_v1();
     Ok((policy, identity))
+}
+
+/// A converted import and its validated conversion record, which must name
+/// the same base import.
+fn read_import_v1(
+    bytes: &[u8],
+) -> Result<(NoStateDigestImportV1, NoStateDigestConversionV1), String> {
+    let import: NoStateDigestImportV1 = serde_json::from_slice(bytes).map_err(err)?;
+    ensure(
+        import.schema == IMPORT_SCHEMA_V1,
+        "unsupported no-state-digest import",
+    )?;
+    let conversion: NoStateDigestConversionV1 = read_pinned(&import.conversion)?;
+    validate_conversion_v1(&conversion)?;
+    ensure(
+        conversion.base_play_import == import.base_play_import,
+        "the conversion record names another base model",
+    )?;
+    Ok((import, conversion))
+}
+
+/// Whether a base import trains under the contract: an ordinary import (no
+/// schema) or a fresh-initialization source. Every other base is
+/// inference-only.
+fn base_trains_v1(base_bytes: &[u8]) -> Result<bool, String> {
+    let probe: Value = serde_json::from_slice(base_bytes).map_err(err)?;
+    Ok(match probe.get("schema") {
+        None => true,
+        Some(schema) => schema.as_str() == Some(super::fresh_initialization_source::SOURCE_SCHEMA),
+    })
+}
+
+/// [`initialize_v1`] in the shape of the ordinary training loader, which
+/// returns it directly: no registry-transfer context.
+#[inline(never)]
+pub(super) fn initialize_training_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+) -> Result<
+    (
+        FrozenPlayPolicyV1,
+        NativePolicyValueTrainStateV1,
+        Option<super::TransferContextV1>,
+    ),
+    String,
+> {
+    let (policy, state) = initialize_v1(source, bytes, inputs)?;
+    Ok((policy, state, None))
+}
+
+/// The training loader of a [`NoStateDigestImportV1`] source, and its one
+/// admission rule. The base import loads through the ordinary path with the
+/// conversion's pinned base checkpoint and full optimizer state. A source
+/// whose checkpoint is that base checkpoint starts a run: the base state is
+/// converted ([`convert_state_v1`]). Any other checkpoint must continue this
+/// exact conversion ([`continue_state_v1`]). Either way the returned policy
+/// and state carry the contract, and the policy names the conversion.
+#[inline(never)]
+pub(super) fn initialize_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
+    let (import, conversion) = read_import_v1(bytes)?;
+    let run_start = source.checkpoint == conversion.base_checkpoint;
+    let base = ExpandedModelSourceV1 {
+        play_import: import.base_play_import.clone(),
+        feature_transfer: source.feature_transfer.clone(),
+        checkpoint: conversion.base_checkpoint.clone(),
+    };
+    let base_bytes = read_pinned_bytes(&base.play_import)?;
+    ensure(
+        base_trains_v1(&base_bytes)?,
+        "this no-state-digest source's base is inference-only and does not train",
+    )?;
+    let (mut policy, base_state, transfer) =
+        initialize_from_source_bytes_v1(&base, &base_bytes, inputs.filter(|_| run_start))?;
+    ensure(
+        transfer.is_none(),
+        "registry-transfer sources do not train under the no-state-digest contract",
+    )?;
+    let check = check_enabled_v1();
+    let mut state = if run_start {
+        convert_state_v1(&mut policy, base_state, &conversion, check)?
+    } else {
+        continue_state_v1(
+            source,
+            &mut policy,
+            &conversion,
+            &import.conversion,
+            inputs,
+            check,
+        )?
+    };
+    if run_start {
+        policy.bind_input_contract_conversion_v1(import.conversion)?;
+    }
+    state
+        .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
+        .map_err(err)?;
+    Ok((policy, state))
+}
+
+/// The base state with the digest columns of W, m and v at +0.0, checked
+/// against the conversion record and its 1,403-wide checkpoint before the
+/// contract is installed on `policy`. The base model, still installed when
+/// the contract takes it, becomes the check model.
+fn convert_state_v1(
+    policy: &mut FrozenPlayPolicyV1,
+    base_state: NativePolicyValueTrainStateV1,
+    conversion: &NoStateDigestConversionV1,
+    check: bool,
+) -> Result<NativePolicyValueTrainStateV1, String> {
+    let base = base_state.snapshot_v1().map_err(err)?;
+    let mut candidate = base.clone();
+    for list in [
+        &mut candidate.parameters,
+        &mut candidate.first_moments,
+        &mut candidate.second_moments,
+    ] {
+        let weight = list
+            .iter_mut()
+            .find(|parameter| parameter.name == STATE_ENCODER_WEIGHT)
+            .ok_or("state encoder weight is missing")?;
+        ensure(
+            weight.shape
+                == [
+                    weight.values.len() / STATE_ENCODER_INPUT_V1,
+                    STATE_ENCODER_INPUT_V1,
+                ]
+                && weight.values.len().is_multiple_of(STATE_ENCODER_INPUT_V1),
+            "state encoder width differs",
+        )?;
+        for row in weight.values.chunks_exact_mut(STATE_ENCODER_INPUT_V1) {
+            row[STATE_DIGEST_COLUMNS_V1].fill(0.0);
+        }
+    }
+    ensure(
+        candidate
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == STATE_ENCODER_BIAS)
+            .is_some_and(|bias| no_negative_zero_v1(&bias.values)),
+        "a state encoder bias of -0.0 has no exact no-state-digest conversion",
+    )?;
+    let mut converted =
+        NativePolicyValueTrainStateV1::from_snapshot_v1(base_state.model_v1().clone(), &candidate)
+            .map_err(err)?;
+    converted.set_training_math_v1(base_state.training_math_v1());
+    ensure(
+        converted.model_v1().parameter_manifest_sha256_v1()
+            == conversion.converted.model_parameter_sha256,
+        "the converted parameters differ from the conversion record",
+    )?;
+    ensure(
+        converted.adam_step_v1() == base.adam_step
+            && converted.scorer_bias_anchor_f32_bits_v1() == base.scorer_bias_anchor_bits
+            && converted.training_math_v1() == base_state.training_math_v1(),
+        "the conversion changed the Adam step, gauge anchor or training math",
+    )?;
+    match (
+        &conversion.base_checkpoint,
+        &conversion.converted_checkpoint,
+    ) {
+        (None, None) => {}
+        (Some(_), Some(pin)) => check_converted_checkpoint_v1(
+            pin,
+            &ConvertedCheckpointExpectationV1 {
+                schema: ordinary_checkpoint_schema_v1(policy.identity_v1()),
+                base_state_sha256: hex(&base.state_sha256_v1().map_err(err)?),
+                converted_contract: &conversion.converted.feature_contract_digest,
+                encoding: policy.feature_identity_v1().feature_encoding_digest,
+                training_math: base_state.training_math_v1(),
+            },
+            &candidate,
+        )?,
+        _ => return Err("the conversion record's checkpoints differ in presence".into()),
+    }
+    install_v1(policy, conversion, check)?;
+    Ok(converted)
+}
+
+/// A trained checkpoint of this conversion: its contract member names
+/// exactly `conversion_pin` and the derived digest beside the base encoding,
+/// and its stored W/m/v digest columns are already +0.0 bits, checked before
+/// anything could zero them. The base model (the conversion's pinned base
+/// checkpoint) must still be the recorded one; it supplies the check model's
+/// original digest columns. A trained checkpoint is never compared with the
+/// initial converted parameter digest.
+fn continue_state_v1(
+    source: &ExpandedModelSourceV1,
+    policy: &mut FrozenPlayPolicyV1,
+    conversion: &NoStateDigestConversionV1,
+    conversion_pin: &PinnedFileV1,
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+    check: bool,
+) -> Result<NativePolicyValueTrainStateV1, String> {
+    let pin = source
+        .checkpoint
+        .as_ref()
+        .ok_or("a no-state-digest continuation requires a checkpoint")?;
+    let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    if let Some(inputs) = inputs {
+        inputs.validate_v1(
+            &saved.trajectories,
+            saved.learning_rate_bits,
+            saved.value_coefficient_bits,
+        )?;
+    }
+    let record = saved
+        .input_contract
+        .as_ref()
+        .ok_or("an unconverted checkpoint does not continue a no-state-digest source")?;
+    ensure(
+        record.conversion == *conversion_pin,
+        "the checkpoint belongs to another no-state-digest conversion",
+    )?;
+    let resolved = resolve_contract_v1(
+        &saved.feature_contract_digest,
+        &saved.feature_encoding_digest,
+        &saved.card_db_hash,
+        Some(record),
+    )?;
+    ensure(
+        resolved.input_contract_digest_v1()
+            == Some(conversion.converted.feature_contract_digest.as_str())
+            && resolved.base_contract_digest == conversion.base.feature_contract_digest,
+        "the checkpoint's no-state-digest contract differs from the conversion's",
+    )?;
+    check_saved_columns_v1(&saved)?;
+    install_v1(policy, conversion, check)?;
+    policy.bind_input_contract_conversion_v1(conversion_pin.clone())?;
+    let model = policy.training_model_v3();
+    restore_checkpoint_state_v1(&saved, policy, model)
+}
+
+/// The stored bits of a checkpoint's W, m and v digest columns are +0.0 and
+/// its state encoder bias has no -0.0.
+fn check_saved_columns_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+    for (list, what) in [
+        (&saved.parameters, "parameter"),
+        (&saved.first_moments, "first moment"),
+        (&saved.second_moments, "second moment"),
+    ] {
+        let weight = list
+            .iter()
+            .find(|parameter| parameter.name == STATE_ENCODER_WEIGHT)
+            .ok_or("state encoder weight is missing")?;
+        let values: Vec<f32> = weight
+            .values
+            .iter()
+            .map(|bits| f32::from_bits(*bits))
+            .collect();
+        ensure(
+            columns_are_positive_zero_v1(&values, STATE_ENCODER_INPUT_V1, STATE_DIGEST_COLUMNS_V1),
+            &format!("no-state-digest contract: a stored state-digest {what} column is not +0.0"),
+        )?;
+    }
+    let bias = saved
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == STATE_ENCODER_BIAS)
+        .ok_or("state encoder bias is missing")?;
+    ensure(
+        bias.values.iter().all(|bits| *bits != 0x8000_0000),
+        "a state encoder bias of -0.0 has no exact no-state-digest conversion",
+    )
+}
+
+/// The members of the 1,403-wide conversion artifact
+/// ([`converted_checkpoint_bytes_v1`]) its comparison reads. It is not a
+/// resumable checkpoint: it records `source_state_sha256`, not
+/// `state_sha256`, and the narrower state encoder.
+#[derive(Deserialize)]
+struct ConvertedCheckpointViewV1 {
+    schema: String,
+    source_state_sha256: String,
+    feature_contract_digest: String,
+    feature_encoding_digest: String,
+    card_db_hash: String,
+    adam_step: u64,
+    scorer_bias_anchor_bits: u32,
+    parameters: Vec<ParameterBitsV1>,
+    first_moments: Vec<ParameterBitsV1>,
+    second_moments: Vec<ParameterBitsV1>,
+    input_contract: ConvertedCheckpointContractV1,
+    #[serde(default)]
+    training_math: TrainingMathV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConvertedCheckpointContractV1 {
+    contract: String,
+    state_digest_columns: [usize; 2],
+}
+
+/// What the conversion's 1,403-wide checkpoint must record: the base
+/// checkpoint's schema and state, the converted contract beside the base
+/// encoding, and the base optimizer's training math.
+struct ConvertedCheckpointExpectationV1<'a> {
+    schema: &'static str,
+    base_state_sha256: String,
+    converted_contract: &'a str,
+    encoding: &'static str,
+    training_math: TrainingMathV1,
+}
+
+/// Every kept bit of the converted parameters and both moments, with every
+/// tensor's exact shape (the state encoder weight and its moments 1,403
+/// wide), the Adam step, gauge anchor, training math and the artifact's
+/// identity, against the conversion's 1,403-wide checkpoint, which names the
+/// base state it was cut from.
+fn check_converted_checkpoint_v1(
+    pin: &PinnedFileV1,
+    expected: &ConvertedCheckpointExpectationV1<'_>,
+    candidate: &NativePolicyValueTrainSnapshotV1,
+) -> Result<(), String> {
+    let view: ConvertedCheckpointViewV1 = read_pinned(pin)?;
+    ensure(
+        view.schema == expected.schema
+            && view.feature_encoding_digest == expected.encoding
+            && view.card_db_hash == format!("{KERNEL_CARDDB_HASH:016x}"),
+        "the converted checkpoint's schema, encoding or card database differs",
+    )?;
+    ensure(
+        view.source_state_sha256 == expected.base_state_sha256
+            && view.feature_contract_digest == expected.converted_contract
+            && view.input_contract.contract == CONTRACT_V1
+            && view.input_contract.state_digest_columns
+                == [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end]
+            && view.adam_step == candidate.adam_step
+            && view.scorer_bias_anchor_bits == candidate.scorer_bias_anchor_bits
+            && view.training_math == expected.training_math,
+        "the converted checkpoint names another base state or optimizer",
+    )?;
+    for (stored, converted) in [
+        (&view.parameters, &candidate.parameters),
+        (&view.first_moments, &candidate.first_moments),
+        (&view.second_moments, &candidate.second_moments),
+    ] {
+        ensure(
+            stored.len() == converted.len(),
+            "converted checkpoint tensor count differs",
+        )?;
+        for (stored, converted) in stored.iter().zip(converted) {
+            let mut shape = converted.shape.clone();
+            if converted.name == STATE_ENCODER_WEIGHT {
+                shape = vec![
+                    converted.values.len() / STATE_ENCODER_INPUT_V1,
+                    STATE_ENCODER_INPUT_V1 - STATE_DIGEST_COLUMNS_V1.len(),
+                ];
+            }
+            ensure(
+                stored.shape == shape,
+                "converted checkpoint tensor shape differs",
+            )?;
+            let kept: Vec<u32> = if converted.name == STATE_ENCODER_WEIGHT {
+                converted
+                    .values
+                    .chunks_exact(STATE_ENCODER_INPUT_V1)
+                    .flat_map(|row| {
+                        row[..STATE_DIGEST_COLUMNS_V1.start]
+                            .iter()
+                            .chain(&row[STATE_DIGEST_COLUMNS_V1.end..])
+                            .map(|value| value.to_bits())
+                    })
+                    .collect()
+            } else {
+                converted
+                    .values
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect()
+            };
+            ensure(
+                stored.name == converted.name && stored.values == kept,
+                "converted checkpoint differs from the converted state",
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// The four files a conversion writes.
@@ -360,6 +979,9 @@ pub fn convert_no_state_digest_v1(
         record,
     })
 }
+
+#[cfg(test)]
+mod training_tests;
 
 #[cfg(test)]
 mod tests {

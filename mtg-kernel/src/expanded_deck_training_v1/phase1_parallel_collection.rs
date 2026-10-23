@@ -194,6 +194,7 @@ pub(super) fn collect_parallel_v1(
         source: source.clone(),
         identity: inference_identity_v1(&source, &policy, &state)?,
     };
+    let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
     drop(state);
     let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
     let worker_count = workers.min(episodes.len());
@@ -327,6 +328,9 @@ pub(super) fn collect_parallel_v1(
     });
     collection_sampler.record_v1(&mut result);
     training_math.record_v1(&mut result);
+    if let Some(record) = &input_contract {
+        result["input_contract"] = json!(record);
+    }
     if let Some(pin) = non_natural_ledger_pin {
         result["non_natural_ledger"] = json!(pin);
     }

@@ -21,14 +21,14 @@ use crate::fast_sampler::{
 };
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
-use crate::native_flat_tensorizer_v3::{
-    NativeFlatDecisionTensorV3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3,
-};
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+use crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3;
 #[cfg(test)]
 use crate::native_flat_tensorizer_v3::{FEATURES_SOURCE_SHA256_V3, FEATURE_DESCRIPTOR_SHA256_V3};
-use crate::native_flat_tensorizer_v4::{
-    NativeFlatDecisionTensorV4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
-};
+use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+use crate::native_flat_tensorizer_v4::NativeFlatDecisionTensorV4;
+use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::native_policy_train_step_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
@@ -1236,6 +1236,17 @@ struct ExpandedTrajectoryV1 {
     /// absent for the platform's libm, preserving archived bytes.
     #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
     training_math: TrainingMathV1,
+    /// The no-state-digest input contract its learner ran under
+    /// (`no_state_digest_v1`); absent for the original inputs, preserving
+    /// archived bytes. `feature_contract_digest` is then the converted one.
+    /// An explicit `null` is not absence and is refused, as the strict reader
+    /// refused this unknown member before.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
+    )]
+    input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1336,6 +1347,18 @@ pub(crate) struct ExpandedCheckpointV1 {
     /// training command refuses a checkpoint recorded under other math.
     #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
     training_math: TrainingMathV1,
+    /// The no-state-digest input contract these parameters trained under
+    /// (`no_state_digest_v1`); absent for the original inputs, so every
+    /// existing checkpoint keeps its bytes. Only the same conversion's
+    /// converted source resumes it.
+    /// An explicit `null` is not absence and is refused, as the strict reader
+    /// refused this unknown member before.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
+    )]
+    input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
 }
 
 /// Whole-pair V3-or-V4 admission: a stored trajectory/checkpoint's
@@ -1442,6 +1465,12 @@ fn initialize_from_source_bytes_v1(
     }
     if probe.get("schema").and_then(Value::as_str) == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) {
         return Err(REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1.into());
+    }
+    if probe.get("schema").and_then(Value::as_str) == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
+        // Never cached: the loaded-source cache keeps excluding converted
+        // sources (`loaded_source_cache_v1::remember_v1`). Returned directly,
+        // so its policy locals stay out of this frame.
+        return no_state_digest_v1::initialize_training_v1(source, bytes, inputs);
     }
     let mut policy = load_ordinary_policy_v1(source, bytes)?;
     // The validated policy already owns the exact contract model. A private
@@ -1686,11 +1715,15 @@ fn restore_checkpoint_fields_v1(
     policy: &mut FrozenPlayPolicyV1,
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
-    identity_valid(
+    // An ordinary source refuses a converted checkpoint, and a converted
+    // source an unconverted one or another conversion's.
+    no_state_digest_v1::resolve_contract_v1(
         &saved.feature_contract_digest,
         &saved.feature_encoding_digest,
         &saved.card_db_hash,
-    )?;
+        saved.input_contract.as_ref(),
+    )?
+    .require_policy_contract_v1(policy)?;
     ensure(
         saved.source_import == *policy.identity_v1(),
         "checkpoint warm-start provenance differs",
@@ -1935,7 +1968,13 @@ fn collect_episode(
             policy.training_math_v1() == other.policy.training_math_v1(),
             "learner and opponent use different training math",
         )?;
+        // And one input contract, the learner's.
+        ensure(
+            policy.input_contract_v1() == other.policy.input_contract_v1(),
+            "learner and opponent use different no-state-digest contracts",
+        )?;
     }
+    let input_contract = no_state_digest_v1::policy_contract_record_v1(policy)?;
     let seat_behaviors = opponent.as_ref().map(|other| {
         std::array::from_fn(|actor| {
             if actor == episode.learner_seat as usize {
@@ -1965,11 +2004,15 @@ fn collect_episode(
                 // Read the digests actually stamped by this loaded policy's
                 // generation, never a hardcoded V3 constant: a fresh-V4
                 // policy must produce a V4-labeled trajectory.
+                // A converted learner stamps its converted contract digest
+                // beside the base encoding, with the contract member.
                 let feature_identity = policy.feature_identity_v1();
                 let result = ExpandedTrajectoryV1 {
                     schema: trajectory_schema_v1(policy.identity_v1(), seat_behaviors.as_ref())
                         .into(),
-                    feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                    feature_contract_digest: no_state_digest_v1::effective_contract_digest_v1(
+                        policy,
+                    ),
                     feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
                     card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
                     source_import: policy.identity_v1().clone(),
@@ -1981,6 +2024,7 @@ fn collect_episode(
                     terminal,
                     learner_sampler: policy.collection_sampler_identity_v1().map(str::to_owned),
                     training_math: policy.training_math_v1(),
+                    input_contract,
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -2402,11 +2446,10 @@ fn validate_actual_behaviors_v1(
 
 fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     validate_behavior_shape_v1(t)?;
-    identity_valid(
-        &t.feature_contract_digest,
-        &t.feature_encoding_digest,
-        &t.card_db_hash,
-    )?;
+    let contract = trajectory_contract_v1(t)?;
+    if contract.input_contract_digest_v1().is_some() {
+        no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
+    }
     validate_episode_records_with_learner_sampler_v1(
         &t.episode,
         &t.configuration_sha256,
@@ -2641,16 +2684,23 @@ type LearnerTensorGroupV1<'a> = (
 
 /// The trajectory's own recorded whole-pair generation, never a caller flag.
 /// `validate_trajectory` (called by every caller of this) already proved the
-/// pair is a legitimate V3-or-V4 whole pair via `identity_valid`, so
-/// anything that is not the V4 pair here is therefore the V3 pair.
+/// identity resolves (`trajectory_contract_v1`), so a converted V4 identity
+/// dispatches as V4; anything that does not resolve here is the V3 pair.
 fn trajectory_generation_v1(t: &ExpandedTrajectoryV1) -> FreshLineageGenerationV1 {
-    if t.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V4
-        && t.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V4
-    {
-        FreshLineageGenerationV1::V4
-    } else {
-        FreshLineageGenerationV1::V3
-    }
+    trajectory_contract_v1(t).map_or(FreshLineageGenerationV1::V3, |contract| contract.generation)
+}
+
+/// The trajectory's validated identity and input contract
+/// (`no_state_digest_v1::resolve_contract_v1`).
+fn trajectory_contract_v1(
+    t: &ExpandedTrajectoryV1,
+) -> Result<no_state_digest_v1::ResolvedContractV1, String> {
+    no_state_digest_v1::resolve_contract_v1(
+        &t.feature_contract_digest,
+        &t.feature_encoding_digest,
+        &t.card_db_hash,
+        t.input_contract.as_ref(),
+    )
 }
 
 /// A `NativeEncodedDecisionViewV1` over the shared common tensor, stamped
@@ -2700,7 +2750,15 @@ fn replay_learner_groups_v1<'a>(
         t.episode.opponent.is_some() == opponent.is_some(),
         "opponent replay source missing",
     )?;
-    let generation = trajectory_generation_v1(t);
+    let contract = trajectory_contract_v1(t)?;
+    contract.require_policy_contract_v1(learner)?;
+    if let Some(opponent) = opponent {
+        ensure(
+            opponent.input_contract_v1() == learner.input_contract_v1(),
+            "learner and opponent use different no-state-digest contracts",
+        )?;
+    }
+    let generation = contract.generation;
     let mut groups = Vec::new();
     let mut index = 0;
     while index < t.decisions.len() {
@@ -2714,18 +2772,7 @@ fn replay_learner_groups_v1<'a>(
             } else {
                 opponent.unwrap_or(learner)
             };
-            let output = match generation {
-                FreshLineageGenerationV1::V3 => {
-                    acting.score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
-                        common: common.clone(),
-                    })?
-                }
-                FreshLineageGenerationV1::V4 => {
-                    acting.score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
-                        common: common.clone(),
-                    })?
-                }
-            };
+            let output = acting.score_replay_tensor_v1(generation, common.clone())?;
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
@@ -3228,6 +3275,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 source: source.clone(),
                 identity: inference_identity_v1(&source, &policy, &state)?,
             };
+            let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
             drop(state);
             let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
             let mut opponent_cache = OpponentCacheV1::for_collection(verified_sources)
@@ -3302,6 +3350,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 "collection_initialization_seconds":initialization_seconds});
             collection_sampler.record_v1(&mut result);
             training_math.record_v1(&mut result);
+            if let Some(record) = &input_contract {
+                result["input_contract"] = json!(record);
+            }
             if let Some(pin) = non_natural_ledger_pin {
                 result["non_natural_ledger"] = json!(pin);
             }
@@ -3666,6 +3717,24 @@ fn execute_update_inner_v1(
             )?;
         }
     }
+    // The no-state-digest contract admits only the audited ordinary CPU
+    // update: the terminal or GAE loss without any auxiliary term or teacher.
+    let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
+    if input_contract.is_some() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::TerminalReinforceValueV3
+                        | ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none(),
+            "the no-state-digest contract admits only the ordinary CPU update",
+        )?;
+    }
     if let Some(context) = &transfer {
         context.validate_scalars(learning_rate, value_coefficient)?;
         // Risk (design section 6, "Registry-transfer scalar pinning"): the
@@ -3715,6 +3784,10 @@ fn execute_update_inner_v1(
         ensure(
             episode.training_math == training_math,
             "trajectory training math differs from the command's",
+        )?;
+        ensure(
+            episode.input_contract == input_contract,
+            "trajectory no-state-digest contract differs from the learner's",
         )?;
     }
     if let Some(context) = &transfer {
@@ -4433,7 +4506,9 @@ fn execute_update_inner_v1(
         // V3 constant on a fresh-V4 policy (the single-accessor mitigation).
         // The update arithmetic above now dispatches on this same
         // `generation` value, so this label matches what actually ran.
-        feature_contract_digest: policy.feature_identity_v1().feature_contract_digest.into(),
+        // Under the no-state-digest contract, the converted digest beside the
+        // base encoding, with the contract member.
+        feature_contract_digest: no_state_digest_v1::effective_contract_digest_v1(&policy),
         feature_encoding_digest: policy.feature_identity_v1().feature_encoding_digest.into(),
         card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         source_import: policy.identity_v1().clone(),
@@ -4502,6 +4577,7 @@ fn execute_update_inner_v1(
             .transpose()?,
         archive_distillation: None,
         training_math,
+        input_contract: input_contract.clone(),
     };
     let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
     // Readback exercises the real same-format continuation loader.
@@ -4532,6 +4608,9 @@ fn execute_update_inner_v1(
     }
     update_backend.record_update_execution_v1(&mut result);
     training_math.record_v1(&mut result);
+    if let Some(record) = &input_contract {
+        result["input_contract"] = json!(record);
+    }
     if let Some(frozen) = frozen_tensor_sha256 {
         // The update's scorer-bias gauge (the step refuses a residual beyond
         // its derived bound, so a published update is within it).
@@ -5322,6 +5401,7 @@ pub(crate) mod tests {
             seat_behaviors,
             learner_sampler: None,
             training_math: TrainingMathV1::PlatformLibm,
+            input_contract: None,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -5596,6 +5676,7 @@ pub(crate) mod tests {
             registry_transfer: None,
             archive_distillation: None,
             training_math: TrainingMathV1::PlatformLibm,
+            input_contract: None,
         };
         (policy, model, saved)
     }
