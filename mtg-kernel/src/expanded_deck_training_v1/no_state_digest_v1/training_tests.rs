@@ -402,7 +402,7 @@ fn conversion_keeps_the_optimizer_and_every_kept_bit() {
                 .conversion,
         )
         .unwrap();
-        let pin = conversion.converted_checkpoint.unwrap();
+        let pin = conversion.converted_checkpoint.clone().unwrap();
         let mut document: Value = read_pinned(&pin).unwrap();
         document.as_object_mut().unwrap().remove(member);
         // Republish the edited artifact through the record and the import.
