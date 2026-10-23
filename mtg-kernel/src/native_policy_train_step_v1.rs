@@ -1063,7 +1063,7 @@ pub(crate) fn columns_are_positive_zero_v1(
 ) -> bool {
     width != 0
         && columns.end <= width
-        && values.len() % width == 0
+        && values.len().is_multiple_of(width)
         && values.chunks_exact(width).all(|row| {
             row[columns.clone()]
                 .iter()

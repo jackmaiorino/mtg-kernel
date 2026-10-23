@@ -27,6 +27,9 @@ use std::path::PathBuf;
 
 const DIGEST: std::ops::Range<usize> = STATE_DIGEST_COLUMNS_V1;
 
+/// One invariant violation written into a snapshot.
+type SnapshotEditV1 = fn(&mut NativePolicyValueTrainSnapshotV1);
+
 fn temp_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "no-state-digest-training-{label}-{}-{}",
@@ -406,7 +409,7 @@ fn continuation_admits_only_this_conversion_with_clean_columns() {
         "successor feature identity differs from its no-state-digest contract"
     );
     // Dirty columns and a -0.0 bias, never repaired.
-    let cases: [(&str, fn(&mut NativePolicyValueTrainSnapshotV1), &str); 5] = [
+    let cases: [(&str, SnapshotEditV1, &str); 5] = [
         (
             "w.json",
             |s| tensor_mut(&mut s.parameters, STATE_ENCODER_WEIGHT)[130] = 0.25,

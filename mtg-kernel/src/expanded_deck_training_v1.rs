@@ -21,14 +21,14 @@ use crate::fast_sampler::{
 };
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
-use crate::native_flat_tensorizer_v3::{
-    NativeFlatDecisionTensorV3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3,
-};
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+use crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3;
 #[cfg(test)]
 use crate::native_flat_tensorizer_v3::{FEATURES_SOURCE_SHA256_V3, FEATURE_DESCRIPTOR_SHA256_V3};
-use crate::native_flat_tensorizer_v4::{
-    NativeFlatDecisionTensorV4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
-};
+use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+use crate::native_flat_tensorizer_v4::NativeFlatDecisionTensorV4;
+use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::native_policy_train_step_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,

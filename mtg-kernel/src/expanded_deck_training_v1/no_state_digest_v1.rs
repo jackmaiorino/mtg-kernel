@@ -460,7 +460,7 @@ fn convert_state_v1(
                     weight.values.len() / STATE_ENCODER_INPUT_V1,
                     STATE_ENCODER_INPUT_V1,
                 ]
-                && weight.values.len() % STATE_ENCODER_INPUT_V1 == 0,
+                && weight.values.len().is_multiple_of(STATE_ENCODER_INPUT_V1),
             "state encoder width differs",
         )?;
         for row in weight.values.chunks_exact_mut(STATE_ENCODER_INPUT_V1) {

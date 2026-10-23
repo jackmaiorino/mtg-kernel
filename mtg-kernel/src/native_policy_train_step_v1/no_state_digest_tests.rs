@@ -11,6 +11,9 @@ use crate::native_policy_value_net_v1::ForwardActivationModeV1;
 use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
 
 const DIGEST: std::ops::Range<usize> = 123..219;
+
+/// One invariant violation written into a snapshot.
+type SnapshotEditV1 = fn(&mut NativePolicyValueTrainSnapshotV1);
 const VC: f32 = 0.75;
 const LR: f32 = 0.0003;
 
@@ -93,7 +96,7 @@ fn state_with(digest: Option<(f32, f32, f32)>) -> NativePolicyValueTrainStateV1 
                 _ => 0.0,
             };
             *m = witness;
-            *v = if offset % 3 == 0 {
+            *v = if offset.is_multiple_of(3) {
                 f32::from_bits(7)
             } else {
                 1.0e-6 * (offset % 11) as f32
@@ -134,7 +137,7 @@ fn state_with(digest: Option<(f32, f32, f32)>) -> NativePolicyValueTrainStateV1 
         {
             for (offset, value) in row[DIGEST].iter_mut().enumerate() {
                 *value = fill.map_or(0.0, |fill| {
-                    if (row_index + offset) % 2 == 0 {
+                    if (row_index + offset).is_multiple_of(2) {
                         fill
                     } else {
                         fill.abs() * 0.5
@@ -205,7 +208,7 @@ fn groups<'a>(
         .enumerate()
         .map(|(index, substeps)| NativePolicyPhysicalDecisionV1 {
             substeps,
-            terminal_return: if index % 2 == 0 { 1 } else { -1 },
+            terminal_return: if index.is_multiple_of(2) { 1 } else { -1 },
             baseline_bits: 0,
         })
         .collect()
@@ -221,7 +224,7 @@ fn update(
     let recorded = outputs(state, tensors);
     let steps = substeps(tensors, &recorded, 1);
     let groups = groups(&steps);
-    if step % 2 == 0 {
+    if step.is_multiple_of(2) {
         state.train_step_feature_transfer_v3(&groups, VC, LR)
     } else {
         state.train_step_gae_feature_transfer_v3(&groups, &[0.4, -0.3], &[0.6, -0.6], VC, LR)
@@ -309,7 +312,7 @@ fn installing_the_contract_refuses_every_invariant_violation_without_repair() {
             code: "no-state-digest-contract-already-installed"
         })
     );
-    let cases: [(fn(&mut NativePolicyValueTrainSnapshotV1), &str); 7] = [
+    let cases: [(SnapshotEditV1, &str); 7] = [
         (
             |s| s.parameters[STATE_FIRST_WEIGHT].values[150] = 0.5,
             "no-state-digest-weight-column-not-positive-zero",
@@ -455,7 +458,7 @@ fn a_dirty_worker_mxcsr_fails_the_step_before_it_commits() {
     let batch = groups(&steps);
     let targets = vec![0.25; batch.len()];
     let advantages: Vec<f32> = (0..batch.len())
-        .map(|index| if index % 2 == 0 { 0.5 } else { -0.5 })
+        .map(|index| if index.is_multiple_of(2) { 0.5 } else { -0.5 })
         .collect();
     let error = converted
         .train_step_gae_feature_transfer_profiled_v1(
