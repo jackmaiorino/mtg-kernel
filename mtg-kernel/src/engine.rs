@@ -10678,8 +10678,14 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             continue;
         }
 
+        let had_pending_discard = state.engine.pending_discard.is_some();
         if let Some(d) = drain_pending_discard_or_decide(state) {
             return d;
+        }
+        // A forced discard can finish resolution without returning a choice.
+        // Recheck its post-resolution loss/SBA checkpoint before priority.
+        if had_pending_discard {
+            continue;
         }
 
         let had_pending_cast = state.engine.pending_cast.is_some();
@@ -10943,6 +10949,26 @@ fn reset_priority(state: &mut GameState) {
 
 fn collect_and_queue_triggers(state: &mut GameState) {
     if resolution_cast_v1::defer_triggers(state) {
+        return;
+    }
+    if state
+        .engine
+        .pending_discard
+        .as_ref()
+        .is_some_and(|pending| {
+            matches!(
+                pending.resume,
+                DiscardResume::FinishAbilityResolution { .. }
+                    | DiscardResume::FinishSpellResolution { .. }
+                    | DiscardResume::FinishEffectContinuation { .. }
+            )
+        })
+    {
+        // A terminal discard leaf still belongs to the resolving spell or
+        // ability. Capture earlier draw events now, but wait until the discard
+        // finishes before checking SBAs or placing any captured triggers.
+        let captures = trigger::capture_triggers_without_sba(state);
+        state.engine.pending_triggers.extend(captures);
         return;
     }
     let triggers = trigger::collect_and_process(state);

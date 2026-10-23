@@ -411,34 +411,52 @@ fn paid_scavenger_natural_attack_loots_once_after_source_departure_and_restores_
 #[test]
 fn paid_scavenger_empty_draw_still_discards_then_loses_naturally_and_restores_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
-        let (mut s, source, _, _, _) = prepare(p, "Dreadwing Scavenger", 0, 0);
-        let old = put(&mut s, p, "Mountain", Zone::Hand);
-        let (mut own, mut native) = sessions(s);
-        cast(&mut own, &mut native, source);
-        let paid = own.snapshot();
-        let raw = native.snapshot_v1();
-        let mut expected = None;
-        for _ in 0..2 {
-            own.restore(&paid).unwrap();
-            native.kaito_restore_v75(&raw).unwrap();
-            assert_eq!(loot(&mut own, &mut native, p, false), old);
-            assert!(own.fixture_state().players[p.index()].drew_from_empty);
-            assert!(own.fixture_state().players[p.index()].has_lost);
-            let FastActorResponseV1::Terminal(terminal) = own.current_response() else {
-                panic!("empty draw did not end naturally after discard")
-            };
-            assert_eq!(
-                terminal.terminal_classification,
-                crate::rl::TerminalClassificationV1::Natural
-            );
-            assert_eq!(
-                terminal.winner,
-                Some(crate::rl::PlayerSeatV1::from(p.opponent()))
-            );
-            if let Some(ref prior) = expected {
-                assert_eq!(own.fixture_state(), prior);
-            } else {
-                expected = Some(own.fixture_state().clone());
+        for needs_choice in [false, true] {
+            let (mut s, source, _, _, _) = prepare(p, "Dreadwing Scavenger", 0, 0);
+            let old = put(&mut s, p, "Mountain", Zone::Hand);
+            if needs_choice {
+                put(&mut s, p, "Forest", Zone::Hand);
+            }
+            let (mut own, mut native) = sessions(s);
+            cast(&mut own, &mut native, source);
+            let paid = own.snapshot();
+            let raw = native.snapshot_v1();
+            let mut expected = None;
+            for _ in 0..2 {
+                own.restore(&paid).unwrap();
+                native.kaito_restore_v75(&raw).unwrap();
+                if needs_choice {
+                    assert_eq!(loot(&mut own, &mut native, p, false), old);
+                } else {
+                    // Preserve the original sole-card scene. The native engine
+                    // automatically discards the only legal card without a menu.
+                    for _ in 0..128 {
+                        if matches!(own.current_response(), FastActorResponseV1::Terminal(_)) {
+                            break;
+                        }
+                        act(&mut own, &mut native, quiet);
+                    }
+                    assert_eq!(own.fixture_state().objects.get(old).zone, Zone::Graveyard);
+                    assert!(own.fixture_state().players[p.index()].hand.is_empty());
+                }
+                assert!(own.fixture_state().players[p.index()].drew_from_empty);
+                assert!(own.fixture_state().players[p.index()].has_lost);
+                let FastActorResponseV1::Terminal(terminal) = own.current_response() else {
+                    panic!("empty draw did not end naturally after discard")
+                };
+                assert_eq!(
+                    terminal.terminal_classification,
+                    crate::rl::TerminalClassificationV1::Natural
+                );
+                assert_eq!(
+                    terminal.winner,
+                    Some(crate::rl::PlayerSeatV1::from(p.opponent()))
+                );
+                if let Some(ref prior) = expected {
+                    assert_eq!(own.fixture_state(), prior);
+                } else {
+                    expected = Some(own.fixture_state().clone());
+                }
             }
         }
     }
