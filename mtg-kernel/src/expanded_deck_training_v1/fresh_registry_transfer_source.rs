@@ -164,4 +164,4 @@ pub(super) fn initialize(
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

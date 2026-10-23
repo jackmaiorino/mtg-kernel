@@ -2248,6 +2248,60 @@ mod tests {
         }
     }
 
+    /// The run's no-state-digest contract member binds every trajectory: an
+    /// unconverted run admits only its absence, and an explicit `null`, which
+    /// the typed trajectory reader refuses, is not absence here either.
+    #[test]
+    fn collection_trajectory_contract_member_must_match_the_run() {
+        let directory = temporary_directory("input-contract-binding");
+        let write = |name: &str, document: &Value| -> PinnedFileV1 {
+            let bytes = serde_json::to_vec(document).unwrap();
+            let path = directory.join(name);
+            fs::write(&path, &bytes).unwrap();
+            PinnedFileV1 {
+                path,
+                sha256: digest(&bytes),
+            }
+        };
+        let episode = schedule().iterations[0].episodes[0].episode.clone();
+        let record = json!({"contract": "no-state-digest-v1", "state_digest_columns": [123, 219],
+            "conversion": {"path": "conversion.json", "sha256": "c".repeat(64)}});
+        let absent = write("absent.json", &json!({"episode": value(&episode).unwrap()}));
+        let null = write(
+            "null.json",
+            &json!({"episode": value(&episode).unwrap(), "input_contract": null}),
+        );
+        let converted = write(
+            "converted.json",
+            &json!({"episode": value(&episode).unwrap(), "input_contract": record}),
+        );
+        let collection =
+            |trajectory: &PinnedFileV1| json!({"trajectories": [value(trajectory).unwrap()]});
+        let episodes = vec![episode];
+        let validate = |trajectory: &PinnedFileV1, expected: Option<&Value>| {
+            validate_collection_episodes_with_sampler_v1(
+                &collection(trajectory),
+                &episodes,
+                None,
+                TrainingMathV1::PlatformLibm,
+                expected,
+            )
+        };
+        validate(&absent, None).unwrap();
+        validate(&converted, Some(&record)).unwrap();
+        for (trajectory, expected) in [
+            (&null, None),
+            (&null, Some(&record)),
+            (&converted, None),
+            (&absent, Some(&record)),
+        ] {
+            assert_eq!(
+                validate(trajectory, expected).unwrap_err(),
+                "collection trajectory no-state-digest contract differs from the run's"
+            );
+        }
+    }
+
     #[test]
     fn recovered_update_must_match_actual_preparation_mode() {
         let serial = json!({});

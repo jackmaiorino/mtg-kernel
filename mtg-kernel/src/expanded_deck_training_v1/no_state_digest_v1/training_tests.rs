@@ -295,35 +295,136 @@ fn conversion_keeps_the_optimizer_and_every_kept_bit() {
     assert!(loaded_source_cache_v1::lookup_v1(&converted, &bytes, None)
         .unwrap()
         .is_none());
-    // A kept bit of the narrow artifact changed: refused.
-    let artifact = outputs.converted_checkpoint.clone().unwrap();
-    let mut document: Value = read_pinned(&artifact).unwrap();
-    let first = document["first_moments"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|entry| entry["name"] == STATE_ENCODER_WEIGHT)
+    // The narrow artifact, edited and republished with its enclosing pins:
+    // a kept bit, any tensor's shape (the 1,403-wide state encoder included)
+    // and its identity members are all checked.
+    let tampered = |name: &str, edit: fn(&mut Value)| {
+        let mut document: Value =
+            read_pinned(outputs.converted_checkpoint.as_ref().unwrap()).unwrap();
+        edit(&mut document);
+        let directory = root.join("tampered").join(name);
+        fs::create_dir_all(&directory).unwrap();
+        let mut record = outputs.record.clone();
+        record.converted_checkpoint =
+            Some(publish_json(&directory, "checkpoint.json", &document).unwrap());
+        let import = NoStateDigestImportV1 {
+            schema: IMPORT_SCHEMA_V1.into(),
+            base_play_import: parent.play_import.clone(),
+            conversion: publish_json(&directory, "conversion.json", &record).unwrap(),
+        };
+        ExpandedModelSourceV1 {
+            play_import: publish_json(&directory, "import.json", &import).unwrap(),
+            ..converted.clone()
+        }
+    };
+    fn tensor<'a>(document: &'a mut Value, list: &str, name: &str) -> &'a mut Value {
+        document[list]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["name"] == name)
+            .unwrap()
+    }
+    // An unchanged republication is admitted.
+    initialize_any_math_v1(&tampered("unchanged", |_| {})).unwrap();
+    let cases: [(&str, fn(&mut Value), &str); 9] = [
+        (
+            "kept-bit",
+            |d| {
+                tensor(d, "first_moments", STATE_ENCODER_WEIGHT)["values"][3] =
+                    Value::from(1.0e-3_f32.to_bits())
+            },
+            "converted checkpoint differs from the converted state",
+        ),
+        (
+            "weight-flat",
+            |d| tensor(d, "parameters", STATE_ENCODER_WEIGHT)["shape"] = serde_json::json!([1]),
+            "converted checkpoint tensor shape differs",
+        ),
+        (
+            "weight-padded",
+            |d| {
+                tensor(d, "parameters", STATE_ENCODER_WEIGHT)["shape"][1] =
+                    Value::from(STATE_ENCODER_INPUT_V1)
+            },
+            "converted checkpoint tensor shape differs",
+        ),
+        (
+            "moment-shape",
+            |d| {
+                tensor(d, "second_moments", STATE_ENCODER_WEIGHT)["shape"] =
+                    serde_json::json!([1_403, 64])
+            },
+            "converted checkpoint tensor shape differs",
+        ),
+        (
+            "other-shape",
+            |d| tensor(d, "parameters", "value_head.2.bias")["shape"] = serde_json::json!([1, 1]),
+            "converted checkpoint tensor shape differs",
+        ),
+        (
+            "schema",
+            |d| d["schema"] = Value::from("mtg-kernel-expanded-deck-checkpoint/v1"),
+            "the converted checkpoint's schema, encoding or card database differs",
+        ),
+        (
+            "encoding",
+            |d| {
+                d["feature_encoding_digest"] =
+                    Value::from(FRESH_FEATURE_IDENTITY_V3.feature_encoding_digest)
+            },
+            "the converted checkpoint's schema, encoding or card database differs",
+        ),
+        (
+            "cards",
+            |d| d["card_db_hash"] = Value::from("0000000000000000"),
+            "the converted checkpoint's schema, encoding or card database differs",
+        ),
+        (
+            "contract",
+            |d| d["input_contract"]["state_digest_columns"] = serde_json::json!([123, 218]),
+            "the converted checkpoint names another base state or optimizer",
+        ),
+    ];
+    for (name, edit, expected) in cases {
+        assert_eq!(refusal(&tampered(name, edit)), expected, "{name}");
+    }
+    // A missing identity member is refused by the artifact's reader.
+    for (name, member) in [
+        ("no-schema", "schema"),
+        ("no-encoding", "feature_encoding_digest"),
+        ("no-cards", "card_db_hash"),
+    ] {
+        let source = tampered(name, |_| {});
+        let conversion: NoStateDigestConversionV1 = read_pinned(
+            &read_pinned::<NoStateDigestImportV1>(&source.play_import)
+                .unwrap()
+                .conversion,
+        )
         .unwrap();
-    first["values"][3] = Value::from(1.0e-3_f32.to_bits());
-    let tampered = root.join("tampered");
-    fs::create_dir_all(&tampered).unwrap();
-    let artifact = publish_json(&tampered, "checkpoint.json", &document).unwrap();
-    let mut record = outputs.record.clone();
-    record.converted_checkpoint = Some(artifact);
-    let conversion = publish_json(&tampered, "conversion.json", &record).unwrap();
-    let import = NoStateDigestImportV1 {
-        schema: IMPORT_SCHEMA_V1.into(),
-        base_play_import: parent.play_import.clone(),
-        conversion,
-    };
-    let tampered_source = ExpandedModelSourceV1 {
-        play_import: publish_json(&tampered, "import.json", &import).unwrap(),
-        ..converted.clone()
-    };
-    assert_eq!(
-        refusal(&tampered_source),
-        "converted checkpoint differs from the converted state"
-    );
+        let pin = conversion.converted_checkpoint.unwrap();
+        let mut document: Value = read_pinned(&pin).unwrap();
+        document.as_object_mut().unwrap().remove(member);
+        // Republish the edited artifact through the record and the import.
+        let directory = pin.path.parent().unwrap();
+        let mut record = conversion.clone();
+        record.converted_checkpoint =
+            Some(publish_json(directory, "checkpoint-edited.json", &document).unwrap());
+        let import = NoStateDigestImportV1 {
+            schema: IMPORT_SCHEMA_V1.into(),
+            base_play_import: parent.play_import.clone(),
+            conversion: publish_json(directory, "conversion-repinned.json", &record).unwrap(),
+        };
+        let source = ExpandedModelSourceV1 {
+            play_import: publish_json(directory, "import-repinned.json", &import).unwrap(),
+            ..converted.clone()
+        };
+        assert!(
+            refusal(&source).contains(member),
+            "{name}: {}",
+            refusal(&source)
+        );
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -398,6 +499,23 @@ fn continuation_admits_only_this_conversion_with_clean_columns() {
         refusal(&plain),
         "an unconverted checkpoint does not continue a no-state-digest source"
     );
+    // An explicit null member is not absence: refused, as the strict reader
+    // refused the then unknown member.
+    let mut document =
+        serde_json::to_value(checkpoint_of(&base_policy, &unconverted, None)).unwrap();
+    assert!(document.get("input_contract").is_none());
+    assert!(serde_json::from_value::<ExpandedCheckpointV1>(document.clone()).is_ok());
+    document["input_contract"] = Value::Null;
+    assert!(serde_json::from_value::<ExpandedCheckpointV1>(document.clone()).is_err());
+    let null_member = ExpandedModelSourceV1 {
+        checkpoint: Some(publish_json(&directory, "null-member.json", &document).unwrap()),
+        ..parent.clone()
+    };
+    assert!(
+        refusal(&null_member).contains("null"),
+        "{}",
+        refusal(&null_member)
+    );
     // The marker with the base digest.
     let mut relabelled = saved.clone();
     relabelled.feature_contract_digest = base_policy
@@ -442,6 +560,36 @@ fn continuation_admits_only_this_conversion_with_clean_columns() {
         let source = publish(name, &checkpoint_of(&policy, &dirty, Some(record.clone())));
         assert_eq!(refusal(&source), expected, "{name}");
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A base that cannot train (here a fresh registry-transfer source) keeps
+/// the inference-only install that predates training: it converts and loads
+/// for inference with the contract, and the training loader refuses it
+/// before loading anything else.
+#[test]
+fn inference_only_bases_keep_the_converted_inference_install() {
+    let root = temp_root("inference-only");
+    let fixture =
+        crate::expanded_deck_training_v1::fresh_registry_transfer_source::tests::fixture();
+    let (outputs, converted) = convert(&root, &fixture.source, "conversion");
+    assert!(outputs.converted_checkpoint.is_none());
+    let (policy, identity) = super::super::load_expanded_inference_v1(&converted).unwrap();
+    assert_eq!(
+        policy.input_contract_v1(),
+        Some(outputs.record.converted.feature_contract_digest.as_str())
+    );
+    assert_eq!(
+        identity.model.model_parameter_sha256,
+        outputs.record.converted.model_parameter_sha256
+    );
+    // No training records: the contract names no conversion.
+    assert_eq!(policy.input_contract_conversion_v1(), None);
+    assert_eq!(
+        refusal(&converted),
+        "this no-state-digest source's base is inference-only and does not train"
+    );
+    drop(fixture);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -687,6 +835,11 @@ fn converted_run_end_to_end_v1() {
     // Tampered rows and markers are refused by validation.
     let trajectory = converted_trajectory.unwrap();
     validate_trajectory(&trajectory).unwrap();
+    let mut document = serde_json::to_value(&trajectory).unwrap();
+    document["input_contract"] = Value::Null;
+    assert!(serde_json::from_value::<ExpandedTrajectoryV1>(document.clone()).is_err());
+    document.as_object_mut().unwrap().remove("input_contract");
+    assert!(serde_json::from_value::<ExpandedTrajectoryV1>(document).is_ok());
     for bits in [1_u32, 0x8000_0000] {
         let mut tampered = trajectory.clone();
         tampered.decisions[0].tensor.state[150] = bits;

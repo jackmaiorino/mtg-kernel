@@ -23,11 +23,15 @@
 //! [`initialize_v1`], serves inference, opponents, training, the update's
 //! readback and the driver: at run start it converts the base checkpoint's
 //! full optimizer state, and a continuation admits only a checkpoint of the
-//! same conversion. Records name the contract in an `input_contract` member
+//! same conversion. Only an ordinary import or a fresh-initialization source
+//! trains; a converted BO3, registry-evolution, registry-transfer or
+//! terminal-teacher source keeps the inference-only install ([`load_v1`]).
+//! Records name the contract in an `input_contract` member
 //! ([`InputContractRecordV1`]), absent from every unconverted record.
 
 use super::{
-    ensure, err, hex, identity_valid, initialize_from_source_bytes_v1, publish_json_bytes_v1,
+    ensure, err, hex, identity_valid, initialize_from_source_bytes_v1,
+    load_expanded_inference_any_math_v1, ordinary_checkpoint_schema_v1, publish_json_bytes_v1,
     read_ordinary_checkpoint_v1, read_pinned, read_pinned_bytes, restore_checkpoint_state_v1, sha,
     CheckpointInputExpectationV1, DecisionRecordV1, ExpandedCheckpointV1,
     ExpandedInferenceIdentityV1, ExpandedModelSourceV1, ParameterBitsV1, PinnedFileV1,
@@ -166,6 +170,15 @@ impl InputContractRecordV1 {
             conversion,
         }
     }
+}
+
+/// Absence keeps the original records' wire shape; an explicitly present
+/// `null` is not absence and stays invalid, as the strict readers refused
+/// the then unknown member before the contract existed.
+pub(super) fn deserialize_present_input_contract_v1<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<InputContractRecordV1>, D::Error> {
+    InputContractRecordV1::deserialize(deserializer).map(Some)
 }
 
 /// The contract a validated record or model runs under.
@@ -340,19 +353,70 @@ pub(crate) fn effective_contract_digest_v1(policy: &FrozenPlayPolicyV1) -> Strin
     )
 }
 
-/// The inference branch for a [`NoStateDigestImportV1`] `play_import`: the
-/// one admission rule of [`initialize_v1`], whose receipt describes the
-/// converted optimizer state. Never inlined: its policy locals must not
-/// enlarge the ordinary loader's frame, which several binaries still reach
-/// on a 1 MiB main thread.
+/// The inference branch for a [`NoStateDigestImportV1`] `play_import`. A
+/// base that trains (`base_trains_v1`) loads through the one admission rule
+/// of [`initialize_v1`], whose receipt describes the converted optimizer
+/// state. Any other base (BO3, registry-evolution, registry-transfer or
+/// terminal-teacher inference sources) keeps the inference-only install
+/// that predates training: the base loads through its own inference loader
+/// at the conversion's base checkpoint, the contract is installed on the
+/// policy alone, and no train state or training record exists for it.
+/// Never inlined: its policy locals must not enlarge the ordinary loader's
+/// frame, which several binaries still reach on a 1 MiB main thread.
 #[inline(never)]
 pub(super) fn load_v1(
     source: &ExpandedModelSourceV1,
     bytes: &[u8],
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
-    let (policy, state) = initialize_v1(source, bytes, None)?;
-    let identity = super::inference_identity_v1(source, &policy, &state)?;
+    let (import, conversion) = read_import_v1(bytes)?;
+    if base_trains_v1(&read_pinned_bytes(&import.base_play_import)?)? {
+        let (policy, state) = initialize_v1(source, bytes, None)?;
+        let identity = super::inference_identity_v1(source, &policy, &state)?;
+        return Ok((policy, identity));
+    }
+    ensure(
+        conversion.base_checkpoint == source.checkpoint,
+        "the conversion record names another base model",
+    )?;
+    let base = ExpandedModelSourceV1 {
+        play_import: import.base_play_import,
+        feature_transfer: source.feature_transfer.clone(),
+        checkpoint: source.checkpoint.clone(),
+    };
+    let (mut policy, mut identity) = load_expanded_inference_any_math_v1(&base)?;
+    install_v1(&mut policy, &conversion, check_enabled_v1())?;
+    identity.model = policy.actual_model_identity_v1();
     Ok((policy, identity))
+}
+
+/// A converted import and its validated conversion record, which must name
+/// the same base import.
+fn read_import_v1(
+    bytes: &[u8],
+) -> Result<(NoStateDigestImportV1, NoStateDigestConversionV1), String> {
+    let import: NoStateDigestImportV1 = serde_json::from_slice(bytes).map_err(err)?;
+    ensure(
+        import.schema == IMPORT_SCHEMA_V1,
+        "unsupported no-state-digest import",
+    )?;
+    let conversion: NoStateDigestConversionV1 = read_pinned(&import.conversion)?;
+    validate_conversion_v1(&conversion)?;
+    ensure(
+        conversion.base_play_import == import.base_play_import,
+        "the conversion record names another base model",
+    )?;
+    Ok((import, conversion))
+}
+
+/// Whether a base import trains under the contract: an ordinary import (no
+/// schema) or a fresh-initialization source. Every other base is
+/// inference-only.
+fn base_trains_v1(base_bytes: &[u8]) -> Result<bool, String> {
+    let probe: Value = serde_json::from_slice(base_bytes).map_err(err)?;
+    Ok(match probe.get("schema") {
+        None => true,
+        Some(schema) => schema.as_str() == Some(super::fresh_initialization_source::SOURCE_SCHEMA),
+    })
 }
 
 /// [`initialize_v1`] in the shape of the ordinary training loader, which
@@ -387,17 +451,7 @@ pub(super) fn initialize_v1(
     bytes: &[u8],
     inputs: Option<&CheckpointInputExpectationV1<'_>>,
 ) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
-    let import: NoStateDigestImportV1 = serde_json::from_slice(bytes).map_err(err)?;
-    ensure(
-        import.schema == IMPORT_SCHEMA_V1,
-        "unsupported no-state-digest import",
-    )?;
-    let conversion: NoStateDigestConversionV1 = read_pinned(&import.conversion)?;
-    validate_conversion_v1(&conversion)?;
-    ensure(
-        conversion.base_play_import == import.base_play_import,
-        "the conversion record names another base model",
-    )?;
+    let (import, conversion) = read_import_v1(bytes)?;
     let run_start = source.checkpoint == conversion.base_checkpoint;
     let base = ExpandedModelSourceV1 {
         play_import: import.base_play_import.clone(),
@@ -405,6 +459,10 @@ pub(super) fn initialize_v1(
         checkpoint: conversion.base_checkpoint.clone(),
     };
     let base_bytes = read_pinned_bytes(&base.play_import)?;
+    ensure(
+        base_trains_v1(&base_bytes)?,
+        "this no-state-digest source's base is inference-only and does not train",
+    )?;
     let (mut policy, base_state, transfer) =
         initialize_from_source_bytes_v1(&base, &base_bytes, inputs.filter(|_| run_start))?;
     ensure(
@@ -497,9 +555,13 @@ fn convert_state_v1(
         (None, None) => {}
         (Some(_), Some(pin)) => check_converted_checkpoint_v1(
             pin,
-            &hex(&base.state_sha256_v1().map_err(err)?),
-            &conversion.converted.feature_contract_digest,
-            base_state.training_math_v1(),
+            &ConvertedCheckpointExpectationV1 {
+                schema: ordinary_checkpoint_schema_v1(policy.identity_v1()),
+                base_state_sha256: hex(&base.state_sha256_v1().map_err(err)?),
+                converted_contract: &conversion.converted.feature_contract_digest,
+                encoding: policy.feature_identity_v1().feature_encoding_digest,
+                training_math: base_state.training_math_v1(),
+            },
             &candidate,
         )?,
         _ => return Err("the conversion record's checkpoints differ in presence".into()),
@@ -601,8 +663,11 @@ fn check_saved_columns_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
 /// `state_sha256`, and the narrower state encoder.
 #[derive(Deserialize)]
 struct ConvertedCheckpointViewV1 {
+    schema: String,
     source_state_sha256: String,
     feature_contract_digest: String,
+    feature_encoding_digest: String,
+    card_db_hash: String,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
     parameters: Vec<ParameterBitsV1>,
@@ -620,26 +685,43 @@ struct ConvertedCheckpointContractV1 {
     state_digest_columns: [usize; 2],
 }
 
-/// Every kept bit of the converted parameters and both moments, the Adam
-/// step, gauge anchor and training math, against the conversion's
-/// 1,403-wide checkpoint, which names the base state it was cut from.
+/// What the conversion's 1,403-wide checkpoint must record: the base
+/// checkpoint's schema and state, the converted contract beside the base
+/// encoding, and the base optimizer's training math.
+struct ConvertedCheckpointExpectationV1<'a> {
+    schema: &'static str,
+    base_state_sha256: String,
+    converted_contract: &'a str,
+    encoding: &'static str,
+    training_math: TrainingMathV1,
+}
+
+/// Every kept bit of the converted parameters and both moments, with every
+/// tensor's exact shape (the state encoder weight and its moments 1,403
+/// wide), the Adam step, gauge anchor, training math and the artifact's
+/// identity, against the conversion's 1,403-wide checkpoint, which names the
+/// base state it was cut from.
 fn check_converted_checkpoint_v1(
     pin: &PinnedFileV1,
-    base_state_sha256: &str,
-    converted_contract: &str,
-    training_math: TrainingMathV1,
+    expected: &ConvertedCheckpointExpectationV1<'_>,
     candidate: &NativePolicyValueTrainSnapshotV1,
 ) -> Result<(), String> {
     let view: ConvertedCheckpointViewV1 = read_pinned(pin)?;
     ensure(
-        view.source_state_sha256 == base_state_sha256
-            && view.feature_contract_digest == converted_contract
+        view.schema == expected.schema
+            && view.feature_encoding_digest == expected.encoding
+            && view.card_db_hash == format!("{KERNEL_CARDDB_HASH:016x}"),
+        "the converted checkpoint's schema, encoding or card database differs",
+    )?;
+    ensure(
+        view.source_state_sha256 == expected.base_state_sha256
+            && view.feature_contract_digest == expected.converted_contract
             && view.input_contract.contract == CONTRACT_V1
             && view.input_contract.state_digest_columns
                 == [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end]
             && view.adam_step == candidate.adam_step
             && view.scorer_bias_anchor_bits == candidate.scorer_bias_anchor_bits
-            && view.training_math == training_math,
+            && view.training_math == expected.training_math,
         "the converted checkpoint names another base state or optimizer",
     )?;
     for (stored, converted) in [
@@ -652,6 +734,17 @@ fn check_converted_checkpoint_v1(
             "converted checkpoint tensor count differs",
         )?;
         for (stored, converted) in stored.iter().zip(converted) {
+            let mut shape = converted.shape.clone();
+            if converted.name == STATE_ENCODER_WEIGHT {
+                shape = vec![
+                    converted.values.len() / STATE_ENCODER_INPUT_V1,
+                    STATE_ENCODER_INPUT_V1 - STATE_DIGEST_COLUMNS_V1.len(),
+                ];
+            }
+            ensure(
+                stored.shape == shape,
+                "converted checkpoint tensor shape differs",
+            )?;
             let kept: Vec<u32> = if converted.name == STATE_ENCODER_WEIGHT {
                 converted
                     .values

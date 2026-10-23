@@ -1239,7 +1239,13 @@ struct ExpandedTrajectoryV1 {
     /// The no-state-digest input contract its learner ran under
     /// (`no_state_digest_v1`); absent for the original inputs, preserving
     /// archived bytes. `feature_contract_digest` is then the converted one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// An explicit `null` is not absence and is refused, as the strict reader
+    /// refused this unknown member before.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
+    )]
     input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
 }
 
@@ -1345,7 +1351,13 @@ pub(crate) struct ExpandedCheckpointV1 {
     /// (`no_state_digest_v1`); absent for the original inputs, so every
     /// existing checkpoint keeps its bytes. Only the same conversion's
     /// converted source resumes it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// An explicit `null` is not absence and is refused, as the strict reader
+    /// refused this unknown member before.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
+    )]
     input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
 }
 
