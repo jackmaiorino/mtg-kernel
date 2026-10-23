@@ -204,7 +204,7 @@ pub(super) fn remember_v1(
     let Ok(template) = policy.duplicate_loaded_v1() else {
         return;
     };
-    insert_v1(LoadedSourceV1 {
+    insert_v1(Arc::new(LoadedSourceV1 {
         source: source.clone(),
         descriptor_bytes: descriptor_bytes.to_vec(),
         kind: KindV1::Fresh(descriptor),
@@ -215,12 +215,14 @@ pub(super) fn remember_v1(
             learning_rate_bits: saved.learning_rate_bits,
             value_coefficient_bits: saved.value_coefficient_bits,
         }),
-    });
+    }));
 }
 
 /// Keep a full converted load's result (`no_state_digest_v1::initialize_training_v1`)
 /// when its base is a fresh-initialization source and its checkpoint names
-/// no further file. `descriptor_bytes` are the converted import's.
+/// no further file. `descriptor_bytes` are the converted import's. Never
+/// inlined: its policy template stays out of the loader's frame.
+#[inline(never)]
 pub(super) fn remember_converted_v1(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
@@ -250,7 +252,7 @@ pub(super) fn remember_converted_v1(
     let Ok(template) = policy.duplicate_loaded_v1() else {
         return;
     };
-    insert_v1(LoadedSourceV1 {
+    insert_v1(Arc::new(LoadedSourceV1 {
         source: source.clone(),
         descriptor_bytes: descriptor_bytes.to_vec(),
         kind: KindV1::Converted {
@@ -260,11 +262,10 @@ pub(super) fn remember_converted_v1(
         policy: template,
         state: state.clone(),
         inputs,
-    });
+    }));
 }
 
-fn insert_v1(entry: LoadedSourceV1) {
-    let entry = Arc::new(entry);
+fn insert_v1(entry: Arc<LoadedSourceV1>) {
     with_entries_v1(|entries| {
         // Concurrent loads of one source keep a single entry.
         entries.retain(|cached| {

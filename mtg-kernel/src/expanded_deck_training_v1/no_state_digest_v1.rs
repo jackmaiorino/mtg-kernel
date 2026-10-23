@@ -391,9 +391,13 @@ pub(super) fn load_v1(
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
     let (import, conversion) = read_import_v1(bytes)?;
     if base_trains_v1(&read_pinned_bytes(&import.base_play_import)?)? {
-        // Through the ordinary training loader, so the loaded-source cache
-        // serves it exactly as it serves training loads.
-        let (policy, state, _) = initialize_from_source_bytes_v1(source, bytes, None)?;
+        // The loaded-source cache serves it exactly as it serves training
+        // loads.
+        let (policy, state, _) =
+            match super::loaded_source_cache_v1::lookup_v1(source, bytes, None)? {
+                Some((policy, state)) => (policy, state, None),
+                None => initialize_training_v1(source, bytes, None)?,
+            };
         let identity = super::inference_identity_v1(source, &policy, &state)?;
         return Ok((policy, identity));
     }

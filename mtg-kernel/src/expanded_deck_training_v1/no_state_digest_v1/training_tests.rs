@@ -38,6 +38,19 @@ type SnapshotEditV1 = fn(&mut NativePolicyValueTrainSnapshotV1);
 /// One edit of the 1,403-wide conversion artifact's document.
 type ArtifactEditV1 = fn(&mut Value);
 
+/// Runs `body` on a 64 MiB thread. The nested converted and base loaders
+/// keep several policies in each unoptimized debug frame, beyond the default
+/// test thread's stack; release frames are far smaller.
+fn on_large_stack(body: fn()) {
+    let run = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(body)
+        .unwrap();
+    if let Err(payload) = run.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 fn temp_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "no-state-digest-training-{label}-{}-{}",
@@ -246,6 +259,10 @@ fn the_resolver_admits_exactly_the_whole_pairs_and_their_own_conversions() {
 /// and the loaded-source cache never holds the converted source.
 #[test]
 fn conversion_keeps_the_optimizer_and_every_kept_bit() {
+    on_large_stack(|| conversion_keeps_the_optimizer_and_every_kept_bit_v1());
+}
+
+fn conversion_keeps_the_optimizer_and_every_kept_bit_v1() {
     let root = temp_root("conversion");
     let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let (outputs, converted) = convert(&root, &parent, "conversion");
@@ -444,6 +461,10 @@ fn conversion_keeps_the_optimizer_and_every_kept_bit() {
 /// converted checkpoint.
 #[test]
 fn continuation_admits_only_this_conversion_with_clean_columns() {
+    on_large_stack(|| continuation_admits_only_this_conversion_with_clean_columns_v1());
+}
+
+fn continuation_admits_only_this_conversion_with_clean_columns_v1() {
     let root = temp_root("continuation");
     let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let (outputs, converted) = convert(&root, &parent, "conversion-a");
@@ -580,6 +601,10 @@ fn continuation_admits_only_this_conversion_with_clean_columns() {
 /// before loading anything else.
 #[test]
 fn inference_only_bases_keep_the_converted_inference_install() {
+    on_large_stack(|| inference_only_bases_keep_the_converted_inference_install_v1());
+}
+
+fn inference_only_bases_keep_the_converted_inference_install_v1() {
     let root = temp_root("inference-only");
     let fixture =
         crate::expanded_deck_training_v1::fresh_registry_transfer_source::tests::fixture();
@@ -675,6 +700,10 @@ fn assert_same_converted_load(
 /// input fails a hit with the full load's error.
 #[test]
 fn converted_loads_are_served_exactly_by_the_loaded_source_cache() {
+    on_large_stack(|| converted_loads_are_served_exactly_by_the_loaded_source_cache_v1());
+}
+
+fn converted_loads_are_served_exactly_by_the_loaded_source_cache_v1() {
     let root = temp_root("loaded-cache");
     let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let (outputs, converted) = convert(&root, &parent, "conversion");
@@ -773,6 +802,12 @@ fn converted_loads_are_served_exactly_by_the_loaded_source_cache() {
 /// setting, and a changed input fails the boundary check.
 #[test]
 fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache() {
+    on_large_stack(|| {
+        converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1()
+    });
+}
+
+fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1() {
     let root = temp_root("opponent-cache");
     let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let (outputs, converted) = convert(&root, &parent, "conversion");
@@ -937,15 +972,7 @@ fn read_value(pin: &Value) -> Value {
 /// the prepared opponent cache re-resolves a hit.
 #[test]
 fn a_converted_run_collects_updates_and_resumes_under_the_per_forward_check() {
-    // Real games, loaders and debug frames on one thread: a large stack, as
-    // the collection and preparation workers have.
-    let run = std::thread::Builder::new()
-        .stack_size(64 << 20)
-        .spawn(converted_run_end_to_end_v1)
-        .unwrap();
-    if let Err(payload) = run.join() {
-        std::panic::resume_unwind(payload);
-    }
+    on_large_stack(converted_run_end_to_end_v1);
 }
 
 fn converted_run_end_to_end_v1() {
