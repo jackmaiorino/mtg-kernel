@@ -16,6 +16,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Marauding Blight-Priest"
             | "Dazzling Angel"
             | "Good-Fortune Unicorn"
+            | "Archmage of Runes"
             | "Youthful Valkyrie"
             | "Spitfire Lagac"
             | "Tatyova, Benthic Druid"
@@ -38,6 +39,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Archmage of Runes" => (
+            3,
+            &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)][..],
+            &[ManaColor::U][..],
+            &[Subtype::Giant, Subtype::Wizard][..],
+            3,
+            6,
+            Keywords::NONE,
+        ),
         "Good-Fortune Unicorn" => (
             1,
             &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::W)][..],
@@ -233,6 +243,12 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.toughness != Some(toughness)
         || d.keywords != keywords
         || usize::from(d.mana_value) != usize::from(generic) + pips.len()
+        || crate::engine::static_instant_sorcery_reduction_for_v1(d.name)
+            != if d.name == "Archmage of Runes" {
+                Some(1)
+            } else {
+                None
+            }
         || d.is_land
         || d.is_token
         || d.enters_battlefield_tapped
@@ -268,6 +284,17 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Archmage of Runes" => (
+            TriggerCondition::CastInstantOrSorcery,
+            json!({"event":"ObserverControllerCastsInstantOrSorcery","current_cast_characteristics":true,"opponent_casts_and_copies_without_cast_do_not_trigger":true,"creature_artifact_or_enchantment_only_casts_do_not_trigger":true,"trigger_count_per_cast":1,"countering_cast_spell_does_not_remove_trigger":true}),
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+            vec![
+                json!({"operation":"DrawCards","recipient":"CapturedTriggerController","count":1,"normal_draw_replacements_and_empty_library_loss_apply":true,"drawn_identity_visible_only_to_authorized_viewers":true,"does_not_require_source_still_on_battlefield":true}),
+            ],
+        ),
         "Eager Trufflesnout" => {
             let food = crate::card_def::card_id_by_name("Food Token")
                 .ok_or(Error::UnsupportedPrintedRoot(id))?;
@@ -513,7 +540,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"observer_trigger_printing":{
+    let mut meaning = json!({"card_id":id,"observer_trigger_printing":{
         "schema":"printed-battlefield-observer/v1","cost":cost,"types":d.types,"subtypes":d.subtypes,
         "supertypes":if supertypes.is_empty() { json!([]) } else { json!(["Legendary"]) },"colors":d.colors,"power":power,"toughness":toughness,
         "keywords":keywords.0,"mana_value":d.mana_value,"token":false,
@@ -526,5 +553,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "mandatory":true,"targets":[],"uses_stack":true,"controller":"ObserverControllerAtEvent",
             "captures_source_incarnation_and_controller_at_event":true,"survives_source_departure_and_later_control_change":true,
             "ordered_resolution":ordered}]
-    }})))
+    }});
+    if d.name == "Archmage of Runes" {
+        meaning["observer_trigger_printing"]["ordered_static_roots"] = json!([{"operation":"ReduceControllerInstantOrSorcerySpellGenericCost","source_zone":"Battlefield","requires_active_printed_source_abilities":true,"controller":"CurrentSourceController","current_effective_copied_printing_selects_rule":true,"spell_types_match_any":["Instant","Sorcery"],"reduction_per_live_source":1,"independent_sources_add":true,"minimum_generic_component":0,"does_not_reduce_colored_pips":true,"apply_to_total_cost_after_additional_costs_and_chosen_x":true,"normal_final_cost_floor_rules_apply_afterward":true,"does_not_reduce_activated_abilities_or_spell_mana_value":true,"recompute_at_cost_determination":true,"does_not_reprice_already_paid_spell":true,"ends_when_source_leaves_or_loses_printed_abilities":true}]);
+    }
+    Ok(Some(meaning))
 }
