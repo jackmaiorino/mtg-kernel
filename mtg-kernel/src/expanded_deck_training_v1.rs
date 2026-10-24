@@ -108,6 +108,7 @@ mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
 mod trajectory_parse_ahead_v1;
+pub(crate) mod verified_bytes_cache_v1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
@@ -572,22 +573,40 @@ pub(crate) fn inference_identity_v1(
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
+    let state_sha256 = hex(&state.state_sha256_v1().map_err(err)?);
+    Ok(inference_identity_with_state_sha256_v1(
+        source,
+        policy,
+        state,
+        state_sha256,
+    ))
+}
+
+/// `inference_identity_v1` for a caller that has just hashed this same,
+/// unmutated `state` (`state_sha256`). The state hash is that function's only
+/// fallible step; every other field is a pure accessor.
+fn inference_identity_with_state_sha256_v1(
+    source: &ExpandedModelSourceV1,
+    policy: &FrozenPlayPolicyV1,
+    state: &NativePolicyValueTrainStateV1,
+    state_sha256: String,
+) -> ExpandedInferenceIdentityV1 {
     // Single accessor, not a hand-picked constant: a fresh-V4 policy must
     // stamp the V4 schema/registry/source/descriptor identity here, never
     // the V3 one, and this is the one place that decides which.
     let feature_identity = policy.feature_identity_v1();
-    Ok(ExpandedInferenceIdentityV1 {
+    ExpandedInferenceIdentityV1 {
         schema: inference_schema_v1(policy.identity_v1()).into(),
         source_import: policy.identity_v1().clone(),
         checkpoint_sha256: source.checkpoint.as_ref().map(|pin| pin.sha256.clone()),
         model: policy.actual_model_identity_v1(),
-        state_sha256: hex(&state.state_sha256_v1().map_err(err)?),
+        state_sha256,
         adam_step: state.adam_step_v1(),
         feature_schema_version: feature_identity.feature_schema_version.into(),
         feature_registry_version: feature_identity.feature_registry_version.into(),
         features_source_sha256: feature_identity.features_source_sha256.into(),
         feature_descriptor_sha256: feature_identity.feature_descriptor_sha256.into(),
-    })
+    }
 }
 
 /// Narrow objective-transition seam. An existing game-terminal checkpoint
@@ -3358,7 +3377,12 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
             let learner = ExpandedSeatBehaviorV1 {
                 source: source.clone(),
-                identity: inference_identity_v1(&source, &policy, &state)?,
+                identity: inference_identity_with_state_sha256_v1(
+                    &source,
+                    &policy,
+                    &state,
+                    state_hash.clone(),
+                ),
             };
             let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
             drop(state);
@@ -3836,7 +3860,7 @@ fn execute_update_inner_v1(
     let before = hex(&state.state_sha256_v1().map_err(err)?);
     let learner = ExpandedSeatBehaviorV1 {
         source: source.clone(),
-        identity: inference_identity_v1(&source, &policy, &state)?,
+        identity: inference_identity_with_state_sha256_v1(&source, &policy, &state, before.clone()),
     };
     let mut ids = BTreeSet::new();
     let mut hashes = BTreeSet::new();
@@ -4829,14 +4853,26 @@ fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, St
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
+    read_pinned_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_bytes` against the verified-bytes cache `cache`.
+fn read_pinned_bytes_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<Vec<u8>, String> {
     let metadata = fs::metadata(&pin.path).map_err(err)?;
     ensure(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
         "input is not a bounded regular file",
     )?;
     let bytes = fs::read(&pin.path).map_err(err)?;
+    // Bytes equal to bytes this process already verified against this pin
+    // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
+    // before.
     ensure(
-        bytes.len() as u64 <= MAX_FILE_BYTES && sha(&bytes) == pin.sha256,
+        bytes.len() as u64 <= MAX_FILE_BYTES
+            && cache.digest_matches_v1(&pin.path, &pin.sha256, &bytes, sha),
         "input file SHA differs",
     )?;
     Ok(bytes)
@@ -4847,12 +4883,53 @@ fn publish_json<T: Serialize>(
     name: &str,
     value: &T,
 ) -> Result<PinnedFileV1, String> {
-    let bytes = serde_json::to_vec(value).map_err(err)?;
+    let bytes = serialize_json_v1(name, value)?;
     publish_json_bytes_v1(directory, name, &bytes)
+}
+
+/// Distinct document names whose serialized length is remembered.
+const SERIALIZED_LENGTH_NAMES_V1: usize = 4096;
+
+/// `serde_json::to_vec(value)`, which is `to_writer` into a 128-byte buffer,
+/// with the buffer presized from the last serialization of the same document
+/// name in this process, so a 20 MB checkpoint is not regrown from 128 bytes
+/// at every update. The bytes and any error are `to_vec`'s.
+fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock, PoisonError};
+    static LENGTHS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+    let lengths = LENGTHS.get_or_init(Default::default);
+    let previous = lengths
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(name)
+        .copied()
+        .unwrap_or(0);
+    // A little headroom: float text makes a document's length vary slightly.
+    let capacity = previous
+        .saturating_add(previous / 16)
+        .clamp(128, MAX_FILE_BYTES as usize);
+    let mut bytes = Vec::with_capacity(capacity);
+    serde_json::to_writer(&mut bytes, value).map_err(err)?;
+    let mut lengths = lengths.lock().unwrap_or_else(PoisonError::into_inner);
+    if lengths.len() < SERIALIZED_LENGTH_NAMES_V1 || lengths.contains_key(name) {
+        lengths.insert(name.to_owned(), bytes.len());
+    }
+    Ok(bytes)
 }
 
 /// `publish_json` for a document already serialized to `bytes`.
 fn publish_json_bytes_v1(
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<PinnedFileV1, String> {
+    publish_json_bytes_in_v1(verified_bytes_cache_v1::global_v1(), directory, name, bytes)
+}
+
+/// `publish_json_bytes_v1` recording into the verified-bytes cache `cache`.
+fn publish_json_bytes_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     directory: &Path,
     name: &str,
     bytes: &[u8],
@@ -4864,10 +4941,15 @@ fn publish_json_bytes_v1(
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
     let receipt =
         publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, bytes).map_err(err)?;
-    Ok(PinnedFileV1 {
+    let pin = PinnedFileV1 {
         path: directory.join(name),
         sha256: hex(&receipt.sha256()),
-    })
+    };
+    // The receipt's digest was computed from `bytes`, and the publication
+    // recaptured the file byte for byte: this process's later reads of the
+    // pin compare instead of hashing (`verified_bytes_cache_v1`).
+    cache.record_verified_v1(&pin.path, &pin.sha256, bytes);
+    Ok(pin)
 }
 
 #[cfg(test)]
