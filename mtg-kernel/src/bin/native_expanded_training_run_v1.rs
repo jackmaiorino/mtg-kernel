@@ -10,6 +10,8 @@ use std::path::PathBuf;
 const MAX_VALIDATION_CONFIG_BYTES: usize = 16 * 1024 * 1024;
 
 fn main() {
+    // SAFETY: first statement of main; no other thread exists yet.
+    unsafe { mtg_kernel::retain_freed_memory_v1() };
     if let Err(error) = run() {
         eprintln!("native expanded training: {error}");
         std::process::exit(1);

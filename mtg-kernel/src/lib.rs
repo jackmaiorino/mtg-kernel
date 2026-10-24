@@ -44,6 +44,50 @@ macro_rules! fast_global_allocator {
     };
 }
 
+/// mimalloc's `mi_option_purge_delay` in the vendored v3 `mimalloc.h`
+/// (libmimalloc-sys 0.1.49, mimalloc 3.3.2), which the bindings do not name.
+const MI_OPTION_PURGE_DELAY_V1: std::ffi::c_int = 15;
+
+unsafe extern "C" {
+    fn mi_option_get(option: std::ffi::c_int) -> std::ffi::c_long;
+    fn mi_option_set(option: std::ffi::c_int, value: std::ffi::c_long);
+}
+
+/// Makes [`FastAllocatorV1`] keep freed memory for reuse instead of returning
+/// it to the system (purge delay -1), unless the environment names a purge
+/// delay (`MIMALLOC_PURGE_DELAY` or its legacy alias `MIMALLOC_RESET_DELAY`,
+/// in any letter case, as mimalloc reads them), in which case mimalloc's own
+/// reading stands. Like the allocator itself it changes cost, not results. A
+/// training process otherwise faults its large per-update buffers back in
+/// from zeroed pages on every reuse; it holds its peak memory instead (about
+/// 140 MB more per process measured for an 18-update ordinary segment; there
+/// is no byte cap).
+///
+/// # Safety
+///
+/// mimalloc's option fields are plain, unsynchronized memory that every
+/// allocating thread reads. Call this first in `main`, before the process
+/// starts any other thread, and never again.
+pub unsafe fn retain_freed_memory_v1() {
+    let named = std::env::vars_os().any(|(name, _)| {
+        name.to_str().is_some_and(|name| {
+            name.eq_ignore_ascii_case("MIMALLOC_PURGE_DELAY")
+                || name.eq_ignore_ascii_case("MIMALLOC_RESET_DELAY")
+        })
+    });
+    if !named {
+        // SAFETY: the caller guarantees no other thread exists yet.
+        unsafe { mi_option_set(MI_OPTION_PURGE_DELAY_V1, -1) };
+    }
+}
+
+/// mimalloc's current purge delay in milliseconds (-1: never purge).
+pub fn purge_delay_ms_v1() -> std::ffi::c_long {
+    // SAFETY: a read of the option; the only writer in this crate,
+    // `retain_freed_memory_v1`, runs before any other thread exists.
+    unsafe { mi_option_get(MI_OPTION_PURGE_DELAY_V1) }
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
