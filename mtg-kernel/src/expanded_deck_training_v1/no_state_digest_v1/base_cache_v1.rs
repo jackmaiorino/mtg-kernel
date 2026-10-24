@@ -52,7 +52,7 @@ impl VerifiedBaseV1 {
     pub(super) fn files_unchanged_v1(&self) -> bool {
         self.files
             .iter()
-            .all(|(path, bytes)| std::fs::read(path).is_ok_and(|read| read == *bytes))
+            .all(|(path, bytes)| holds_bytes_v1(path, bytes))
     }
 
     /// The base import's bytes.
@@ -64,6 +64,40 @@ impl VerifiedBaseV1 {
     pub(super) fn template_v1(&self) -> Result<FrozenPlayPolicyV1, String> {
         self.template.duplicate_loaded_v1()
     }
+}
+
+/// Whether `path` is a regular file of exactly `expected`'s length holding
+/// exactly those bytes. Metadata comes first and the read is capped at one
+/// byte past that length, so an oversized or non-regular replacement (a
+/// directory, a pipe) is a miss without being read; the original reader
+/// then reports it.
+fn holds_bytes_v1(path: &std::path::Path, expected: &[u8]) -> bool {
+    use std::io::Read;
+    let regular = |metadata: std::io::Result<std::fs::Metadata>| {
+        metadata.is_ok_and(|metadata| metadata.is_file() && metadata.len() == expected.len() as u64)
+    };
+    // Checked before opening, which would block on a pipe, and again on the
+    // opened file.
+    if !regular(std::fs::metadata(path)) {
+        return false;
+    }
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    if !regular(file.metadata()) {
+        return false;
+    }
+    let mut read = Vec::with_capacity(expected.len() + 1);
+    if file
+        .take(expected.len() as u64 + 1)
+        .read_to_end(&mut read)
+        .is_err()
+    {
+        return false;
+    }
+    #[cfg(test)]
+    BYTES_READ_FOR_TEST_V1.with(|total| total.set(total.get() + read.len() as u64));
+    read == expected
 }
 
 type EntriesV1 = VecDeque<Arc<VerifiedBaseV1>>;
@@ -89,6 +123,13 @@ fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> Option<R> {
 #[cfg(test)]
 thread_local! {
     static HITS_FOR_TEST_V1: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static BYTES_READ_FOR_TEST_V1: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Test-only: bytes this thread's comparisons read.
+#[cfg(test)]
+pub(super) fn bytes_read_for_test_v1() -> u64 {
+    BYTES_READ_FOR_TEST_V1.with(std::cell::Cell::get)
 }
 
 /// Test-only: base files this thread found unchanged for an entry.

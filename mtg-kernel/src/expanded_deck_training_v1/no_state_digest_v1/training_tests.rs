@@ -1089,6 +1089,75 @@ fn converted_bases_are_served_exactly_by_the_base_cache_v1() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// A base file replaced by an oversized file or by a non-regular one (a
+/// directory at its path) is a base cache miss that reads none of it, and
+/// the full path refuses with exactly its own error.
+#[test]
+fn base_cache_misses_unread_oversized_and_non_regular_replacements() {
+    on_large_stack(base_cache_misses_unread_oversized_and_non_regular_replacements_v1);
+}
+
+fn base_cache_misses_unread_oversized_and_non_regular_replacements_v1() {
+    let hits = base_cache_v1::hits_for_test_v1;
+    let read = base_cache_v1::bytes_read_for_test_v1;
+    let root = temp_root("base-cache-bounds");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let (outputs, converted) = convert(&root, &parent, "conversion");
+    let first = with_continuation(&root, &converted, "first");
+    let base_descriptor: super::super::ExpandedFreshInitializationSourceV1 =
+        read_pinned(&parent.play_import).unwrap();
+    let checkpoint = parent.checkpoint.clone().unwrap().path;
+    let verified: u64 = [
+        &outputs.conversion.path,
+        &parent.play_import.path,
+        &base_descriptor.initialization.path,
+        &base_descriptor.parameters.path,
+        &checkpoint,
+    ]
+    .iter()
+    .map(|path| fs::metadata(path).unwrap().len())
+    .sum();
+    with_check_for_test_v1(false, || {
+        clear_for_test_v1();
+        initialize_any_math_v1(&first).unwrap();
+        let cases = [
+            (checkpoint.clone(), "oversized"),
+            (checkpoint.clone(), "directory"),
+            (base_descriptor.parameters.path.clone(), "directory"),
+        ];
+        for (path, kind) in cases {
+            let original = fs::read(&path).unwrap();
+            if kind == "oversized" {
+                let mut bigger = original.clone();
+                bigger.resize(original.len() + (4 << 20), b' ');
+                fs::write(&path, bigger).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+                fs::create_dir(&path).unwrap();
+            }
+            let full = bypassed_for_test_v1(|| refusal(&first));
+            clear_for_test_v1();
+            let (before_hits, before_read) = (hits(), read());
+            assert_eq!(refusal(&first), full, "{kind} {}", path.display());
+            assert_eq!(hits(), before_hits, "{kind} {}", path.display());
+            assert!(
+                read() - before_read < verified,
+                "{kind} {}: the cache read the replacement",
+                path.display()
+            );
+            if kind == "directory" {
+                fs::remove_dir(&path).unwrap();
+            }
+            fs::write(&path, &original).unwrap();
+        }
+        clear_for_test_v1();
+        let before = hits();
+        initialize_any_math_v1(&first).unwrap();
+        assert_eq!(hits(), before + 1, "the restored base is served again");
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn list(id: &str) -> ExpandedDeckListV1 {
     let registration = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
     let cards = registration.registered_configuration();
