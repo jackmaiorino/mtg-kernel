@@ -20,12 +20,18 @@
 //! byte. Every caller's digest is the lowercase hex SHA-256 of the bytes, so
 //! an entry recorded by one caller proves the pin of every other.
 //!
-//! `MTG_KERNEL_VERIFIED_BYTES_CACHE_MIB` sets the held bytes (default 160;
-//! 0 turns the memo off). Least recently used entries are dropped before a
-//! new one is copied in, so held entries never exceed the budget, and bytes
-//! larger than the whole budget are not held. A dropped entry's bytes live on
-//! only while a reader that took it before the drop finishes its comparison
-//! (at most one file per concurrent reader).
+//! Readers take a cache handle: production passes the process cache
+//! (`global_v1`), and tests pass their own.
+//!
+//! `MTG_KERNEL_VERIFIED_BYTES_CACHE_MIB` sets the process cache's budget
+//! (default 160; 0 turns the memo off). An entry is charged its bytes, its
+//! path, its digest and `ENTRY_OVERHEAD_BYTES_V1`, so empty files count too,
+//! and at most `ENTRY_LIMIT_V1` entries are held. Least recently used entries
+//! are dropped before a new one is copied in, so held entries never exceed
+//! either bound, and an entry whose charge exceeds the whole budget is not
+//! held. A dropped entry's bytes live on only while a reader that took it
+//! before the drop finishes its comparison (at most one file per concurrent
+//! reader).
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -35,112 +41,150 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 mod tests;
 
 const DEFAULT_BUDGET_MIB_V1: usize = 160;
+/// Charged per entry beside its bytes, path and digest: the entry, its `Arc`
+/// and the allocations' bookkeeping, rounded up.
+const ENTRY_OVERHEAD_BYTES_V1: usize = 256;
+/// A run holds a few dozen pins per update; this only stops tiny files from
+/// accumulating entries.
+const ENTRY_LIMIT_V1: usize = 4096;
 
-fn budget_bytes_v1() -> usize {
-    static BUDGET: OnceLock<usize> = OnceLock::new();
-    *BUDGET.get_or_init(|| {
-        std::env::var("MTG_KERNEL_VERIFIED_BYTES_CACHE_MIB")
+/// The process cache every production reader uses.
+pub(crate) fn global_v1() -> &'static VerifiedBytesCacheV1 {
+    static CACHE: OnceLock<VerifiedBytesCacheV1> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let budget = std::env::var("MTG_KERNEL_VERIFIED_BYTES_CACHE_MIB")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(DEFAULT_BUDGET_MIB_V1)
-            .saturating_mul(1 << 20)
+            .saturating_mul(1 << 20);
+        VerifiedBytesCacheV1::new_v1(budget, ENTRY_LIMIT_V1)
     })
+}
+
+/// What an entry for `path`, `sha256` and `bytes_len` bytes is charged.
+fn charge_v1(path: &Path, sha256: &str, bytes_len: usize) -> usize {
+    bytes_len
+        .saturating_add(path.as_os_str().len())
+        .saturating_add(sha256.len())
+        .saturating_add(ENTRY_OVERHEAD_BYTES_V1)
 }
 
 struct EntryV1 {
     path: PathBuf,
     sha256: String,
     bytes: Arc<Vec<u8>>,
+    charge: usize,
 }
 
 #[derive(Default)]
-struct CacheV1 {
+struct HeldV1 {
     /// Least recently used first; a hit or a re-record moves to the back.
     entries: VecDeque<EntryV1>,
-    held_bytes: usize,
+    /// The sum of the entries' charges.
+    charged: usize,
 }
 
-fn cache_v1() -> &'static Mutex<CacheV1> {
-    static CACHE: OnceLock<Mutex<CacheV1>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(CacheV1::default()))
-}
-
-/// Whether `bytes`, just read from `path`, have the SHA-256 `sha256`: equal
-/// to held bytes for that pin, or else `digest(bytes) == sha256`, recording
-/// them on a match. The comparison runs outside the lock.
-pub(crate) fn digest_matches_v1(
-    path: &Path,
-    sha256: &str,
-    bytes: &[u8],
-    digest: impl FnOnce(&[u8]) -> String,
-) -> bool {
-    if held_v1(path, sha256).is_some_and(|held| held.as_slice() == bytes) {
-        return true;
-    }
-    let matches = digest(bytes) == sha256;
-    if matches {
-        record_verified_v1(path, sha256, bytes);
-    }
-    matches
-}
-
-/// The bytes held for `path` under `sha256`, whose SHA-256 is `sha256`.
-pub(crate) fn held_v1(path: &Path, sha256: &str) -> Option<Arc<Vec<u8>>> {
-    held_in_v1(cache_v1(), budget_bytes_v1(), path, sha256)
-}
-
-/// Holds `bytes` for `path`; the caller has established that their SHA-256
-/// is `sha256`.
-pub(crate) fn record_verified_v1(path: &Path, sha256: &str, bytes: &[u8]) {
-    record_in_v1(cache_v1(), budget_bytes_v1(), path, sha256, bytes);
-}
-
-fn held_in_v1(
-    cache: &Mutex<CacheV1>,
+pub(crate) struct VerifiedBytesCacheV1 {
+    /// Bound on the held entries' charges; 0 turns the cache off.
     budget: usize,
-    path: &Path,
-    sha256: &str,
-) -> Option<Arc<Vec<u8>>> {
-    if budget == 0 {
-        return None;
-    }
-    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
-    let index = cache
-        .entries
-        .iter()
-        .position(|entry| entry.sha256 == sha256 && entry.path == path)?;
-    let entry = cache.entries.remove(index)?;
-    let bytes = Arc::clone(&entry.bytes);
-    cache.entries.push_back(entry);
-    Some(bytes)
+    /// Bound on the number of held entries.
+    entry_limit: usize,
+    held: Mutex<HeldV1>,
+    /// Digests computed by `digest_matches_v1`, so tests can tell a
+    /// comparison from a fallback.
+    #[cfg(test)]
+    hashed: std::sync::atomic::AtomicUsize,
 }
 
-/// The least recently used entries are dropped until `bytes` fit, then
-/// `bytes` are copied in; bytes larger than the whole budget are not held.
-fn record_in_v1(cache: &Mutex<CacheV1>, budget: usize, path: &Path, sha256: &str, bytes: &[u8]) {
-    if budget == 0 || bytes.len() > budget {
-        return;
-    }
-    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(index) = cache
-        .entries
-        .iter()
-        .position(|entry| entry.sha256 == sha256 && entry.path == path)
-    {
-        if let Some(entry) = cache.entries.remove(index) {
-            cache.held_bytes -= entry.bytes.len();
+impl VerifiedBytesCacheV1 {
+    pub(crate) fn new_v1(budget: usize, entry_limit: usize) -> Self {
+        Self {
+            budget,
+            entry_limit,
+            held: Mutex::new(HeldV1::default()),
+            #[cfg(test)]
+            hashed: std::sync::atomic::AtomicUsize::new(0),
         }
     }
-    while cache.held_bytes + bytes.len() > budget {
-        let Some(oldest) = cache.entries.pop_front() else {
-            break;
-        };
-        cache.held_bytes -= oldest.bytes.len();
+
+    /// Whether `bytes`, just read from `path`, have the SHA-256 `sha256`:
+    /// equal to held bytes for that pin, or else `digest(bytes) == sha256`,
+    /// recording them on a match. The comparison runs outside the lock.
+    pub(crate) fn digest_matches_v1(
+        &self,
+        path: &Path,
+        sha256: &str,
+        bytes: &[u8],
+        digest: impl FnOnce(&[u8]) -> String,
+    ) -> bool {
+        if self
+            .held_v1(path, sha256)
+            .is_some_and(|held| held.as_slice() == bytes)
+        {
+            return true;
+        }
+        #[cfg(test)]
+        self.hashed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let matches = digest(bytes) == sha256;
+        if matches {
+            self.record_verified_v1(path, sha256, bytes);
+        }
+        matches
     }
-    cache.held_bytes += bytes.len();
-    cache.entries.push_back(EntryV1 {
-        path: path.to_path_buf(),
-        sha256: sha256.to_owned(),
-        bytes: Arc::new(bytes.to_vec()),
-    });
+
+    /// The bytes held for `path` under `sha256`, whose SHA-256 is `sha256`.
+    pub(crate) fn held_v1(&self, path: &Path, sha256: &str) -> Option<Arc<Vec<u8>>> {
+        if self.budget == 0 {
+            return None;
+        }
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let index = held
+            .entries
+            .iter()
+            .position(|entry| entry.sha256 == sha256 && entry.path == path)?;
+        let entry = held.entries.remove(index)?;
+        let bytes = Arc::clone(&entry.bytes);
+        held.entries.push_back(entry);
+        Some(bytes)
+    }
+
+    /// Holds `bytes` for `path`; the caller has established that their
+    /// SHA-256 is `sha256`. The least recently used entries are dropped until
+    /// the new entry fits both bounds, then `bytes` are copied in; an entry
+    /// whose charge exceeds the whole budget is not held.
+    pub(crate) fn record_verified_v1(&self, path: &Path, sha256: &str, bytes: &[u8]) {
+        let charge = charge_v1(path, sha256, bytes.len());
+        if self.entry_limit == 0 || charge > self.budget {
+            return;
+        }
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(index) = held
+            .entries
+            .iter()
+            .position(|entry| entry.sha256 == sha256 && entry.path == path)
+        {
+            if let Some(entry) = held.entries.remove(index) {
+                held.charged -= entry.charge;
+            }
+        }
+        while held.charged + charge > self.budget || held.entries.len() >= self.entry_limit {
+            let Some(oldest) = held.entries.pop_front() else {
+                break;
+            };
+            held.charged -= oldest.charge;
+        }
+        held.charged += charge;
+        held.entries.push_back(EntryV1 {
+            path: path.to_path_buf(),
+            sha256: sha256.to_owned(),
+            bytes: Arc::new(bytes.to_vec()),
+            charge,
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hashed_for_test_v1(&self) -> usize {
+        self.hashed.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }

@@ -4853,6 +4853,14 @@ fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, St
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
+    read_pinned_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_bytes` against the verified-bytes cache `cache`.
+fn read_pinned_bytes_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<Vec<u8>, String> {
     let metadata = fs::metadata(&pin.path).map_err(err)?;
     ensure(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
@@ -4864,7 +4872,7 @@ fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
     // before.
     ensure(
         bytes.len() as u64 <= MAX_FILE_BYTES
-            && verified_bytes_cache_v1::digest_matches_v1(&pin.path, &pin.sha256, &bytes, sha),
+            && cache.digest_matches_v1(&pin.path, &pin.sha256, &bytes, sha),
         "input file SHA differs",
     )?;
     Ok(bytes)
@@ -4916,6 +4924,16 @@ fn publish_json_bytes_v1(
     name: &str,
     bytes: &[u8],
 ) -> Result<PinnedFileV1, String> {
+    publish_json_bytes_in_v1(verified_bytes_cache_v1::global_v1(), directory, name, bytes)
+}
+
+/// `publish_json_bytes_v1` recording into the verified-bytes cache `cache`.
+fn publish_json_bytes_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<PinnedFileV1, String> {
     ensure(
         bytes.len() as u64 <= MAX_FILE_BYTES,
         "output exceeds file size limit",
@@ -4930,7 +4948,7 @@ fn publish_json_bytes_v1(
     // The receipt's digest was computed from `bytes`, and the publication
     // recaptured the file byte for byte: this process's later reads of the
     // pin compare instead of hashing (`verified_bytes_cache_v1`).
-    verified_bytes_cache_v1::record_verified_v1(&pin.path, &pin.sha256, bytes);
+    cache.record_verified_v1(&pin.path, &pin.sha256, bytes);
     Ok(pin)
 }
 
