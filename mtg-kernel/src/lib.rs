@@ -44,6 +44,48 @@ macro_rules! fast_global_allocator {
     };
 }
 
+/// mimalloc's `mi_option_purge_delay` in the vendored v3 `mimalloc.h`
+/// (libmimalloc-sys 0.1.49, mimalloc 3.3.2), which the bindings do not name.
+const MI_OPTION_PURGE_DELAY_V1: std::ffi::c_int = 15;
+
+unsafe extern "C" {
+    fn mi_option_get(option: std::ffi::c_int) -> std::ffi::c_long;
+    fn mi_option_set(option: std::ffi::c_int, value: std::ffi::c_long);
+}
+
+/// Makes [`FastAllocatorV1`] keep freed memory for reuse instead of returning
+/// it to the system (purge delay -1), unless `MIMALLOC_PURGE_DELAY` is set, in
+/// which case mimalloc's own reading of it stands. Call it first in `main`.
+/// Like the allocator itself it changes cost, not results. A training process
+/// otherwise faults its large per-update buffers back in from zeroed pages on
+/// every reuse; it holds its peak memory instead (about 140 MB more per
+/// process for an 18-update ordinary segment).
+pub fn retain_freed_memory_v1() {
+    if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
+        // SAFETY: plain option setters of the linked allocator; they take no
+        // pointers and are safe to call at any time from any thread.
+        unsafe { mi_option_set(MI_OPTION_PURGE_DELAY_V1, -1) };
+    }
+}
+
+/// mimalloc's current purge delay in milliseconds (-1: never purge).
+pub fn purge_delay_ms_v1() -> i64 {
+    // SAFETY: as in `retain_freed_memory_v1`.
+    i64::from(unsafe { mi_option_get(MI_OPTION_PURGE_DELAY_V1) })
+}
+
+#[cfg(test)]
+mod allocator_tests {
+    #[test]
+    fn retain_freed_memory_sets_the_purge_delay_option() {
+        // Option 15 is the purge delay: its built-in default is 10 ms.
+        assert!(std::env::var_os("MIMALLOC_PURGE_DELAY").is_none());
+        assert_eq!(super::purge_delay_ms_v1(), 10);
+        super::retain_freed_memory_v1();
+        assert_eq!(super::purge_delay_ms_v1(), -1);
+    }
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
