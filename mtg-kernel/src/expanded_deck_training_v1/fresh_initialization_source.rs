@@ -366,7 +366,7 @@ pub(super) fn reverify_input_files_v1(
     Ok(())
 }
 
-fn read_actual(pin: &PinnedFileV1, cap: usize) -> Result<Vec<u8>, String> {
+pub(super) fn read_actual(pin: &PinnedFileV1, cap: usize) -> Result<Vec<u8>, String> {
     actual_pin(pin)?;
     let file = File::open(&pin.path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
@@ -378,8 +378,17 @@ fn read_actual(pin: &PinnedFileV1, cap: usize) -> Result<Vec<u8>, String> {
     file.take(cap as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
+    // Bytes equal to bytes this process already verified against this pin
+    // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
+    // before.
     require(
-        bytes.len() <= cap && hash(&bytes) == pin.sha256,
+        bytes.len() <= cap
+            && super::verified_bytes_cache_v1::digest_matches_v1(
+                &pin.path,
+                &pin.sha256,
+                &bytes,
+                hash,
+            ),
         "fresh input bytes differ from their size bound or SHA256 pin",
     )?;
     Ok(bytes)
