@@ -45,8 +45,7 @@ use std::sync::Arc;
 /// alive while a caller still holds its `Arc`.
 const BASE_CACHE_ENTRIES_V1: usize = 6;
 
-/// Files in read order, each with its bytes as verified against its pin.
-type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
+use crate::expanded_deck_training_v1::VerifiedFilesV1;
 
 pub(super) struct VerifiedBaseV1 {
     source: ExpandedModelSourceV1,
@@ -99,11 +98,14 @@ impl VerifiedBaseV1 {
 }
 
 /// Whether `path` is a regular file of exactly `expected`'s length holding
-/// exactly those bytes. Metadata comes first and the read is capped at one
+/// exactly those bytes (also the process opponent cache's comparison). Metadata comes first and the read is capped at one
 /// byte past that length, so an oversized or non-regular replacement (a
 /// directory, a pipe) is a miss without being read; the original reader
 /// then reports it.
-fn holds_bytes_v1(path: &std::path::Path, expected: &[u8]) -> bool {
+pub(in crate::expanded_deck_training_v1) fn holds_bytes_v1(
+    path: &std::path::Path,
+    expected: &[u8],
+) -> bool {
     use std::io::Read;
     let regular = |metadata: std::io::Result<std::fs::Metadata>| {
         metadata.is_ok_and(|metadata| metadata.is_file() && metadata.len() == expected.len() as u64)

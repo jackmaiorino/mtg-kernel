@@ -315,6 +315,15 @@ pub(super) fn read_trajectories_v1(
 /// policy that cannot be forked is used directly and never cached, as before.
 /// Converted (`no_state_digest_v1`) and ordinary entries share the bound, so
 /// either kind can evict the other.
+///
+/// An entry keeps every file its full load read, with the bytes verified
+/// against their pins (`opponent_cache_files_v1`). A prepared update's hit
+/// rereads them and compares bytes (`holds_bytes_v1`), so any change is a
+/// miss whose full load reports exactly its own error; a collection's hit
+/// follows the boundary's pin check of the same files
+/// (`verify_collection_opponent_sources_v1`). A source of any other kind, or
+/// whose checkpoint names a further file (a phase-1 archive-distillation
+/// parent), is not kept and loads in full every time.
 const OPPONENT_CACHE_ENTRIES: usize = 8;
 
 struct CachedOpponentV1 {
@@ -325,14 +334,28 @@ struct CachedOpponentV1 {
     /// setting it loaded under; a hit must match the current one, as a full
     /// load would.
     no_state_digest_check: Option<bool>,
+    /// Every file the full load read, with its verified bytes.
+    files: Arc<super::VerifiedFilesV1>,
 }
 
 static OPPONENT_CACHE: OnceLock<Mutex<VecDeque<CachedOpponentV1>>> = OnceLock::new();
 
+/// Whether the cache holds `source`. Its checkpoint, if any, was probed clean
+/// of a further file when it was kept.
+pub(super) fn holds_source_v1(source: &ExpandedModelSourceV1) -> bool {
+    OPPONENT_CACHE
+        .get()
+        .and_then(|cache| cache.lock().ok())
+        .is_some_and(|entries| entries.iter().any(|entry| &entry.source == source))
+}
+
 /// Load one opponent, forking it from the cache when its source is cached;
-/// the flag reports a cache hit.
+/// the flag reports a cache hit. `revalidate`: a hit must first find every
+/// file of the entry holding its verified bytes (a prepared update's load);
+/// otherwise the caller verified them (a collection, at its boundary).
 pub(super) fn load_opponent_cached_v1(
     source: &ExpandedModelSourceV1,
+    revalidate: bool,
 ) -> Result<(LoadedOpponentV1, bool), String> {
     let cache = OPPONENT_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));
     let cached = {
@@ -347,13 +370,22 @@ pub(super) fn load_opponent_cached_v1(
                 let entry = entries.remove(index).ok_or("opponent cache index")?;
                 let policy = Arc::clone(&entry.policy);
                 let identity = entry.identity.clone();
+                let files = Arc::clone(&entry.files);
                 entries.push_back(entry);
-                Some((policy, identity))
+                Some((policy, identity, files))
             }
             None => None,
         }
     };
-    if let Some((policy, identity)) = cached {
+    // A changed, missing or replaced file makes the hit a miss: the full
+    // load below reports exactly its own error.
+    let cached = cached.filter(|(_, _, files)| {
+        !revalidate
+            || files
+                .iter()
+                .all(|(path, bytes)| no_state_digest_v1::holds_bytes_v1(path, bytes))
+    });
+    if let Some((policy, identity, _)) = cached {
         // A hit bypasses loading, so the entry's effective input contract is
         // resolved again: its receipt and its policy must still agree.
         ensure(
@@ -382,8 +414,14 @@ pub(super) fn load_opponent_cached_v1(
         source: source.clone(),
         identity: identity.clone(),
     };
-    match policy.fork_for_collection_v3() {
-        Ok(fork) => {
+    // The files this load read, verified again; a source the cache cannot
+    // re-verify exactly is not kept.
+    let files = match super::opponent_cache_files_v1(source) {
+        Ok(Some(files)) => Some(Arc::new(files)),
+        _ => None,
+    };
+    match (policy.fork_for_collection_v3(), files) {
+        (Ok(fork), Some(files)) => {
             let mut entries = cache
                 .lock()
                 .map_err(|_| "opponent cache poisoned".to_string())?;
@@ -401,6 +439,7 @@ pub(super) fn load_opponent_cached_v1(
                 policy: Arc::new(policy),
                 identity,
                 no_state_digest_check,
+                files,
             });
             Ok((
                 LoadedOpponentV1 {
@@ -410,7 +449,22 @@ pub(super) fn load_opponent_cached_v1(
                 false,
             ))
         }
-        Err(_) => Ok((LoadedOpponentV1 { policy, behavior }, false)),
+        (Ok(fork), None) => {
+            // Nothing kept for this descriptor may outlive a load that could
+            // not re-verify it.
+            cache
+                .lock()
+                .map_err(|_| "opponent cache poisoned".to_string())?
+                .retain(|entry| &entry.source != source);
+            Ok((
+                LoadedOpponentV1 {
+                    policy: fork,
+                    behavior,
+                },
+                false,
+            ))
+        }
+        (Err(_), _) => Ok((LoadedOpponentV1 { policy, behavior }, false)),
     }
 }
 
@@ -430,7 +484,7 @@ pub(super) fn prepare_v1<'a>(
         workers,
         max_prepared_tensor_mebibytes,
         |source| {
-            let (mut loaded, hit) = load_opponent_cached_v1(source)?;
+            let (mut loaded, hit) = load_opponent_cached_v1(source, true)?;
             hits += usize::from(hit);
             bind_opponent_math_v1(source, &mut loaded.policy, training_math)?;
             Ok(loaded)

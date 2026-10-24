@@ -584,10 +584,49 @@ pub(super) fn verify_source_pins_v1(
     Ok(true)
 }
 
+/// All pins a full load reads, and those among them that are checkpoints.
+type SourcePinsV1 = (Vec<PinnedFileV1>, Vec<PinnedFileV1>);
+
+/// The pins of every file a full load of a converted `source` reads besides
+/// its import, in that load's order, and the checkpoints among them (the
+/// base checkpoint and a continuation's own), for the process opponent
+/// cache. `None` for an inference-only base, which keeps its full load.
+pub(super) fn source_pins_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+) -> Result<Option<SourcePinsV1>, String> {
+    let (import, conversion) = read_import_v1(bytes)?;
+    let base_bytes = read_pinned_bytes(&import.base_play_import)?;
+    if !base_trains_v1(&base_bytes)? {
+        return Ok(None);
+    }
+    let Some(base_pins) = super::import_pins_v1(&base_bytes)? else {
+        return Ok(None);
+    };
+    let mut pins = vec![import.conversion.clone(), import.base_play_import.clone()];
+    pins.extend(base_pins);
+    let mut checkpoints = Vec::new();
+    if let Some(pin) = &conversion.base_checkpoint {
+        pins.push(pin.clone());
+        checkpoints.push(pin.clone());
+    }
+    if source.checkpoint == conversion.base_checkpoint {
+        pins.extend(conversion.converted_checkpoint.iter().cloned());
+    } else {
+        let pin = source
+            .checkpoint
+            .clone()
+            .ok_or("a no-state-digest continuation requires a checkpoint")?;
+        pins.push(pin.clone());
+        checkpoints.push(pin);
+    }
+    Ok(Some((pins, checkpoints)))
+}
+
 /// Whether checkpoint bytes name a further file a full load reads: a
 /// phase-1 archive-distillation parent. Neither cache serves such a
 /// converted source, so it always loads in full.
-fn names_another_file_v1(checkpoint: &[u8]) -> Result<bool, String> {
+pub(super) fn names_another_file_v1(checkpoint: &[u8]) -> Result<bool, String> {
     #[derive(Deserialize)]
     struct ArchiveProbeV1 {
         #[serde(default, deserialize_with = "super::present_value_v1")]
@@ -1256,6 +1295,7 @@ pub fn convert_no_state_digest_v1(
 }
 
 mod base_cache_v1;
+pub(super) use base_cache_v1::holds_bytes_v1;
 
 #[cfg(test)]
 mod training_tests;

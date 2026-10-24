@@ -717,7 +717,7 @@ impl OpponentCacheV1 {
                 self.entries.remove(0);
             }
             let mut opponent = if self.verified_sources.contains(source) {
-                ordered_update_preparation::load_opponent_cached_v1(source)?.0
+                ordered_update_preparation::load_opponent_cached_v1(source, false)?.0
             } else {
                 // Unrecognized import schemas retain their original complete
                 // loader validation rather than trusting a process cache hit.
@@ -768,7 +768,18 @@ fn verify_collection_opponent_sources_v1(
         let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
             no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes.as_deref())?
         } else {
-            verify_import_pins_v1(&bytes)?
+            let mut pins_ok = verify_import_pins_v1(&bytes)?;
+            // A checkpoint that names a further file (a phase-1
+            // archive-distillation parent), or that the probe cannot read,
+            // keeps its full load, which reads it and reports its own error.
+            // The process cache holds only sources whose checkpoint the same
+            // probe found clean, and this pin was just verified, so a held
+            // source needs no probe.
+            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes.as_deref()) {
+                pins_ok = ordered_update_preparation::holds_source_v1(source)
+                    || no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
+            }
+            pins_ok
         };
         if !verified_pins {
             continue;
@@ -778,52 +789,106 @@ fn verify_collection_opponent_sources_v1(
     Ok(verified)
 }
 
-/// The external pins of a fresh-initialization source or an ordinary import,
-/// read once; `false` for any other schema, whose loader keeps its own full
-/// validation.
-fn verify_import_pins_v1(bytes: &[u8]) -> Result<bool, String> {
+/// Files read in full, each with its bytes verified against its pin.
+pub(super) type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
+
+/// Every file a full opponent load of `source` reads, read again and
+/// verified against its pin, for the process opponent cache: the import, its
+/// own inputs and the checkpoint, or for a converted source over a trainable
+/// base the conversion record, the base's files, the base checkpoint and the
+/// artifact or continuation checkpoint. `None` for any other kind of source,
+/// and for one whose base or source checkpoint names a further file (a
+/// phase-1 archive-distillation parent): those load in full every time.
+pub(super) fn opponent_cache_files_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<Option<VerifiedFilesV1>, String> {
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    let (pins, checkpoints) = if probe.get("schema").and_then(Value::as_str)
+        == Some(no_state_digest_v1::IMPORT_SCHEMA_V1)
+    {
+        match no_state_digest_v1::source_pins_v1(source, &bytes)? {
+            Some(pins) => pins,
+            None => return Ok(None),
+        }
+    } else {
+        let Some(mut pins) = import_pins_v1(&bytes)? else {
+            return Ok(None);
+        };
+        let checkpoints: Vec<PinnedFileV1> = source.checkpoint.iter().cloned().collect();
+        pins.extend(checkpoints.iter().cloned());
+        (pins, checkpoints)
+    };
+    let mut files = vec![(source.play_import.path.clone(), bytes)];
+    for pin in &pins {
+        let read = read_pinned_bytes(pin)?;
+        if checkpoints.contains(pin) && no_state_digest_v1::names_another_file_v1(&read)? {
+            return Ok(None);
+        }
+        files.push((pin.path.clone(), read));
+    }
+    Ok(Some(files))
+}
+
+/// The pins of the files a full load of an import reads besides the import
+/// itself: a fresh-initialization source's manifest and parameters, or an
+/// ordinary import's metadata, source run, source registry and parameters
+/// (the metadata, read and verified here, names two of them). `None` for any
+/// other schema.
+fn import_pins_v1(bytes: &[u8]) -> Result<Option<Vec<PinnedFileV1>>, String> {
     let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
     let schema = probe.get("schema").and_then(Value::as_str);
     if schema == Some(fresh_initialization_source::SOURCE_SCHEMA) {
         let descriptor = fresh_initialization_source::parse_source_v1(bytes)?;
-        read_pinned_bytes(&descriptor.initialization)?;
-        read_pinned_bytes(&descriptor.parameters)?;
-    } else if schema.is_none() {
-        let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(bytes).map_err(err)?;
-        let metadata = read_pinned_bytes(&PinnedFileV1 {
-            path: import.export_directory.join("metadata.json"),
-            sha256: import.expected_metadata_sha256,
-        })?;
-        let metadata: Value = serde_json::from_slice(&metadata).map_err(err)?;
-        for (path, expected) in [
-            (
-                import.source_run_path,
-                metadata
-                    .pointer("/identity/loaded_run_sha256")
-                    .and_then(Value::as_str)
-                    .ok_or("source run pin missing")?
-                    .to_owned(),
-            ),
-            (
-                import.source_registry_path,
-                import.expected_source_registry_sha256,
-            ),
-            (
-                import.export_directory.join("parameters.f32le"),
-                metadata
-                    .pointer("/parameter_section_sha256")
-                    .and_then(Value::as_str)
-                    .ok_or("parameter pin missing")?
-                    .to_owned(),
-            ),
-        ] {
-            read_pinned_bytes(&PinnedFileV1 {
-                path,
-                sha256: expected,
-            })?;
-        }
-    } else {
+        return Ok(Some(vec![descriptor.initialization, descriptor.parameters]));
+    }
+    if schema.is_some() {
+        return Ok(None);
+    }
+    let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(bytes).map_err(err)?;
+    let metadata_pin = PinnedFileV1 {
+        path: import.export_directory.join("metadata.json"),
+        sha256: import.expected_metadata_sha256,
+    };
+    let metadata: Value =
+        serde_json::from_slice(&read_pinned_bytes(&metadata_pin)?).map_err(err)?;
+    let source_run = PinnedFileV1 {
+        path: import.source_run_path,
+        sha256: metadata
+            .pointer("/identity/loaded_run_sha256")
+            .and_then(Value::as_str)
+            .ok_or("source run pin missing")?
+            .to_owned(),
+    };
+    let source_registry = PinnedFileV1 {
+        path: import.source_registry_path,
+        sha256: import.expected_source_registry_sha256,
+    };
+    let parameters = PinnedFileV1 {
+        path: import.export_directory.join("parameters.f32le"),
+        sha256: metadata
+            .pointer("/parameter_section_sha256")
+            .and_then(Value::as_str)
+            .ok_or("parameter pin missing")?
+            .to_owned(),
+    };
+    Ok(Some(vec![
+        metadata_pin,
+        source_run,
+        source_registry,
+        parameters,
+    ]))
+}
+
+/// The external pins of a fresh-initialization source or an ordinary import,
+/// read once; `false` for any other schema, whose loader keeps its own full
+/// validation.
+fn verify_import_pins_v1(bytes: &[u8]) -> Result<bool, String> {
+    let Some(pins) = import_pins_v1(bytes)? else {
         return Ok(false);
+    };
+    for pin in &pins {
+        read_pinned_bytes(pin)?;
     }
     Ok(true)
 }
@@ -5011,7 +5076,7 @@ pub(crate) mod tests {
         };
         let initialization = write_pin("initialization.json", b"initialization fixture");
         let parameters = write_pin("parameters.f32le", b"parameter fixture");
-        let checkpoint = write_pin("checkpoint.json", b"checkpoint fixture");
+        let checkpoint = write_pin("checkpoint.json", br#"{"fixture": "checkpoint"}"#);
         let descriptor = json!({
             "schema": fresh_initialization_source::SOURCE_SCHEMA,
             "initialization": initialization,

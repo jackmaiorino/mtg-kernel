@@ -821,9 +821,10 @@ fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1(
             vec![source.clone()]
         );
         with_check_for_test_v1(false, || {
-            let (first, _) = ordered_update_preparation::load_opponent_cached_v1(source).unwrap();
+            let (first, _) =
+                ordered_update_preparation::load_opponent_cached_v1(source, true).unwrap();
             let (second, hit) =
-                ordered_update_preparation::load_opponent_cached_v1(source).unwrap();
+                ordered_update_preparation::load_opponent_cached_v1(source, true).unwrap();
             assert!(hit);
             let full =
                 bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(source)).unwrap();
@@ -846,7 +847,7 @@ fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1(
         });
         with_check_for_test_v1(true, || {
             let (loaded, hit) =
-                ordered_update_preparation::load_opponent_cached_v1(source).unwrap();
+                ordered_update_preparation::load_opponent_cached_v1(source, true).unwrap();
             assert!(
                 !hit,
                 "an entry kept without the check is not served with it"
@@ -995,6 +996,193 @@ fn archive_distillation_bases_always_load_in_full_v1() {
                 &reference,
                 source,
             );
+        }
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The full opponent load's error for `source`.
+fn opponent_refusal(source: &ExpandedModelSourceV1) -> String {
+    match bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(source)) {
+        Ok(_) => panic!("the full opponent load succeeded"),
+        Err(error) => error,
+    }
+}
+
+/// A prepared update's opponent cache hit rereads every file a full load
+/// reads and compares the verified bytes: the entry holds exactly those
+/// files, a hit equals a full load, a changed or deleted file is a miss
+/// whose load refuses with exactly the full load's error, and the restored
+/// bytes are served again. Fresh, trained, converted run start and
+/// continuation sources alike.
+#[test]
+fn prepared_opponent_hits_reverify_every_file_a_full_load_reads() {
+    on_large_stack(prepared_opponent_hits_reverify_every_file_a_full_load_reads_v1);
+}
+
+fn prepared_opponent_hits_reverify_every_file_a_full_load_reads_v1() {
+    let root = temp_root("opponent-revalidate");
+    let fresh = fresh_source(&root);
+    let trained = with_trained_checkpoint(&root, &fresh);
+    let (outputs, converted) = convert(&root, &trained, "conversion");
+    let continuation = with_continuation(&root, &converted, "continuation");
+    let descriptor: super::super::ExpandedFreshInitializationSourceV1 =
+        read_pinned(&fresh.play_import).unwrap();
+    let fresh_files = vec![
+        fresh.play_import.path.clone(),
+        descriptor.initialization.path.clone(),
+        descriptor.parameters.path.clone(),
+    ];
+    let trained_files = [
+        fresh_files.clone(),
+        vec![trained.checkpoint.clone().unwrap().path],
+    ]
+    .concat();
+    let base_files = [
+        vec![
+            converted.play_import.path.clone(),
+            outputs.conversion.path.clone(),
+        ],
+        trained_files.clone(),
+    ]
+    .concat();
+    let cases = [
+        (&fresh, fresh_files),
+        (&trained, trained_files),
+        (
+            &converted,
+            [
+                base_files.clone(),
+                vec![outputs.converted_checkpoint.clone().unwrap().path],
+            ]
+            .concat(),
+        ),
+        (
+            &continuation,
+            [
+                base_files,
+                vec![continuation.checkpoint.clone().unwrap().path],
+            ]
+            .concat(),
+        ),
+    ];
+    let load = |source: &ExpandedModelSourceV1| {
+        ordered_update_preparation::load_opponent_cached_v1(source, true)
+    };
+    with_check_for_test_v1(false, || {
+        for (source, files) in cases {
+            // The entry keeps exactly the files a full load reads.
+            let mut kept: Vec<PathBuf> = super::super::opponent_cache_files_v1(source)
+                .unwrap()
+                .unwrap()
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect();
+            kept.sort();
+            let mut expected = files.clone();
+            expected.sort();
+            assert_eq!(kept, expected);
+            let full =
+                bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(source)).unwrap();
+            load(source).unwrap();
+            let (hit_load, hit) = load(source).unwrap();
+            assert!(hit);
+            assert_eq!(hit_load.behavior.identity, full.1);
+            assert_eq!(
+                hit_load.policy.actual_model_identity_v1(),
+                full.0.actual_model_identity_v1()
+            );
+            assert_eq!(
+                hit_load.policy.input_contract_v1(),
+                full.0.input_contract_v1()
+            );
+            for path in &files {
+                let original = fs::read(path).unwrap();
+                let mut changed = original.clone();
+                changed[original.len() / 2] ^= 1;
+                for (label, bytes) in [("changed", Some(changed)), ("missing", None)] {
+                    match bytes {
+                        Some(bytes) => fs::write(path, bytes).unwrap(),
+                        None => fs::remove_file(path).unwrap(),
+                    }
+                    let error = match load(source) {
+                        Ok(_) => panic!("{label} {}: a hit served it", path.display()),
+                        Err(error) => error,
+                    };
+                    assert_eq!(
+                        error,
+                        opponent_refusal(source),
+                        "{label} {}",
+                        path.display()
+                    );
+                    fs::write(path, &original).unwrap();
+                }
+                let (restored, hit) = load(source).unwrap();
+                assert!(hit, "restored {}", path.display());
+                assert_eq!(restored.behavior.identity, full.1);
+            }
+        }
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// An unconverted phase-1 archive-distillation opponent (whose full load
+/// reads its named parent) stays out of the opponent cache: the collection
+/// boundary leaves it to the full loader, a prepared update never keeps it,
+/// and a changed or deleted parent is refused on both paths exactly as a
+/// full load refuses it.
+#[test]
+fn archive_distillation_opponents_always_load_in_full() {
+    on_large_stack(archive_distillation_opponents_always_load_in_full_v1);
+}
+
+fn archive_distillation_opponents_always_load_in_full_v1() {
+    let root = temp_root("archive-opponent");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let parent_pin = parent.checkpoint.clone().unwrap();
+    let phase1 = with_phase1_checkpoint(&root, &parent);
+    let episodes = vec![episode("archive", 2_026_102_401, Some(phase1.clone()))];
+    with_check_for_test_v1(false, || {
+        let verified = verify_collection_opponent_sources_v1(&episodes).unwrap();
+        assert!(verified.is_empty());
+        assert!(super::super::opponent_cache_files_v1(&phase1)
+            .unwrap()
+            .is_none());
+        let full = bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(&phase1)).unwrap();
+        for _ in 0..2 {
+            let (loaded, hit) =
+                ordered_update_preparation::load_opponent_cached_v1(&phase1, true).unwrap();
+            assert!(!hit);
+            assert_eq!(loaded.behavior.identity, full.1);
+        }
+        assert!(!ordered_update_preparation::holds_source_v1(&phase1));
+        let opponents = || super::super::OpponentCacheV1::for_collection(verified.clone());
+        opponents().load(&phase1).unwrap();
+        let original = fs::read(&parent_pin.path).unwrap();
+        let mut changed = original.clone();
+        changed[original.len() / 2] ^= 1;
+        for (label, bytes) in [("changed", Some(changed)), ("missing", None)] {
+            match bytes {
+                Some(bytes) => fs::write(&parent_pin.path, bytes).unwrap(),
+                None => fs::remove_file(&parent_pin.path).unwrap(),
+            }
+            let full = opponent_refusal(&phase1);
+            let prepared = match ordered_update_preparation::load_opponent_cached_v1(&phase1, true)
+            {
+                Ok(_) => panic!("{label}: the prepared opponent loaded"),
+                Err(error) => error,
+            };
+            assert_eq!(prepared, full, "{label}");
+            let collected = match opponents().load(&phase1) {
+                Ok(_) => panic!("{label}: the collection opponent loaded"),
+                Err(error) => error,
+            };
+            assert_eq!(collected, full, "{label}");
+            // The boundary still leaves it to the full loader.
+            fs::write(&parent_pin.path, &original).unwrap();
+            assert!(verify_collection_opponent_sources_v1(&episodes)
+                .unwrap()
+                .is_empty());
         }
     });
     fs::remove_dir_all(root).unwrap();
@@ -1574,8 +1762,10 @@ fn converted_run_end_to_end_v1() {
     assert!(initial.diagnostic_forward_v4(&tensor).is_err());
 
     // The prepared opponent cache re-resolves a hit's contract.
-    let (_, first_hit) = ordered_update_preparation::load_opponent_cached_v1(&converted).unwrap();
-    let (loaded, hit) = ordered_update_preparation::load_opponent_cached_v1(&converted).unwrap();
+    let (_, first_hit) =
+        ordered_update_preparation::load_opponent_cached_v1(&converted, true).unwrap();
+    let (loaded, hit) =
+        ordered_update_preparation::load_opponent_cached_v1(&converted, true).unwrap();
     assert!(hit || first_hit);
     assert_eq!(
         loaded.policy.input_contract_v1(),
