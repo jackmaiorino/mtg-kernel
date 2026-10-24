@@ -1840,6 +1840,10 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
     a.engine.pending_cast = Some(PendingCast {
         spell,
         source_contract,
+        omniscience_v1: None,
+        sphinx_lore_v1: None,
+        greatwurm_v1: None,
+        wide_x_value_v59: None,
         controller: PlayerId::P0,
         target_spec: TargetSpec::AnyTarget,
         targets_chosen: vec![Target::Player(PlayerId::P1)],

@@ -273,6 +273,17 @@ pub enum TriggerCondition {
     OtherControlledNontokenCreatureDiesV1,
     /// Actual opposing casts; spell copies emit no cast event.
     OpponentCastsSpellV1,
+    /// Precommit death capture checks the departed effective subtypes.
+    DiesUnlessSubtype(Subtype),
+    /// Nine-Lives Familiar dies with positive counters in its exact departure LKI.
+    /// Appended to preserve the serialized discriminants of existing conditions.
+    DiesWithRevivalCounterV1,
+    /// A controlled nontoken creature dies without the named effective
+    /// subtype, captured before the death batch. The source may itself die.
+    ControlledNontokenCreatureDiesWithoutSubtypeV1(Subtype),
+    /// Event-time native wave capture, not generic per-recipient matching.
+    ControlledCreatureCombatDamageDuringOwnTurnV1,
+    OpponentDiscardsV72,
 }
 
 pub struct TriggeredAbilityDef {
@@ -349,6 +360,14 @@ fn materialize_trigger_source_program(
                 },
             }
         }
+        EffectOp::BindAleshaRaidReturn => {
+            EffectOp::AleshaRaidReturn {
+                // Preserve trigger-time source power. A departure checkpoint
+                // records engine-produced LKI before the source incarnation
+                // changes zones, and updates this effect payload to match.
+                source_power_lki: crate::engine::effective_power(state, source),
+            }
+        }
         EffectOp::BindWarpExileToTriggerSource => {
             let live = state.objects.get(source);
             EffectOp::WarpExileBoundObject {
@@ -403,6 +422,7 @@ fn contains_source_binding_template(effect: &EffectOp) -> bool {
         EffectOp::BindTemporaryBoostToTriggerSource { .. }
         | EffectOp::BindAshrootAttackBoostV1
         | EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+        | EffectOp::BindAleshaRaidReturn
         | EffectOp::BindDoublePlusOneCountersToTriggerSource
         | EffectOp::BindOilCounterToTriggerSource => true,
         EffectOp::Sequence(steps) => steps.iter().any(contains_source_binding_template),
@@ -713,6 +733,12 @@ const PHYREXIAN_ARENA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     },
     ..etb_trigger(phyrexian_arena_effect)
 }];
+const EXTRAVAGANT_REPLICATION_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    ..etb_trigger(crate::extravagant_replication_v1::root)
+}];
 const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
     home_zone: Zone::Graveyard,
@@ -989,6 +1015,33 @@ const SKYKNIGHT_SQUIRE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
 }];
+static GREATWURM_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledCreatureCombatDamageDuringOwnTurnV1,
+    ..etb_trigger(crate::effect::greatwurm_v1::marker)
+}];
+fn lathril_template_v1() -> EffectOp {
+    EffectOp::BindLathrilCombatTokensV1
+}
+static LATHRIL_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(lathril_template_v1)
+}];
+
+fn thousand_year_storm_template_v1() -> EffectOp {
+    EffectOp::BindThousandYearStormV1
+}
+const THOUSAND_YEAR_STORM_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(thousand_year_storm_template_v1)
+}];
+
+fn sphinxs_tutelage_template_v1() -> EffectOp {
+    EffectOp::BindSphinxsTutelageMillV1
+}
+const SPHINXS_TUTELAGE_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerDraws,
+    ..etb_trigger(sphinxs_tutelage_template_v1)
+}];
 const CLINQUANT_SKYMAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControllerDraws,
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
@@ -1131,6 +1184,23 @@ fn celestial_armor_effect() -> EffectOp {
     ])
 }
 
+fn embercleave_effect() -> EffectOp {
+    EffectOp::AttachSourceToTarget {
+        object: ObjectRef::Target(0),
+    }
+}
+
+// Selected only by the genuine Embercleave catalog printing. The trigger
+// retains the original Equipment incarnation through target choice/resolution.
+const EMBERCLEAVE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    face_index: 0,
+    effect: embercleave_effect,
+}];
+
 const CELESTIAL_ARMOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -1206,6 +1276,10 @@ pub fn unselected_trigger_modes(
     if let Some(modes) = crate::standard_creature_choices_v1::trigger_modes(card_def, effect) {
         return Some(modes);
     }
+    if crate::effect::kykar_v1::definition(card_def) && *effect == crate::effect::kykar_v1::marker()
+    {
+        return Some(crate::effect::kykar_v1::modes());
+    }
     if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
         return Some(apothecary_stomper_modes());
     }
@@ -1275,12 +1349,7 @@ fn koma_coils_effect() -> EffectOp {
 }
 
 fn homunculus_horde_effect() -> EffectOp {
-    let token_def = crate::card_def::card_id_by_name("Homunculus Horde Token")
-        .expect("Homunculus Horde Token in CARD_DEFS");
-    EffectOp::CreateToken {
-        token_def,
-        controller: PlayerRef::Controller,
-    }
+    EffectOp::CreateTokenCopyOfSourceV1
 }
 
 fn mischievous_mystic_effect() -> EffectOp {
@@ -1698,6 +1767,11 @@ static AUTHORITY_OF_THE_CONSULS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredA
     effect: authority_entry_effect,
 }];
 
+const MIDNIGHT_SNACK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
+    ..etb_trigger(crate::midnight_snack_v1::raid)
+}];
+
 const SEARSLICER_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
     ..etb_trigger(searslicer_goblin_effect)
@@ -1832,6 +1906,17 @@ fn gatecreeper_vine_effect() -> EffectOp {
         filter: crate::effect::LibraryCardFilter::BasicLandOrGate,
     }
 }
+
+fn consuming_aberration_mill_v1() -> EffectOp {
+    EffectOp::RevealUntilCardTypeAndMill {
+        player: PlayerRef::Opponent,
+        card_type: CardType::Land,
+    }
+}
+const CONSUMING_ABERRATION_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastSpell,
+    ..etb_trigger(consuming_aberration_mill_v1)
+}];
 
 fn balustrade_spy_effect() -> EffectOp {
     EffectOp::RevealUntilCardTypeAndMill {
@@ -2718,22 +2803,36 @@ fn goldvein_pick_combat_damage_effect() -> EffectOp {
 fn solemn_simulacrum_etb_effect() -> EffectOp {
     // "When this creature enters, you may search your library for a basic
     // land card, put that card onto the battlefield tapped, then shuffle."
-    // The zero-card selection is the "may".
-    EffectOp::SearchLibraryToBattlefieldTapped {
-        player: PlayerRef::Controller,
-        filter: crate::effect::LibraryCardFilter::BasicLand,
+    // Declining the optional instruction performs no shuffle. An accepted
+    // search still permits failing to find, followed by the required shuffle.
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::SearchLibraryToBattlefieldTapped {
+                player: PlayerRef::Controller,
+                filter: crate::effect::LibraryCardFilter::BasicLand,
+            },
+        ],
     }
 }
 
 fn campus_guide_etb_effect() -> EffectOp {
     // "When this creature enters, you may search your library for a basic
-    // land card, reveal it, then shuffle and put that card on top." The
-    // zero-card selection is the "may".
-    EffectOp::SearchLibraryCardsToDestination {
-        player: PlayerRef::Controller,
-        filter: crate::effect::LibraryCardFilter::BasicLand,
-        max_targets: 1,
-        destination: crate::effect::LibrarySearchDestinationV1::LibraryTopAfterShuffle,
+    // land card, reveal it, then shuffle and put that card on top."
+    // Declining does not search or shuffle. Accepting still permits failing
+    // to find a basic land, in which case the library must be shuffled.
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: crate::effect::LibraryCardFilter::BasicLand,
+                max_targets: 1,
+                destination: crate::effect::LibrarySearchDestinationV1::LibraryTopAfterShuffle,
+            },
+        ],
     }
 }
 
@@ -3285,6 +3384,11 @@ fn crackling_cyclops_effect() -> EffectOp {
     }
 }
 
+const KYKAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(crate::effect::kykar_v1::marker)
+}];
+
 const CRACKLING_CYCLOPS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::CastNoncreatureSpell,
     ..etb_trigger(crackling_cyclops_effect)
@@ -3533,6 +3637,10 @@ const HIGH_SOCIETY_HUNTER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(crate::high_society_hunter_v1::death_program)
     },
 ];
+const SPHINX_LORE_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(crate::effect::sphinx_lore_v1::marker)
+}];
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     static TABLE: std::sync::OnceLock<Box<[&'static [TriggeredAbilityDef]]>> =
         std::sync::OnceLock::new();
@@ -3551,6 +3659,33 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if crate::effect::liliana_dreadhorde_v1::definition(card_def) {
+        return &crate::effect::liliana_dreadhorde_v1::DEATH_TRIGGERS;
+    }
+    if card.name == "Sphinx of Forgotten Lore"
+        && crate::effect::sphinx_lore_v1::definition(card_def)
+    {
+        return &SPHINX_LORE_TRIGGERS_V1;
+    }
+    if card.name == "Quilled Greatwurm" && crate::effect::greatwurm_v1::definition(card_def) {
+        return &GREATWURM_TRIGGERS_V1;
+    }
+    if card.name == "Lathril, Blade of the Elves" {
+        return &LATHRIL_TRIGGERS_V1;
+    }
+    if card.name == "Consuming Aberration" {
+        return &CONSUMING_ABERRATION_TRIGGERS_V1;
+    }
+    if card.name == "Sphinx's Tutelage" {
+        return &SPHINXS_TUTELAGE_TRIGGERS_V1;
+    }
+    if card.name == "Zimone, Paradox Sculptor" {
+        return &crate::zimone_paradox_sculptor_v1::TRIGGERS;
+    }
+    let artist = crate::effect::perforating_artist_v1::triggers(card);
+    if !artist.is_empty() {
+        return artist;
+    }
     if card.other_controlled_nontoken_death_v1.is_some() {
         return crate::spinner_of_souls_v1::triggers(card);
     }
@@ -3561,6 +3696,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Thousand-Year Storm" if crate::effect::thousand_year_storm_v1::definition(card_def) => {
+            &THOUSAND_YEAR_STORM_TRIGGERS_V1
+        }
         #[cfg(all(
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
@@ -3569,6 +3707,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Tersa Lightshatter" => &TERSA_LIGHTSHATTER_TRIGGERS,
         "Zoetic Glyph" => &ZOETIC_GLYPH_TRIGGERS,
         "Collector's Cage" => &COLLECTORS_CAGE_TRIGGERS,
+        "Embercleave" => &EMBERCLEAVE_TRIGGERS,
         "Celestial Armor" => &CELESTIAL_ARMOR_TRIGGERS,
         "Exemplar of Light" => &EXEMPLAR_OF_LIGHT_TRIGGERS,
         "Vanguard Seraph" => &VANGUARD_SERAPH_TRIGGERS,
@@ -3610,6 +3749,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Wardens of the Cycle" => &WARDENS_OF_THE_CYCLE_TRIGGERS,
         "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
         "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
+        "Extravagant Replication" => &EXTRAVAGANT_REPLICATION_TRIGGERS,
         "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,
         "Gleaming Barrier" => &GLEAMING_BARRIER_TRIGGERS,
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
@@ -3621,6 +3761,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Grappling Kraken" => &GRAPPLING_KRAKEN_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
+        "Tinybones, Bauble Burglar" => &crate::engine::tinybones_v72::TRIGGERS,
         "Fiendish Panda" => &crate::fiendish_panda_v1::TRIGGERS,
         "Bloodthirsty Conqueror" => &crate::bloodthirsty_conqueror_v49::TRIGGERS,
         "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
@@ -3674,6 +3815,11 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
 
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
+        "Midnight Snack" => &MIDNIGHT_SNACK_TRIGGERS,
+        "Alesha, Who Laughs at Fate" => &crate::alesha_v1::TRIGGERS,
+        "Nine-Lives Familiar" => &crate::nine_lives_familiar_v1::TRIGGERS,
+        "Valkyrie's Call" => &crate::valkyries_call_v1::TRIGGERS,
+        "Infernal Vessel" => &crate::infernal_vessel_v1::TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
@@ -3699,6 +3845,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Faerie Miscreant" => &FAERIE_MISCREANT_TRIGGERS,
         "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
         "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
+        "Curator of Destinies" if crate::effect::curator_v1::definition(card_def) => {
+            &crate::effect::curator_v1::TRIGGERS
+        }
         "Solemn Simulacrum" => &SOLEMN_SIMULACRUM_TRIGGERS,
         "Campus Guide" => &CAMPUS_GUIDE_TRIGGERS,
         "Adventuring Gear" => &ADVENTURING_GEAR_TRIGGERS,
@@ -3714,6 +3863,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
         "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
         "Crackling Cyclops" => &CRACKLING_CYCLOPS_TRIGGERS,
+        "Kykar, Zephyr Awakener" => &KYKAR_TRIGGERS,
         "Reclamation Sage" => &RECLAMATION_SAGE_TRIGGERS,
         "Moon-Circuit Hacker" => &MOON_CIRCUIT_HACKER_TRIGGERS,
         "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,
@@ -3864,6 +4014,15 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Thousand-Year Storm" => TargetSpec::None,
+        "Sphinx's Tutelage" => TargetSpec::TargetOpponent,
+        "Zimone, Paradox Sculptor" => TargetSpec::StandardV1(
+            crate::standard_cards_v1::StandardTargetV1::UpToTwoControlledCreatures,
+        ),
+        "Extravagant Replication" => TargetSpec::AnotherControlledNonlandPermanent,
+        "Drakuseth, Maw of Flames" => TargetSpec::StandardV1(
+            crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
+        ),
         "Lagrella, the Magpie" => TargetSpec::UpToTwoOtherCreaturesDifferentControllers,
         "Halana and Alena, Partners" | "Ashroot Animist" => TargetSpec::AnotherControlledCreature,
         "Restless Bivouac" => TargetSpec::ControlledCreature,
@@ -3871,7 +4030,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Restless Reef" => TargetSpec::AnyPlayer,
         "Restless Vinestalk" => TargetSpec::UpToOneOtherCreature,
         "Restless Ridgeline" => TargetSpec::AnotherAttackingCreature,
-        "Celestial Armor" | "Needletooth Pack" => TargetSpec::ControlledCreature,
+        "Celestial Armor" | "Embercleave" | "Needletooth Pack" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
         "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,
@@ -3997,6 +4156,14 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
 pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if *template == crate::engine::tinybones_v72::trigger_recipe()
+        && matches!(effect, EffectOp::TinybonesStashV72 { .. })
+    {
+        return true;
+    }
+    if crate::snack_wide_life_v59::custody::binding(effect).is_some() {
+        return *template == crate::bloodthirsty_conqueror_v49::recipe();
+    }
     if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
         return *template == crate::bloodthirsty_conqueror_v49::recipe();
     }
@@ -4012,6 +4179,9 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         return true;
     }
     match (template, effect) {
+        (EffectOp::BindSphinxLoreV1, EffectOp::SphinxLoreV1 { .. }) => true,
+        (EffectOp::BindGreatwurmCountersV1, EffectOp::GreatwurmCountersV1 { .. }) => true,
+        (EffectOp::BindLathrilCombatTokensV1, EffectOp::LathrilCombatTokensV1 { .. }) => true,
         // The actual row validator authenticates this capture's complete
         // enclosing combat operation and original source incarnation.
         (
@@ -4056,6 +4226,10 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
             },
         ) => source_bound_trigger_program_matches(then, actual_then),
         (EffectOp::BindOilCounterToTriggerSource, EffectOp::PutOilCounterOnBoundObject { .. }) => {
+            true
+        }
+        (EffectOp::BindAleshaRaidReturn, EffectOp::AleshaRaidReturn { .. }) => true,
+        (EffectOp::BindValkyriesCallDeathV1, EffectOp::ReturnValkyriesCallCreatureV1 { .. }) => {
             true
         }
         (
@@ -4108,12 +4282,65 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
 }
 
 pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
+    if crate::effect::kaito_cunning_v75::definition(card_def)
+        && matches!(effect, EffectOp::KaitoCunningV75 { kind: 3 | 4, .. })
+    {
+        return true;
+    }
+    if crate::effect::sphinx_lore_v1::definition(card_def) {
+        return crate::effect::sphinx_lore_v1::recipe(effect);
+    }
+    if crate::effect::greatwurm_v1::definition(card_def) {
+        return crate::effect::greatwurm_v1::recipe(effect);
+    }
+    if crate::effect::kykar_v1::definition(card_def) && crate::effect::kykar_v1::recipe(effect) {
+        return true;
+    }
     if crate::standard_creature_choices_v1::trigger_target_spec(card_def, effect).is_some() {
         return true;
     }
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
     };
+    if card.name == "Nine-Lives Familiar"
+        && matches!(
+            effect,
+            EffectOp::BindNineLivesFamiliarReturnV1
+                | EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
+                | EffectOp::ReturnNineLivesFamiliarV1 { .. }
+        )
+    {
+        return true;
+    }
+    if card.name == "Valkyrie's Call"
+        && matches!(
+            effect,
+            EffectOp::BindValkyriesCallDeathV1 | EffectOp::ReturnValkyriesCallCreatureV1 { .. }
+        )
+    {
+        return true;
+    }
+    if card.name == "Lathril, Blade of the Elves"
+        && matches!(
+            effect,
+            EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. }
+        )
+    {
+        return true;
+    }
+    if card.name == "Sphinx's Tutelage"
+        && matches!(
+            effect,
+            EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. }
+        )
+    {
+        return true;
+    }
+    if card.name == "Niv-Mizzet, Visionary"
+        && matches!(effect, EffectOp::NivMizzetVisionaryDrawV1 { .. })
+    {
+        return true;
+    }
     if card.name == "Wardens of the Cycle"
         && wardens_of_the_cycle_modes()
             .iter()
@@ -4197,6 +4424,11 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    if crate::effect::thousand_year_storm_v1::definition(card_def)
+        && crate::effect::thousand_year_storm_v1::capture(effect).is_some()
+    {
+        return true;
+    }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
@@ -4215,6 +4447,82 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::engine::tinybones_v72::definition(card_def) {
+        return matches!(effect, EffectOp::TinybonesStashV72 { .. }).then_some(TargetSpec::None);
+    }
+    if crate::effect::thousand_year_storm_v1::definition(card_def) {
+        return crate::effect::thousand_year_storm_v1::recipe(effect).then_some(TargetSpec::None);
+    }
+    if crate::effect::sphinx_lore_v1::definition(card_def) {
+        return crate::effect::sphinx_lore_v1::recipe(effect)
+            .then_some(crate::effect::sphinx_lore_v1::target_spec());
+    }
+    if crate::effect::kaito_cunning_v75::definition(card_def)
+        && matches!(effect, EffectOp::KaitoCunningV75 { kind: 3 | 4, .. })
+    {
+        return Some(TargetSpec::None);
+    }
+    if crate::effect::greatwurm_v1::definition(card_def) {
+        return crate::effect::greatwurm_v1::recipe(effect).then_some(TargetSpec::None);
+    }
+    if crate::effect::kykar_v1::definition(card_def) {
+        return match effect {
+            EffectOp::KykarChooseModeV1
+            | EffectOp::KykarSpiritV1
+            | EffectOp::KykarReturnV1 { .. } => Some(TargetSpec::None),
+            EffectOp::KykarExileV1 => Some(TargetSpec::AnotherControlledCreature),
+            _ => None,
+        };
+    }
+    if crate::event::is_lathril_v1(card_def) {
+        return matches!(
+            effect,
+            EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. }
+        )
+        .then_some(TargetSpec::None);
+    }
+    if crate::event::is_sphinxs_tutelage_v1(card_def) {
+        return matches!(
+            effect,
+            EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. }
+        )
+        .then_some(TargetSpec::TargetOpponent);
+    }
+    if crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.name == "Nine-Lives Familiar")
+    {
+        return matches!(
+            effect,
+            EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
+                | EffectOp::ReturnNineLivesFamiliarV1 { .. }
+        )
+        .then_some(TargetSpec::None);
+    }
+    if crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.name == "Valkyrie's Call")
+    {
+        return matches!(effect, EffectOp::ReturnValkyriesCallCreatureV1 { .. })
+            .then_some(TargetSpec::None);
+    }
+    if crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.name == "Alesha, Who Laughs at Fate")
+    {
+        return match effect {
+            EffectOp::AleshaRaidReturn { .. } => Some(
+                crate::card_def::TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower,
+            ),
+            EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+            | EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. } => Some(TargetSpec::None),
+            _ => None,
+        };
+    }
+    if crate::snack_wide_life_v59::custody::binding(effect).is_some() {
+        return crate::bloodthirsty_conqueror_v49::owns_definition(card_def)
+            .then_some(TargetSpec::None);
+    }
     if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
         return crate::bloodthirsty_conqueror_v49::owns_definition(card_def)
             .then_some(TargetSpec::None);
@@ -4515,17 +4823,18 @@ fn token_card_defs() -> &'static [bool] {
 fn sba_fixed_point_with_protected_triggers(
     state: &mut GameState,
     protected_triggers: &[PendingTrigger],
-) {
+) -> bool {
+    let mut any_changed = false;
     loop {
         // Refuse the entire sweep before legend/death/detachment mutations.
         if crate::engine::halt_on_invalid_battlefield_pt(state) {
-            return;
+            return any_changed;
         }
         #[cfg(feature = "standard-magezero-fixtures")]
         {
             crate::standard_cards_v1::refresh_aegis_copies(state);
             if crate::engine::halt_on_invalid_battlefield_pt(state) {
-                return;
+                return any_changed;
             }
         }
         let protected_players = crate::game_outcome_protection_v1::protected_players(state);
@@ -4535,7 +4844,7 @@ fn sba_fixed_point_with_protected_triggers(
                 protected_players,
             );
         if crate::legend_rule_v1::stage(state, protected_triggers) {
-            return;
+            return true;
         }
         #[cfg(feature = "standard-magezero-fixtures")]
         {
@@ -4564,7 +4873,7 @@ fn sba_fixed_point_with_protected_triggers(
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     id,
                 ));
-                return;
+                return any_changed;
             };
             let indestructible = crate::engine::has_effective_keyword(
                 state,
@@ -4607,11 +4916,12 @@ fn sba_fixed_point_with_protected_triggers(
                 }
                 let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
                 if aura.v4.attached_to.is_some_and(|link| {
-                    crate::controlled_creature_grants_v1::protects_from_colors(
-                        state,
-                        link.object,
-                        crate::engine::object_color_mask(state, id),
-                    )
+                    crate::progenitus_v1::attachment_forbidden(state, id, link.object)
+                        || crate::controlled_creature_grants_v1::protects_from_colors(
+                            state,
+                            link.object,
+                            crate::engine::object_color_mask(state, id),
+                        )
                 }) && (definition.attachment.is_some()
                     || crate::standard_cards_v1::is_aura(definition))
                 {
@@ -4638,11 +4948,7 @@ fn sba_fixed_point_with_protected_triggers(
                     state.objects.try_get(link.object).is_some_and(|host| {
                         host.zone == Zone::Battlefield
                             && host.zone_change_count == link.zone_change_count
-                            && crate::engine::object_has_type(
-                                state,
-                                link.object,
-                                attachment.enchanted_type(),
-                            )
+                            && attachment.host_matches(state, link.object)
                             && host.attachments.contains(&id)
                     })
                 });
@@ -4769,10 +5075,12 @@ fn sba_fixed_point_with_protected_triggers(
             }
         }
 
+        any_changed |= changed;
         if !changed {
             break;
         }
     }
+    any_changed
 }
 
 /// Matches the events already in `state.engine.event_log`, runs SBAs to a
@@ -4820,18 +5128,27 @@ pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<Pending
 
 pub(crate) fn collect_and_process_with_waiting(
     state: &mut GameState,
-    mut waiting: Vec<PendingTrigger>,
+    waiting: Vec<PendingTrigger>,
 ) -> Vec<PendingTrigger> {
+    collect_and_process_with_sba_result_v1(state, waiting).0
+}
+
+/// Same complete checkpoint, also exposing whether its SBA pass acted. Cleanup
+/// uses this native fact for CR 514.3a even when the action creates no trigger.
+pub(crate) fn collect_and_process_with_sba_result_v1(
+    state: &mut GameState,
+    mut waiting: Vec<PendingTrigger>,
+) -> (Vec<PendingTrigger>, bool, bool) {
     if state.pending_legend_rule_v1.is_some()
         || crate::engine::halt_on_invalid_battlefield_pt(state)
     {
-        return Vec::new();
+        return (Vec::new(), false, false);
     }
     waiting.extend(capture_triggers_without_sba(state));
     // This checkpoint ends the resolving item's ownership of its kick marker.
     state.engine.pending_kicked_source = None;
     if state.engine.halted.is_some() {
-        return Vec::new();
+        return (Vec::new(), false, false);
     }
     let mut new_triggers = waiting;
 
@@ -4840,9 +5157,9 @@ pub(crate) fn collect_and_process_with_waiting(
     // graveyard here; its dies trigger belongs to this same trigger-placement
     // checkpoint, not some later action. Match that second batch only after
     // the fixed point, then order both batches together under 603.3b.
-    sba_fixed_point_with_protected_triggers(state, &new_triggers);
+    let sba_changed = sba_fixed_point_with_protected_triggers(state, &new_triggers);
     if state.engine.halted.is_some() || state.pending_legend_rule_v1.is_some() {
-        return Vec::new();
+        return (Vec::new(), sba_changed, !new_triggers.is_empty());
     }
     // SBA entry/replacement work can itself commit counters. Merge those
     // immediate captures before the same checkpoint's one APNAP ordering.
@@ -4862,6 +5179,7 @@ pub(crate) fn collect_and_process_with_waiting(
     // checkpoint, rather than at the earlier event-matching snapshot. The
     // targets must be legal for the trigger's own source (protection,
     // "other than this"), the same set its target decision will offer.
+    let triggered = !new_triggers.is_empty();
     new_triggers.retain(|pending| {
         let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
         if !keep {
@@ -4881,10 +5199,14 @@ pub(crate) fn collect_and_process_with_waiting(
         keep
     });
     if state.engine.halted.is_some() {
-        return Vec::new();
+        return (Vec::new(), false, false);
     }
 
-    order_apnap(new_triggers, state.active_player)
+    (
+        order_apnap(new_triggers, state.active_player),
+        sba_changed,
+        triggered,
+    )
 }
 
 /// Per-definition flag: whether an object of this definition can produce a
@@ -4946,6 +5268,96 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::effect::curator_v1::collect(state, events) {
+        Ok(p) => new_triggers.extend(p),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::event::collect_copied_token_end_step_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::effect::sphinx_lore_v1::collect(state, events) {
+        Ok(p) => new_triggers.extend(p),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return vec![];
+        }
+    }
+    match crate::effect::kaito_cunning_v75::collect(state, events) {
+        Ok(p) => new_triggers.extend(p),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return vec![];
+        }
+    }
+    match crate::effect::greatwurm_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::event::collect_lathril_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::effect::thousand_year_storm_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return vec![];
+        }
+    }
+    match crate::event::collect_tutelage_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::event::niv_mizzet_visionary_triggers_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::drake_hatcher_v1::custody::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {
@@ -4977,6 +5389,16 @@ fn triggers_from_events(
         }
     }
     match crate::bloodthirsty_conqueror_v49::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::snack_wide_life_v59::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((
@@ -5143,6 +5565,79 @@ fn triggers_from_events(
             }
         }
     }
+    match crate::effect::kykar_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Kykar delayed collection rejected: {_error}");
+            let source = state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|e| match e {
+                    CommittedEvent::KykarExiledV1 { source, .. } => Some(source.source),
+                    _ => None,
+                })
+                .unwrap_or(ObjectId(0));
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    // A resolved Nine-Lives death trigger creates exactly one future
+    // beginning-of-end-step trigger. Consume its schedule when collected so
+    // repeated collection cannot duplicate it; a card moved out of that exact
+    // graveyard incarnation still gets a trigger whose resolution is a no-op.
+    if let Some(mut delayed) = state.nine_lives_delayed_v1.take() {
+        let mut retained = Vec::with_capacity(delayed.len());
+        for scheduled in delayed.drain(..) {
+            let due = events.iter().any(|event| {
+                if !matches!(event, CommittedEvent::BeginningEndStep { .. }) {
+                    return false;
+                }
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .enumerate()
+                    .skip(
+                        usize::try_from(scheduled.created_after_history_len).unwrap_or(usize::MAX),
+                    )
+                    .any(|(history_index, historical)| {
+                        history_index
+                            >= usize::try_from(scheduled.created_after_history_len)
+                                .unwrap_or(usize::MAX)
+                            && historical == event
+                            && matches!(historical, CommittedEvent::BeginningEndStep { .. })
+                    })
+            });
+            if due {
+                new_triggers.push(PendingTrigger {
+                    controller: scheduled.source.controller,
+                    source: scheduled.source.source,
+                    effect: EffectOp::ReturnNineLivesFamiliarV1 {
+                        graveyard: scheduled.graveyard,
+                        revival_counters: scheduled.revival_counters,
+                    },
+                    is_madness_offer: false,
+                    kicked: false,
+                    target_spec: TargetSpec::None,
+                    targets: Vec::new(),
+                    target_contracts: Vec::new(),
+                    placement_ordered: false,
+                    source_contract: Some(scheduled.source),
+                    granted_by: None,
+                    optional_additional_cost_paid: None,
+                    paid_cost_refs: Vec::new(),
+                });
+            } else {
+                retained.push(scheduled);
+            }
+        }
+        state.nine_lives_delayed_v1 = (!retained.is_empty()).then_some(retained);
+    }
     // Consume only after every new capture in this batch validates. Refusal
     // leaves committed history intact, and a replay cannot collect again.
     for history_index in death_capture_authorities {
@@ -5271,6 +5766,12 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if crate::effect::sphinx_lore_v1::definition(obj.card_def) {
+                    continue;
+                }
+                if crate::effect::curator_v1::definition(obj.card_def) {
+                    continue;
+                }
                 if crate::fiendish_panda_v1::owns_definition(obj.card_def) {
                     continue; // Both roots are captured at actual commit, before later operations/SBA.
                 }
@@ -5310,14 +5811,24 @@ fn triggers_from_events(
                     // before this batch's later membership/controller changes.
                     continue;
                 }
+                // Tutelage observes each successful draw at event commit, not this later scene.
+                if crate::effect::thousand_year_storm_v1::definition(definition)
+                    || crate::event::is_sphinxs_tutelage_v1(definition)
+                    || crate::event::is_lathril_v1(definition)
+                {
+                    continue;
+                }
                 // These abilities were captured at the actual life-gain commit,
                 // before later operations can change battlefield membership.
                 if matches!(
                     def.condition,
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::DiesWithRevivalCounterV1
+                        | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherNontokenCreatureDies
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
+                        | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
                         | TriggerCondition::OpponentLosesLifeBatchV49
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {
@@ -5978,6 +6489,8 @@ fn trigger_matches(
     }
 
     match (cond, ev) {
+        // The shared discard transaction captures each original observer once.
+        (TriggerCondition::OpponentDiscardsV72, _) => false,
         (
             TriggerCondition::TurnedFaceUp,
             CommittedEvent::TurnedFaceUp {
@@ -5989,8 +6502,9 @@ fn trigger_matches(
             battlefield_entry_object(event) == Some(source)
                 && state.player_attacked_this_turn_v1(controller)
         }
-        (TriggerCondition::ControllerGainsLife, CommittedEvent::LifeGain { player, amount }) => {
-            *player == controller && *amount > 0
+        (TriggerCondition::ControllerGainsLife, event) => {
+            crate::snack_wide_life_v59::positive_gain(event)
+                .is_some_and(|(player, _)| player == controller)
         }
         (
             TriggerCondition::ControllerAddedPlusOneCountersToSelf { .. },
@@ -6428,6 +6942,7 @@ fn trigger_matches(
                 ..
             },
         ) => *object == source,
+        (TriggerCondition::DiesUnlessSubtype(_), _) => false,
         (
             TriggerCondition::DiesWithoutCounters,
             CommittedEvent::ZoneChange {

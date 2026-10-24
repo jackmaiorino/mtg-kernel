@@ -65,6 +65,10 @@ pub mod conqueror_v49;
 pub mod eaten_v46;
 pub mod elenda_v52;
 pub mod fake_v50;
+pub mod graveyard_return_v61;
+mod limited_graveyard_return_v7;
+mod limited_next_five_v6;
+pub mod next_five_v59;
 pub mod panda_v47;
 pub mod prepared_v57;
 pub mod ravenous_v51;
@@ -335,6 +339,11 @@ pub use game_outcome_v41::{
     HumanDecisionGameOutcomeV41, HumanGameOutcomeExtensionsV41, HumanGameOutcomeProjectorV41,
     HumanGameOutcomeSessionV41, HumanGameOutcomeSnapshotV41, HumanGameOutcomeSourceV41,
 };
+pub use graveyard_return_v61::{
+    HumanDecisionGraveyardReturnV61, HumanGraveyardReturnProjectorV61,
+    HumanGraveyardReturnSessionV61, HumanGraveyardReturnSnapshotV61,
+    HumanVisibleStateGraveyardReturnV61,
+};
 pub(crate) use limited_common_v1::project_limited_common_v1;
 pub use limited_common_v1::{LimitedCombatAssignmentV1, LimitedCombatV1, LimitedCommonDecisionV1};
 pub(crate) use limited_common_v2::project_limited_common_v2;
@@ -343,8 +352,17 @@ pub(crate) use limited_common_v3::project_limited_common_v3;
 pub use limited_common_v3::LimitedCommonDecisionV3;
 pub(crate) use limited_elenda_v4::project_limited_elenda_v4;
 pub use limited_elenda_v4::LimitedElendaDecisionV4;
+pub(crate) use limited_graveyard_return_v7::project_limited_graveyard_return_v7;
+pub use limited_graveyard_return_v7::LimitedGraveyardReturnDecisionV7;
+pub(crate) use limited_next_five_v6::project_limited_next_five_v6;
+pub use limited_next_five_v6::LimitedNextFiveDecisionV6;
 pub(crate) use limited_prepared_v5::project_limited_prepared_v5;
 pub use limited_prepared_v5::LimitedPreparedDecisionV5;
+pub use next_five_v59::{
+    HumanDecisionNextFiveV59, HumanNextFiveActivationV59, HumanNextFiveProjectorV59,
+    HumanNextFiveSessionV59, HumanNextFiveSnapshotV59, HumanNextFiveTargetV59,
+    HumanVisibleStateNextFiveV59,
+};
 
 pub mod ajani_v42;
 pub use ajani_v42::{
@@ -371,3 +389,88 @@ mod tests;
 pub use eaten_v46::{
     HumanDecisionEatenV46, HumanEatenProjectorV46, HumanEatenSessionV46, HumanEatenSnapshotV46,
 };
+
+pub mod call_v62;
+mod limited_call_v8;
+pub use call_v62::{
+    HumanCallProjectorV62, HumanCallSessionV62, HumanCallSnapshotV62, HumanDecisionCallV62,
+    HumanVisibleStateCallV62,
+};
+pub(crate) use limited_call_v8::project_limited_call_v8;
+pub use limited_call_v8::LimitedCallDecisionV8;
+
+pub mod end_turn_v68;
+pub use end_turn_v68::{
+    HumanDecisionEndTurnV68, HumanEndTurnProjectorV68, HumanEndTurnSessionV68,
+    HumanEndTurnSnapshotV68, HumanVisibleStateEndTurnV68,
+};
+
+mod limited_end_turn_v9;
+pub(crate) use limited_end_turn_v9::project_limited_end_turn_v9;
+pub use limited_end_turn_v9::LimitedEndTurnDecisionV9;
+
+pub mod genesis_wave_v69;
+pub use genesis_wave_v69::{
+    HumanDecisionGenesisWaveV69, HumanGenesisWaveProjectorV69, HumanGenesisWaveSessionV69,
+    HumanGenesisWaveSnapshotV69, HumanVisibleStateGenesisWaveV69,
+};
+pub(crate) mod limited_genesis_wave_v10;
+pub(crate) use limited_genesis_wave_v10::project_limited_genesis_wave_v10;
+pub use limited_genesis_wave_v10::LimitedGenesisWaveDecisionV10;
+
+pub mod vivien_v70;
+pub use vivien_v70::{
+    HumanDecisionVivienV70, HumanVisibleStateVivienV70, HumanVivienProjectorV70,
+    HumanVivienSessionV70, HumanVivienSnapshotV70,
+};
+
+pub(crate) mod limited_vivien_v11;
+pub(crate) use limited_vivien_v11::project_limited_vivien_v11;
+pub use limited_vivien_v11::LimitedVivienDecisionV11;
+
+pub mod muldrotha_v71;
+pub use muldrotha_v71::{
+    HumanDecisionMuldrothaV71, HumanMuldrothaProjectorV71, HumanMuldrothaSessionV71,
+    HumanMuldrothaSnapshotV71, HumanVisibleStateMuldrothaV71,
+};
+pub(crate) mod limited_muldrotha_v12;
+pub(crate) use limited_muldrotha_v12::project_limited_muldrotha_v12;
+pub use limited_muldrotha_v12::LimitedMuldrothaDecisionV12;
+
+pub mod tinybones_v72;
+pub use tinybones_v72::{
+    HumanDecisionTinybonesV72, HumanTinybonesProjectorV72, HumanTinybonesSessionV72,
+    HumanTinybonesSnapshotV72, HumanVisibleStateTinybonesV72,
+};
+
+pub(crate) mod limited_tinybones_v13;
+pub(crate) use limited_tinybones_v13::project_limited_tinybones_v13;
+pub use limited_tinybones_v13::LimitedTinybonesDecisionV13;
+
+pub mod liliana_v73;
+pub use liliana_v73::{
+    HumanDecisionLilianaV73, HumanLilianaProjectorV73, HumanLilianaSessionV73,
+    HumanLilianaSnapshotV73, HumanVisibleStateLilianaV73,
+};
+pub(crate) mod limited_liliana_v14;
+pub(crate) use limited_liliana_v14::project_limited_liliana_v14;
+pub use limited_liliana_v14::LimitedLilianaDecisionV14;
+
+pub mod chandra_v74;
+pub use chandra_v74::{
+    HumanChandraProjectorV74, HumanChandraSessionV74, HumanChandraSnapshotV74,
+    HumanDecisionChandraV74, HumanVisibleStateChandraV74,
+};
+pub(crate) mod limited_chandra_v15;
+pub(crate) use limited_chandra_v15::project_limited_chandra_v15;
+pub use limited_chandra_v15::LimitedChandraDecisionV15;
+
+pub mod kaito_v75;
+pub use kaito_v75::{
+    HumanDecisionKaitoV75, HumanKaitoProjectorV75, HumanKaitoSessionV75, HumanKaitoSnapshotV75,
+    HumanVisibleStateKaitoV75,
+};
+
+pub(crate) mod limited_kaito_v16;
+pub(crate) use limited_kaito_v16::project_limited_kaito_v16;
+pub use limited_kaito_v16::LimitedKaitoDecisionV16;

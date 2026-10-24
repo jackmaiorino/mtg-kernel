@@ -640,7 +640,10 @@ fn heroic_reinforcements_bonus_expires_at_cleanup() {
     cast(&mut surface, &mut state, spell, [1, 0, 0, 1, 0, 2], None);
     let soldiers = tokens(&state, PlayerId::P0, "Soldier Token");
     assert_eq!(stats(&state, soldiers[0]), (2, 2));
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(&mut state, active, Step::End);
+    }
     state.engine.priority_passes = [false, false];
     apply(&mut surface, &mut state, Action::Pass);
     next(&mut surface, &mut state);

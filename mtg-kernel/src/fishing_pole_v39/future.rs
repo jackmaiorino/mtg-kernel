@@ -200,6 +200,7 @@ fn multiple_bait_remove_exactly_one_and_explicit_effect_untap_both_seats() {
             controller: actor,
             targets: vec![Target::Object(pole)],
             stack_item_id: None,
+            niv_damage_origin_v1: None,
             target_contracts: vec![crate::state::StackTargetContractV4::capture(
                 &state,
                 Target::Object(pole),

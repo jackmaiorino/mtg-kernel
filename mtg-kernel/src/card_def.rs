@@ -348,6 +348,10 @@ pub enum Subtype {
     Phoenix,
     /// Appended for the genuine Drake Hatcher dependency; stable ids persist.
     Drake,
+    /// Appended for Curator of Destinies without changing legacy choice lists.
+    Sphinx,
+    /// Planeswalker type; appended without changing existing subtype IDs.
+    Vivien,
 }
 
 impl Subtype {
@@ -672,6 +676,334 @@ impl Subtype {
     /// source spelling or locale-sensitive string ordering.
     pub const fn stable_id(self) -> u16 {
         self as u16
+    }
+
+    /// Checked decoding of append-only native subtype IDs. Unknown IDs stay
+    /// unknown; no public choice or card permission is granted by decoding.
+    pub(crate) const fn from_stable_id(id: u16) -> Option<Self> {
+        Some(match id {
+            0 => Subtype::Ape,
+            1 => Subtype::Aura,
+            2 => Subtype::BirdAllCaps,
+            3 => Subtype::Bird,
+            4 => Subtype::Blood,
+            5 => Subtype::Cat,
+            6 => Subtype::Detective,
+            7 => Subtype::Dragon,
+            8 => Subtype::Drone,
+            9 => Subtype::Druid,
+            10 => Subtype::Eldrazi,
+            11 => Subtype::Elf,
+            12 => Subtype::Equipment,
+            13 => Subtype::FaerieAllCaps,
+            14 => Subtype::Faerie,
+            15 => Subtype::Food,
+            16 => Subtype::Forest,
+            17 => Subtype::Gate,
+            18 => Subtype::Goblin,
+            19 => Subtype::HumanAllCaps,
+            20 => Subtype::Hero,
+            21 => Subtype::Human,
+            22 => Subtype::Hydra,
+            23 => Subtype::Island,
+            24 => Subtype::Knight,
+            25 => Subtype::Monk,
+            26 => Subtype::Moonfolk,
+            27 => Subtype::Monkey,
+            28 => Subtype::Mountain,
+            29 => Subtype::Myr,
+            30 => Subtype::NinjaAllCaps,
+            31 => Subtype::Ninja,
+            32 => Subtype::Ouphe,
+            33 => Subtype::Pirate,
+            34 => Subtype::Plains,
+            35 => Subtype::RogueAllCaps,
+            36 => Subtype::Ranger,
+            37 => Subtype::Rat,
+            38 => Subtype::Rogue,
+            39 => Subtype::Serpent,
+            40 => Subtype::Saga,
+            41 => Subtype::Samurai,
+            42 => Subtype::Shaman,
+            43 => Subtype::Shapeshifter,
+            44 => Subtype::Soldier,
+            45 => Subtype::Spider,
+            46 => Subtype::Spirit,
+            47 => Subtype::Swamp,
+            48 => Subtype::Toy,
+            49 => Subtype::Treefolk,
+            50 => Subtype::Vampire,
+            51 => Subtype::WizardAllCaps,
+            52 => Subtype::Warrior,
+            53 => Subtype::Wizard,
+            54 => Subtype::Zombie,
+            55 => Subtype::Illusion,
+            56 => Subtype::Dryad,
+            57 => Subtype::Plant,
+            58 => Subtype::Wall,
+            59 => Subtype::Troll,
+            60 => Subtype::Elemental,
+            61 => Subtype::Map,
+            62 => Subtype::Treasure,
+            63 => Subtype::Giant,
+            64 => Subtype::Spawn,
+            65 => Subtype::Phyrexian,
+            66 => Subtype::Horror,
+            67 => Subtype::Nightmare,
+            68 => Subtype::Clue,
+            69 => Subtype::Skeleton,
+            70 => Subtype::Squirrel,
+            71 => Subtype::Lesson,
+            72 => Subtype::Insect,
+            73 => Subtype::Fish,
+            74 => Subtype::Urzas,
+            75 => Subtype::Tower,
+            76 => Subtype::PowerPlant,
+            77 => Subtype::Mine,
+            78 => Subtype::Desert,
+            79 => Subtype::Angel,
+            80 => Subtype::Noble,
+            81 => Subtype::Unicorn,
+            82 => Subtype::Ajani,
+            83 => Subtype::Beast,
+            84 => Subtype::Cleric,
+            85 => Subtype::Homunculus,
+            86 => Subtype::Merfolk,
+            87 => Subtype::Octopus,
+            88 => Subtype::Hyena,
+            89 => Subtype::Raccoon,
+            90 => Subtype::Citizen,
+            91 => Subtype::Turtle,
+            92 => Subtype::Gremlin,
+            93 => Subtype::Dinosaur,
+            94 => Subtype::Warlock,
+            95 => Subtype::Archer,
+            96 => Subtype::Lizard,
+            97 => Subtype::Golem,
+            98 => Subtype::Boar,
+            99 => Subtype::Cyclops,
+            100 => Subtype::Shark,
+            101 => Subtype::Elk,
+            102 => Subtype::Demon,
+            103 => Subtype::Dwarf,
+            104 => Subtype::Berserker,
+            105 => Subtype::Scout,
+            106 => Subtype::Bat,
+            107 => Subtype::Mercenary,
+            108 => Subtype::Assassin,
+            109 => Subtype::Wolf,
+            110 => Subtype::Kraken,
+            111 => Subtype::Djinn,
+            112 => Subtype::Mouse,
+            113 => Subtype::Incubator,
+            114 => Subtype::Werewolf,
+            115 => Subtype::Rabbit,
+            116 => Subtype::Avatar,
+            117 => Subtype::Glimmer,
+            118 => Subtype::Sheep,
+            119 => Subtype::Otter,
+            120 => Subtype::AssemblyWorker,
+            121 => Subtype::Mite,
+            122 => Subtype::Sphere,
+            123 => Subtype::Town,
+            124 => Subtype::Elephant,
+            125 => Subtype::Construct,
+            126 => Subtype::Dog,
+            127 => Subtype::Elder,
+            128 => Subtype::Teferi,
+            129 => Subtype::God,
+            130 => Subtype::Room,
+            131 => Subtype::Case,
+            132 => Subtype::Class,
+            133 => Subtype::Liliana,
+            134 => Subtype::Gnome,
+            135 => Subtype::Chandra,
+            136 => Subtype::Vehicle,
+            137 => Subtype::Pilot,
+            138 => Subtype::Siren,
+            139 => Subtype::Praetor,
+            140 => Subtype::Ox,
+            141 => Subtype::Llama,
+            142 => Subtype::Role,
+            143 => Subtype::Kaito,
+            144 => Subtype::Wurm,
+            145 => Subtype::Artificer,
+            146 => Subtype::Orc,
+            147 => Subtype::Juggernaut,
+            148 => Subtype::Minotaur,
+            149 => Subtype::Ooze,
+            150 => Subtype::Devil,
+            151 => Subtype::Bear,
+            152 => Subtype::Phoenix,
+            153 => Subtype::Drake,
+            154 => Subtype::Sphinx,
+            155 => Subtype::Vivien,
+            _ => return None,
+        })
+    }
+
+    /// Complete subtype classification, independent of the frozen changeling
+    /// materialization and choice-admission lists. Exhaustive over the native
+    /// enum so a new variant requires a deliberate classification.
+    pub(crate) const fn is_native_creature_type(self) -> bool {
+        match self {
+            Subtype::Ape => true,
+            Subtype::Aura => false,
+            Subtype::BirdAllCaps => true,
+            Subtype::Bird => true,
+            Subtype::Blood => false,
+            Subtype::Cat => true,
+            Subtype::Detective => true,
+            Subtype::Dragon => true,
+            Subtype::Drone => true,
+            Subtype::Druid => true,
+            Subtype::Eldrazi => true,
+            Subtype::Elf => true,
+            Subtype::Equipment => false,
+            Subtype::FaerieAllCaps => true,
+            Subtype::Faerie => true,
+            Subtype::Food => false,
+            Subtype::Forest => false,
+            Subtype::Gate => false,
+            Subtype::Goblin => true,
+            Subtype::HumanAllCaps => true,
+            Subtype::Hero => true,
+            Subtype::Human => true,
+            Subtype::Hydra => true,
+            Subtype::Island => false,
+            Subtype::Knight => true,
+            Subtype::Monk => true,
+            Subtype::Moonfolk => true,
+            Subtype::Monkey => true,
+            Subtype::Mountain => false,
+            Subtype::Myr => true,
+            Subtype::NinjaAllCaps => true,
+            Subtype::Ninja => true,
+            Subtype::Ouphe => true,
+            Subtype::Pirate => true,
+            Subtype::Plains => false,
+            Subtype::RogueAllCaps => true,
+            Subtype::Ranger => true,
+            Subtype::Rat => true,
+            Subtype::Rogue => true,
+            Subtype::Serpent => true,
+            Subtype::Saga => false,
+            Subtype::Samurai => true,
+            Subtype::Shaman => true,
+            Subtype::Shapeshifter => true,
+            Subtype::Soldier => true,
+            Subtype::Spider => true,
+            Subtype::Spirit => true,
+            Subtype::Swamp => false,
+            Subtype::Toy => true,
+            Subtype::Treefolk => true,
+            Subtype::Vampire => true,
+            Subtype::WizardAllCaps => true,
+            Subtype::Warrior => true,
+            Subtype::Wizard => true,
+            Subtype::Zombie => true,
+            Subtype::Illusion => true,
+            Subtype::Dryad => true,
+            Subtype::Plant => true,
+            Subtype::Wall => true,
+            Subtype::Troll => true,
+            Subtype::Elemental => true,
+            Subtype::Map => false,
+            Subtype::Treasure => false,
+            Subtype::Giant => true,
+            Subtype::Spawn => true,
+            Subtype::Phyrexian => true,
+            Subtype::Horror => true,
+            Subtype::Nightmare => true,
+            Subtype::Clue => false,
+            Subtype::Skeleton => true,
+            Subtype::Squirrel => true,
+            Subtype::Lesson => false,
+            Subtype::Insect => true,
+            Subtype::Fish => true,
+            Subtype::Urzas => false,
+            Subtype::Tower => false,
+            Subtype::PowerPlant => false,
+            Subtype::Mine => false,
+            Subtype::Desert => false,
+            Subtype::Angel => true,
+            Subtype::Noble => true,
+            Subtype::Unicorn => true,
+            Subtype::Ajani => false,
+            Subtype::Beast => true,
+            Subtype::Cleric => true,
+            Subtype::Homunculus => true,
+            Subtype::Merfolk => true,
+            Subtype::Octopus => true,
+            Subtype::Hyena => true,
+            Subtype::Raccoon => true,
+            Subtype::Citizen => true,
+            Subtype::Turtle => true,
+            Subtype::Gremlin => true,
+            Subtype::Dinosaur => true,
+            Subtype::Warlock => true,
+            Subtype::Archer => true,
+            Subtype::Lizard => true,
+            Subtype::Golem => true,
+            Subtype::Boar => true,
+            Subtype::Cyclops => true,
+            Subtype::Shark => true,
+            Subtype::Elk => true,
+            Subtype::Demon => true,
+            Subtype::Dwarf => true,
+            Subtype::Berserker => true,
+            Subtype::Scout => true,
+            Subtype::Bat => true,
+            Subtype::Mercenary => true,
+            Subtype::Assassin => true,
+            Subtype::Wolf => true,
+            Subtype::Kraken => true,
+            Subtype::Djinn => true,
+            Subtype::Mouse => true,
+            Subtype::Incubator => false,
+            Subtype::Werewolf => true,
+            Subtype::Rabbit => true,
+            Subtype::Avatar => true,
+            Subtype::Glimmer => true,
+            Subtype::Sheep => true,
+            Subtype::Otter => true,
+            Subtype::AssemblyWorker => true,
+            Subtype::Mite => true,
+            Subtype::Sphere => false,
+            Subtype::Town => false,
+            Subtype::Elephant => true,
+            Subtype::Construct => true,
+            Subtype::Dog => true,
+            Subtype::Elder => true,
+            Subtype::Teferi => false,
+            Subtype::God => true,
+            Subtype::Room => false,
+            Subtype::Case => false,
+            Subtype::Class => false,
+            Subtype::Liliana => false,
+            Subtype::Gnome => true,
+            Subtype::Chandra => false,
+            Subtype::Vehicle => false,
+            Subtype::Pilot => true,
+            Subtype::Siren => true,
+            Subtype::Praetor => true,
+            Subtype::Ox => true,
+            Subtype::Llama => true,
+            Subtype::Role => false,
+            Subtype::Kaito => false,
+            Subtype::Wurm => true,
+            Subtype::Artificer => true,
+            Subtype::Orc => true,
+            Subtype::Juggernaut => true,
+            Subtype::Minotaur => true,
+            Subtype::Ooze => true,
+            Subtype::Devil => true,
+            Subtype::Bear => true,
+            Subtype::Phoenix => true,
+            Subtype::Drake => true,
+            Subtype::Sphinx => true,
+            Subtype::Vivien => false,
+        }
     }
 
     /// The other registry spelling of the same subtype, if the pool carries
@@ -1090,6 +1422,12 @@ pub enum TargetSpec {
     /// graveyard. The signed bound is captured source power, not a fixed
     /// printed mana value. A negative bound offers no targets.
     AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(i32),
+    /// Exactly one other nonland permanent controlled by the trigger controller.
+    AnotherControlledNonlandPermanent,
+    /// One creature card in the trigger controller's graveyard whose printed
+    /// mana value is at most the original source incarnation's current power,
+    /// or its last-known power after that incarnation leaves.
+    CreatureCardInOwnGraveyardManaValueAtMostSourcePower,
 }
 
 impl TargetSpec {
@@ -1184,6 +1522,8 @@ impl TargetSpec {
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
             TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
             TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => 103,
+            TargetSpec::AnotherControlledNonlandPermanent => 104,
+            TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => 105,
         }
     }
 }
@@ -1229,6 +1569,8 @@ impl Keywords {
     pub const TOXIC_1: Keywords = Keywords(1 << 17);
     /// This permanent cannot be targeted by any player (702.18).
     pub const SHROUD: Keywords = Keywords(1 << 18);
+    /// Protection from every object (702.16j), not a color-quality shortcut.
+    pub const PROTECTION_FROM_EVERYTHING: Keywords = Keywords(1 << 19);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -1299,6 +1641,8 @@ pub enum PermanentFilter {
     /// (Repurposing Bay's "Sacrifice another artifact"). Appended.
     AnotherArtifact,
     Token,
+    /// A controlled permanent with this effective subtype, excluding the cost source.
+    AnotherWithSubtype(Subtype),
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -1469,12 +1813,25 @@ pub enum AttachmentDef {
     AuraCreatureStatic(AuraCreatureStaticDef),
     /// Enchant artifact; add creature characteristics without removing types.
     AuraArtifactAnimation(AnimationDef),
+    /// Enchant creature, land, or planeswalker; layer 4 only Land, layer 5
+    /// colorless, layer 6 lose other abilities and gain `{T}: Add {C}`.
+    AuraLandOverride,
 }
 
 impl AttachmentDef {
+    pub fn host_matches(self, state: &crate::state::GameState, host: crate::ids::ObjectId) -> bool {
+        if self == Self::AuraLandOverride {
+            [CardType::Creature, CardType::Land, CardType::Planeswalker]
+                .into_iter()
+                .any(|kind| crate::engine::object_has_type(state, host, kind))
+        } else {
+            crate::engine::object_has_type(state, host, self.enchanted_type())
+        }
+    }
     pub const fn enchanted_type(self) -> CardType {
         match self {
             Self::AuraArtifactAnimation(_) => CardType::Artifact,
+            Self::AuraLandOverride => CardType::Land,
             _ => CardType::Creature,
         }
     }
@@ -1547,6 +1904,8 @@ pub enum AltCostCondition {
         time_counters: u8,
     },
     DisguiseFromHand,
+    /// All effective battlefield creatures, under either controller.
+    BattlefieldCreatureCountAtLeast(u16),
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -1793,12 +2152,17 @@ pub enum ManaSpendRestrictionDef {
     LegendarySpell,
     Unrestricted,
     CreatureSpellOrCreatureAbility,
+    /// Spend only on casting a spell with the named subtype, never an activation.
+    SpellWithSubtype(Subtype),
+    /// None is a definition-owned chosen-type template; floating units
+    /// always bind Some to the original producing entry incarnation.
+    ChosenCreatureTypeV60(Option<crate::creature_types_v60::CreatureTypeV60>),
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
-/// spending restriction. It is never an explicit action: the payment
-/// planner offers these colors from the source only while paying the total
-/// cost of a spell the restriction allows, so restricted mana never floats.
+/// spending restriction. Spell payment offers the source only for eligible
+/// casts. Explicit activation retains the restriction on each floating unit,
+/// including after its producing incarnation leaves the battlefield.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RestrictedManaAbilityDef {
     pub colors: &'static [ManaColor],
@@ -1907,6 +2271,10 @@ pub enum DynamicCountDef {
     /// Negative powers contribute before the aggregate is floored at zero.
     ControllerCreatureTotalPower,
     CreaturesAttackedThisTurn,
+    /// Count live, effectively creature permanents the caster currently
+    /// controls that remain in the native combat attacker's roster. This is
+    /// not the declaration/event count and becomes zero after combat ends.
+    ControllerAttackingCreatures,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -2060,6 +2428,15 @@ pub enum AsEntersColorChoiceDefV1 {
     AnyWubrg,
 }
 
+/// Choose a legal creature type before entry, count the pre-entry controlled
+/// creatures of that type for fellowship counters, then grant a current-counter
+/// anthem to controlled creatures of that type. No predecessor meaning covers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CreatureTypeEntryDefV1 {
+    FellowshipAndChosenTypeAnthem,
+    ChosenTypeCreatureSpellOrAbilityMana,
+}
+
 /// A printed continuous power/toughness modification using the source's
 /// own pre-entry color choice and its current controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2091,6 +2468,9 @@ pub enum DamageReplacementDefV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TokenCounterReplacementDefV48 {
     DoubleEffectTokensAndControlledPermanentCounters,
+    /// Each OTHER controlled permanent of this subtype enters with one
+    /// additional +1/+1 counter per already-controlled permanent of that subtype.
+    OtherControlledSubtypeEntry(Subtype),
 }
 
 /// One additive, battlefield-only self bonus. The threshold reads the live
@@ -2340,6 +2720,9 @@ pub struct CardDef {
     /// Definition-owned controlled, other, nontoken death recipe. Absent
     /// descriptors preserve predecessor trigger and catalog identities.
     pub other_controlled_nontoken_death_v1: Option<OtherControlledNontokenDeathDefV1>,
+    /// Distinct native type-entry and fellowship anthem descriptor. Earlier
+    /// complete printing/meaning shapes explicitly refuse a present value.
+    pub creature_type_entry_v1: Option<CreatureTypeEntryDefV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -2464,7 +2847,8 @@ impl CardDef {
         self.is_executable()
             && (!self.mana_ability_choices.is_empty()
                 || self.mana_ability_includes_chosen_color
-                || !self.additional_mana_abilities.is_empty())
+                || !self.additional_mana_abilities.is_empty()
+                || !self.restricted_mana_abilities.is_empty())
     }
 
     /// Automatic spell-cost payment may only tap sources whose entire printed
@@ -2760,14 +3144,15 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 451 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 472 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // The seven prospective Full candidates occupy ids 444-448 and 450-451.
+        // Seven Full candidates retain ids 444-448 and 450-451; five unaccepted Full candidates retain ids 452-456,
+        // followed by Partial registrations through Kaito and Ninja Token at 495.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                452
+                496
             } else {
                 192
             }
@@ -2972,8 +3357,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v88_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x0d46_66d3_7951_a4fc;
+    fn card_db_hash_full_pool_provisional_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x30b0_6c76_c3a3_70a6;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -3217,7 +3602,51 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn capability_is_the_fail_closed_source_for_programs_and_deck_preflight() {
-        let expected_partial: &[(u16, &str)] = &[];
+        let expected_partial: &[(u16, &str)] = if cfg!(feature = "limited-fdn-fixtures") {
+            &[
+                (457, "Alesha, Who Laughs at Fate"),
+                (458, "Nine-Lives Familiar"),
+                (459, "Valkyrie's Call"),
+                (460, "Perforating Artist"),
+                (461, "Niv-Mizzet, Visionary"),
+                (462, "Embercleave"),
+                (463, "Banner of Kinship"),
+                (464, "Drakuseth, Maw of Flames"),
+                (465, "Zimone, Paradox Sculptor"),
+                (466, "Sphinx's Tutelage"),
+                (467, "Consuming Aberration"),
+                (468, "Lathril, Blade of the Elves"),
+                (469, "Blasphemous Edict"),
+                (470, "Secluded Courtyard"),
+                (471, "Electroduplicate"),
+                (472, "Curator of Destinies"),
+                (473, "Loot, Exuberant Explorer"),
+                (474, "Kykar, Zephyr Awakener"),
+                (475, "Kykar Spirit Token"),
+                (476, "Quilled Greatwurm"),
+                (477, "Sphinx of Forgotten Lore"),
+                (478, "Omniscience"),
+                (479, "Abyssal Harvester"),
+                (480, "Progenitus"),
+                (481, "Etali, Primal Storm"),
+                (482, "Leyline Axe"),
+                (483, "Fiend Artisan"),
+                (484, "Imprisoned in the Moon"),
+                (485, "Thousand-Year Storm"),
+                (486, "Time Stop"),
+                (487, "Genesis Wave"),
+                (488, "Vivien Reid"),
+                (489, "Muldrotha, the Gravetide"),
+                (490, "Tinybones, Bauble Burglar"),
+                (491, "Liliana, Dreadhorde General"),
+                (492, "Zombie Token"),
+                (493, "Chandra, Flameshaper"),
+                (494, "Kaito, Cunning Infiltrator"),
+                (495, "Ninja Token"),
+            ]
+        } else {
+            &[]
+        };
         let partial = CARD_DEFS
             .iter()
             .enumerate()
@@ -3238,11 +3667,16 @@ mod tests {
             assert_eq!(card_id_by_name(name), Some(id));
             assert!(CARD_DEFS[usize::from(id)].is_executable());
             assert!(!CARD_DEFS[usize::from(id)].has_full_support());
-            assert!(matches!(preflight_fully_supported_deck(&[
-                card_id_by_name("Forest").unwrap(), id]),
-                Err(DeckPreflightError::NotFullySupported {
-                    index: 1, card_def, name: actual, capability: CardCapability::Partial
-                }) if card_def == id && actual == name));
+            let result = preflight_fully_supported_deck(&[card_id_by_name("Forest").unwrap(), id]);
+            if CARD_DEFS[usize::from(id)].is_token {
+                assert!(
+                    matches!(result,Err(DeckPreflightError::TokenInDeck{index:1,card_def,name:actual})if card_def==id && actual==name)
+                );
+            } else {
+                assert!(
+                    matches!(result,Err(DeckPreflightError::NotFullySupported {index:1,card_def,name:actual,capability:CardCapability::Partial})if card_def==id && actual==name)
+                );
+            }
         }
         #[cfg(feature = "limited-fdn-fixtures")]
         {
@@ -3252,7 +3686,13 @@ mod tests {
                 .filter(|(_, def)| def.capability != CardCapability::Full)
                 .map(|(id, def)| (id, def.name, def.capability))
                 .collect();
-            assert!(non_full.is_empty());
+            assert_eq!(
+                non_full,
+                expected_partial
+                    .iter()
+                    .map(|(id, name)| (usize::from(*id), *name, CardCapability::Partial))
+                    .collect::<Vec<_>>()
+            );
             for id in [444, 445, 446, 447, 448, 450, 451] {
                 assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Full);
                 assert!(preflight_fully_supported_deck(&[id]).is_ok());

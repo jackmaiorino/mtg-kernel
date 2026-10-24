@@ -1,0 +1,1311 @@
+{
+  "schema": "creature-type-domain-v60",
+  "rules_effective_date": "2026-09-25",
+  "retrieved_date": "2026-10-15",
+  "authority": "Wizards of the Coast Magic: The Gathering Comprehensive Rules",
+  "rules_page": "https://magic.wizards.com/en/rules",
+  "rules_url": "https://media.wizards.com/2026/downloads/MagicCompRules%2020260925.txt",
+  "rules_bytes": 977752,
+  "rules_sha256": "8d860e451f20f38865b725b42d82feb714c725373dd8f3b32b8652b3eeb070ca",
+  "rule": "205.3m",
+  "rule_utf8_sha256": "8824f7c20b514512b6fc0d074ffe7b20951ae5cc9a416319d8dcca545f6d0379",
+  "index_order": "CR 205.3m one-word list in source order, then its separately named Time Lord; frozen zero-based indices",
+  "types": [
+    {
+      "id": 0,
+      "name": "Advisor"
+    },
+    {
+      "id": 1,
+      "name": "Aetherborn"
+    },
+    {
+      "id": 2,
+      "name": "Alien"
+    },
+    {
+      "id": 3,
+      "name": "Ally"
+    },
+    {
+      "id": 4,
+      "name": "Angel"
+    },
+    {
+      "id": 5,
+      "name": "Antelope"
+    },
+    {
+      "id": 6,
+      "name": "Ape"
+    },
+    {
+      "id": 7,
+      "name": "Archer"
+    },
+    {
+      "id": 8,
+      "name": "Archon"
+    },
+    {
+      "id": 9,
+      "name": "Armadillo"
+    },
+    {
+      "id": 10,
+      "name": "Army"
+    },
+    {
+      "id": 11,
+      "name": "Artificer"
+    },
+    {
+      "id": 12,
+      "name": "Assassin"
+    },
+    {
+      "id": 13,
+      "name": "Assembly-Worker"
+    },
+    {
+      "id": 14,
+      "name": "Astartes"
+    },
+    {
+      "id": 15,
+      "name": "Atog"
+    },
+    {
+      "id": 16,
+      "name": "Aurochs"
+    },
+    {
+      "id": 17,
+      "name": "Avatar"
+    },
+    {
+      "id": 18,
+      "name": "Azra"
+    },
+    {
+      "id": 19,
+      "name": "Badger"
+    },
+    {
+      "id": 20,
+      "name": "Balloon"
+    },
+    {
+      "id": 21,
+      "name": "Barbarian"
+    },
+    {
+      "id": 22,
+      "name": "Bard"
+    },
+    {
+      "id": 23,
+      "name": "Basilisk"
+    },
+    {
+      "id": 24,
+      "name": "Bat"
+    },
+    {
+      "id": 25,
+      "name": "Bear"
+    },
+    {
+      "id": 26,
+      "name": "Beast"
+    },
+    {
+      "id": 27,
+      "name": "Beaver"
+    },
+    {
+      "id": 28,
+      "name": "Beeble"
+    },
+    {
+      "id": 29,
+      "name": "Beholder"
+    },
+    {
+      "id": 30,
+      "name": "Berserker"
+    },
+    {
+      "id": 31,
+      "name": "Bird"
+    },
+    {
+      "id": 32,
+      "name": "Bison"
+    },
+    {
+      "id": 33,
+      "name": "Blinkmoth"
+    },
+    {
+      "id": 34,
+      "name": "Boar"
+    },
+    {
+      "id": 35,
+      "name": "Bringer"
+    },
+    {
+      "id": 36,
+      "name": "Brushwagg"
+    },
+    {
+      "id": 37,
+      "name": "Camarid"
+    },
+    {
+      "id": 38,
+      "name": "Camel"
+    },
+    {
+      "id": 39,
+      "name": "Capybara"
+    },
+    {
+      "id": 40,
+      "name": "Caribou"
+    },
+    {
+      "id": 41,
+      "name": "Carrier"
+    },
+    {
+      "id": 42,
+      "name": "Cat"
+    },
+    {
+      "id": 43,
+      "name": "Centaur"
+    },
+    {
+      "id": 44,
+      "name": "Child"
+    },
+    {
+      "id": 45,
+      "name": "Chimera"
+    },
+    {
+      "id": 46,
+      "name": "Citizen"
+    },
+    {
+      "id": 47,
+      "name": "Cleric"
+    },
+    {
+      "id": 48,
+      "name": "Clown"
+    },
+    {
+      "id": 49,
+      "name": "Cockatrice"
+    },
+    {
+      "id": 50,
+      "name": "Construct"
+    },
+    {
+      "id": 51,
+      "name": "Coward"
+    },
+    {
+      "id": 52,
+      "name": "Coyote"
+    },
+    {
+      "id": 53,
+      "name": "Crab"
+    },
+    {
+      "id": 54,
+      "name": "Crocodile"
+    },
+    {
+      "id": 55,
+      "name": "C’tan"
+    },
+    {
+      "id": 56,
+      "name": "Custodes"
+    },
+    {
+      "id": 57,
+      "name": "Cyberman"
+    },
+    {
+      "id": 58,
+      "name": "Cyclops"
+    },
+    {
+      "id": 59,
+      "name": "Dalek"
+    },
+    {
+      "id": 60,
+      "name": "Dauthi"
+    },
+    {
+      "id": 61,
+      "name": "Demigod"
+    },
+    {
+      "id": 62,
+      "name": "Demon"
+    },
+    {
+      "id": 63,
+      "name": "Deserter"
+    },
+    {
+      "id": 64,
+      "name": "Detective"
+    },
+    {
+      "id": 65,
+      "name": "Devil"
+    },
+    {
+      "id": 66,
+      "name": "Dinosaur"
+    },
+    {
+      "id": 67,
+      "name": "Djinn"
+    },
+    {
+      "id": 68,
+      "name": "Doctor"
+    },
+    {
+      "id": 69,
+      "name": "Dog"
+    },
+    {
+      "id": 70,
+      "name": "Dragon"
+    },
+    {
+      "id": 71,
+      "name": "Drake"
+    },
+    {
+      "id": 72,
+      "name": "Dreadnought"
+    },
+    {
+      "id": 73,
+      "name": "Drix"
+    },
+    {
+      "id": 74,
+      "name": "Drone"
+    },
+    {
+      "id": 75,
+      "name": "Druid"
+    },
+    {
+      "id": 76,
+      "name": "Dryad"
+    },
+    {
+      "id": 77,
+      "name": "Dwarf"
+    },
+    {
+      "id": 78,
+      "name": "Echidna"
+    },
+    {
+      "id": 79,
+      "name": "Efreet"
+    },
+    {
+      "id": 80,
+      "name": "Egg"
+    },
+    {
+      "id": 81,
+      "name": "Elder"
+    },
+    {
+      "id": 82,
+      "name": "Eldrazi"
+    },
+    {
+      "id": 83,
+      "name": "Elemental"
+    },
+    {
+      "id": 84,
+      "name": "Elephant"
+    },
+    {
+      "id": 85,
+      "name": "Elf"
+    },
+    {
+      "id": 86,
+      "name": "Elk"
+    },
+    {
+      "id": 87,
+      "name": "Employee"
+    },
+    {
+      "id": 88,
+      "name": "Eternal"
+    },
+    {
+      "id": 89,
+      "name": "Eye"
+    },
+    {
+      "id": 90,
+      "name": "Faerie"
+    },
+    {
+      "id": 91,
+      "name": "Ferret"
+    },
+    {
+      "id": 92,
+      "name": "Fish"
+    },
+    {
+      "id": 93,
+      "name": "Flagbearer"
+    },
+    {
+      "id": 94,
+      "name": "Fox"
+    },
+    {
+      "id": 95,
+      "name": "Fractal"
+    },
+    {
+      "id": 96,
+      "name": "Frog"
+    },
+    {
+      "id": 97,
+      "name": "Fungus"
+    },
+    {
+      "id": 98,
+      "name": "Gamer"
+    },
+    {
+      "id": 99,
+      "name": "Gamma"
+    },
+    {
+      "id": 100,
+      "name": "Gargoyle"
+    },
+    {
+      "id": 101,
+      "name": "Germ"
+    },
+    {
+      "id": 102,
+      "name": "Giant"
+    },
+    {
+      "id": 103,
+      "name": "Giraffe"
+    },
+    {
+      "id": 104,
+      "name": "Gith"
+    },
+    {
+      "id": 105,
+      "name": "Glimmer"
+    },
+    {
+      "id": 106,
+      "name": "Gnoll"
+    },
+    {
+      "id": 107,
+      "name": "Gnome"
+    },
+    {
+      "id": 108,
+      "name": "Goat"
+    },
+    {
+      "id": 109,
+      "name": "Goblin"
+    },
+    {
+      "id": 110,
+      "name": "God"
+    },
+    {
+      "id": 111,
+      "name": "Golem"
+    },
+    {
+      "id": 112,
+      "name": "Gorgon"
+    },
+    {
+      "id": 113,
+      "name": "Graveborn"
+    },
+    {
+      "id": 114,
+      "name": "Gremlin"
+    },
+    {
+      "id": 115,
+      "name": "Griffin"
+    },
+    {
+      "id": 116,
+      "name": "Guest"
+    },
+    {
+      "id": 117,
+      "name": "Hag"
+    },
+    {
+      "id": 118,
+      "name": "Halfling"
+    },
+    {
+      "id": 119,
+      "name": "Hamster"
+    },
+    {
+      "id": 120,
+      "name": "Harpy"
+    },
+    {
+      "id": 121,
+      "name": "Hedgehog"
+    },
+    {
+      "id": 122,
+      "name": "Hellion"
+    },
+    {
+      "id": 123,
+      "name": "Hero"
+    },
+    {
+      "id": 124,
+      "name": "Hippo"
+    },
+    {
+      "id": 125,
+      "name": "Hippogriff"
+    },
+    {
+      "id": 126,
+      "name": "Homarid"
+    },
+    {
+      "id": 127,
+      "name": "Homunculus"
+    },
+    {
+      "id": 128,
+      "name": "Horror"
+    },
+    {
+      "id": 129,
+      "name": "Horse"
+    },
+    {
+      "id": 130,
+      "name": "Human"
+    },
+    {
+      "id": 131,
+      "name": "Hydra"
+    },
+    {
+      "id": 132,
+      "name": "Hyena"
+    },
+    {
+      "id": 133,
+      "name": "Illusion"
+    },
+    {
+      "id": 134,
+      "name": "Imp"
+    },
+    {
+      "id": 135,
+      "name": "Incarnation"
+    },
+    {
+      "id": 136,
+      "name": "Inhuman"
+    },
+    {
+      "id": 137,
+      "name": "Inkling"
+    },
+    {
+      "id": 138,
+      "name": "Inquisitor"
+    },
+    {
+      "id": 139,
+      "name": "Insect"
+    },
+    {
+      "id": 140,
+      "name": "Jackal"
+    },
+    {
+      "id": 141,
+      "name": "Jellyfish"
+    },
+    {
+      "id": 142,
+      "name": "Juggernaut"
+    },
+    {
+      "id": 143,
+      "name": "Kangaroo"
+    },
+    {
+      "id": 144,
+      "name": "Kavu"
+    },
+    {
+      "id": 145,
+      "name": "Kirin"
+    },
+    {
+      "id": 146,
+      "name": "Kithkin"
+    },
+    {
+      "id": 147,
+      "name": "Knight"
+    },
+    {
+      "id": 148,
+      "name": "Kobold"
+    },
+    {
+      "id": 149,
+      "name": "Kor"
+    },
+    {
+      "id": 150,
+      "name": "Kraken"
+    },
+    {
+      "id": 151,
+      "name": "Kree"
+    },
+    {
+      "id": 152,
+      "name": "Llama"
+    },
+    {
+      "id": 153,
+      "name": "Lamia"
+    },
+    {
+      "id": 154,
+      "name": "Lammasu"
+    },
+    {
+      "id": 155,
+      "name": "Leech"
+    },
+    {
+      "id": 156,
+      "name": "Lemur"
+    },
+    {
+      "id": 157,
+      "name": "Leviathan"
+    },
+    {
+      "id": 158,
+      "name": "Lhurgoyf"
+    },
+    {
+      "id": 159,
+      "name": "Licid"
+    },
+    {
+      "id": 160,
+      "name": "Lizard"
+    },
+    {
+      "id": 161,
+      "name": "Lobster"
+    },
+    {
+      "id": 162,
+      "name": "Manticore"
+    },
+    {
+      "id": 163,
+      "name": "Masticore"
+    },
+    {
+      "id": 164,
+      "name": "Mercenary"
+    },
+    {
+      "id": 165,
+      "name": "Merfolk"
+    },
+    {
+      "id": 166,
+      "name": "Metathran"
+    },
+    {
+      "id": 167,
+      "name": "Minion"
+    },
+    {
+      "id": 168,
+      "name": "Minotaur"
+    },
+    {
+      "id": 169,
+      "name": "Mite"
+    },
+    {
+      "id": 170,
+      "name": "Mole"
+    },
+    {
+      "id": 171,
+      "name": "Monger"
+    },
+    {
+      "id": 172,
+      "name": "Mongoose"
+    },
+    {
+      "id": 173,
+      "name": "Monk"
+    },
+    {
+      "id": 174,
+      "name": "Monkey"
+    },
+    {
+      "id": 175,
+      "name": "Moogle"
+    },
+    {
+      "id": 176,
+      "name": "Moonfolk"
+    },
+    {
+      "id": 177,
+      "name": "Mount"
+    },
+    {
+      "id": 178,
+      "name": "Mouse"
+    },
+    {
+      "id": 179,
+      "name": "Mutant"
+    },
+    {
+      "id": 180,
+      "name": "Myr"
+    },
+    {
+      "id": 181,
+      "name": "Mystic"
+    },
+    {
+      "id": 182,
+      "name": "Nautilus"
+    },
+    {
+      "id": 183,
+      "name": "Necron"
+    },
+    {
+      "id": 184,
+      "name": "Nephilim"
+    },
+    {
+      "id": 185,
+      "name": "Nightmare"
+    },
+    {
+      "id": 186,
+      "name": "Nightstalker"
+    },
+    {
+      "id": 187,
+      "name": "Ninja"
+    },
+    {
+      "id": 188,
+      "name": "Noble"
+    },
+    {
+      "id": 189,
+      "name": "Noggle"
+    },
+    {
+      "id": 190,
+      "name": "Nomad"
+    },
+    {
+      "id": 191,
+      "name": "Nymph"
+    },
+    {
+      "id": 192,
+      "name": "Octopus"
+    },
+    {
+      "id": 193,
+      "name": "Ogre"
+    },
+    {
+      "id": 194,
+      "name": "Ooze"
+    },
+    {
+      "id": 195,
+      "name": "Orb"
+    },
+    {
+      "id": 196,
+      "name": "Orc"
+    },
+    {
+      "id": 197,
+      "name": "Orgg"
+    },
+    {
+      "id": 198,
+      "name": "Otter"
+    },
+    {
+      "id": 199,
+      "name": "Ouphe"
+    },
+    {
+      "id": 200,
+      "name": "Ox"
+    },
+    {
+      "id": 201,
+      "name": "Oyster"
+    },
+    {
+      "id": 202,
+      "name": "Pangolin"
+    },
+    {
+      "id": 203,
+      "name": "Peasant"
+    },
+    {
+      "id": 204,
+      "name": "Pegasus"
+    },
+    {
+      "id": 205,
+      "name": "Pentavite"
+    },
+    {
+      "id": 206,
+      "name": "Performer"
+    },
+    {
+      "id": 207,
+      "name": "Pest"
+    },
+    {
+      "id": 208,
+      "name": "Phelddagrif"
+    },
+    {
+      "id": 209,
+      "name": "Phoenix"
+    },
+    {
+      "id": 210,
+      "name": "Phyrexian"
+    },
+    {
+      "id": 211,
+      "name": "Pilot"
+    },
+    {
+      "id": 212,
+      "name": "Pincher"
+    },
+    {
+      "id": 213,
+      "name": "Pirate"
+    },
+    {
+      "id": 214,
+      "name": "Plant"
+    },
+    {
+      "id": 215,
+      "name": "Platypus"
+    },
+    {
+      "id": 216,
+      "name": "Porcupine"
+    },
+    {
+      "id": 217,
+      "name": "Possum"
+    },
+    {
+      "id": 218,
+      "name": "Praetor"
+    },
+    {
+      "id": 219,
+      "name": "Primarch"
+    },
+    {
+      "id": 220,
+      "name": "Prism"
+    },
+    {
+      "id": 221,
+      "name": "Processor"
+    },
+    {
+      "id": 222,
+      "name": "Qu"
+    },
+    {
+      "id": 223,
+      "name": "Rabbit"
+    },
+    {
+      "id": 224,
+      "name": "Raccoon"
+    },
+    {
+      "id": 225,
+      "name": "Ranger"
+    },
+    {
+      "id": 226,
+      "name": "Rat"
+    },
+    {
+      "id": 227,
+      "name": "Rebel"
+    },
+    {
+      "id": 228,
+      "name": "Reflection"
+    },
+    {
+      "id": 229,
+      "name": "Rhino"
+    },
+    {
+      "id": 230,
+      "name": "Rigger"
+    },
+    {
+      "id": 231,
+      "name": "Robot"
+    },
+    {
+      "id": 232,
+      "name": "Rogue"
+    },
+    {
+      "id": 233,
+      "name": "Sable"
+    },
+    {
+      "id": 234,
+      "name": "Salamander"
+    },
+    {
+      "id": 235,
+      "name": "Samurai"
+    },
+    {
+      "id": 236,
+      "name": "Sand"
+    },
+    {
+      "id": 237,
+      "name": "Saproling"
+    },
+    {
+      "id": 238,
+      "name": "Satyr"
+    },
+    {
+      "id": 239,
+      "name": "Scarecrow"
+    },
+    {
+      "id": 240,
+      "name": "Scientist"
+    },
+    {
+      "id": 241,
+      "name": "Scion"
+    },
+    {
+      "id": 242,
+      "name": "Scorpion"
+    },
+    {
+      "id": 243,
+      "name": "Scout"
+    },
+    {
+      "id": 244,
+      "name": "Sculpture"
+    },
+    {
+      "id": 245,
+      "name": "Seal"
+    },
+    {
+      "id": 246,
+      "name": "Serf"
+    },
+    {
+      "id": 247,
+      "name": "Serpent"
+    },
+    {
+      "id": 248,
+      "name": "Servo"
+    },
+    {
+      "id": 249,
+      "name": "Shade"
+    },
+    {
+      "id": 250,
+      "name": "Shaman"
+    },
+    {
+      "id": 251,
+      "name": "Shapeshifter"
+    },
+    {
+      "id": 252,
+      "name": "Shark"
+    },
+    {
+      "id": 253,
+      "name": "Sheep"
+    },
+    {
+      "id": 254,
+      "name": "Shi’ar"
+    },
+    {
+      "id": 255,
+      "name": "Siren"
+    },
+    {
+      "id": 256,
+      "name": "Skeleton"
+    },
+    {
+      "id": 257,
+      "name": "Skrull"
+    },
+    {
+      "id": 258,
+      "name": "Skunk"
+    },
+    {
+      "id": 259,
+      "name": "Slith"
+    },
+    {
+      "id": 260,
+      "name": "Sliver"
+    },
+    {
+      "id": 261,
+      "name": "Sloth"
+    },
+    {
+      "id": 262,
+      "name": "Slug"
+    },
+    {
+      "id": 263,
+      "name": "Snail"
+    },
+    {
+      "id": 264,
+      "name": "Snake"
+    },
+    {
+      "id": 265,
+      "name": "Soldier"
+    },
+    {
+      "id": 266,
+      "name": "Soltari"
+    },
+    {
+      "id": 267,
+      "name": "Sorcerer"
+    },
+    {
+      "id": 268,
+      "name": "Spawn"
+    },
+    {
+      "id": 269,
+      "name": "Specter"
+    },
+    {
+      "id": 270,
+      "name": "Spellshaper"
+    },
+    {
+      "id": 271,
+      "name": "Sphinx"
+    },
+    {
+      "id": 272,
+      "name": "Spider"
+    },
+    {
+      "id": 273,
+      "name": "Spike"
+    },
+    {
+      "id": 274,
+      "name": "Spirit"
+    },
+    {
+      "id": 275,
+      "name": "Splinter"
+    },
+    {
+      "id": 276,
+      "name": "Sponge"
+    },
+    {
+      "id": 277,
+      "name": "Spy"
+    },
+    {
+      "id": 278,
+      "name": "Squid"
+    },
+    {
+      "id": 279,
+      "name": "Squirrel"
+    },
+    {
+      "id": 280,
+      "name": "Starfish"
+    },
+    {
+      "id": 281,
+      "name": "Surrakar"
+    },
+    {
+      "id": 282,
+      "name": "Survivor"
+    },
+    {
+      "id": 283,
+      "name": "Symbiote"
+    },
+    {
+      "id": 284,
+      "name": "Synth"
+    },
+    {
+      "id": 285,
+      "name": "Tentacle"
+    },
+    {
+      "id": 286,
+      "name": "Tetravite"
+    },
+    {
+      "id": 287,
+      "name": "Thalakos"
+    },
+    {
+      "id": 288,
+      "name": "Thopter"
+    },
+    {
+      "id": 289,
+      "name": "Thrull"
+    },
+    {
+      "id": 290,
+      "name": "Tiefling"
+    },
+    {
+      "id": 291,
+      "name": "Toy"
+    },
+    {
+      "id": 292,
+      "name": "Treefolk"
+    },
+    {
+      "id": 293,
+      "name": "Trilobite"
+    },
+    {
+      "id": 294,
+      "name": "Triskelavite"
+    },
+    {
+      "id": 295,
+      "name": "Troll"
+    },
+    {
+      "id": 296,
+      "name": "Turtle"
+    },
+    {
+      "id": 297,
+      "name": "Tyranid"
+    },
+    {
+      "id": 298,
+      "name": "Unicorn"
+    },
+    {
+      "id": 299,
+      "name": "Utrom"
+    },
+    {
+      "id": 300,
+      "name": "Vampire"
+    },
+    {
+      "id": 301,
+      "name": "Varmint"
+    },
+    {
+      "id": 302,
+      "name": "Vedalken"
+    },
+    {
+      "id": 303,
+      "name": "Villain"
+    },
+    {
+      "id": 304,
+      "name": "Volver"
+    },
+    {
+      "id": 305,
+      "name": "Wall"
+    },
+    {
+      "id": 306,
+      "name": "Walrus"
+    },
+    {
+      "id": 307,
+      "name": "Warlock"
+    },
+    {
+      "id": 308,
+      "name": "Warrior"
+    },
+    {
+      "id": 309,
+      "name": "Weasel"
+    },
+    {
+      "id": 310,
+      "name": "Weird"
+    },
+    {
+      "id": 311,
+      "name": "Werewolf"
+    },
+    {
+      "id": 312,
+      "name": "Whale"
+    },
+    {
+      "id": 313,
+      "name": "Wizard"
+    },
+    {
+      "id": 314,
+      "name": "Wolf"
+    },
+    {
+      "id": 315,
+      "name": "Wolverine"
+    },
+    {
+      "id": 316,
+      "name": "Wombat"
+    },
+    {
+      "id": 317,
+      "name": "Worm"
+    },
+    {
+      "id": 318,
+      "name": "Wraith"
+    },
+    {
+      "id": 319,
+      "name": "Wurm"
+    },
+    {
+      "id": 320,
+      "name": "Yeti"
+    },
+    {
+      "id": 321,
+      "name": "Zombie"
+    },
+    {
+      "id": 322,
+      "name": "Zubera"
+    },
+    {
+      "id": 323,
+      "name": "Time Lord"
+    }
+  ]
+}

@@ -192,3 +192,53 @@ required-features = ["standard-magezero-fixtures"]
 [[bin]]
 name = "kernel_limited_prepared_env_v5"
 path = "src/bin/kernel_limited_prepared_env_v5.rs"
+
+[[bin]]
+name = "kernel_limited_next_five_env_v6"
+path = "src/bin/kernel_limited_next_five_env_v6.rs"
+
+[[bin]]
+name = "kernel_limited_graveyard_return_env_v7"
+path = "src/bin/kernel_limited_graveyard_return_env_v7.rs"
+
+[[bin]]
+name = "kernel_limited_call_env_v8"
+path = "src/bin/kernel_limited_call_env_v8.rs"
+
+[[bin]]
+name = "kernel_limited_end_turn_env_v9"
+path = "src/bin/kernel_limited_end_turn_env_v9.rs"
+
+[[bin]]
+name = "kernel_limited_genesis_wave_env_v10"
+path = "src/bin/kernel_limited_genesis_wave_env_v10.rs"
+
+[[bin]]
+name = "kernel_limited_vivien_env_v11"
+path = "src/bin/kernel_limited_vivien_env_v11.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_muldrotha_env_v12"
+path = "src/bin/kernel_limited_muldrotha_env_v12.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_tinybones_env_v13"
+path = "src/bin/kernel_limited_tinybones_env_v13.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_liliana_env_v14"
+path = "src/bin/kernel_limited_liliana_env_v14.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_chandra_env_v15"
+path = "src/bin/kernel_limited_chandra_env_v15.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_kaito_env_v16"
+path = "src/bin/kernel_limited_kaito_env_v16.rs"
+required-features = ["limited-fdn-fixtures"]

@@ -61,6 +61,9 @@ fn absent_variable_source_binding_preserves_legacy_finalized_record_json_and_has
         chosen_creature_cost: None,
     };
     let current = FinalizedCastBindingV1 {
+        omniscience_cast_v1: None,
+        sphinx_lore_cast_v1: None,
+        greatwurm_payment_v1: None,
         x_value: 7,
         chosen_creature_cost: None,
         variable_targeting_kicked: None,

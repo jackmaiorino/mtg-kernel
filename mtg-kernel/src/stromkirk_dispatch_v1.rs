@@ -684,6 +684,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
             validate_item(state, capture, item)?;
         }
+        let disposed = match published {
+            Some((_, item)) => crate::engine::time_stop_v1::disposed(state, item)?,
+            None => false,
+        };
+        if completions.is_empty() && disposed {
+            if !live.is_empty()
+                || !held.is_empty()
+                || !operations.is_empty()
+                || !removals.is_empty()
+            {
+                return Err("Stromkirk disposed occurrence has another owner/outcome".into());
+            }
+            continue;
+        }
         if completions.is_empty() {
             validate_open_turn(state, capture)?;
             if !operations.is_empty() || !removals.is_empty() {

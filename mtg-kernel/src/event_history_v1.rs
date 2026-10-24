@@ -22,7 +22,7 @@ use std::ops::{Deref, DerefMut};
 
 /// One value per `CommittedEvent` variant, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
+#[repr(u16)]
 pub enum EventKindV1 {
     Damage,
     ZoneChange,
@@ -261,12 +261,87 @@ pub enum EventKindV1 {
     DrakeJournalV1,
     DrakeHistoryRefV1,
     ConquerorGainReplayBorrowV49,
+    AleshaPowerLkiV1,
+    NivMizzetVisionaryDamageV1,
+    NivMizzetVisionaryTriggerStackedV1,
+    NivMizzetVisionaryDamageSourceDepartureV1,
+    KinshipEntryV1,
+    SphinxsTutelageDrawV1,
+    SphinxsTutelageCollectedV1,
+    SphinxsTutelagePublishedV1,
+    SphinxsTutelageMillStartedV1,
+    SphinxsTutelageMillBatchV1,
+    LathrilCombatDamageV1,
+    LathrilCombatCollectedV1,
+    LathrilCombatPublishedV1,
+    LathrilCombatResolvedV1,
+    LathrilCombatCounteredV1,
+    LathrilCombatObservedV1,
+    CopiedTokenAbilitiesEnteredV1,
+    CopiedTokenEndStepV1,
+    CopiedTokenEndStepCollectedV1,
+    CopiedTokenSacrificePublishedV1,
+    CopiedTokenSacrificeFinishedV1,
+    CuratorEnteredV1,
+    CuratorCollectedV1,
+    CuratorPublishedV1,
+    CuratorFinishedV1,
+    CuratorProgressV1,
+    KykarExiledV1,
+    KykarDelayedCollectedV1,
+    GreatwurmCounterPaymentV1,
+    GreatwurmCombatCaptureV1,
+    GreatwurmCombatBoundV1,
+    GreatwurmCollectedV1,
+    GreatwurmPublishedV1,
+    GreatwurmFinishedV1,
+    GreatwurmCounterInputV1,
+    SourceCopyDepartureV1,
+    SphinxLoreV1,
+    SphinxLoreCastOptionsV1,
+    SphinxLoreCastSelectedV1,
+    OmniscienceCastOptionsV1,
+    OmniscienceCastSelectedV1,
+    NightmareCopyEnteredV1,
+    NightmareCopyLayerV1,
+    HarvesterGraveyardEntryV1,
+    HarvesterResolvedV1,
+    HarvesterCastAnnouncedV1,
+    HarvesterCastReversedV1,
+    ProgenitusInputV1,
+    ProgenitusShuffledV1,
+    LeylineOpeningV1,
+    FiendArtisanInputV1,
+    FiendArtisanPaidV1,
+    FiendArtisanSearchStartedV1,
+    FiendArtisanSearchFinishedV1,
+    LifeLossWideV59,
+    LifeGainWideV59,
+    ConquerorObserverInputV59,
+    ConquerorLossBatchV59,
+    ConquerorCapturedV59,
+    ConquerorCollectedV59,
+    ConquerorJournalV59,
+    FiendishPandaWideGainCaptureV59,
+    ThousandYearStormV1,
+    TimeStopJournalV1,
+    OrdinaryCleanupStageV1,
+    GenesisWaveProgressV1,
+    GenesisWaveFinishedV1,
+    PublishedCastIdentityV1,
+    VivienReidV1,
+    MuldrothaOptionsV1,
+    MuldrothaSelectedV1,
+    MuldrothaPlayedV1,
+    TinybonesV72,
+    LilianaDreadhordeV1,
+    ChandraFlameshaperV74,
+    KaitoCunningV75,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 237;
-const _: () =
-    assert!(EventKindV1::ConquerorGainReplayBorrowV49 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 313;
+const _: () = assert!(EventKindV1::KaitoCunningV75 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -589,6 +664,96 @@ impl CommittedEvent {
             Self::DrakeJournalV1 { .. } => EventKindV1::DrakeJournalV1,
             Self::DrakeHistoryRefV1 { .. } => EventKindV1::DrakeHistoryRefV1,
             Self::ConquerorGainReplayBorrowV49 { .. } => EventKindV1::ConquerorGainReplayBorrowV49,
+            Self::AleshaPowerLkiV1 { .. } => EventKindV1::AleshaPowerLkiV1,
+            Self::NivMizzetVisionaryDamageV1 { .. } => EventKindV1::NivMizzetVisionaryDamageV1,
+            Self::NivMizzetVisionaryTriggerStackedV1 { .. } => {
+                EventKindV1::NivMizzetVisionaryTriggerStackedV1
+            }
+            Self::NivMizzetVisionaryDamageSourceDepartureV1 { .. } => {
+                EventKindV1::NivMizzetVisionaryDamageSourceDepartureV1
+            }
+            Self::KinshipEntryV1 { .. } => EventKindV1::KinshipEntryV1,
+            Self::SphinxsTutelageDrawV1 { .. } => EventKindV1::SphinxsTutelageDrawV1,
+            Self::SphinxsTutelageCollectedV1 { .. } => EventKindV1::SphinxsTutelageCollectedV1,
+            Self::SphinxsTutelagePublishedV1 { .. } => EventKindV1::SphinxsTutelagePublishedV1,
+            Self::SphinxsTutelageMillStartedV1 { .. } => EventKindV1::SphinxsTutelageMillStartedV1,
+            Self::SphinxsTutelageMillBatchV1 { .. } => EventKindV1::SphinxsTutelageMillBatchV1,
+            Self::LathrilCombatDamageV1 { .. } => EventKindV1::LathrilCombatDamageV1,
+            Self::LathrilCombatCollectedV1 { .. } => EventKindV1::LathrilCombatCollectedV1,
+            Self::LathrilCombatPublishedV1 { .. } => EventKindV1::LathrilCombatPublishedV1,
+            Self::LathrilCombatResolvedV1 { .. } => EventKindV1::LathrilCombatResolvedV1,
+            Self::LathrilCombatCounteredV1 { .. } => EventKindV1::LathrilCombatCounteredV1,
+            Self::LathrilCombatObservedV1 { .. } => EventKindV1::LathrilCombatObservedV1,
+            Self::CopiedTokenAbilitiesEnteredV1 { .. } => {
+                EventKindV1::CopiedTokenAbilitiesEnteredV1
+            }
+            Self::CopiedTokenEndStepV1 { .. } => EventKindV1::CopiedTokenEndStepV1,
+            Self::CopiedTokenEndStepCollectedV1 { .. } => {
+                EventKindV1::CopiedTokenEndStepCollectedV1
+            }
+            Self::CopiedTokenSacrificePublishedV1 { .. } => {
+                EventKindV1::CopiedTokenSacrificePublishedV1
+            }
+            Self::CopiedTokenSacrificeFinishedV1 { .. } => {
+                EventKindV1::CopiedTokenSacrificeFinishedV1
+            }
+            Self::CuratorEnteredV1 { .. } => EventKindV1::CuratorEnteredV1,
+            Self::CuratorCollectedV1 { .. } => EventKindV1::CuratorCollectedV1,
+            Self::CuratorPublishedV1 { .. } => EventKindV1::CuratorPublishedV1,
+            Self::CuratorFinishedV1 { .. } => EventKindV1::CuratorFinishedV1,
+            Self::CuratorProgressV1 { .. } => EventKindV1::CuratorProgressV1,
+            Self::KykarExiledV1 { .. } => EventKindV1::KykarExiledV1,
+            Self::KykarDelayedCollectedV1 { .. } => EventKindV1::KykarDelayedCollectedV1,
+            Self::GreatwurmCounterPaymentV1 { .. } => EventKindV1::GreatwurmCounterPaymentV1,
+            Self::GreatwurmCombatCaptureV1 { .. } => EventKindV1::GreatwurmCombatCaptureV1,
+            Self::GreatwurmCombatBoundV1 { .. } => EventKindV1::GreatwurmCombatBoundV1,
+            Self::GreatwurmCollectedV1 { .. } => EventKindV1::GreatwurmCollectedV1,
+            Self::GreatwurmPublishedV1 { .. } => EventKindV1::GreatwurmPublishedV1,
+            Self::GreatwurmFinishedV1 { .. } => EventKindV1::GreatwurmFinishedV1,
+            Self::GreatwurmCounterInputV1 { .. } => EventKindV1::GreatwurmCounterInputV1,
+            Self::SourceCopyDepartureV1 { .. } => EventKindV1::SourceCopyDepartureV1,
+            Self::SphinxLoreV1 { .. } => EventKindV1::SphinxLoreV1,
+            Self::SphinxLoreCastOptionsV1 { .. } => EventKindV1::SphinxLoreCastOptionsV1,
+            Self::SphinxLoreCastSelectedV1 { .. } => EventKindV1::SphinxLoreCastSelectedV1,
+            Self::OmniscienceCastOptionsV1 { .. } => EventKindV1::OmniscienceCastOptionsV1,
+            Self::OmniscienceCastSelectedV1 { .. } => EventKindV1::OmniscienceCastSelectedV1,
+            Self::NightmareCopyEnteredV1 { .. } => EventKindV1::NightmareCopyEnteredV1,
+            Self::NightmareCopyLayerV1 { .. } => EventKindV1::NightmareCopyLayerV1,
+            Self::HarvesterGraveyardEntryV1 { .. } => EventKindV1::HarvesterGraveyardEntryV1,
+            Self::HarvesterResolvedV1 { .. } => EventKindV1::HarvesterResolvedV1,
+            Self::HarvesterCastAnnouncedV1 { .. } => EventKindV1::HarvesterCastAnnouncedV1,
+            Self::HarvesterCastReversedV1 { .. } => EventKindV1::HarvesterCastReversedV1,
+            Self::ProgenitusInputV1 { .. } => EventKindV1::ProgenitusInputV1,
+            Self::ProgenitusShuffledV1 { .. } => EventKindV1::ProgenitusShuffledV1,
+            Self::LeylineOpeningV1 { .. } => EventKindV1::LeylineOpeningV1,
+            Self::FiendArtisanInputV1 { .. } => EventKindV1::FiendArtisanInputV1,
+            Self::FiendArtisanPaidV1 { .. } => EventKindV1::FiendArtisanPaidV1,
+            Self::FiendArtisanSearchStartedV1 { .. } => EventKindV1::FiendArtisanSearchStartedV1,
+            Self::FiendArtisanSearchFinishedV1 { .. } => EventKindV1::FiendArtisanSearchFinishedV1,
+            Self::LifeLossWideV59 { .. } => EventKindV1::LifeLossWideV59,
+            Self::LifeGainWideV59 { .. } => EventKindV1::LifeGainWideV59,
+            Self::ConquerorObserverInputV59 { .. } => EventKindV1::ConquerorObserverInputV59,
+            Self::ConquerorLossBatchV59 { .. } => EventKindV1::ConquerorLossBatchV59,
+            Self::ConquerorCapturedV59 { .. } => EventKindV1::ConquerorCapturedV59,
+            Self::ConquerorCollectedV59 { .. } => EventKindV1::ConquerorCollectedV59,
+            Self::ConquerorJournalV59 { .. } => EventKindV1::ConquerorJournalV59,
+            Self::FiendishPandaWideGainCaptureV59 { .. } => {
+                EventKindV1::FiendishPandaWideGainCaptureV59
+            }
+            Self::ThousandYearStormV1 { .. } => EventKindV1::ThousandYearStormV1,
+            Self::TimeStopJournalV1 { .. } => EventKindV1::TimeStopJournalV1,
+            Self::OrdinaryCleanupStageV1 { .. } => EventKindV1::OrdinaryCleanupStageV1,
+            Self::GenesisWaveProgressV1 { .. } => EventKindV1::GenesisWaveProgressV1,
+            Self::GenesisWaveFinishedV1 { .. } => EventKindV1::GenesisWaveFinishedV1,
+            Self::PublishedCastIdentityV1 { .. } => EventKindV1::PublishedCastIdentityV1,
+            Self::VivienReidV1 { .. } => EventKindV1::VivienReidV1,
+            Self::MuldrothaOptionsV1 { .. } => EventKindV1::MuldrothaOptionsV1,
+            Self::MuldrothaSelectedV1 { .. } => EventKindV1::MuldrothaSelectedV1,
+            Self::MuldrothaPlayedV1 { .. } => EventKindV1::MuldrothaPlayedV1,
+            Self::TinybonesV72 { .. } => EventKindV1::TinybonesV72,
+            Self::LilianaDreadhordeV1 { .. } => EventKindV1::LilianaDreadhordeV1,
+            Self::ChandraFlameshaperV74 { .. } => EventKindV1::ChandraFlameshaperV74,
+            Self::KaitoCunningV75 { .. } => EventKindV1::KaitoCunningV75,
         }
     }
 }

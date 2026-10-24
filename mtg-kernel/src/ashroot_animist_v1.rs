@@ -123,6 +123,13 @@ fn record(state: &mut GameState, source: ObjectLinkV4, owner: PlayerId, power: i
         });
 }
 pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
+    before_departure_with_power(state, id, None);
+}
+pub(crate) fn before_departure_with_power(
+    state: &mut GameState,
+    id: ObjectId,
+    frozen: Option<i32>,
+) {
     if !needs_departure(state, id) {
         return;
     }
@@ -132,7 +139,7 @@ pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
         zone_change_count: live.zone_change_count,
     };
     let owner = live.owner;
-    let power = crate::engine::effective_power(state, id);
+    let power = frozen.unwrap_or_else(|| crate::engine::effective_power(state, id));
     record(state, source, owner, power);
 }
 pub(crate) fn validate_trigger(

@@ -9,6 +9,71 @@ pub(crate) use key_step::V4SearchActionTokenV1;
 #[cfg(test)]
 pub(super) mod library_tests;
 mod sampler;
+pub(super) fn redeterminize_call_v62(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_call_v62(state, actor, seed)
+}
+pub(super) fn same_current_unknown_pool_v69(
+    before: &crate::state::GameState,
+    current: &crate::state::GameState,
+    actor: crate::ids::PlayerId,
+) -> bool {
+    sampler::same_current_unknown_pool_v69(before, current, actor)
+}
+pub(super) fn redeterminize_muldrotha_v71(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_muldrotha_v71(state, actor, seed)
+}
+pub(super) fn redeterminize_tinybones_v72(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_tinybones_v72(state, actor, seed)
+}
+pub(super) fn redeterminize_liliana_v73(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_liliana_v73(state, actor, seed)
+}
+pub(super) fn redeterminize_kaito_v75(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_kaito_v75(state, actor, seed)
+}
+pub(super) fn redeterminize_chandra_v74(
+    state: &mut crate::state::GameState,
+    actor: crate::ids::PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_chandra_v74(state, actor, seed)
+}
+pub(super) fn redeterminize_genesis_wave_v69(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_genesis_wave_v69(state, actor, seed)
+}
+/// Typed native-only successor entry; old V4 playing/search modes remain frozen.
+pub(super) fn redeterminize_end_turn_v68(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+) -> Result<(), V4SearchStateErrorV1> {
+    sampler::redeterminize_end_turn_v68(state, actor, seed)
+}
+
 #[cfg(test)]
 mod sampler_tests;
 #[cfg(test)]

@@ -445,6 +445,36 @@ pub(super) fn prepare_current(
     session: &FastActorSessionV1,
     current: &mut FastActorCurrentDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if session.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
+        return super::kaito_v75::prepare_current(session, current);
+    } else if session.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
+        return super::chandra_v74::prepare_current(session, current);
+    } else if session.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
+        return super::liliana_v73::prepare_current(session, current);
+    }
+    if session.flat_action_contract_mode == FlatActionContractModeV1::TinybonesV72 {
+        return super::tinybones_v72::prepare_current(session, current);
+    }
+    if session.flat_action_contract_mode == FlatActionContractModeV1::MuldrothaV71 {
+        return super::muldrotha_v71::prepare_current(session, current);
+    }
+    if session.flat_action_contract_mode == FlatActionContractModeV1::VivienV70 {
+        return super::vivien_v70::prepare_current(session, current);
+    }
+    if session.flat_action_contract_mode == FlatActionContractModeV1::GenesisWaveV69 {
+        return super::genesis_wave_v69::prepare_current(session, current);
+    } else if session.flat_action_contract_mode == FlatActionContractModeV1::EndTurnV68 {
+        return super::end_turn_v68::prepare_current(session, current);
+    }
+    if session.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
+        return super::call_v62::prepare_current(session, current);
+    }
+    if session.flat_action_contract_mode == FlatActionContractModeV1::GraveyardReturnV61 {
+        return super::graveyard_return_v61::prepare_current(session, current);
+    }
+    if session.flat_action_contract_mode == FlatActionContractModeV1::NextFiveV59 {
+        return super::next_five_v59::prepare_current(session, current);
+    }
     if session.flat_action_contract_mode == FlatActionContractModeV1::PreparedV57 {
         return super::prepared_v57::prepare_current(session, current);
     }
@@ -491,6 +521,10 @@ impl FastActorSessionV1 {
                 "invalid Ravenous V51 reset",
             ));
         }
+        preflight_declared_mainboards_for_scope(
+            crate::rl::CommonProjectionScopeV42::ExistingV40,
+            [&mainboards[0], &mainboards[1]],
+        )?;
         let mut state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
             env_seed,
             &mainboards[0],
@@ -574,6 +608,11 @@ impl FastActorSessionV1 {
         } else {
             restored.environment_revision = next_revision;
         }
+        crate::graveyard_return_public_v61::require_legacy_visible(
+            &restored.state,
+            restored.current.as_ref().map(|c| c.actor),
+        )
+        .map_err(RlContractError)?;
         *self = restored;
         Ok(())
     }

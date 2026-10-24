@@ -92,7 +92,50 @@ pub fn producer_sha256() -> String {
                 "linked_aura_operation_v1.rs",
                 include_str!("linked_aura_operation_v1.rs"),
             ),
+            ("planeswalker_v1.rs", include_str!("planeswalker_v1.rs")),
+            ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
+            ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
+            ("progenitus_v1.rs", include_str!("progenitus_v1.rs")),
+            ("fiendish_panda_v1.rs", include_str!("fiendish_panda_v1.rs")),
+            ("life_gain_turn_v1.rs", include_str!("life_gain_turn_v1.rs")),
+            ("midnight_snack_v1.rs", include_str!("midnight_snack_v1.rs")),
+            (
+                "standard_cast_convoke.rs",
+                include_str!("standard_cast_convoke.rs"),
+            ),
+            (
+                "engine/mandatory_cast_cost_v1.rs",
+                include_str!("engine/mandatory_cast_cost_v1.rs"),
+            ),
+            (
+                "rules_meaning_next_five_v59.rs",
+                include_str!("rules_meaning_next_five_v59.rs"),
+            ),
+            (
+                "effect/thousand_year_storm_v1.rs",
+                include_str!("effect/thousand_year_storm_v1.rs"),
+            ),
+            (
+                "effect/standard_copy.rs",
+                include_str!("effect/standard_copy.rs"),
+            ),
+            (
+                "standard_spell_copy.rs",
+                include_str!("standard_spell_copy.rs"),
+            ),
             ("event_history_v1.rs", include_str!("event_history_v1.rs")),
+            (
+                "time-stop-native-semantic-source/v1",
+                crate::engine::time_stop_v1::source_sha256_v1(),
+            ),
+            (
+                "genesis-wave-native-source/v1",
+                crate::effect::genesis_wave_v1::source_sha256_v1(),
+            ),
+            (
+                "mtg-kernel/src/engine/tinybones_v72.rs",
+                include_str!("engine/tinybones_v72.rs"),
+            ),
         ] {
             h.update([0]);
             h.update(path.as_bytes());

@@ -17,7 +17,9 @@ use super::*;
 /// Legality facts of a target specification.
 pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
     match spec {
-        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => {
+        TargetSpec::AnotherControlledNonlandPermanent
+        | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => {
             // Frozen vocabulary cannot preserve the signed captured-power
             // bound, Bear/changeling exclusion and historical physical source.
             out.atoms.push(Atom::Opaque);
@@ -440,7 +442,9 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
 /// (the engine never resolves a slot past `target_count`).
 pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
     match spec {
-        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => creature(),
+        TargetSpec::AnotherControlledNonlandPermanent => ObjF::Permanent,
+        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => creature(),
         TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => ObjF::AnyCard,
         TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => ObjF::Permanent,
         TargetSpec::StackObject
@@ -679,17 +683,23 @@ fn mana_value_bucket(maximum: u16) -> u8 {
 fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> ObjF {
     use crate::standard_cards_v1::StandardTargetV1 as S;
     match filter {
+        S::UpToEightCreaturesOrPlaneswalkersV74
+        | S::CreatureLandOrPlaneswalkerV1
+        | S::ArtifactEnchantmentOrFlyingCreatureV1 => ObjF::Permanent,
         S::OpponentNonlandPermanentManaValueAtMost(_)
         | S::OpponentNonlandPermanent
         | S::AnotherNonlandPermanent => ObjF::NonlandPermanent,
-        S::OpponentArtifactOrCreature => ObjF::Permanent,
+        S::OpponentArtifactOrCreature | S::UpToTwoControlledArtifactsOrCreatures => ObjF::Permanent,
         S::ControlledArtifact => typed(CardType::Artifact),
         S::InstantOrSorceryCardInOwnGraveyard | S::CardInAGraveyard => ObjF::AnyCard,
+        S::CreatureCardPutIntoGraveyardThisTurnV1 => creature(),
         S::AnotherNonlegendaryControlledCreature
         | S::UpToOneCreature
+        | S::UpToOneControlledCreatureV1
         | S::TappedOpponentCreature
-        | S::CrewedSourceThisTurn => creature(),
-        S::UpToTwoAnyTargets => ObjF::PlayerOrPermanent,
+        | S::CrewedSourceThisTurn
+        | S::UpToTwoControlledCreatures => creature(),
+        S::UpToTwoAnyTargets | S::OneToThreeDistinctAnyTargetsV1 => ObjF::PlayerOrPermanent,
     }
 }
 
@@ -699,16 +709,24 @@ pub(super) fn standard_target_origin(
     use crate::standard_cards_v1::StandardTargetV1 as S;
     match filter {
         S::InstantOrSorceryCardInOwnGraveyard => (Some(ZoneF::Graveyard), Some(RelF::You)),
-        S::CardInAGraveyard => (Some(ZoneF::Graveyard), None),
-        S::ControlledArtifact | S::AnotherNonlegendaryControlledCreature => {
-            (Some(ZoneF::Battlefield), Some(RelF::You))
+        S::CardInAGraveyard | S::CreatureCardPutIntoGraveyardThisTurnV1 => {
+            (Some(ZoneF::Graveyard), None)
         }
+        S::ControlledArtifact
+        | S::AnotherNonlegendaryControlledCreature
+        | S::UpToOneControlledCreatureV1
+        | S::UpToTwoControlledCreatures
+        | S::UpToTwoControlledArtifactsOrCreatures => (Some(ZoneF::Battlefield), Some(RelF::You)),
         S::OpponentNonlandPermanentManaValueAtMost(_)
         | S::OpponentNonlandPermanent
         | S::OpponentArtifactOrCreature
         | S::TappedOpponentCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
         S::AnotherNonlandPermanent
+        | S::UpToEightCreaturesOrPlaneswalkersV74
+        | S::CreatureLandOrPlaneswalkerV1
+        | S::ArtifactEnchantmentOrFlyingCreatureV1
         | S::UpToTwoAnyTargets
+        | S::OneToThreeDistinctAnyTargetsV1
         | S::UpToOneCreature
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
@@ -722,6 +740,24 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
     let (zone, relation) = standard_target_origin(filter);
     let zone = zone.expect("every Standard object target has a zone");
     match filter {
+        S::UpToEightCreaturesOrPlaneswalkersV74
+        | S::CreatureLandOrPlaneswalkerV1
+        | S::ArtifactEnchantmentOrFlyingCreatureV1 => {
+            // The old facet vocabulary does not encode this union or land override.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::CreatureCardPutIntoGraveyardThisTurnV1 => {
+            object(out, creature(), relation, zone);
+            // Exact current-turn entry and physical incarnation need a successor.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToTwoControlledCreatures
+        | S::UpToTwoControlledArtifactsOrCreatures
+        | S::UpToOneControlledCreatureV1 => {
+            // Preserve the native payload without admitting these new target
+            // programs through the frozen v1 facet vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         S::OpponentNonlandPermanentManaValueAtMost(maximum) => {
             out.target(TargetAtom::Object {
                 obj: ObjF::NonlandPermanent,
@@ -763,6 +799,16 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Planeswalker), None, zone);
             out.target(TargetAtom::MultipleTargets);
             out.target(TargetAtom::UpTo);
+        }
+        S::OneToThreeDistinctAnyTargetsV1 => {
+            out.target(TargetAtom::PlayerYou);
+            out.target(TargetAtom::PlayerOpponent);
+            object(out, creature(), None, zone);
+            object(out, typed(CardType::Planeswalker), None, zone);
+            out.target(TargetAtom::MultipleTargets);
+            // The frozen vocabulary cannot express a mandatory first slot
+            // followed by optional OTHER slots. Retain exact source payload.
+            out.atoms.push(Atom::Opaque);
         }
     }
 }

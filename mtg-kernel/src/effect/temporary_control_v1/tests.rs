@@ -28,7 +28,9 @@ fn replay(state: &GameState) -> GameState {
     restored
 }
 fn cleanup(state: &mut GameState) {
-    state.step = crate::state::Step::End;
+    // Native advancement must publish the End-step entry used by cleanup.
+    state.step = crate::state::Step::Main2;
+    state.engine.priority_passes = [false; 2];
     for _ in 0..8 {
         let decision = crate::engine::advance_until_decision(state);
         assert!(

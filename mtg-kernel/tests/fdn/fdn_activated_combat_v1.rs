@@ -80,9 +80,11 @@ fn cleanup(state: &mut GameState) {
     assert!(state.stack.is_empty());
     assert!(!state.engine.until_end_of_turn.is_empty());
     let active = state.active_player;
-    // Expiry runs when the engine enters Cleanup, not when a fixture assigns
-    // that step directly. Pass the real End window to execute the entry action.
-    state.step = Step::End;
+    // Reach the native End entry before passing into Cleanup.
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(state, active, Step::End);
+    }
     state.priority_player = active;
     state.engine.priority_passes = [false, false];
     for _ in 0..8 {

@@ -12,12 +12,14 @@ pub enum PreventionV1 {
     Replacement(ActiveReplacement),
     Multiplier(crate::state::AbilitySourceContractV4),
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChoiceV1 {
     pub source: ObjectId,
     /// Only the authenticated finalized source-power receipt may supply LKI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub historical_source: Option<StackItemId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) niv_damage_origin_v1: Option<crate::event::NivDamageOriginV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<BatchProgressV2>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,6 +38,27 @@ pub struct ChoiceV1 {
     )]
     pub applied_multipliers: crate::twinflame_tyrant_v1::ordering::AppliedMultipliersV38,
 }
+impl std::hash::Hash for ChoiceV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.historical_source.hash(state);
+        self.batch.hash(state);
+        self.creature_power.hash(state);
+        self.target.hash(state);
+        self.original_amount.hash(state);
+        self.remaining_amount.hash(state);
+        self.touched.hash(state);
+        self.chooser.hash(state);
+        self.path.hash(state);
+        self.options.hash(state);
+        self.remaining_frames.hash(state);
+        self.applied_multipliers.hash(state);
+        if let Some(origin) = self.niv_damage_origin_v1 {
+            0x6e69_765f_646d_676f_u64.hash(state);
+            origin.hash(state);
+        }
+    }
+}
 impl ChoiceV1 {
     fn damage(&self) -> DamageProposed {
         DamageProposed {
@@ -45,6 +68,7 @@ impl ChoiceV1 {
             touched_by: self.touched.clone(),
             is_combat: false,
             historical_source: self.historical_source,
+            niv_damage_origin_v1: self.niv_damage_origin_v1,
         }
     }
 }
@@ -93,7 +117,7 @@ pub struct ProgramChoiceOperationV3 {
     pub before: Box<EffectContinuation>,
     pub option: u16,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionStepV1 {
     pub frame: EffectFrame,
     pub conditional_result: Option<bool>,
@@ -109,6 +133,28 @@ pub struct ExecutionStepV1 {
     pub discard_capture: Option<DiscardCaptureV2>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub damage_operation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excess_capture: Option<crate::goblin_negotiation_v1::owned::CaptureV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excess_finish: Option<crate::goblin_negotiation_v1::owned::FinishV1>,
+}
+impl std::hash::Hash for ExecutionStepV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.frame.hash(h);
+        self.conditional_result.hash(h);
+        self.offered_menu.hash(h);
+        self.damage_history.hash(h);
+        self.nondamage_history.hash(h);
+        self.batch_capture.hash(h);
+        self.creature_power_capture.hash(h);
+        self.discard_capture.hash(h);
+        self.damage_operation.hash(h);
+        if self.excess_capture.is_some() || self.excess_finish.is_some() {
+            "goblin-excess-step/v1".hash(h);
+            self.excess_capture.hash(h);
+            self.excess_finish.hash(h);
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BatchDamageV2 {
@@ -126,7 +172,20 @@ impl BatchDamageV2 {
             touched_by: self.touched.clone(),
             is_combat: false,
             historical_source: None,
+            niv_damage_origin_v1: None,
         }
+    }
+
+    fn proposed_with_context(&self, ctx: &ExecCtx) -> DamageProposed {
+        let mut damage = self.proposed();
+        crate::event::attach_niv_damage_origin_v1(ctx, &mut damage);
+        if ctx
+            .ability_source_contract
+            .is_some_and(|source| super::chandra_flameshaper_v1::definition(source.card_def))
+        {
+            damage.historical_source = ctx.stack_item_id;
+        }
+        damage
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -386,7 +445,8 @@ impl OwnerV1 {
         op: &EffectOp,
         path: &[u16],
     ) -> Option<(u32, StackItem)> {
-        (ctx == &context(&self.expected)
+        (ctx.same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, ctx)
             && effect_op_at_structural_path(&self.root, path) == Some(op)
             && state.engine.pending_effect.is_none()
             && !state
@@ -403,7 +463,10 @@ impl OwnerV1 {
         before: &EffectContinuation,
     ) -> bool {
         before.resolving_item == self.expected
-            && before.ctx == context(&self.expected)
+            && before
+                .ctx
+                .same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, &before.ctx)
             && state.engine.pending_effect.as_ref() == Some(before)
             && state
                 .stack
@@ -422,6 +485,8 @@ impl OwnerV1 {
     ) -> bool {
         matches!(event, crate::event::ProposedEvent::Damage(d)
             if d.source == self.expected.source && !d.is_combat
+                && d.niv_damage_origin_v1
+                    == crate::event::niv_damage_origin_for_saved_item_v1(state, &self.expected)
                 && (d.historical_source.is_none()
                     || d.historical_source == Some(self.expected.v4.stack_item_id)
                         && crate::source_power_activation_v1::damage_source(
@@ -454,15 +519,35 @@ impl OwnerV1 {
                     && last(state, &self.expected).and_then(|b| b.pending.as_deref()) == Some(p)
             });
         (removed || waiting)
-            && capture.ctx == context(&self.expected)
+            && capture
+                .ctx
+                .same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, &capture.ctx)
             && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
-            && batch_recipe(&capture.op)
-            && events.iter().all(|e| {
-                matches!(e, crate::event::ProposedEvent::Damage(d)
-                if !d.is_combat && d.historical_source.is_none()
-                    && capture.proposals.iter().enumerate().any(|(slot, original)| original.source == d.source && original.target == d.target
-                        && d.amount > 0 && d.amount <= capture.multiplier_options.0.get(slot).map_or(original.amount, |packet| packet.options.iter().fold(original.amount, |amount, o| if matches!(o, PreventionV1::Multiplier(_)) { amount.saturating_mul(2) } else { amount }))))
-            })
+            && batch_recipe(&capture.op) && events.iter().all(|event| {
+            matches!(event, crate::event::ProposedEvent::Damage(damage)
+                if !damage.is_combat
+                    && capture.proposals.iter().enumerate().any(|(slot, original)| {
+                        let expected = original.proposed_with_context(&capture.ctx);
+                        let maximum = capture.multiplier_options.0.get(slot).map_or(
+                            original.amount,
+                            |packet| packet.options.iter().fold(original.amount, |amount, option| {
+                                if matches!(option, PreventionV1::Multiplier(_)) {
+                                    amount.saturating_mul(2)
+                                } else {
+                                    amount
+                                }
+                            }),
+                        );
+                        damage.historical_source == expected.historical_source
+                            && damage.niv_damage_origin_v1 == expected.niv_damage_origin_v1
+                            && original.source == damage.source
+                            && original.target == damage.target
+                            && damage.amount > 0
+                            && damage.amount <= maximum
+                    })
+            )
+        })
     }
     pub(crate) fn permits_creature_power(
         &self,
@@ -470,8 +555,14 @@ impl OwnerV1 {
         capture: &CreaturePowerCaptureV2,
         event: &crate::event::ProposedEvent,
     ) -> bool {
-        let damage = capture.damage.as_ref().map(BatchDamageV2::proposed);
-        capture.ctx == context(&self.expected)
+        let damage = capture
+            .damage
+            .as_ref()
+            .map(|damage| damage.proposed_with_context(&capture.ctx));
+        capture
+            .ctx
+            .same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, &capture.ctx)
             && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
             && matches!(event, crate::event::ProposedEvent::Damage(d) if damage.as_ref() == Some(d))
             && !state
@@ -497,7 +588,10 @@ impl OwnerV1 {
                 p.resolving_item == self.expected
                     && last(state, &self.expected).and_then(|b| b.pending.as_deref()) == Some(p)
             })
-            && capture.ctx == context(&self.expected)
+            && capture
+                .ctx
+                .same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, &capture.ctx)
             && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
             && optional_discard_draw(&capture.op)
             && capture.hand.contains(&selected)
@@ -536,8 +630,18 @@ impl OwnerV1 {
         *item == self.expected
     }
 }
-fn context(item: &StackItem) -> ExecCtx {
+pub(crate) fn context(item: &StackItem) -> ExecCtx {
+    context_with_niv_damage_origin(item, None)
+}
+fn niv_origin_matches_saved_item(state: &GameState, item: &StackItem, ctx: &ExecCtx) -> bool {
+    ctx.niv_damage_origin_v1 == crate::event::niv_damage_origin_for_saved_item_v1(state, item)
+}
+fn context_with_niv_damage_origin(
+    item: &StackItem,
+    niv_damage_origin_v1: Option<crate::event::NivDamageOriginV1>,
+) -> ExecCtx {
     ExecCtx {
+        niv_damage_origin_v1,
         stack_item_id: Some(item.v4.stack_item_id),
         source: item.source,
         controller: item.controller,
@@ -554,9 +658,15 @@ fn context(item: &StackItem) -> ExecCtx {
     }
 }
 fn probe(item: &StackItem) -> EffectContinuation {
+    probe_with_niv_damage_origin(item, None)
+}
+fn probe_with_niv_damage_origin(
+    item: &StackItem,
+    niv_damage_origin_v1: Option<crate::event::NivDamageOriginV1>,
+) -> EffectContinuation {
     EffectContinuation {
         resolving_item: item.clone(),
-        ctx: context(item),
+        ctx: context_with_niv_damage_origin(item, niv_damage_origin_v1),
         frames: Vec::new(),
         choice: None,
         answered_choice_guard: None,
@@ -570,16 +680,48 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // These two fixed owned roots can only sacrifice/counter or draw.
         // Their genuine capture/publication is authenticated by Hunter custody.
         EffectOp::HighSocietyHunterFromCaptureV45 { .. } => true,
+        EffectOp::NivMizzetVisionaryDrawV1 { .. } => true,
+        // Both ordered batches move cards only; resulting ETBs resolve later.
+        EffectOp::KaitoCunningV75 { .. }
+        | EffectOp::GenesisWaveV1
+        | EffectOp::LilianaZombieV1
+        | EffectOp::LilianaSacrificeV1 { .. } => true,
+        EffectOp::ChandraFlameshaperV74 {
+            ability_index: 0 | 1,
+        } => true,
+        // This exact owned root only mills. Draw capture, source, target and
+        // private begin/resume authority remain Tutelage-owned.
+        EffectOp::SphinxsTutelageMillV1 { .. } => true,
+        EffectOp::HarvesterExileAndCopyV1
+        | EffectOp::CreateTokenCopyOfSourceV1
+        | EffectOp::BindSphinxLoreV1
+        | EffectOp::SphinxLoreV1 { .. }
+        | EffectOp::BindGreatwurmCountersV1
+        | EffectOp::GreatwurmCountersV1 { .. }
+        | EffectOp::KykarChooseModeV1
+        | EffectOp::KykarExileV1
+        | EffectOp::KykarSpiritV1
+        | EffectOp::KykarReturnV1 { .. }
+        | EffectOp::BindCuratorDestiniesV1
+        | EffectOp::CuratorDestiniesV1 { .. }
+        | EffectOp::BlasphemousEdictV1 => true,
+        // Authenticated native copying/sacrifice only; this classification
+        // supplies no public/owning admission for the printing or its tokens.
+        EffectOp::ElectroduplicateCopyV1 | EffectOp::CopiedTokenEndStepSacrificeV1 { .. } => true,
         // These leaves authenticate their original collected capture before
         // countering an exact source or moving a legal graveyard target. ETB
         // triggers from the returned card are separately published roots.
         // Conqueror custody authenticates a mandatory gain-only root.
         EffectOp::ConquerorGainFromCaptureV49 { .. }
+        | EffectOp::ConquerorGainFromWideCaptureV59 { .. }
         | EffectOp::DrakeIncubationFromCaptureV1 { .. }
-        | EffectOp::DrakeCreateTokenFromPaidV1 => true,
+        | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::LoseLifeEqualControllerTurnGainsV1 => true,
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => true,
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1) => true,
+        EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+        | EffectOp::CreateAttachedAuraCopyV1 { .. } => true,
         EffectOp::Sequence(ops) => ops.iter().all(ordinary_nondamage),
         EffectOp::Conditional { then, else_, .. } => {
             ordinary_nondamage(then) && ordinary_nondamage(else_)
@@ -673,6 +815,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
         | EffectOp::ReturnAllGraveyardCreaturesUnderController
+        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
         | EffectOp::ExileTargetLinkedToSource { .. }
         | EffectOp::ReturnObjectsExiledBySource
         | EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature
@@ -704,6 +847,18 @@ fn original_damage(
 ) -> Result<DamageProposed, String> {
     if matches!(op, EffectOp::FieryAnnihilation) {
         return crate::twinflame_tyrant_v1::fiery::damage(state, ctx, path);
+    }
+    if let EffectOp::DealXDamageThenCreateTokensForExcess { target_index, .. } = op {
+        let target = *ctx
+            .targets
+            .get(usize::from(*target_index))
+            .ok_or("excess damage target absent")?;
+        let crate::event::ProposedEvent::Damage(damage) =
+            crate::event::damage_from_exec_ctx_v1(ctx, target, i32::from(ctx.x_value))
+        else {
+            unreachable!()
+        };
+        return Ok(damage);
     }
     if crate::twinflame_tyrant_v1::sampling::selected(op) {
         return crate::twinflame_tyrant_v1::sampling::damage(state, ctx, op, path);
@@ -784,6 +939,7 @@ fn original_damage(
         touched_by: Vec::new(),
         is_combat: false,
         historical_source,
+        niv_damage_origin_v1: ctx.niv_damage_origin_v1,
     })
 }
 /// Equipment owns the grant recipe; the host owns the resulting trigger.
@@ -798,6 +954,10 @@ fn equipment_damage_grant(item: &StackItem) -> bool {
         })
 }
 fn owned_root(state: &GameState, pending: &EffectContinuation) -> Result<Box<EffectOp>, String> {
+    if super::chandra_flameshaper_v1::selected(state, &pending.resolving_item) {
+        return super::chandra_flameshaper_v1::crystal_root(state, &pending.resolving_item)
+            .map(Box::new);
+    }
     if crate::equipment_damage_source_v4::tracked(state, &pending.resolving_item) {
         crate::equipment_damage_source_v4::validate_published_metadata(
             state,
@@ -811,7 +971,8 @@ fn owned_root(state: &GameState, pending: &EffectContinuation) -> Result<Box<Eff
         return validated_definition_owned_root_effect(state, pending);
     }
     let item = &pending.resolving_item;
-    if pending.ctx != context(item)
+    if !pending.ctx.same_except_niv_damage_origin_v1(&context(item))
+        || !niv_origin_matches_saved_item(state, item, &pending.ctx)
         || crate::engine::validated_stack_item_target_spec(item, state)?.is_some()
     {
         return Err("Crystal equipment damage lost actual historical grant/context".into());
@@ -844,6 +1005,58 @@ fn live_equipment_damage_source(state: &GameState, item: &StackItem) -> bool {
         })
     })
 }
+/// A cast snapshot predates this module's native resolution-start sidecar.
+/// Every other row field remains exact; only the genuine initial boundary may
+/// explain the difference. This does not validate a later answer or grant a
+/// new execution owner.
+pub(crate) fn spell_cast_snapshot_matches(
+    state: &GameState,
+    item: &StackItem,
+    saved: &StackItem,
+) -> bool {
+    if item == saved {
+        return true;
+    }
+    if item.kind != crate::state::StackItemKind::Spell
+        || item.inline_effect.is_some()
+        || !saved.v4.crystal_prevention_started_v1.is_empty()
+    {
+        return false;
+    }
+    let Some(index) = item.v4.crystal_prevention_started_v1.0 else {
+        return false;
+    };
+    let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary }) =
+        state.engine.event_history.get(index as usize)
+    else {
+        return false;
+    };
+    let mut original = item.clone();
+    original.v4.crystal_prevention_started_v1 = CrystalPreventionStartedV1::default();
+    if original != *saved {
+        return false;
+    }
+    let mut initial = probe_with_niv_damage_origin(
+        item,
+        crate::event::niv_damage_origin_for_saved_item_v1(state, item),
+    );
+    let Ok(root) = validated_definition_owned_root_effect(state, &initial) else {
+        return false;
+    };
+    if !supported(&root) || !has_damage(&root) {
+        return false;
+    }
+    initial.frames.push(EffectFrame::Program {
+        op: (*root).clone(),
+        path: Vec::new(),
+    });
+    boundary.history_index == index
+        && boundary.previous.is_none()
+        && boundary.answer.is_none()
+        && *boundary.item == *item
+        && boundary.root == *root
+        && boundary.pending.as_deref() == Some(&initial)
+}
 /// Source-power payment authority remains byte-exact except for this module's
 /// independently published start marker. This is not a generic stack rewrite.
 pub(crate) fn source_power_payment_matches(
@@ -864,7 +1077,10 @@ pub(crate) fn source_power_payment_matches(
     };
     let mut original = item.clone();
     original.v4.crystal_prevention_started_v1 = CrystalPreventionStartedV1::default();
-    let mut initial = probe(item);
+    let mut initial = probe_with_niv_damage_origin(
+        item,
+        crate::event::niv_damage_origin_for_saved_item_v1(state, item),
+    );
     initial.frames.push(EffectFrame::Program {
         op: boundary.root.clone(),
         path: Vec::new(),
@@ -927,27 +1143,43 @@ fn batch_recipe(op: &EffectOp) -> bool {
         op,
         EffectOp::DamageAllCreatures { .. } | EffectOp::DamageAllTargets { .. }
     ) || fight_recipe(op)
+        || matches!(op, EffectOp::ChandraFlameshaperV74 { ability_index: 2 })
 }
-fn has_damage(op: &EffectOp) -> bool {
+pub(crate) fn has_damage(op: &EffectOp) -> bool {
     if fight_recipe(op) {
         return true;
     }
     match op {
-        EffectOp::FieryAnnihilation
+        EffectOp::ChandraFlameshaperV74 { ability_index: 2 }
+        | EffectOp::FieryAnnihilation
+        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
         | EffectOp::DealDamage { .. }
         | EffectOp::DealDamageDynamic { .. }
         | EffectOp::DealDamageByControlledCreatureCount { .. }
         | EffectOp::DamageAllCreatures { .. }
         | EffectOp::DamageAllTargets { .. }
+        | EffectOp::DamageOpponentAndTheirCreatures { .. }
         | EffectOp::CreatureTargetPowerDamage {
             plus1_plus1: 0.., ..
         }
-        | EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
-            true
-        }
+        | EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+            | crate::standard_cards_v1::StandardOpV1::DamageEachTarget { .. }
+            | crate::standard_cards_v1::StandardOpV1::DamageEachTargetChosenX
+            | crate::standard_cards_v1::StandardOpV1::DamageTargetsByPositionV1 { .. }
+            | crate::standard_cards_v1::StandardOpV1::EachControlledCreatureDealsOneDamageToTarget,
+        ) => true,
         EffectOp::Sequence(ops) => ops.iter().any(has_damage),
         EffectOp::Choice { options, .. } => options.iter().any(has_damage),
         EffectOp::Conditional { then, else_, .. } => has_damage(then) || has_damage(else_),
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. }
+        | EffectOp::MaySacrificeNonlandOtherwiseV1 { unpaid, .. } => has_damage(unpaid),
+        EffectOp::MayPayCostThen {
+            then, otherwise, ..
+        } => has_damage(then) || otherwise.as_deref().is_some_and(has_damage),
+        EffectOp::MayPayManaThen { then, .. }
+        | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. }
+        | EffectOp::LookAtTopMayRevealThen { then, .. } => has_damage(then),
         _ => false,
     }
 }
@@ -971,7 +1203,9 @@ pub(crate) fn authenticates_legacy_frame(
         .v4
         .crystal_prevention_started_v1
         .is_empty()
-        || !(optional_discard_draw(op) || matches!(op, EffectOp::FieryAnnihilation))
+        || !(optional_discard_draw(op)
+            || matches!(op, EffectOp::FieryAnnihilation)
+            || crate::goblin_negotiation_v1::owned::selected(op))
     {
         return Ok(false);
     }
@@ -995,11 +1229,13 @@ fn supported(op: &EffectOp) -> bool {
         return true;
     }
     match op {
+        EffectOp::ChandraFlameshaperV74 { ability_index: 2 } => true,
         EffectOp::GainLife {
             player: PlayerRef::Controller | PlayerRef::Opponent,
             ..
         } => true,
         EffectOp::FieryAnnihilation
+        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
         | EffectOp::DealDamage { .. }
         | EffectOp::DealDamageDynamic { .. }
         | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -1063,7 +1299,17 @@ pub(crate) fn acquire_owner(
     initial: bool,
 ) -> Result<Option<OwnerV1>, String> {
     let started = item.v4.crystal_prevention_started_v1.0.is_some();
+    let excess_root = item
+        .inline_effect
+        .clone()
+        .or_else(|| {
+            let definition =
+                &crate::card_def::CARD_DEFS[usize::from(state.objects.get(item.source).card_def)];
+            (definition.spell_effect)()
+        })
+        .is_some_and(|op| crate::goblin_negotiation_v1::owned::selected(&op));
     if !(started
+        || excess_root
         || mixed_environment(state)
         || crate::twinflame_tyrant_v1::has_active_source(state)
         || crate::fixed_source_damage_v3::tracked(state, item)
@@ -1373,7 +1619,8 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             }
         }
         if previous.is_none() {
-            let mut initial = probe(&b.item);
+            let expected_origin = crate::event::niv_damage_origin_for_saved_item_v1(state, &b.item);
+            let mut initial = probe_with_niv_damage_origin(&b.item, expected_origin);
             initial.frames.push(EffectFrame::Program {
                 op: b.root.clone(),
                 path: Vec::new(),
@@ -1400,7 +1647,9 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                     let damage = choice_original_damage(state, &p.ctx, op, choice)?;
                     let mut frames = Vec::new();
                     remaining(&b.root, &choice.path, &[], &mut frames)?;
-                    if matches!(op, EffectOp::FieryAnnihilation) {
+                    if matches!(op, EffectOp::FieryAnnihilation)
+                        || crate::goblin_negotiation_v1::owned::selected(op)
+                    {
                         frames.push(EffectFrame::Program {
                             op: op.clone(),
                             path: choice.path.clone(),
@@ -1409,6 +1658,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                     if p.choice.as_ref() != Some(&menu((**choice).clone()))
                         || choice.source != damage.source
                         || choice.historical_source != damage.historical_source
+                        || choice.niv_damage_origin_v1 != damage.niv_damage_origin_v1
                         || choice.target != damage.target
                         || choice.original_amount != damage.amount
                         || choice.remaining_amount <= 0
@@ -1440,7 +1690,10 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             ) {
                 validate_program_menu_record(p, &b.root)?;
             }
-            if p.resolving_item != *b.item || p.ctx != context(&b.item) {
+            if p.resolving_item != *b.item
+                || !p.ctx.same_except_niv_damage_origin_v1(&context(&b.item))
+                || !niv_origin_matches_saved_item(state, &b.item, &p.ctx)
+            {
                 return Err("Crystal boundary lost the complete captured context".into());
             }
         }
@@ -1504,7 +1757,8 @@ pub(crate) fn begin_owned(
 ) -> Result<ResumableProgress, String> {
     if !owner.initial
         || *op != owner.root
-        || *ctx != context(&owner.original)
+        || !ctx.same_except_niv_damage_origin_v1(&context(&owner.original))
+        || !niv_origin_matches_saved_item(state, &owner.original, ctx)
         || state.engine.pending_effect.is_some()
         || state
             .stack
@@ -1513,7 +1767,7 @@ pub(crate) fn begin_owned(
     {
         return Err("Crystal removed-item loan changed".into());
     }
-    let mut p = probe(&owner.expected);
+    let mut p = probe_with_niv_damage_origin(&owner.expected, ctx.niv_damage_origin_v1);
     p.frames.push(EffectFrame::Program {
         op: op.clone(),
         path: Vec::new(),
@@ -1564,6 +1818,8 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             creature_power_capture: None,
             discard_capture: None,
             damage_operation: None,
+            excess_capture: None,
+            excess_finish: None,
         };
         match op {
             EffectOp::Sequence(ops) => {
@@ -1597,6 +1853,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 });
             }
             EffectOp::FieryAnnihilation
+            | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
             | EffectOp::DealDamage { .. }
             | EffectOp::DealDamageDynamic { .. }
             | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -1620,6 +1877,24 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                         continue;
                     }
                     crate::twinflame_tyrant_v1::fiery::capture(state, owner, &pending.ctx, path)?;
+                }
+                if crate::goblin_negotiation_v1::owned::selected(op) {
+                    if let Some(capture) =
+                        crate::goblin_negotiation_v1::owned::lookup(state, &pending.ctx, path)?
+                    {
+                        step.excess_finish = Some(crate::goblin_negotiation_v1::owned::finish(
+                            state, owner, &capture,
+                        )?);
+                        steps.push(step);
+                        continue;
+                    }
+                    step.excess_capture = Some(crate::goblin_negotiation_v1::owned::capture(
+                        state,
+                        owner,
+                        &pending.ctx,
+                        op,
+                        path,
+                    )?);
                 }
                 if let Some(gorehorn) = owner.gorehorn.as_ref() {
                     crate::gorehorn_damage_v1::crystal::prepare_owned(
@@ -1648,6 +1923,11 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 }
                 let damage = original_damage(state, &pending.ctx, op, path)?;
                 if damage.amount <= 0 {
+                    if let Some(capture) = step.excess_capture.as_ref() {
+                        step.excess_finish = Some(crate::goblin_negotiation_v1::owned::finish(
+                            state, owner, capture,
+                        )?);
+                    }
                     if matches!(op, EffectOp::FieryAnnihilation) {
                         crate::twinflame_tyrant_v1::fiery::finish(
                             state,
@@ -1659,7 +1939,10 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     steps.push(step);
                     continue;
                 }
-                if matches!(op, EffectOp::FieryAnnihilation) && needs_choice(state, &damage) {
+                if (matches!(op, EffectOp::FieryAnnihilation)
+                    || crate::goblin_negotiation_v1::owned::selected(op))
+                    && needs_choice(state, &damage)
+                {
                     pending.frames.push(EffectFrame::Program {
                         op: op.clone(),
                         path: path.clone(),
@@ -1694,6 +1977,11 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 if matches!(op, EffectOp::FieryAnnihilation) {
                     crate::twinflame_tyrant_v1::fiery::finish(state, owner, &pending.ctx, path)?;
                 }
+                if let Some(capture) = step.excess_capture.as_ref() {
+                    step.excess_finish = Some(crate::goblin_negotiation_v1::owned::finish(
+                        state, owner, capture,
+                    )?);
+                }
             }
             EffectOp::MayPayCostThen { .. } if optional_discard_draw(op) => {
                 let capture = DiscardCaptureV2 {
@@ -1727,13 +2015,8 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 if let Some(damage) = capture.damage.as_ref() {
                     let occurrence = u32::try_from(state.engine.event_history.len())
                         .map_err(|_| "Crystal power capture exceeds u32")?;
-                    if offer_damage(
-                        state,
-                        &mut pending,
-                        damage.proposed(),
-                        path,
-                        Some(occurrence),
-                    )? {
+                    let proposal = damage.proposed_with_context(&pending.ctx);
+                    if offer_damage(state, &mut pending, proposal, path, Some(occurrence))? {
                         step.offered_menu = pending.choice.clone();
                         step.creature_power_capture = Some(capture);
                         steps.push(step);
@@ -1743,7 +2026,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     step.damage_operation =
                         Some(crate::event::propose_and_commit_crystal_power_owned(
                             state,
-                            damage.proposed(),
+                            damage.proposed_with_context(&pending.ctx),
                             &capture,
                             owner,
                         )?);
@@ -1782,7 +2065,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     break;
                 }
                 let start = state.engine.event_history.len();
-                let survivors = batch_survivors(&capture.initial_outcomes)?;
+                let survivors = batch_survivors(&capture.initial_outcomes, &capture.ctx)?;
                 crate::event::commit_crystal_prepared_batch(state, survivors, &capture, owner);
                 if state.engine.halted.is_some() {
                     state.engine.pending_effect = Some(pending);
@@ -1845,7 +2128,15 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             execution: Box::new(execution),
         });
     record(state, owner, None)?;
+    #[cfg(test)]
+    if owner.root == super::chandra_flameshaper_v1::minus_four() {
+        eprintln!(
+            "Chandra Crystal drive: suspended={suspended}, selected={}",
+            super::chandra_flameshaper_v1::selected(state, &owner.expected)
+        );
+    }
     if !suspended {
+        super::chandra_flameshaper_v1::finish_crystal(state, owner, &owner.expected)?;
         if let Some(gorehorn) = owner.gorehorn.as_ref() {
             crate::gorehorn_damage_v1::crystal::finish_owned(state, gorehorn, &owner.expected)?;
         }
@@ -1936,7 +2227,10 @@ fn validate_damage_operations(state: &GameState) -> Result<(), String> {
         if owners.next().is_some()
             || execution.history_index as usize <= at
             || execution.item.v4.stack_item_id != operation.ctx.stack_item_id.unwrap_or_default()
-            || operation.ctx != context(&execution.item)
+            || !operation
+                .ctx
+                .same_except_niv_damage_origin_v1(&context(&execution.item))
+            || !niv_origin_matches_saved_item(state, &execution.item, &operation.ctx)
             || step.frame
                 != (EffectFrame::Program {
                     op: operation.op.clone(),
@@ -2078,6 +2372,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                 && (!matches!(
                     op,
                     EffectOp::FieryAnnihilation
+                        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
                         | EffectOp::DealDamage { .. }
                         | EffectOp::DealDamageDynamic { .. }
                         | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -2107,6 +2402,12 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                     "Crystal damage/structural instruction carries foreign life gain".into(),
                 );
             }
+            crate::goblin_negotiation_v1::owned::validate_step(
+                state,
+                execution,
+                step,
+                &pending.ctx,
+            )?;
             match op {
                 EffectOp::Choice { options, .. } if optional_source_fight(op) => {
                     if step.conditional_result.is_some()
@@ -2156,6 +2457,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                     });
                 }
                 EffectOp::FieryAnnihilation
+                | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
                 | EffectOp::DealDamage { .. }
                 | EffectOp::DealDamageDynamic { .. }
                 | EffectOp::DealDamageByControlledCreatureCount { .. }
@@ -2190,6 +2492,20 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         )?;
                         continue;
                     }
+                    if crate::goblin_negotiation_v1::owned::selected(op)
+                        && step.excess_capture.is_none()
+                    {
+                        if step.excess_finish.is_none()
+                            || step.offered_menu.is_some()
+                            || !step.damage_history.is_empty()
+                            || step.damage_operation.is_some()
+                        {
+                            return Err(
+                                "excess completion repeated damage or skipped result".into()
+                            );
+                        }
+                        continue;
+                    }
                     let damage = original_damage(state, &pending.ctx, op, path)?;
                     if step.conditional_result.is_some() {
                         return Err("Crystal damage carries a foreign branch".into());
@@ -2209,7 +2525,9 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         else {
                             return Err("Crystal execution offered a foreign menu".into());
                         };
-                        if matches!(op, EffectOp::FieryAnnihilation) {
+                        if matches!(op, EffectOp::FieryAnnihilation)
+                            || crate::goblin_negotiation_v1::owned::selected(op)
+                        {
                             pending.frames.push(EffectFrame::Program {
                                 op: op.clone(),
                                 path: path.clone(),
@@ -2218,6 +2536,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         if choice.path != *path
                             || choice.source != damage.source
                             || choice.historical_source != damage.historical_source
+                            || choice.niv_damage_origin_v1 != damage.niv_damage_origin_v1
                             || choice.target != damage.target
                             || choice.original_amount != damage.amount
                             || choice.remaining_amount != damage.amount
@@ -2398,7 +2717,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                                 &pending.ctx,
                                 op,
                                 path,
-                                &damage.proposed(),
+                                &damage.proposed_with_context(&pending.ctx),
                                 (before_damage, index),
                             )?;
                         } else if step.damage_operation.is_some() {
@@ -2414,7 +2733,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         .batch_capture
                         .as_ref()
                         .ok_or("Crystal simultaneous damage lost its capture")?;
-                    validate_batch_capture(capture, &pending.ctx, op, path)?;
+                    validate_batch_capture(state, capture, &pending.ctx, op, path)?;
                     validate_batch_preparation_ref(state, capture, previous_index, index)?;
                     if step.conditional_result.is_some() {
                         return Err("Crystal batch carries foreign branch".into());
@@ -2932,7 +3251,9 @@ fn choice_original_damage(
         else {
             unreachable!()
         };
-        if context(&execution.item) != *ctx {
+        if !ctx.same_except_niv_damage_origin_v1(&context(&execution.item))
+            || !niv_origin_matches_saved_item(state, &execution.item, ctx)
+        {
             return Err("Crystal chosen power borrowed foreign stack incarnation".into());
         }
         return capture
@@ -3209,9 +3530,11 @@ fn batch_choice(
         .and_then(|o| o.clone())
         .ok_or("Crystal batch choice lost original options")?;
     u16::try_from(options.len()).map_err(|_| "Crystal batch menu exceeds u16")?;
+    let proposed = damage.proposed_with_context(&capture.ctx);
     Ok(ChoiceV1 {
         source: damage.source,
-        historical_source: None,
+        historical_source: proposed.historical_source,
+        niv_damage_origin_v1: proposed.niv_damage_origin_v1,
         batch: Some(progress),
         creature_power: None,
         target: damage.target,
@@ -3384,7 +3707,23 @@ fn capture_batch(
     } else {
         None
     };
-    let proposals = if let EffectOp::DamageAllTargets { amount } = op {
+    let proposals = if matches!(op, EffectOp::ChandraFlameshaperV74 { ability_index: 2 }) {
+        Some(
+            super::chandra_flameshaper_v1::damage_allocations(state, ctx)?
+                .into_iter()
+                .enumerate()
+                .filter(|(slot, _)| {
+                    super::chandra_flameshaper_v1::damage_target_legal(state, ctx, *slot)
+                })
+                .map(|(slot, amount)| BatchDamageV2 {
+                    source: ctx.source,
+                    target: ctx.targets[slot],
+                    amount: i32::from(amount),
+                    touched: vec![],
+                })
+                .collect(),
+        )
+    } else if let EffectOp::DamageAllTargets { amount } = op {
         Some(
             ctx.targets
                 .iter()
@@ -3470,7 +3809,7 @@ fn capture_batch(
     // cannot consume one another's shield or require cross-packet allocation.
     let all_options = proposals
         .iter()
-        .map(|p| applicable(state, &p.proposed()))
+        .map(|p| applicable(state, &p.proposed_with_context(ctx)))
         .collect::<Vec<_>>();
     let multiplier_options = if all_options
         .iter()
@@ -3486,7 +3825,7 @@ fn capture_batch(
                         options,
                         lifelink_player: crate::event::twinflame_packet_lifelink_player(
                             state,
-                            packet.proposed(),
+                            packet.proposed_with_context(ctx),
                         ),
                     }
                 })
@@ -3498,7 +3837,7 @@ fn capture_batch(
     let options = proposals
         .iter()
         .map(|p| {
-            let d = p.proposed();
+            let d = p.proposed_with_context(ctx);
             needs_choice(state, &d).then(|| applicable(state, &d))
         })
         .collect::<Vec<_>>();
@@ -3533,7 +3872,7 @@ fn capture_batch(
     let events = capture
         .proposals
         .iter()
-        .map(|p| crate::event::ProposedEvent::Damage(p.proposed()))
+        .map(|p| crate::event::ProposedEvent::Damage(p.proposed_with_context(ctx)))
         .collect::<Vec<_>>();
     if !owner.permits_batch(state, &capture, &events) {
         return Err("Crystal batch lost exact pre-pop source loan".into());
@@ -3561,7 +3900,7 @@ fn capture_batch(
             } else {
                 crate::event::apply_replacements(
                     state,
-                    crate::event::ProposedEvent::Damage(proposal.proposed()),
+                    crate::event::ProposedEvent::Damage(proposal.proposed_with_context(ctx)),
                 )
             };
             if state.engine.halted.is_some() {
@@ -3634,7 +3973,13 @@ fn validate_batch_preparations(state: &GameState) -> Result<(), String> {
         {
             return Err("Crystal batch preparation changed its unique original execution".into());
         }
-        validate_batch_capture(capture, &execution.before.ctx, &capture.op, &capture.path)?;
+        validate_batch_capture(
+            state,
+            capture,
+            &execution.before.ctx,
+            &capture.op,
+            &capture.path,
+        )?;
     }
     Ok(())
 }
@@ -3658,6 +4003,7 @@ fn validate_batch_preparation_ref(
     Ok(())
 }
 fn validate_batch_capture(
+    state: &GameState,
     capture: &BatchCaptureV2,
     ctx: &ExecCtx,
     op: &EffectOp,
@@ -3681,6 +4027,35 @@ fn validate_batch_capture(
         return Err("Crystal batch repeated battlefield recipient".into());
     }
     let expected = match op {
+        EffectOp::ChandraFlameshaperV74 { ability_index: 2 } => {
+            if capture.fight.is_some() {
+                return Err("Chandra division carries foreign fight facts".into());
+            }
+            let allocations = super::chandra_flameshaper_v1::damage_allocations(state, ctx)?;
+            let mut result = vec![];
+            for (slot, amount) in allocations.into_iter().enumerate() {
+                if let Some(r) = capture
+                    .roster
+                    .iter()
+                    .find(|r| r.selected && ctx.targets[slot] == Target::Object(r.object.object))
+                {
+                    if !matches!(ctx.target_contracts.get(slot),Some(crate::state::StackTargetContractV4::Object { object, owner, zone:Zone::Battlefield, zone_change_count,.. })
+                        if *object==r.object.object && *owner==r.owner && *zone_change_count==r.object.expected_zone_change_count)
+                    {
+                        return Err(
+                            "Chandra division changed original recipient incarnation".into()
+                        );
+                    }
+                    result.push(BatchDamageV2 {
+                        source: ctx.source,
+                        target: ctx.targets[slot],
+                        amount: i32::from(amount),
+                        touched: vec![],
+                    });
+                }
+            }
+            result
+        }
         EffectOp::DamageAllTargets { amount } => {
             if capture.fight.is_some() {
                 return Err("targeted area damage carries foreign fight facts".into());
@@ -3895,6 +4270,22 @@ fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<()
                     || live.controller != r.controller
                     || live.card_def != r.card_def
                     || match &capture.op {
+                        EffectOp::ChandraFlameshaperV74 { ability_index: 2 } => {
+                            capture
+                                .ctx
+                                .targets
+                                .iter()
+                                .enumerate()
+                                .any(|(slot, target)| {
+                                    *target == Target::Object(r.object.object)
+                                        && super::chandra_flameshaper_v1::damage_target_legal(
+                                            state,
+                                            &capture.ctx,
+                                            slot,
+                                        )
+                                })
+                                != r.selected
+                        }
                         EffectOp::DamageAllTargets { .. } => {
                             capture
                                 .ctx
@@ -3937,13 +4328,19 @@ fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<()
                 _ => None,
             })
             .collect::<Vec<_>>();
-        let live_sources = crate::twinflame_tyrant_v1::sources(state, &proposal.proposed())?
-            .into_iter()
-            .map(|id| crate::state::AbilitySourceContractV4::capture(state, id))
-            .collect::<Vec<_>>();
+        let live_sources = crate::twinflame_tyrant_v1::sources(
+            state,
+            &proposal.proposed_with_context(&capture.ctx),
+        )?
+        .into_iter()
+        .map(|id| crate::state::AbilitySourceContractV4::capture(state, id))
+        .collect::<Vec<_>>();
         if original_sources != live_sources
             || packet.lifelink_player
-                != crate::event::twinflame_packet_lifelink_player(state, proposal.proposed())
+                != crate::event::twinflame_packet_lifelink_player(
+                    state,
+                    proposal.proposed_with_context(&capture.ctx),
+                )
         {
             return Err(
                 "Twinflame waiting batch changed original multiplier or lifelink sources".into(),
@@ -4030,6 +4427,7 @@ pub(crate) fn replacement_answer_pending(
 }
 fn batch_survivors(
     outcomes: &[BatchOutcomeV2],
+    ctx: &ExecCtx,
 ) -> Result<Vec<crate::event::ProposedEvent>, String> {
     outcomes
         .iter()
@@ -4038,9 +4436,9 @@ fn batch_survivors(
                 "Crystal batch committed before all affected choices".into(),
             )),
             BatchOutcomeV2::Prevented => None,
-            BatchOutcomeV2::Damage(d) => {
-                Some(Ok(crate::event::ProposedEvent::Damage(d.proposed())))
-            }
+            BatchOutcomeV2::Damage(d) => Some(Ok(crate::event::ProposedEvent::Damage(
+                d.proposed_with_context(ctx),
+            ))),
         })
         .collect()
 }
@@ -4057,7 +4455,7 @@ fn validate_batch_choice_record(
     let capture = batch_capture_at(state, progress.capture, &choice.path)?;
     let op = effect_op_at_structural_path(root, &choice.path)
         .ok_or("Crystal batch lost printed leaf")?;
-    validate_batch_capture(capture, &pending.ctx, op, &choice.path)?;
+    validate_batch_capture(state, capture, &pending.ctx, op, &choice.path)?;
     let Some(CommittedEvent::CrystalExecutionV1 { execution }) =
         state.engine.event_history.get(progress.capture as usize)
     else {
@@ -4143,8 +4541,9 @@ fn validate_batch_choice_record(
             && !matches!(o, PreventionV1::Multiplier(source) if multipliers.contains(source))
     });
     if choice.source != original.source
+        || choice.niv_damage_origin_v1 != original.niv_damage_origin_v1
         || choice.target != original.target
-        || choice.historical_source.is_some()
+        || choice.historical_source != original.historical_source
         || choice.creature_power.is_some()
         || choice.original_amount != original.original_amount
         || choice.remaining_amount <= 0
@@ -4465,6 +4864,7 @@ fn offer_damage(
     let choice = ChoiceV1 {
         source: damage.source,
         historical_source: damage.historical_source,
+        niv_damage_origin_v1: damage.niv_damage_origin_v1,
         batch: None,
         creature_power,
         target: damage.target,
@@ -4568,13 +4968,16 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
     }
     let op = effect_op_at_structural_path(&root, &choice.path)
         .ok_or("Crystal choice lost its actual damage instruction")?;
+    crate::goblin_negotiation_v1::owned::validate_live_choice(state, pending, op, &choice.path)?;
     let damage = choice_original_damage(state, &pending.ctx, op, choice)?;
     if let Some(index) = choice.creature_power {
         validate_live_creature_power(state, creature_power_at(state, index, &choice.path)?)?;
     }
     let mut expected_frames = Vec::new();
     remaining(&root, &choice.path, &[], &mut expected_frames)?;
-    if matches!(op, EffectOp::FieryAnnihilation) {
+    if matches!(op, EffectOp::FieryAnnihilation)
+        || crate::goblin_negotiation_v1::owned::selected(op)
+    {
         expected_frames.push(EffectFrame::Program {
             op: op.clone(),
             path: choice.path.clone(),
@@ -4590,6 +4993,7 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
     if pending.choice.as_ref() != Some(&menu((**choice).clone()))
         || choice.source != damage.source
         || choice.historical_source != damage.historical_source
+        || choice.niv_damage_origin_v1 != damage.niv_damage_origin_v1
         || choice.target != damage.target
         || choice.original_amount != damage.amount
         || choice.remaining_amount <= 0
@@ -4716,7 +5120,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
                 .ok_or("Crystal batch answer lost prior boundary")?
                 .history_index;
             let start = state.engine.event_history.len();
-            let survivors = batch_survivors(&progress.outcomes)?;
+            let survivors = batch_survivors(&progress.outcomes, &capture.ctx)?;
             crate::event::commit_crystal_prepared_batch(state, survivors, &capture, &owner);
             if state.engine.halted.is_some() {
                 return Err("Crystal answered simultaneous batch halted".into());

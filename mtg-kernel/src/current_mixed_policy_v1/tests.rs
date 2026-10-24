@@ -1296,7 +1296,431 @@ mod paid {
             token_counter_replacement_v48: None,
             starting_life_self_bonuses_v1: d.starting_life_self_bonuses_v1,
             source_type_hexproof_v1: None,
+            creature_type_entry_v1: None,
             other_controlled_nontoken_death_v1: None,
+        }
+    }
+
+    #[test]
+    fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
+        use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
+        use crate::effect::{EffectOp, PlayerRef};
+        use crate::mana::{Cost, ManaColor};
+
+        let id = crate::card_def::card_id_by_name("Dragon 5/5 Token").unwrap();
+        let token = roots::baseline(id).unwrap();
+        let p = &token["primitive_printing"];
+        assert_eq!(p["object_name"], "Dragon Token");
+        assert_eq!(p["power"], 5);
+        assert_eq!(p["toughness"], 5);
+        assert_eq!(p["keywords"], Keywords::FLYING.0);
+        assert_eq!(p["token"], true);
+        assert_eq!(p["ordered_instructions"][0]["not_cast_permission"], true);
+        let rite = crate::card_def::card_id_by_name("Rite of the Dragoncaller").unwrap();
+        assert_eq!(
+            roots::baseline(rite).unwrap()["triggered_enchantment_printing"]["ordered_triggers"][0]
+                ["ordered_resolution"][0]["token_definition"],
+            token
+        );
+        macro_rules! reject {
+            ($field:ident, $value:expr) => {{
+                let mut changed = ordinary_recipe(id);
+                changed.$field = $value;
+                assert!(matches!(roots::baseline_recipe(id, &changed),
+                    Err(Error::UnsupportedPrintedRoot(actual)) if actual == id), stringify!($field));
+            }};
+        }
+        reject!(object_name, "Different Dragon");
+        reject!(object_name, "Dragon 5/5 Token");
+        reject!(power, Some(4));
+        reject!(toughness, Some(4));
+        reject!(keywords, Keywords::NONE);
+        reject!(subtypes, &[Subtype::Bird]);
+        reject!(types, &[CardType::Artifact]);
+        reject!(colors, &[ManaColor::U]);
+        reject!(is_token, false);
+        reject!(mana_value, 1);
+        reject!(
+            cost,
+            Cost {
+                generic: 1,
+                ..Cost::zero()
+            }
+        );
+        reject!(target_spec, TargetSpec::AnyPlayer);
+        reject!(produces_mana, &[ManaColor::R]);
+        reject!(enters_battlefield_tapped, true);
+        reject!(
+            controlled_creature_grant,
+            Some(crate::controlled_creature_grants_v1::MEMORIAL)
+        );
+        reject!(spell_effect, || Some(EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1
+        }));
+        let other = crate::card_def::card_id_by_name("Dragon Token").unwrap();
+        assert!(
+            matches!(roots::baseline_recipe(other, &ordinary_recipe(id)),
+            Err(Error::UnsupportedPrintedRoot(actual)) if actual == other)
+        );
+        let mut foreign = ordinary_recipe(other);
+        foreign.object_name = "Different Dragon";
+        assert!(matches!(roots::baseline_recipe(other, &foreign),
+            Err(Error::UnsupportedPrintedRoot(actual)) if actual == other));
+    }
+
+    #[test]
+    fn growth_and_druid_printings_preserve_exact_cost_boost_duration_mana_and_conditional_hexproof()
+    {
+        use crate::card_def::{CardType, Keywords};
+        use crate::effect::{EffectOp, PlayerRef};
+        use crate::mana::{Cost, ManaColor, Pip};
+        fn wrong_program() -> Option<EffectOp> {
+            Some(EffectOp::GainLife {
+                player: PlayerRef::Controller,
+                amount: 1,
+            })
+        }
+        for name in ["Giant Growth", "Paradise Druid"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let growth = name == "Giant Growth";
+            let value = roots::baseline(id).unwrap();
+            assert_eq!(
+                roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                value
+            );
+            let printing = &value["primitive_printing"];
+            let cast = &printing["ordered_cast_roots"][0];
+            assert_eq!(
+                cast["ordered_costs"],
+                json!([{"PrintedMana":Cost {
+                    generic: if growth { 0 } else { 1 },
+                    pips: &[Pip::Colored(ManaColor::G)], x_count: 0
+                }}])
+            );
+            if growth {
+                assert_eq!(printing["types"], json!([CardType::Instant]));
+                assert_eq!(cast["timing"], "InstantWithPriority");
+                assert_eq!(cast["target_count"], 1);
+                assert_eq!(
+                    cast["target_filter"],
+                    json!(crate::card_def::TargetSpec::Creature)
+                );
+                assert_eq!(cast["target_may_be_own_or_opposing"], true);
+                assert_eq!(
+                    cast["requires_exact_live_battlefield_target_incarnation"],
+                    true
+                );
+                assert_eq!(cast["duration"], "UntilEndOfTurn");
+                assert_eq!(cast["places_no_counters"], true);
+                assert_eq!(
+                    cast["ordered_resolution"],
+                    json!([(crate::card_def::CARD_DEFS[usize::from(id)].spell_effect)().unwrap()])
+                );
+                assert_eq!(printing["ordered_mana_roots"], json!([]));
+                assert_eq!(printing["ordered_static_roots"], json!([]));
+            } else {
+                assert_eq!(printing["types"], json!([CardType::Creature]));
+                assert_eq!(
+                    (printing["power"].as_i64(), printing["toughness"].as_i64()),
+                    (Some(2), Some(1))
+                );
+                assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+                let mana = &printing["ordered_mana_roots"][0];
+                assert_eq!(mana["ordered_costs"], json!(["TapOriginalSource"]));
+                assert_eq!(
+                    mana["controller_chooses_exactly_one_color"],
+                    json!([
+                        ManaColor::W,
+                        ManaColor::U,
+                        ManaColor::B,
+                        ManaColor::R,
+                        ManaColor::G
+                    ])
+                );
+                assert_eq!(mana["requires_control_since_turn_began_or_haste"], true);
+                assert_eq!(mana["uses_stack"], false);
+                assert_eq!(mana["mana_amount"], 1);
+                let keyword = &printing["ordered_static_roots"][0];
+                assert_eq!(keyword["condition"], "ThisSourceIsUntapped");
+                assert_eq!(keyword["keyword"], "Hexproof");
+                assert_eq!(keyword["requires_printed_abilities_active"], true);
+                assert_eq!(
+                    keyword["opposing_spells_and_abilities_cannot_target_this"],
+                    true
+                );
+            }
+            for mode in 0..9 {
+                let mut changed = ordinary_recipe(id);
+                match mode {
+                    0 => changed.cost.generic += 1,
+                    1 => changed.types = &[CardType::Sorcery],
+                    2 => changed.colors = &[ManaColor::R],
+                    3 => changed.power = Some(9),
+                    4 => changed.mana_ability_choices = &[ManaColor::G],
+                    5 => changed.keywords = Keywords::FLYING,
+                    6 => changed.spell_cannot_be_countered = true,
+                    7 => changed.spell_effect = wrong_program,
+                    8 => changed.produces_mana = &[ManaColor::G],
+                    _ => unreachable!(),
+                }
+                assert!(
+                    matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(actual)) if actual==id),
+                    "{name}: mutation {mode}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn burnished_hart_printing_preserves_artifact_creature_paid_sacrifice_and_optional_basic_search(
+    ) {
+        use crate::card_def::{CardType, CostComponent};
+        use crate::effect::{EffectOp, LibraryCardFilter, LibrarySearchDestinationV1, PlayerRef};
+        use crate::mana::Cost;
+        let id = crate::card_def::card_id_by_name("Burnished Hart").unwrap();
+        let value = roots::baseline(id).unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            value
+        );
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["types"],
+            json!([CardType::Artifact, CardType::Creature])
+        );
+        assert_eq!(
+            (printing["power"].as_i64(), printing["toughness"].as_i64()),
+            (Some(2), Some(2))
+        );
+        assert_eq!(
+            printing["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"]["generic"],
+            3
+        );
+        let activation = &printing["ordered_activation_roots"][0];
+        assert_eq!(
+            activation["ordered_costs"],
+            json!([
+                {"Mana":Cost {
+                    generic: 3,
+                    pips: &[],
+                    x_count: 0
+                }},
+                "SacrificeSelf"
+            ])
+        );
+        assert_eq!(activation["source_sacrificed_before_publication"], true);
+        assert_eq!(activation["resolution_requires_source_to_remain"], false);
+        assert_eq!(activation["minimum_selected"], 0);
+        assert_eq!(activation["maximum_selected"], 2);
+        assert_eq!(activation["shuffle_even_when_no_cards_selected"], true);
+        assert_eq!(
+            activation["ordered_resolution"],
+            json!([EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: LibraryCardFilter::BasicLand,
+                max_targets: 2,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: true }
+            }])
+        );
+        fn wrong_search() -> EffectOp {
+            EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter: LibraryCardFilter::AnyLand,
+                max_targets: 2,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+            }
+        }
+        for mode in 0..10 {
+            let mut changed = ordinary_recipe(id);
+            let mut ability = changed.activated_abilities[0];
+            match mode {
+                0 => changed.cost.generic = 2,
+                1 => changed.power = Some(3),
+                2 => changed.types = &[CardType::Creature],
+                3 => {
+                    ability.cost = &[CostComponent::Mana(Cost {
+                        generic: 3,
+                        pips: &[],
+                        x_count: 0,
+                    })]
+                }
+                4 => {
+                    ability.cost = &[
+                        CostComponent::SacrificeSelf,
+                        CostComponent::Mana(Cost {
+                            generic: 3,
+                            pips: &[],
+                            x_count: 0,
+                        }),
+                    ]
+                }
+                5 => {
+                    ability.cost = &[
+                        CostComponent::Mana(Cost {
+                            generic: 3,
+                            pips: &[],
+                            x_count: 0,
+                        }),
+                        CostComponent::Tap,
+                        CostComponent::SacrificeSelf,
+                    ]
+                }
+                6 => ability.effect = wrong_search,
+                7 => ability.sorcery_speed_only = true,
+                8 => ability.target_spec = crate::card_def::TargetSpec::ControlledCreature,
+                _ => changed.enters_battlefield_tapped = true,
+            }
+            changed.activated_abilities = Box::leak(vec![ability].into_boxed_slice());
+            assert!(
+                matches!(roots::baseline_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(card))if card==id),
+                "field mode {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn diregraf_printing_preserves_mandatory_tapped_entry_and_rejects_a_vanilla_replacement() {
+        let id = crate::card_def::card_id_by_name("Diregraf Ghoul").unwrap();
+        let value = roots::baseline(id).unwrap();
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["cost"],
+            json!({"generic":0,"pips":[{"Colored":"B"}],"x_count":0})
+        );
+        assert_eq!(printing["power"], 2);
+        assert_eq!(printing["toughness"], 2);
+        assert_eq!(
+            printing["ordered_instructions"],
+            json!([{"operation":"EnterBattlefield","controller":"Caster","enters_battlefield_tapped":true}])
+        );
+        for mode in 0..5 {
+            let mut changed = ordinary_recipe(id);
+            match mode {
+                0 => changed.enters_battlefield_tapped = false,
+                1 => changed.cost.generic = 1,
+                2 => changed.power = Some(3),
+                3 => changed.subtypes = &[],
+                _ => changed.colors = &[],
+            }
+            assert!(
+                matches!(roots::baseline_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(card))if card==id),
+                "field mode {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn goldvein_printing_keeps_equip_bonus_and_original_controller_treasure_trigger() {
+        use crate::effect::{EffectOp, ObjectRef, PlayerRef};
+        let id = crate::card_def::card_id_by_name("Goldvein Pick").unwrap();
+        let value = roots::baseline(id).unwrap();
+        let printing = &value["primitive_printing"];
+        assert_eq!(
+            printing["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"]["generic"],
+            2
+        );
+        assert_eq!(printing["ordered_static_roots"][0]["power_delta"], 1);
+        assert_eq!(printing["ordered_static_roots"][0]["toughness_delta"], 1);
+        assert_eq!(
+            printing["ordered_static_roots"][0]["controller_turn_only"],
+            false
+        );
+        let equip = &printing["ordered_activation_roots"][0];
+        assert_eq!(equip["ordered_costs"][0]["PrintedMana"]["generic"], 1);
+        assert_eq!(equip["target_filter"], "ControlledCreature");
+        assert_eq!(
+            equip["ordered_resolution"],
+            json!([EffectOp::AttachSourceToTarget {
+                object: ObjectRef::Target(0)
+            }])
+        );
+        let trigger = &printing["ordered_trigger_roots"][0];
+        assert_eq!(
+            trigger["condition"],
+            "EquippedCreatureDealsCombatDamageToPlayer"
+        );
+        assert_eq!(trigger["captured_actor"], "EquipmentController");
+        assert_eq!(
+            trigger["resolution_does_not_require_source_or_attachment_to_remain"],
+            true
+        );
+        let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+        assert_eq!(
+            trigger["ordered_resolution"],
+            json!([EffectOp::CreateToken {
+                token_def: treasure,
+                controller: PlayerRef::Controller
+            }])
+        );
+        assert_eq!(
+            trigger["created_token_printing"],
+            roots::baseline(treasure).unwrap()
+        );
+        let encoded = NumericTree::encode(&value).unwrap();
+        for path in [
+            "ordered_static_roots",
+            "ordered_activation_roots",
+            "ordered_trigger_roots",
+        ] {
+            let mut erased = value.clone();
+            erased["primitive_printing"]
+                .as_object_mut()
+                .unwrap()
+                .remove(path);
+            assert_ne!(encoded, NumericTree::encode(&erased).unwrap(), "{path}");
+        }
+
+        let fixture = || {
+            let mut d = ordinary_recipe(id);
+            d.equipment = crate::card_def::CARD_DEFS[usize::from(id)].equipment;
+            d
+        };
+        assert_eq!(roots::baseline_recipe(id, &fixture()).unwrap(), value);
+        for mode in 0..10 {
+            let mut changed = fixture();
+            match mode {
+                0 => changed.cost.generic = 3,
+                1 => changed.equipment.as_mut().unwrap().power_delta = 2,
+                2 => changed.equipment.as_mut().unwrap().toughness_delta = 2,
+                3 => changed.equipment.as_mut().unwrap().pt_controller_turn_only = true,
+                4 => {
+                    changed.equipment.as_mut().unwrap().controller_turn_keywords =
+                        crate::card_def::Keywords::FLYING
+                }
+                5 => changed.equipment.as_mut().unwrap().job_select = true,
+                6 => changed.equipment = None,
+                7 => changed.ward_cost = Some(crate::card_def::WardCostDef::Generic(1)),
+                8 => changed.enters_battlefield_tapped = true,
+                _ => changed.capability = crate::card_def::CardCapability::Partial,
+            }
+            assert!(
+                matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(card)) if card == id),
+                "field mode {mode}"
+            );
+        }
+        for mode in 0..7 {
+            let mut changed = fixture();
+            let mut ability = changed.activated_abilities[0];
+            match mode {
+                0 => ability.cost = &[],
+                1 => ability.sorcery_speed_only = false,
+                2 => ability.activation_zone = Zone::Hand,
+                3 => ability.target_spec = crate::card_def::TargetSpec::Creature,
+                4 => ability.max_activations_per_turn = Some(1),
+                5 => ability.face = Some(1),
+                _ => {
+                    ability.effect = || EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    }
+                }
+            }
+            changed.activated_abilities = Box::leak(vec![ability].into_boxed_slice());
+            assert!(
+                matches!(roots::baseline_recipe(id, &changed), Err(Error::UnsupportedPrintedRoot(card)) if card == id),
+                "ability mode {mode}"
+            );
         }
     }
 

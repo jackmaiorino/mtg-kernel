@@ -96,6 +96,74 @@ fn discard(state: &mut GameState, player: PlayerId, wanted: ObjectId) {
 }
 
 #[test]
+fn empty_draw_finishes_automatic_or_chosen_discard_before_natural_loss_and_restores_both_seats() {
+    let island = card_id_by_name("Island").unwrap();
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for hand_count in 0..=2 {
+            let (left, right) = if player == PlayerId::P0 {
+                (vec![], vec![island; 40])
+            } else {
+                (vec![island; 40], vec![])
+            };
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &left,
+                &right,
+                mtg_kernel::rl::card_name,
+                110_404,
+                player,
+            );
+            state.step = Step::Main1;
+            for land in ["Island", "Swamp", "Forest"] {
+                put(&mut state, player, land, Zone::Battlefield);
+            }
+            let kept = (0..hand_count)
+                .map(|_| put(&mut state, player, "Mountain", Zone::Hand))
+                .collect::<Vec<_>>();
+            let source = put(&mut state, player, "Dreadwing Scavenger", Zone::Hand);
+            next(&mut state);
+            engine::step(&mut state, Action::CastSpell(source)).unwrap();
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+            let mut replay = copy(&state);
+            for current in [&mut state, &mut replay] {
+                let decision = settle(current).unwrap();
+                if hand_count == 2 {
+                    assert!(
+                        matches!(decision,Decision::Discard{player:chooser,count:1,ref choices}if chooser==player&&choices==&kept)
+                    );
+                    assert!(current.players[player.index()].drew_from_empty);
+                    assert!(!current.players[player.index()].has_lost);
+                    assert_eq!(current.stack.last().unwrap().source, source);
+                    let mut private_replay = copy(current);
+                    for branch in [&mut *current, &mut private_replay] {
+                        engine::step(branch, Action::Discard(vec![kept[0]])).unwrap();
+                        assert!(
+                            matches!(next(branch),Decision::GameOver{winner:Some(winner)}if winner==player.opponent())
+                        );
+                    }
+                    assert_eq!(&*current, &private_replay);
+                    assert_eq!(current.players[player.index()].hand, vec![kept[1]]);
+                } else {
+                    assert!(
+                        matches!(decision,Decision::GameOver{winner:Some(winner)}if winner==player.opponent())
+                    );
+                    assert!(current.players[player.index()].hand.is_empty());
+                }
+                assert!(current.players[player.index()].drew_from_empty);
+                assert!(current.players[player.index()].has_lost);
+                assert!(current.engine.pending_discard.is_none());
+                assert!(current.engine.pending_effect.is_none());
+                assert!(current.stack.is_empty());
+                if let Some(&discarded) = kept.first() {
+                    assert_eq!(current.objects.get(discarded).zone, Zone::Graveyard);
+                }
+            }
+            assert_eq!(state, replay);
+        }
+    }
+}
+
+#[test]
 fn printed_metadata_and_real_cast_payment_replay_for_both_seats() {
     let id = card_id_by_name("Dreadwing Scavenger").unwrap();
     assert_eq!(id, 364);

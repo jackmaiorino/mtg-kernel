@@ -1771,8 +1771,8 @@ fn case_of_the_uneaten_feast_gains_life_solves_and_lets_creatures_be_cast_from_t
         Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&flash)
     ));
     let round = state.turn;
-    // Enter cleanup through the engine so its end-of-turn effects actually run.
-    state.step = Step::End;
+    // Enter End through the engine before its owned cleanup transition.
+    to_end_step(&mut state);
     loop {
         let decision = next(&mut state);
         if state.active_player == P1 && state.priority_player == P0 {

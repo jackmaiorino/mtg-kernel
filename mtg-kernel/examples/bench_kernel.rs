@@ -226,6 +226,10 @@ fn random_action_for_decision(
     rng: &mut SplitMix64,
 ) -> Action {
     match decision {
+        Decision::ChooseEntryCreatureTypeV1 { .. }
+        | Decision::ChooseFullRangeCastXValueV59 { .. } => {
+            panic!("raw benchmark requires a separate successor for creature-type entry and full-range cast-X decisions")
+        }
         Decision::ChooseEntryColorV36 { colors, .. } => {
             Action::ChooseEffectOption(rng_below(rng, colors.len()) as u16)
         }
