@@ -3,6 +3,11 @@
 //! thread) rules out libtest's harness, so this test is its own `main`: run
 //! without arguments it starts itself once per case with a controlled
 //! environment, and each child checks the option before starting any thread.
+//! The child's case travels in an environment variable, so libtest arguments
+//! a whole-crate `cargo test` passes (filters, `--nocapture`) are ignored;
+//! `--list` lists nothing.
+
+const CASE: &str = "MTG_KERNEL_RETAIN_FREED_MEMORY_CASE";
 
 const CASES: [(&str, Option<(&str, &str)>); 4] = [
     ("default", None),
@@ -12,11 +17,14 @@ const CASES: [(&str, Option<(&str, &str)>); 4] = [
 ];
 
 fn main() {
-    match std::env::args().nth(1).as_deref() {
+    if std::env::args().any(|argument| argument == "--list") {
+        return;
+    }
+    match std::env::var(CASE).ok().as_deref() {
         None => {
             for (case, variable) in CASES {
                 let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-                command.arg(case);
+                command.env(CASE, case);
                 for (name, _) in std::env::vars_os() {
                     if name
                         .to_str()
