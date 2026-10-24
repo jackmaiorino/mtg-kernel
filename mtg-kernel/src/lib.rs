@@ -54,35 +54,99 @@ unsafe extern "C" {
 }
 
 /// Makes [`FastAllocatorV1`] keep freed memory for reuse instead of returning
-/// it to the system (purge delay -1), unless `MIMALLOC_PURGE_DELAY` is set, in
-/// which case mimalloc's own reading of it stands. Call it first in `main`.
-/// Like the allocator itself it changes cost, not results. A training process
-/// otherwise faults its large per-update buffers back in from zeroed pages on
-/// every reuse; it holds its peak memory instead (about 140 MB more per
-/// process for an 18-update ordinary segment).
-pub fn retain_freed_memory_v1() {
-    if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
-        // SAFETY: plain option setters of the linked allocator; they take no
-        // pointers and are safe to call at any time from any thread.
+/// it to the system (purge delay -1), unless the environment names a purge
+/// delay (`MIMALLOC_PURGE_DELAY` or its legacy alias `MIMALLOC_RESET_DELAY`,
+/// in any letter case, as mimalloc reads them), in which case mimalloc's own
+/// reading stands. Like the allocator itself it changes cost, not results. A
+/// training process otherwise faults its large per-update buffers back in
+/// from zeroed pages on every reuse; it holds its peak memory instead (about
+/// 140 MB more per process measured for an 18-update ordinary segment; there
+/// is no byte cap).
+///
+/// # Safety
+///
+/// mimalloc's option fields are plain, unsynchronized memory that every
+/// allocating thread reads. Call this first in `main`, before the process
+/// starts any other thread, and never again.
+pub unsafe fn retain_freed_memory_v1() {
+    let named = std::env::vars_os().any(|(name, _)| {
+        name.to_str().is_some_and(|name| {
+            name.eq_ignore_ascii_case("MIMALLOC_PURGE_DELAY")
+                || name.eq_ignore_ascii_case("MIMALLOC_RESET_DELAY")
+        })
+    });
+    if !named {
+        // SAFETY: the caller guarantees no other thread exists yet.
         unsafe { mi_option_set(MI_OPTION_PURGE_DELAY_V1, -1) };
     }
 }
 
 /// mimalloc's current purge delay in milliseconds (-1: never purge).
 pub fn purge_delay_ms_v1() -> i64 {
-    // SAFETY: as in `retain_freed_memory_v1`.
+    // SAFETY: a read of the option; the only writer in this crate,
+    // `retain_freed_memory_v1`, runs before any other thread exists.
     i64::from(unsafe { mi_option_get(MI_OPTION_PURGE_DELAY_V1) })
 }
 
 #[cfg(test)]
 mod allocator_tests {
+    const CHILD: &str = "MTG_KERNEL_ALLOCATOR_TEST_CHILD";
+
+    /// Runs this test again in a fresh process (one thread, controlled
+    /// environment); the child checks the option there.
+    fn run_child(case: &str, purge_delay_env: Option<(&str, &str)>) {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "allocator_tests::retain_freed_memory_sets_the_purge_delay_option",
+                "--exact",
+                "--test-threads=1",
+            ])
+            .env(CHILD, case);
+        for (name, _) in std::env::vars_os() {
+            if name.to_str().is_some_and(|name| name.to_ascii_uppercase().starts_with("MIMALLOC_")) {
+                command.env_remove(name);
+            }
+        }
+        if let Some((name, value)) = purge_delay_env {
+            command.env(name, value);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "child {case}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     #[test]
     fn retain_freed_memory_sets_the_purge_delay_option() {
-        // Option 15 is the purge delay: its built-in default is 1000 ms.
-        assert!(std::env::var_os("MIMALLOC_PURGE_DELAY").is_none());
-        assert_eq!(super::purge_delay_ms_v1(), 1000);
-        super::retain_freed_memory_v1();
-        assert_eq!(super::purge_delay_ms_v1(), -1);
+        match std::env::var(CHILD).as_deref() {
+            // Option 15 is the purge delay: its built-in default is 1000 ms.
+            Ok("default") => {
+                assert_eq!(super::purge_delay_ms_v1(), 1000);
+                unsafe { super::retain_freed_memory_v1() };
+                assert_eq!(super::purge_delay_ms_v1(), -1);
+            }
+            // A delay the environment names stands, under either name.
+            Ok("override") => {
+                assert_eq!(super::purge_delay_ms_v1(), 0);
+                unsafe { super::retain_freed_memory_v1() };
+                assert_eq!(super::purge_delay_ms_v1(), 0);
+            }
+            Ok("legacy") => {
+                assert_eq!(super::purge_delay_ms_v1(), 7);
+                unsafe { super::retain_freed_memory_v1() };
+                assert_eq!(super::purge_delay_ms_v1(), 7);
+            }
+            Ok(other) => panic!("unknown child case {other}"),
+            Err(_) => {
+                run_child("default", None);
+                run_child("override", Some(("MIMALLOC_PURGE_DELAY", "0")));
+                run_child("legacy", Some(("MIMALLOC_RESET_DELAY", "7")));
+            }
+        }
     }
 }
 
