@@ -1,36 +1,46 @@
 //! Process-wide cache of verified converted bases.
 //!
-//! Every converted continuation load reads its conversion record, its base
-//! import, the base's fresh-initialization inputs and the 20 MB base
-//! checkpoint, rebuilds the base policy, installs the contract (hashing the
-//! base and the converted parameters) and probes the base checkpoint for an
-//! archive-distillation parent. Every converted loaded-source hit and every
-//! collection boundary check hashes the base files again. All of that is a
-//! pure function of those files' bytes.
+//! Every converted load reads its conversion record, its base import, the
+//! base's fresh-initialization inputs and the 20 MB base checkpoint, rebuilds
+//! the base policy, installs the contract (hashing the base and the converted
+//! parameters) and probes the base checkpoint for an archive-distillation
+//! parent; a run start also reads its 1,403-wide artifact. Every converted
+//! loaded-source hit and every collection boundary check hashes those files
+//! again and probes again. All of that is a pure function of the files'
+//! bytes.
 //!
 //! This cache keeps, per converted import, the bytes of those files as a full
-//! load verified them against their pins, and the base policy with the
-//! contract installed and the conversion bound, as a full load left it just
-//! before restoring the continuation. A hit rereads each file and compares
-//! its bytes with the verified bytes, which proves its pin without hashing
-//! (the comparison durable publication makes of a published file). Any
-//! difference, unreadable file or other doubt is a miss, and the caller runs
-//! the full load or the full reads, which report exactly their own errors in
-//! their own order. Only fresh-initialization bases without an archive
-//! parent are kept, and an entry matches only the per-forward check setting
-//! its policy was installed under.
+//! load verified them against their pins, the base checkpoint's archive
+//! status as the full probe parsed it, the artifact's bytes when a run start
+//! read it, and the base policy with the contract installed and the
+//! conversion bound, as a full load left it just before restoring a
+//! continuation (or, at a run start, after installing). A hit rereads each
+//! file and compares its bytes with the verified bytes, which proves its pin
+//! without hashing (the comparison durable publication makes of a published
+//! file), and then serves the archive status the probe derived from those
+//! same bytes. Any difference, unreadable file or other doubt is a miss, and
+//! the caller runs the full load, the full reads or the full probe, which
+//! report exactly their own errors in their own order. Only
+//! fresh-initialization bases are kept. A base whose checkpoint names an
+//! archive parent is kept for its status alone: its loads stay full, since
+//! they read that parent. An entry matches only the per-forward check
+//! setting its policy was installed under.
 
 use super::{
     names_another_file_v1, read_pinned_bytes, ExpandedModelSourceV1, FrozenPlayPolicyV1,
-    NoStateDigestConversionV1, NoStateDigestImportV1,
+    NoStateDigestConversionV1, NoStateDigestImportV1, PinnedFileV1,
 };
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// A run needs one converted import; a second serves an alternating caller.
-/// Each entry holds its base files' bytes (about 30 MB for a fresh base).
-const BASE_CACHE_ENTRIES_V1: usize = 2;
+/// Enough for a run's learner and its fixed converted opponents, each its
+/// own conversion, not to evict one another. An entry holds its base files'
+/// bytes (about 30 MB for a fresh base), a run start's artifact (about
+/// 20 MB) and one installed policy (about 6 MB, twice that with the
+/// per-forward check model): at most about 6 x 60 MB = 360 MB per process,
+/// 2.9 GB for eight concurrent runs.
+const BASE_CACHE_ENTRIES_V1: usize = 6;
 
 /// Files in read order, each with its bytes as verified against its pin.
 type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
@@ -43,16 +53,34 @@ pub(super) struct VerifiedBaseV1 {
     /// import, initialization manifest, parameter payload, base checkpoint),
     /// with the bytes verified against their pins.
     files: VerifiedFilesV1,
+    /// Whether the base checkpoint names an archive-distillation parent, as
+    /// the full probe parsed it from the verified bytes.
+    archive: bool,
+    /// The 1,403-wide artifact's verified bytes, when a run start read it.
+    artifact: Option<(PathBuf, Vec<u8>)>,
     /// The base policy, contract installed and conversion bound.
     template: FrozenPlayPolicyV1,
 }
 
 impl VerifiedBaseV1 {
     /// Whether every base file still holds exactly its verified bytes.
-    pub(super) fn files_unchanged_v1(&self) -> bool {
+    fn files_unchanged_v1(&self) -> bool {
         self.files
             .iter()
             .all(|(path, bytes)| holds_bytes_v1(path, bytes))
+    }
+
+    /// Whether the base checkpoint names an archive parent.
+    pub(super) fn archive_v1(&self) -> bool {
+        self.archive
+    }
+
+    /// Whether `pin` is the artifact a run start verified and it still holds
+    /// exactly those bytes.
+    pub(super) fn artifact_unchanged_v1(&self, pin: &PinnedFileV1) -> bool {
+        self.artifact
+            .as_ref()
+            .is_some_and(|(path, bytes)| *path == pin.path && holds_bytes_v1(path, bytes))
     }
 
     /// The base import's bytes.
@@ -60,9 +88,10 @@ impl VerifiedBaseV1 {
         &self.files[1].1
     }
 
-    /// A private duplicate of the installed base policy.
-    pub(super) fn template_v1(&self) -> Result<FrozenPlayPolicyV1, String> {
-        self.template.duplicate_loaded_v1()
+    /// A private duplicate of the installed base policy, for a base without
+    /// an archive parent; `None` when its loads must stay full.
+    pub(super) fn template_v1(&self) -> Option<Result<FrozenPlayPolicyV1, String>> {
+        (!self.archive).then(|| self.template.duplicate_loaded_v1())
     }
 }
 
@@ -138,6 +167,12 @@ pub(super) fn hits_for_test_v1() -> u64 {
     HITS_FOR_TEST_V1.with(std::cell::Cell::get)
 }
 
+/// Test-only: empties this thread's entries.
+#[cfg(test)]
+pub(super) fn clear_for_test_v1() {
+    with_entries_v1(VecDeque::clear);
+}
+
 fn bypassed_v1() -> bool {
     #[cfg(test)]
     if super::super::loaded_source_cache_v1::bypassed_now_for_test_v1() {
@@ -153,6 +188,14 @@ pub(super) fn lookup_v1(
     source: &ExpandedModelSourceV1,
     import_bytes: &[u8],
 ) -> Option<Arc<VerifiedBaseV1>> {
+    let entry = find_v1(source, import_bytes)?;
+    #[cfg(test)]
+    HITS_FOR_TEST_V1.with(|hits| hits.set(hits.get() + 1));
+    Some(entry)
+}
+
+/// [`lookup_v1`] without its test count.
+fn find_v1(source: &ExpandedModelSourceV1, import_bytes: &[u8]) -> Option<Arc<VerifiedBaseV1>> {
     if bypassed_v1() {
         return None;
     }
@@ -172,29 +215,32 @@ pub(super) fn lookup_v1(
     if !entry.files_unchanged_v1() {
         return None;
     }
-    #[cfg(test)]
-    HITS_FOR_TEST_V1.with(|hits| hits.set(hits.get() + 1));
     Some(entry)
 }
 
-/// Keep a full converted load's installed base policy (`template`, taken just
-/// before the continuation was restored) with its base files' bytes, read
-/// again and verified against their pins. A base that is not a
-/// fresh-initialization source, whose checkpoint names an archive parent, or
-/// any file that no longer verifies is not kept. Never inlined: its policy
-/// stays out of the loader's frame.
+/// Keep a full converted load's installed base policy (`template`: before a
+/// continuation was restored, or after a run start installed) with its base
+/// files' bytes, read again and verified against their pins, the base
+/// checkpoint's archive status probed from those bytes and, at a run start,
+/// the artifact's verified bytes. A base that is not a fresh-initialization
+/// source, or any file that no longer verifies, is not kept. Never inlined:
+/// its policy stays out of the loader's frame.
 #[inline(never)]
 pub(super) fn remember_v1(
     source: &ExpandedModelSourceV1,
     import_bytes: &[u8],
     import: &NoStateDigestImportV1,
     conversion: &NoStateDigestConversionV1,
+    run_start: bool,
     template: FrozenPlayPolicyV1,
 ) {
-    if bypassed_v1() {
+    // A base whose loads stay full (an archive parent) would otherwise be
+    // read again at every load; an unchanged entry is kept as it is.
+    if bypassed_v1() || find_v1(source, import_bytes).is_some() {
         return;
     }
-    let read = || -> Result<Option<VerifiedFilesV1>, String> {
+    type ReadV1 = (VerifiedFilesV1, bool, Option<(PathBuf, Vec<u8>)>);
+    let read = || -> Result<Option<ReadV1>, String> {
         let base_bytes = read_pinned_bytes(&import.base_play_import)?;
         let Ok(descriptor) =
             super::super::fresh_initialization_source::parse_source_v1(&base_bytes)
@@ -216,16 +262,19 @@ pub(super) fn remember_v1(
                 read_pinned_bytes(&descriptor.parameters)?,
             ),
         ];
+        let mut archive = false;
         if let Some(pin) = &conversion.base_checkpoint {
             let bytes = read_pinned_bytes(pin)?;
-            if names_another_file_v1(&bytes)? {
-                return Ok(None);
-            }
+            archive = names_another_file_v1(&bytes)?;
             files.push((pin.path.clone(), bytes));
         }
-        Ok(Some(files))
+        let artifact = match (&conversion.converted_checkpoint, run_start) {
+            (Some(pin), true) => Some((pin.path.clone(), read_pinned_bytes(pin)?)),
+            _ => None,
+        };
+        Ok(Some((files, archive, artifact)))
     };
-    let Ok(Some(files)) = read() else {
+    let Ok(Some((files, archive, artifact))) = read() else {
         return;
     };
     let entry = Arc::new(VerifiedBaseV1 {
@@ -233,6 +282,8 @@ pub(super) fn remember_v1(
         import_bytes: import_bytes.to_vec(),
         check: template.no_state_digest_check_v1(),
         files,
+        archive,
+        artifact,
         template,
     });
     with_entries_v1(|entries| {
