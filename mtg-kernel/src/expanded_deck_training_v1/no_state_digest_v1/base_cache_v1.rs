@@ -32,6 +32,9 @@ use std::sync::Arc;
 /// Each entry holds its base files' bytes (about 30 MB for a fresh base).
 const BASE_CACHE_ENTRIES_V1: usize = 2;
 
+/// Files in read order, each with its bytes as verified against its pin.
+type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
+
 pub(super) struct VerifiedBaseV1 {
     source: ExpandedModelSourceV1,
     import_bytes: Vec<u8>,
@@ -39,7 +42,7 @@ pub(super) struct VerifiedBaseV1 {
     /// The base load's files in its read order (conversion record, base
     /// import, initialization manifest, parameter payload, base checkpoint),
     /// with the bytes verified against their pins.
-    files: Vec<(PathBuf, Vec<u8>)>,
+    files: VerifiedFilesV1,
     /// The base policy, contract installed and conversion bound.
     template: FrozenPlayPolicyV1,
 }
@@ -150,7 +153,7 @@ pub(super) fn remember_v1(
     if bypassed_v1() {
         return;
     }
-    let read = || -> Result<Option<Vec<(PathBuf, Vec<u8>)>>, String> {
+    let read = || -> Result<Option<VerifiedFilesV1>, String> {
         let base_bytes = read_pinned_bytes(&import.base_play_import)?;
         let Ok(descriptor) =
             super::super::fresh_initialization_source::parse_source_v1(&base_bytes)
