@@ -756,15 +756,17 @@ fn verify_collection_opponent_sources_v1(
         }
         checked.push(source.clone());
         let bytes = read_pinned_bytes(&source.play_import)?;
-        if let Some(pin) = &source.checkpoint {
-            read_pinned_bytes(pin)?;
-        }
+        let checkpoint_bytes = source
+            .checkpoint
+            .as_ref()
+            .map(read_pinned_bytes)
+            .transpose()?;
         let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
         let schema = probe.get("schema").and_then(Value::as_str);
         // A converted source whose base trains verifies the conversion's
         // pins and the base's own, then is served like its base.
         let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
-            no_state_digest_v1::verify_source_pins_v1(source, &bytes)?
+            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes.as_deref())?
         } else {
             verify_import_pins_v1(&bytes)?
         };

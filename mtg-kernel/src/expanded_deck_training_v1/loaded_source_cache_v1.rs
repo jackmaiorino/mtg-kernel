@@ -105,6 +105,19 @@ pub(super) fn matches_for_test_v1() -> u64 {
     MATCHES_FOR_TEST_V1.with(std::cell::Cell::get)
 }
 
+/// Test-only: whether this thread's caches are switched off, which also
+/// switches off the converted base cache (`no_state_digest_v1::base_cache_v1`).
+#[cfg(test)]
+pub(super) fn bypassed_now_for_test_v1() -> bool {
+    BYPASS_FOR_TEST_V1.with(std::cell::Cell::get)
+}
+
+/// Test-only: empties this thread's entries.
+#[cfg(test)]
+pub(super) fn clear_for_test_v1() {
+    with_entries_v1(VecDeque::clear);
+}
+
 /// Test-only: runs `load` on this thread with the cache switched off.
 #[cfg(test)]
 pub(super) fn bypassed_for_test_v1<T>(load: impl FnOnce() -> T) -> T {

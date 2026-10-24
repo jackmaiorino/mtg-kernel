@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::expanded_deck_training_v1::loaded_source_cache_v1::{
-    bypassed_for_test_v1, matches_for_test_v1,
+    bypassed_for_test_v1, clear_for_test_v1, matches_for_test_v1,
 };
 use crate::expanded_deck_training_v1::{
     execute_v1, initialize_any_math_v1, load_expanded_inference_any_math_v1,
@@ -631,14 +631,18 @@ fn inference_only_bases_keep_the_converted_inference_install_v1() {
 
 /// A published continuation of `converted`: moved kept parameters, moments
 /// and step, under its contract member.
-fn with_continuation(root: &Path, converted: &ExpandedModelSourceV1) -> ExpandedModelSourceV1 {
+fn with_continuation(
+    root: &Path,
+    converted: &ExpandedModelSourceV1,
+    name: &str,
+) -> ExpandedModelSourceV1 {
     let (policy, state) = initialize_any_math_v1(converted).unwrap();
     let mut trained = state.snapshot_v1().unwrap();
     trained.adam_step += 1;
     tensor_mut(&mut trained.parameters, STATE_ENCODER_WEIGHT)[9] += 0.125;
     tensor_mut(&mut trained.first_moments, STATE_ENCODER_WEIGHT)[400] = -3.0e-4;
     let record = policy_contract_record_v1(&policy).unwrap();
-    let directory = root.join("continuation");
+    let directory = root.join(name);
     fs::create_dir_all(&directory).unwrap();
     ExpandedModelSourceV1 {
         checkpoint: Some(
@@ -707,7 +711,7 @@ fn converted_loads_are_served_exactly_by_the_loaded_source_cache_v1() {
     let root = temp_root("loaded-cache");
     let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let (outputs, converted) = convert(&root, &parent, "conversion");
-    let continuation = with_continuation(&root, &converted);
+    let continuation = with_continuation(&root, &converted, "continuation");
     let base_descriptor: super::super::ExpandedFreshInitializationSourceV1 =
         read_pinned(&parent.play_import).unwrap();
     for check in [false, true] {
@@ -809,7 +813,7 @@ fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1(
     let root = temp_root("opponent-cache");
     let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let (outputs, converted) = convert(&root, &parent, "conversion");
-    let continuation = with_continuation(&root, &converted);
+    let continuation = with_continuation(&root, &converted, "continuation");
     for source in [&converted, &continuation] {
         let episodes = vec![episode("opponent", 2_026_102_401, Some(source.clone()))];
         assert_eq!(
@@ -872,26 +876,17 @@ fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1(
     fs::remove_dir_all(root).unwrap();
 }
 
-/// A converted source over a phase-1 archive-distillation base checkpoint
-/// (whose full load reads its named parent) is never served by either
-/// cache: its run start and its continuation load in full every time, the
-/// collection boundary leaves it to the full loader, and a corrupted or
-/// deleted parent is refused exactly as a full load refuses it.
-#[test]
-fn archive_distillation_bases_always_load_in_full() {
-    on_large_stack(archive_distillation_bases_always_load_in_full_v1);
-}
-
-fn archive_distillation_bases_always_load_in_full_v1() {
+/// `parent` with a published phase-1 archive-distillation checkpoint over
+/// its checkpoint: the parent's optimizer state, moved parameters. Its full
+/// load reads the named parent.
+fn with_phase1_checkpoint(root: &Path, parent: &ExpandedModelSourceV1) -> ExpandedModelSourceV1 {
     use crate::expanded_deck_training_v1::archive_distillation_v1::{
         ArchiveDistillationArmV1, ArchiveDistillationProvenanceV1, PHASE1_LOSS_IDENTITY_V1,
     };
-    let root = temp_root("archive-base");
-    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let parent_pin = parent.checkpoint.clone().unwrap();
     let parent_saved: ExpandedCheckpointV1 = read_pinned(&parent_pin).unwrap();
     // A phase-1 checkpoint: the parent's optimizer state, moved parameters.
-    let (policy, state) = initialize_any_math_v1(&parent).unwrap();
+    let (policy, state) = initialize_any_math_v1(parent).unwrap();
     let mut snapshot = state.snapshot_v1().unwrap();
     tensor_mut(&mut snapshot.parameters, "value_head.2.bias")[0] += 0.0625;
     let mut phase1 = checkpoint_of(&policy, &snapshot, None);
@@ -926,13 +921,30 @@ fn archive_distillation_bases_always_load_in_full_v1() {
     });
     let directory = root.join("phase1");
     fs::create_dir_all(&directory).unwrap();
-    let base = ExpandedModelSourceV1 {
+    ExpandedModelSourceV1 {
         checkpoint: Some(publish_json(&directory, "checkpoint.json", &phase1).unwrap()),
         ..parent.clone()
-    };
+    }
+}
+
+/// A converted source over a phase-1 archive-distillation base checkpoint
+/// (whose full load reads its named parent) is never served by either
+/// cache: its run start and its continuation load in full every time, the
+/// collection boundary leaves it to the full loader, and a corrupted or
+/// deleted parent is refused exactly as a full load refuses it.
+#[test]
+fn archive_distillation_bases_always_load_in_full() {
+    on_large_stack(archive_distillation_bases_always_load_in_full_v1);
+}
+
+fn archive_distillation_bases_always_load_in_full_v1() {
+    let root = temp_root("archive-base");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let parent_pin = parent.checkpoint.clone().unwrap();
+    let base = with_phase1_checkpoint(&root, &parent);
     initialize_any_math_v1(&base).unwrap();
     let (_, converted) = convert(&root, &base, "conversion");
-    let continuation = with_continuation(&root, &converted);
+    let continuation = with_continuation(&root, &converted, "continuation");
     let corrupt = |action: &str| {
         let original = fs::read(&parent_pin.path).unwrap();
         match action {
@@ -984,6 +996,284 @@ fn archive_distillation_bases_always_load_in_full_v1() {
                 source,
             );
         }
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A continuation over a verified base starts from the base cache's
+/// installed base policy: it equals a full load under both check settings,
+/// a loaded-source hit and the collection boundary pass the base checks by
+/// comparing bytes, an entry serves only its own check setting, and a
+/// changed or deleted base file (conversion record, base import,
+/// initialization manifest, parameters, base checkpoint) sends the load to
+/// the full path, which refuses with exactly its own error.
+#[test]
+fn converted_bases_are_served_exactly_by_the_base_cache() {
+    on_large_stack(converted_bases_are_served_exactly_by_the_base_cache_v1);
+}
+
+fn converted_bases_are_served_exactly_by_the_base_cache_v1() {
+    let hits = base_cache_v1::hits_for_test_v1;
+    let root = temp_root("base-cache");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let (outputs, converted) = convert(&root, &parent, "conversion");
+    let first = with_continuation(&root, &converted, "first");
+    let second = with_continuation(&root, &converted, "second");
+    let base_descriptor: super::super::ExpandedFreshInitializationSourceV1 =
+        read_pinned(&parent.play_import).unwrap();
+    // Without the run start entry `with_continuation` kept.
+    base_cache_v1::clear_for_test_v1();
+    for check in [false, true] {
+        with_check_for_test_v1(check, || {
+            clear_for_test_v1();
+            // A full load of one continuation keeps the installed base.
+            // An entry kept under the other setting is not served.
+            let full = bypassed_for_test_v1(|| initialize_any_math_v1(&first)).unwrap();
+            assert_eq!(full.0.no_state_digest_check_v1(), check);
+            let before = hits();
+            let loaded = initialize_any_math_v1(&first).unwrap();
+            assert_eq!(hits(), before);
+            assert_same_converted_load(&loaded, &full, &first);
+            // Another continuation starts from it, exactly.
+            let full = bypassed_for_test_v1(|| initialize_any_math_v1(&second)).unwrap();
+            let before = hits();
+            let from_base = initialize_any_math_v1(&second).unwrap();
+            assert_eq!(hits(), before + 1, "a base cache hit");
+            assert_same_converted_load(&from_base, &full, &second);
+            // Its loaded-source hit and the collection boundary compare
+            // the base bytes instead of hashing them.
+            let (before, matches) = (hits(), matches_for_test_v1());
+            assert_same_converted_load(&initialize_any_math_v1(&second).unwrap(), &full, &second);
+            assert_eq!((hits(), matches_for_test_v1()), (before + 1, matches + 1));
+            let episodes = vec![episode("base", 2_026_102_601, Some(second.clone()))];
+            let before = hits();
+            assert_eq!(
+                verify_collection_opponent_sources_v1(&episodes).unwrap(),
+                vec![second.clone()]
+            );
+            assert_eq!(hits(), before + 1);
+        });
+    }
+    with_check_for_test_v1(false, || {
+        // Every base file: a changed or deleted copy is a miss, and the
+        // full path refuses with its own error.
+        let files = [
+            outputs.conversion.path.clone(),
+            parent.play_import.path.clone(),
+            base_descriptor.initialization.path.clone(),
+            base_descriptor.parameters.path.clone(),
+            parent.checkpoint.clone().unwrap().path,
+        ];
+        for path in files {
+            clear_for_test_v1();
+            let reference = initialize_any_math_v1(&second).unwrap();
+            let original = fs::read(&path).unwrap();
+            let mut changed = original.clone();
+            changed[original.len() / 2] ^= 1;
+            for (label, bytes) in [("changed", Some(changed)), ("missing", None)] {
+                match bytes {
+                    Some(bytes) => fs::write(&path, bytes).unwrap(),
+                    None => fs::remove_file(&path).unwrap(),
+                }
+                let full = bypassed_for_test_v1(|| refusal(&first));
+                clear_for_test_v1();
+                let before = hits();
+                assert_eq!(refusal(&first), full, "{label} {}", path.display());
+                assert_eq!(hits(), before, "{label} {}", path.display());
+                fs::write(&path, &original).unwrap();
+            }
+            // The restored bytes are served from the base again.
+            clear_for_test_v1();
+            let before = hits();
+            let restored = initialize_any_math_v1(&second).unwrap();
+            assert_eq!(hits(), before + 1);
+            assert_same_converted_load(&restored, &reference, &second);
+        }
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A base file replaced by an oversized file or by a non-regular one (a
+/// directory at its path) is a base cache miss that reads none of it, and
+/// the full path refuses with exactly its own error.
+#[test]
+fn base_cache_misses_unread_oversized_and_non_regular_replacements() {
+    on_large_stack(base_cache_misses_unread_oversized_and_non_regular_replacements_v1);
+}
+
+fn base_cache_misses_unread_oversized_and_non_regular_replacements_v1() {
+    let hits = base_cache_v1::hits_for_test_v1;
+    let read = base_cache_v1::bytes_read_for_test_v1;
+    let root = temp_root("base-cache-bounds");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let (outputs, converted) = convert(&root, &parent, "conversion");
+    let first = with_continuation(&root, &converted, "first");
+    let base_descriptor: super::super::ExpandedFreshInitializationSourceV1 =
+        read_pinned(&parent.play_import).unwrap();
+    let checkpoint = parent.checkpoint.clone().unwrap().path;
+    let verified: u64 = [
+        &outputs.conversion.path,
+        &parent.play_import.path,
+        &base_descriptor.initialization.path,
+        &base_descriptor.parameters.path,
+        &checkpoint,
+    ]
+    .iter()
+    .map(|path| fs::metadata(path).unwrap().len())
+    .sum();
+    with_check_for_test_v1(false, || {
+        clear_for_test_v1();
+        initialize_any_math_v1(&first).unwrap();
+        let cases = [
+            (checkpoint.clone(), "oversized"),
+            (checkpoint.clone(), "directory"),
+            (base_descriptor.parameters.path.clone(), "directory"),
+        ];
+        for (path, kind) in cases {
+            let original = fs::read(&path).unwrap();
+            if kind == "oversized" {
+                let mut bigger = original.clone();
+                bigger.resize(original.len() + (4 << 20), b' ');
+                fs::write(&path, bigger).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+                fs::create_dir(&path).unwrap();
+            }
+            let full = bypassed_for_test_v1(|| refusal(&first));
+            clear_for_test_v1();
+            let (before_hits, before_read) = (hits(), read());
+            assert_eq!(refusal(&first), full, "{kind} {}", path.display());
+            assert_eq!(hits(), before_hits, "{kind} {}", path.display());
+            assert!(
+                read() - before_read < verified,
+                "{kind} {}: the cache read the replacement",
+                path.display()
+            );
+            if kind == "directory" {
+                fs::remove_dir(&path).unwrap();
+            }
+            fs::write(&path, &original).unwrap();
+        }
+        clear_for_test_v1();
+        let before = hits();
+        initialize_any_math_v1(&first).unwrap();
+        assert_eq!(hits(), before + 1, "the restored base is served again");
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The base cache serves the archive-parent status the full probe parsed
+/// from the same verified bytes: a collection boundary check on an
+/// unchanged archive base answers as the full probe does without probing
+/// again, a changed base checkpoint misses with the uncached error, and a
+/// learner and two opponents, three separate conversions, are all served
+/// without evicting one another or probing their bases again.
+#[test]
+fn base_cache_serves_archive_status_and_keeps_three_conversions() {
+    on_large_stack(base_cache_serves_archive_status_and_keeps_three_conversions_v1);
+}
+
+fn base_cache_serves_archive_status_and_keeps_three_conversions_v1() {
+    let (hits, probes) = (base_cache_v1::hits_for_test_v1, probes_for_test_v1);
+    let root = temp_root("base-cache-status");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let phase1 = with_phase1_checkpoint(&root, &parent);
+    let (_, archive) = convert(&root, &phase1, "conversion-archive");
+    let (_, learner) = convert(&root, &parent, "conversion-learner");
+    let (_, opponent_b) = convert(&root, &parent, "conversion-b");
+    let (_, opponent_c) = convert(&root, &parent, "conversion-c");
+    let continuation = with_continuation(&root, &learner, "continuation");
+    let verify = |source: &ExpandedModelSourceV1| {
+        verify_collection_opponent_sources_v1(&[episode(
+            "status",
+            2_026_102_701,
+            Some(source.clone()),
+        )])
+    };
+    with_check_for_test_v1(false, || {
+        clear_for_test_v1();
+        base_cache_v1::clear_for_test_v1();
+        // The archive base: a full load keeps its status.
+        initialize_any_math_v1(&archive).unwrap();
+        let full_probes = probes();
+        let full = bypassed_for_test_v1(|| verify(&archive)).unwrap();
+        assert!(probes() > full_probes, "the uncached boundary probes");
+        let (before_hits, before_probes) = (hits(), probes());
+        assert_eq!(verify(&archive).unwrap(), full);
+        assert!(full.is_empty(), "an archive base keeps its full load");
+        assert_eq!((hits(), probes()), (before_hits + 1, before_probes));
+        // A changed base checkpoint misses, with the uncached error.
+        let path = phase1.checkpoint.clone().unwrap().path;
+        let original = fs::read(&path).unwrap();
+        let mut changed = original.clone();
+        changed[original.len() / 2] ^= 1;
+        fs::write(&path, changed).unwrap();
+        let full = bypassed_for_test_v1(|| verify(&archive)).unwrap_err();
+        let before_hits = hits();
+        assert_eq!(verify(&archive).unwrap_err(), full);
+        assert_eq!(hits(), before_hits);
+        fs::write(&path, &original).unwrap();
+        // Restored, it is served again without a probe.
+        let before_probes = probes();
+        assert!(verify(&archive).unwrap().is_empty());
+        assert_eq!(probes(), before_probes);
+
+        // A learner and two opponents, three conversions of one base.
+        for source in [&learner, &opponent_b, &opponent_c, &continuation] {
+            initialize_any_math_v1(source).unwrap();
+        }
+        let full = bypassed_for_test_v1(|| initialize_any_math_v1(&continuation)).unwrap();
+        let (before_hits, before_probes) = (hits(), probes());
+        for opponent in [&opponent_b, &opponent_c] {
+            assert_eq!(verify(opponent).unwrap(), vec![opponent.clone()]);
+        }
+        clear_for_test_v1();
+        let served = initialize_any_math_v1(&continuation).unwrap();
+        assert_same_converted_load(&served, &full, &continuation);
+        assert_eq!(hits(), before_hits + 3, "every conversion is still held");
+        assert_eq!(probes(), before_probes, "and none is probed again");
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A continuation checkpoint with an explicit `"archive_distillation": null`
+/// loads in full (its typed member is absent), and the collection boundary
+/// classifies it by the raw probe of its verified bytes alike whether the
+/// caches are warm or bypassed.
+#[test]
+fn explicit_null_archive_member_classifies_alike_warm_and_bypassed() {
+    on_large_stack(explicit_null_archive_member_classifies_alike_warm_and_bypassed_v1);
+}
+
+fn explicit_null_archive_member_classifies_alike_warm_and_bypassed_v1() {
+    let root = temp_root("null-archive");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let (_, converted) = convert(&root, &parent, "conversion");
+    let (policy, state) = initialize_any_math_v1(&converted).unwrap();
+    let mut trained = state.snapshot_v1().unwrap();
+    trained.adam_step += 1;
+    let record = policy_contract_record_v1(&policy).unwrap();
+    let mut document = serde_json::to_value(checkpoint_of(&policy, &trained, record)).unwrap();
+    document["archive_distillation"] = Value::Null;
+    let directory = root.join("null-member");
+    fs::create_dir_all(&directory).unwrap();
+    let continuation = ExpandedModelSourceV1 {
+        checkpoint: Some(publish_json(&directory, "checkpoint.json", &document).unwrap()),
+        ..converted.clone()
+    };
+    let episodes = vec![episode("null", 2_026_102_801, Some(continuation.clone()))];
+    with_check_for_test_v1(false, || {
+        let full =
+            bypassed_for_test_v1(|| verify_collection_opponent_sources_v1(&episodes)).unwrap();
+        assert!(full.is_empty(), "the raw probe sees the member");
+        // Both full loaders admit the checkpoint, and warm the caches.
+        bypassed_for_test_v1(|| initialize_any_math_v1(&continuation)).unwrap();
+        initialize_any_math_v1(&continuation).unwrap();
+        initialize_any_math_v1(&continuation).unwrap();
+        assert_eq!(
+            verify_collection_opponent_sources_v1(&episodes).unwrap(),
+            full
+        );
     });
     fs::remove_dir_all(root).unwrap();
 }

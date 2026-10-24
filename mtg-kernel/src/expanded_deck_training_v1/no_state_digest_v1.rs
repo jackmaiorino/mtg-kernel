@@ -494,19 +494,29 @@ pub(super) fn reverify_converted_v1(
     bytes: &[u8],
 ) -> Result<(), String> {
     let (import, conversion) = read_import_v1(bytes)?;
-    let base_bytes = read_pinned_bytes(&import.base_play_import)?;
-    ensure(
-        base_trains_v1(&base_bytes)?,
-        "this no-state-digest source's base is inference-only and does not train",
-    )?;
-    let descriptor = super::fresh_initialization_source::parse_source_v1(&base_bytes)?;
-    super::fresh_initialization_source::reverify_input_files_v1(&descriptor)?;
-    if let Some(pin) = &conversion.base_checkpoint {
-        read_pinned_bytes(pin)?;
+    // Base files that still hold the bytes a full load verified pass every
+    // base read below; otherwise those reads run and report as before.
+    let base = base_cache_v1::lookup_v1(source, bytes);
+    if base.is_none() {
+        let base_bytes = read_pinned_bytes(&import.base_play_import)?;
+        ensure(
+            base_trains_v1(&base_bytes)?,
+            "this no-state-digest source's base is inference-only and does not train",
+        )?;
+        let descriptor = super::fresh_initialization_source::parse_source_v1(&base_bytes)?;
+        super::fresh_initialization_source::reverify_input_files_v1(&descriptor)?;
+        if let Some(pin) = &conversion.base_checkpoint {
+            read_pinned_bytes(pin)?;
+        }
     }
     if source.checkpoint == conversion.base_checkpoint {
         if let Some(pin) = &conversion.converted_checkpoint {
-            read_pinned_bytes(pin)?;
+            if !base
+                .as_ref()
+                .is_some_and(|base| base.artifact_unchanged_v1(pin))
+            {
+                read_pinned_bytes(pin)?;
+            }
         }
     } else {
         read_pinned_bytes(
@@ -523,33 +533,51 @@ pub(super) fn reverify_converted_v1(
 /// process opponent cache may serve it (`verify_collection_opponent_sources_v1`):
 /// the conversion record, the base import and its own pins, the base
 /// checkpoint and, at run start, the 1,403-wide artifact. `false` for an
-/// inference-only base, which keeps its full load.
+/// inference-only base, which keeps its full load. `checkpoint_bytes` are the
+/// source checkpoint's bytes, which the caller verified against their pin.
 pub(super) fn verify_source_pins_v1(
     source: &ExpandedModelSourceV1,
     bytes: &[u8],
+    checkpoint_bytes: Option<&[u8]>,
 ) -> Result<bool, String> {
     let (import, conversion) = read_import_v1(bytes)?;
-    let base_bytes = read_pinned_bytes(&import.base_play_import)?;
-    if !base_trains_v1(&base_bytes)? {
+    // A verified base (a trainable fresh base) whose files still hold their
+    // verified bytes passes the base checks, with the archive status the
+    // full probe parsed from those bytes.
+    let base = base_cache_v1::lookup_v1(source, bytes);
+    if base.as_ref().is_some_and(|base| base.archive_v1()) {
         return Ok(false);
     }
-    if !super::verify_import_pins_v1(&base_bytes)? {
-        return Ok(false);
-    }
-    // A base or continuation checkpoint that names a further file (a
-    // phase-1 archive-distillation parent) keeps its full load, which reads
-    // that file; the cache would not.
-    if let Some(pin) = &conversion.base_checkpoint {
-        if names_another_file_v1(&read_pinned_bytes(pin)?)? {
+    if base.is_none() {
+        let base_bytes = read_pinned_bytes(&import.base_play_import)?;
+        if !base_trains_v1(&base_bytes)? {
             return Ok(false);
+        }
+        if !super::verify_import_pins_v1(&base_bytes)? {
+            return Ok(false);
+        }
+        // A base or continuation checkpoint that names a further file (a
+        // phase-1 archive-distillation parent) keeps its full load, which
+        // reads that file; the cache would not.
+        if let Some(pin) = &conversion.base_checkpoint {
+            if names_another_file_v1(&read_pinned_bytes(pin)?)? {
+                return Ok(false);
+            }
         }
     }
     if source.checkpoint == conversion.base_checkpoint {
         if let Some(pin) = &conversion.converted_checkpoint {
-            read_pinned_bytes(pin)?;
+            if !base
+                .as_ref()
+                .is_some_and(|base| base.artifact_unchanged_v1(pin))
+            {
+                read_pinned_bytes(pin)?;
+            }
         }
-    } else if let Some(pin) = &source.checkpoint {
-        if names_another_file_v1(&read_pinned_bytes(pin)?)? {
+    } else if let Some(checkpoint) = checkpoint_bytes {
+        // The continuation's own raw probe, on the bytes the caller verified
+        // (no second read or hash).
+        if names_another_file_v1(checkpoint)? {
             return Ok(false);
         }
     }
@@ -565,8 +593,21 @@ fn names_another_file_v1(checkpoint: &[u8]) -> Result<bool, String> {
         #[serde(default, deserialize_with = "super::present_value_v1")]
         archive_distillation: Option<Value>,
     }
+    #[cfg(test)]
+    PROBES_FOR_TEST_V1.with(|probes| probes.set(probes.get() + 1));
     let probe: ArchiveProbeV1 = serde_json::from_slice(checkpoint).map_err(err)?;
     Ok(probe.archive_distillation.is_some())
+}
+
+#[cfg(test)]
+thread_local! {
+    static PROBES_FOR_TEST_V1: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Test-only: archive-parent probes this thread ran.
+#[cfg(test)]
+pub(super) fn probes_for_test_v1() -> u64 {
+    PROBES_FOR_TEST_V1.with(std::cell::Cell::get)
 }
 
 /// The training loader of a [`NoStateDigestImportV1`] source, and its one
@@ -592,6 +633,38 @@ fn initialize_v1(
 > {
     let (import, conversion) = read_import_v1(bytes)?;
     let run_start = source.checkpoint == conversion.base_checkpoint;
+    // A continuation over a verified base whose files still hold their
+    // verified bytes starts from its installed base policy: the base load,
+    // contract installation and archive probe are pure functions of those
+    // bytes, and every continuation check below runs as in a full load.
+    if !run_start {
+        if let Some((base, template)) = base_cache_v1::lookup_v1(source, bytes)
+            .and_then(|base| base.template_v1().map(|template| (base, template)))
+        {
+            let mut policy = template?;
+            let (mut state, kind, _) = continue_state_v1(
+                source,
+                &mut policy,
+                &conversion,
+                &import.conversion,
+                inputs,
+                None,
+            )?;
+            state
+                .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
+                .map_err(err)?;
+            let check = policy.no_state_digest_check_v1();
+            return Ok((
+                policy,
+                state,
+                ConvertedLoadV1 {
+                    kind,
+                    base_bytes: base.base_bytes_v1().to_vec(),
+                    check,
+                },
+            ));
+        }
+    }
     let base = ExpandedModelSourceV1 {
         play_import: import.base_play_import.clone(),
         feature_transfer: source.feature_transfer.clone(),
@@ -609,10 +682,12 @@ fn initialize_v1(
         "registry-transfer sources do not train under the no-state-digest contract",
     )?;
     let check = check_enabled_v1();
-    let (mut state, mut kind) = if run_start {
+    let mut run_start_template = None;
+    let (mut state, mut kind, template) = if run_start {
         (
             convert_state_v1(&mut policy, base_state, &conversion, check)?,
             ConvertedLoadKindV1::RunStart,
+            None,
         )
     } else {
         continue_state_v1(
@@ -621,11 +696,14 @@ fn initialize_v1(
             &conversion,
             &import.conversion,
             inputs,
-            check,
+            Some(check),
         )?
     };
     if run_start {
-        policy.bind_input_contract_conversion_v1(import.conversion)?;
+        policy.bind_input_contract_conversion_v1(import.conversion.clone())?;
+        // The installed, bound base policy before any continuation, as the
+        // continuation path keeps it.
+        run_start_template = policy.duplicate_loaded_v1().ok();
     }
     state
         .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
@@ -635,6 +713,12 @@ fn initialize_v1(
         if names_another_file_v1(&read_pinned_bytes(pin)?)? {
             kind = ConvertedLoadKindV1::NotCached;
         }
+    }
+    if let Some(template) = template {
+        base_cache_v1::remember_v1(source, bytes, &import, &conversion, false, template);
+    }
+    if let Some(template) = run_start_template {
+        base_cache_v1::remember_v1(source, bytes, &import, &conversion, true, template);
     }
     // The cache's tag is the check model the policy actually holds.
     let check = policy.no_state_digest_check_v1();
@@ -735,14 +819,29 @@ fn convert_state_v1(
 /// checkpoint) must still be the recorded one; it supplies the check model's
 /// original digest columns. A trained checkpoint is never compared with the
 /// initial converted parameter digest.
+///
+/// `install` carries the per-forward check setting when the base policy is
+/// still uninstalled; then its installed duplicate is handed back for the
+/// base cache. `None`: the policy comes installed and bound from that cache.
+#[allow(
+    clippy::type_complexity,
+    reason = "the state, its cache kind and the installed base"
+)]
 fn continue_state_v1(
     source: &ExpandedModelSourceV1,
     policy: &mut FrozenPlayPolicyV1,
     conversion: &NoStateDigestConversionV1,
     conversion_pin: &PinnedFileV1,
     inputs: Option<&CheckpointInputExpectationV1<'_>>,
-    check: bool,
-) -> Result<(NativePolicyValueTrainStateV1, ConvertedLoadKindV1), String> {
+    install: Option<bool>,
+) -> Result<
+    (
+        NativePolicyValueTrainStateV1,
+        ConvertedLoadKindV1,
+        Option<FrozenPlayPolicyV1>,
+    ),
+    String,
+> {
     let pin = source
         .checkpoint
         .as_ref()
@@ -776,8 +875,14 @@ fn continue_state_v1(
         "the checkpoint's no-state-digest contract differs from the conversion's",
     )?;
     check_saved_columns_v1(&saved)?;
-    install_v1(policy, conversion, check)?;
-    policy.bind_input_contract_conversion_v1(conversion_pin.clone())?;
+    let template = match install {
+        Some(check) => {
+            install_v1(policy, conversion, check)?;
+            policy.bind_input_contract_conversion_v1(conversion_pin.clone())?;
+            policy.duplicate_loaded_v1().ok()
+        }
+        None => None,
+    };
     let model = policy.training_model_v3();
     let state = restore_checkpoint_state_v1(&saved, policy, model)?;
     // A checkpoint that names another file is never cached, as for an
@@ -791,7 +896,7 @@ fn continue_state_v1(
             value_coefficient_bits: saved.value_coefficient_bits,
         })
     };
-    Ok((state, kind))
+    Ok((state, kind, template))
 }
 
 /// The stored bits of a checkpoint's W, m and v digest columns are +0.0 and
@@ -1149,6 +1254,8 @@ pub fn convert_no_state_digest_v1(
         record,
     })
 }
+
+mod base_cache_v1;
 
 #[cfg(test)]
 mod training_tests;
