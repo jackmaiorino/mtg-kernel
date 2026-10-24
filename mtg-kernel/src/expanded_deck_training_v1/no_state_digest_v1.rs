@@ -533,10 +533,12 @@ pub(super) fn reverify_converted_v1(
 /// process opponent cache may serve it (`verify_collection_opponent_sources_v1`):
 /// the conversion record, the base import and its own pins, the base
 /// checkpoint and, at run start, the 1,403-wide artifact. `false` for an
-/// inference-only base, which keeps its full load.
+/// inference-only base, which keeps its full load. `checkpoint_bytes` are the
+/// source checkpoint's bytes, which the caller verified against their pin.
 pub(super) fn verify_source_pins_v1(
     source: &ExpandedModelSourceV1,
     bytes: &[u8],
+    checkpoint_bytes: Option<&[u8]>,
 ) -> Result<bool, String> {
     let (import, conversion) = read_import_v1(bytes)?;
     // A verified base (a trainable fresh base) whose files still hold their
@@ -572,13 +574,10 @@ pub(super) fn verify_source_pins_v1(
                 read_pinned_bytes(pin)?;
             }
         }
-    } else if let Some(pin) = &source.checkpoint {
-        // The caller verified this checkpoint's pin. A loaded-source entry
-        // of this exact continuation proves it names no further file (such
-        // a checkpoint is never kept), so only an unknown one is probed.
-        if !super::loaded_source_cache_v1::holds_converted_continuation_v1(source, bytes)
-            && names_another_file_v1(&read_pinned_bytes(pin)?)?
-        {
+    } else if let Some(checkpoint) = checkpoint_bytes {
+        // The continuation's own raw probe, on the bytes the caller verified
+        // (no second read or hash).
+        if names_another_file_v1(checkpoint)? {
             return Ok(false);
         }
     }

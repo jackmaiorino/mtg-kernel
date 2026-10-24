@@ -35,11 +35,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Enough for a run's learner and its fixed converted opponents, each its
-/// own conversion, not to evict one another. An entry holds its base files'
-/// bytes (about 30 MB for a fresh base), a run start's artifact (about
-/// 20 MB) and one installed policy (about 6 MB, twice that with the
-/// per-forward check model): at most about 6 x 60 MB = 360 MB per process,
-/// 2.9 GB for eight concurrent runs.
+/// own conversion, not to evict one another. Six resident entries is the
+/// enforced bound. An entry normally holds its base files' bytes (about
+/// 30 MB for a fresh base), a run start's artifact (about 20 MB) and one
+/// installed policy (about 6 MB, twice that with the per-forward check
+/// model), so the expected payload is about 6 x 60 MB = 360 MB per process
+/// (2.9 GB for eight concurrent runs). It is an estimate, not a limit:
+/// larger valid checkpoints make larger entries, and an evicted entry stays
+/// alive while a caller still holds its `Arc`.
 const BASE_CACHE_ENTRIES_V1: usize = 6;
 
 /// Files in read order, each with its bytes as verified against its pin.

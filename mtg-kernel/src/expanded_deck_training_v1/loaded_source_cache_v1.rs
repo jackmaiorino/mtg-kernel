@@ -99,33 +99,6 @@ thread_local! {
     static BYPASS_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Whether an entry holds this exact converted continuation (`source`,
-/// with its checkpoint pin, and its import bytes). A continuation whose
-/// checkpoint names another file is never kept, so a held one names none.
-pub(super) fn holds_converted_continuation_v1(
-    source: &ExpandedModelSourceV1,
-    descriptor_bytes: &[u8],
-) -> bool {
-    #[cfg(test)]
-    if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
-        return false;
-    }
-    with_entries_v1(|entries| {
-        entries.iter().any(|entry| {
-            entry.source == *source
-                && entry.descriptor_bytes == descriptor_bytes
-                && matches!(
-                    entry.kind,
-                    KindV1::Converted {
-                        run_start: false,
-                        ..
-                    }
-                )
-        })
-    })
-    .unwrap_or(false)
-}
-
 /// Test-only: lookups on this thread that found an entry.
 #[cfg(test)]
 pub(super) fn matches_for_test_v1() -> u64 {

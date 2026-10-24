@@ -1236,6 +1236,48 @@ fn base_cache_serves_archive_status_and_keeps_three_conversions_v1() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// A continuation checkpoint with an explicit `"archive_distillation": null`
+/// loads in full (its typed member is absent), and the collection boundary
+/// classifies it by the raw probe of its verified bytes alike whether the
+/// caches are warm or bypassed.
+#[test]
+fn explicit_null_archive_member_classifies_alike_warm_and_bypassed() {
+    on_large_stack(explicit_null_archive_member_classifies_alike_warm_and_bypassed_v1);
+}
+
+fn explicit_null_archive_member_classifies_alike_warm_and_bypassed_v1() {
+    let root = temp_root("null-archive");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let (_, converted) = convert(&root, &parent, "conversion");
+    let (policy, state) = initialize_any_math_v1(&converted).unwrap();
+    let mut trained = state.snapshot_v1().unwrap();
+    trained.adam_step += 1;
+    let record = policy_contract_record_v1(&policy).unwrap();
+    let mut document = serde_json::to_value(checkpoint_of(&policy, &trained, record)).unwrap();
+    document["archive_distillation"] = Value::Null;
+    let directory = root.join("null-member");
+    fs::create_dir_all(&directory).unwrap();
+    let continuation = ExpandedModelSourceV1 {
+        checkpoint: Some(publish_json(&directory, "checkpoint.json", &document).unwrap()),
+        ..converted.clone()
+    };
+    let episodes = vec![episode("null", 2_026_102_801, Some(continuation.clone()))];
+    with_check_for_test_v1(false, || {
+        let full =
+            bypassed_for_test_v1(|| verify_collection_opponent_sources_v1(&episodes)).unwrap();
+        assert!(full.is_empty(), "the raw probe sees the member");
+        // Both full loaders admit the checkpoint, and warm the caches.
+        bypassed_for_test_v1(|| initialize_any_math_v1(&continuation)).unwrap();
+        initialize_any_math_v1(&continuation).unwrap();
+        initialize_any_math_v1(&continuation).unwrap();
+        assert_eq!(
+            verify_collection_opponent_sources_v1(&episodes).unwrap(),
+            full
+        );
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn list(id: &str) -> ExpandedDeckListV1 {
     let registration = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
     let cards = registration.registered_configuration();
