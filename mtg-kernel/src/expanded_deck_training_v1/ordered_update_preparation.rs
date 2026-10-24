@@ -335,7 +335,7 @@ struct CachedOpponentV1 {
     /// load would.
     no_state_digest_check: Option<bool>,
     /// Every file the full load read, with its verified bytes.
-    files: Arc<Vec<(std::path::PathBuf, Vec<u8>)>>,
+    files: Arc<super::VerifiedFilesV1>,
 }
 
 static OPPONENT_CACHE: OnceLock<Mutex<VecDeque<CachedOpponentV1>>> = OnceLock::new();

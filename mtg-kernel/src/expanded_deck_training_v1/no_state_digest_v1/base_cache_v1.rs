@@ -45,8 +45,7 @@ use std::sync::Arc;
 /// alive while a caller still holds its `Arc`.
 const BASE_CACHE_ENTRIES_V1: usize = 6;
 
-/// Files in read order, each with its bytes as verified against its pin.
-type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
+use crate::expanded_deck_training_v1::VerifiedFilesV1;
 
 pub(super) struct VerifiedBaseV1 {
     source: ExpandedModelSourceV1,

@@ -789,6 +789,9 @@ fn verify_collection_opponent_sources_v1(
     Ok(verified)
 }
 
+/// Files read in full, each with its bytes verified against its pin.
+pub(super) type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
+
 /// Every file a full opponent load of `source` reads, read again and
 /// verified against its pin, for the process opponent cache: the import, its
 /// own inputs and the checkpoint, or for a converted source over a trainable
@@ -798,7 +801,7 @@ fn verify_collection_opponent_sources_v1(
 /// phase-1 archive-distillation parent): those load in full every time.
 pub(super) fn opponent_cache_files_v1(
     source: &ExpandedModelSourceV1,
-) -> Result<Option<Vec<(PathBuf, Vec<u8>)>>, String> {
+) -> Result<Option<VerifiedFilesV1>, String> {
     let bytes = read_pinned_bytes(&source.play_import)?;
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     let (pins, checkpoints) = if probe.get("schema").and_then(Value::as_str)

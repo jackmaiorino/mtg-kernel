@@ -584,6 +584,9 @@ pub(super) fn verify_source_pins_v1(
     Ok(true)
 }
 
+/// All pins a full load reads, and those among them that are checkpoints.
+type SourcePinsV1 = (Vec<PinnedFileV1>, Vec<PinnedFileV1>);
+
 /// The pins of every file a full load of a converted `source` reads besides
 /// its import, in that load's order, and the checkpoints among them (the
 /// base checkpoint and a continuation's own), for the process opponent
@@ -591,7 +594,7 @@ pub(super) fn verify_source_pins_v1(
 pub(super) fn source_pins_v1(
     source: &ExpandedModelSourceV1,
     bytes: &[u8],
-) -> Result<Option<(Vec<PinnedFileV1>, Vec<PinnedFileV1>)>, String> {
+) -> Result<Option<SourcePinsV1>, String> {
     let (import, conversion) = read_import_v1(bytes)?;
     let base_bytes = read_pinned_bytes(&import.base_play_import)?;
     if !base_trains_v1(&base_bytes)? {
