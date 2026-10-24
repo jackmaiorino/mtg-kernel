@@ -770,13 +770,14 @@ fn verify_collection_opponent_sources_v1(
         } else {
             let mut pins_ok = verify_import_pins_v1(&bytes)?;
             // A checkpoint that names a further file (a phase-1
-            // archive-distillation parent) keeps its full load, which reads
-            // it. The process cache holds only sources whose checkpoint the
-            // same probe found clean, and this pin was just verified, so a
-            // held source needs no probe.
+            // archive-distillation parent), or that the probe cannot read,
+            // keeps its full load, which reads it and reports its own error.
+            // The process cache holds only sources whose checkpoint the same
+            // probe found clean, and this pin was just verified, so a held
+            // source needs no probe.
             if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes.as_deref()) {
                 pins_ok = ordered_update_preparation::holds_source_v1(source)
-                    || !no_state_digest_v1::names_another_file_v1(checkpoint)?;
+                    || no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
             }
             pins_ok
         };
@@ -5072,7 +5073,7 @@ pub(crate) mod tests {
         };
         let initialization = write_pin("initialization.json", b"initialization fixture");
         let parameters = write_pin("parameters.f32le", b"parameter fixture");
-        let checkpoint = write_pin("checkpoint.json", b"checkpoint fixture");
+        let checkpoint = write_pin("checkpoint.json", br#"{"fixture": "checkpoint"}"#);
         let descriptor = json!({
             "schema": fresh_initialization_source::SOURCE_SCHEMA,
             "initialization": initialization,
