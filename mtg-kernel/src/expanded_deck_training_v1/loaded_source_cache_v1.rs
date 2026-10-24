@@ -18,14 +18,20 @@
 //!
 //! Only fresh-initialization descriptors are cached, and only when the
 //! checkpoint names no further file (a phase-1 archive-distillation
-//! checkpoint reads its parent). Every other source loads in full as before.
+//! checkpoint reads its parent), and converted (`no_state_digest_v1`)
+//! sources over such a base: a hit reads the conversion record, the base
+//! import and every pin of the base, the artifact or continuation checkpoint
+//! in the full converted load's order (`reverify_converted_v1`), and must
+//! match the full load's per-forward check setting. Every other source loads
+//! in full as before.
 //! Duplicates come from `FrozenPlayPolicyV1::duplicate_loaded_v1`, which only
 //! accepts a policy in its as-loaded state, and from cloning the train state.
 
 use super::fresh_initialization_source::{self, ExpandedFreshInitializationSourceV1};
 use super::{
-    ensure, read_pinned_bytes, CheckpointInputExpectationV1, ExpandedCheckpointV1,
-    ExpandedModelSourceV1, FrozenPlayPolicyV1, NativePolicyValueTrainStateV1, PinnedFileV1,
+    ensure, no_state_digest_v1, read_pinned_bytes, CheckpointInputExpectationV1,
+    ExpandedCheckpointV1, ExpandedModelSourceV1, FrozenPlayPolicyV1, NativePolicyValueTrainStateV1,
+    PinnedFileV1,
 };
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -34,19 +40,31 @@ use std::sync::Arc;
 mod tests;
 
 /// A native run needs one entry (the newest checkpoint); a second keeps the
-/// run's initial source or an alternating caller from evicting it.
+/// run's initial source or an alternating caller from evicting it. Converted
+/// (`no_state_digest_v1`) and fresh entries share the bound, so either kind
+/// can evict the other; a converted load also looks up its base's entry.
 const LOADED_SOURCE_CACHE_ENTRIES_V1: usize = 2;
 
-struct RecordedInputsV1 {
-    trajectories: Vec<PinnedFileV1>,
-    learning_rate_bits: u32,
-    value_coefficient_bits: u32,
+pub(super) struct RecordedInputsV1 {
+    pub(super) trajectories: Vec<PinnedFileV1>,
+    pub(super) learning_rate_bits: u32,
+    pub(super) value_coefficient_bits: u32,
+}
+
+/// What a hit must reread, by kind of source.
+enum KindV1 {
+    /// A fresh-initialization descriptor.
+    Fresh(ExpandedFreshInitializationSourceV1),
+    /// A converted source over a fresh-initialization base. `run_start`: its
+    /// checkpoint is the conversion's base checkpoint. `check`: the
+    /// per-forward check setting it loaded under.
+    Converted { run_start: bool, check: bool },
 }
 
 struct LoadedSourceV1 {
     source: ExpandedModelSourceV1,
     descriptor_bytes: Vec<u8>,
-    descriptor: ExpandedFreshInitializationSourceV1,
+    kind: KindV1,
     policy: FrozenPlayPolicyV1,
     state: NativePolicyValueTrainStateV1,
     /// The checkpoint's recorded update inputs; `None` without a checkpoint.
@@ -81,6 +99,21 @@ thread_local! {
     static BYPASS_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Test-only: lookups on this thread that found an entry.
+#[cfg(test)]
+pub(super) fn matches_for_test_v1() -> u64 {
+    MATCHES_FOR_TEST_V1.with(std::cell::Cell::get)
+}
+
+/// Test-only: runs `load` on this thread with the cache switched off.
+#[cfg(test)]
+pub(super) fn bypassed_for_test_v1<T>(load: impl FnOnce() -> T) -> T {
+    BYPASS_FOR_TEST_V1.with(|bypass| bypass.set(true));
+    let result = load();
+    BYPASS_FOR_TEST_V1.with(|bypass| bypass.set(false));
+    result
+}
+
 /// The cached result for these descriptor bytes, after the full loader's file
 /// checks and input binding, or `None` when the source must load in full.
 pub(super) fn lookup_v1(
@@ -94,7 +127,19 @@ pub(super) fn lookup_v1(
     }
     let entry = with_entries_v1(|entries| {
         let index = entries.iter().position(|entry| {
-            entry.source == *source && entry.descriptor_bytes == descriptor_bytes
+            entry.source == *source
+                && entry.descriptor_bytes == descriptor_bytes
+                && match entry.kind {
+                    KindV1::Fresh(_) => true,
+                    // A converted run start's update inputs bind the base
+                    // checkpoint inside the base load; it is served only
+                    // without them. Either kind matches only the current
+                    // per-forward check setting.
+                    KindV1::Converted { run_start, check } => {
+                        !(run_start && inputs.is_some())
+                            && check == no_state_digest_v1::check_enabled_v1()
+                    }
+                }
         })?;
         let entry = entries.remove(index)?;
         entries.push_back(Arc::clone(&entry));
@@ -106,11 +151,18 @@ pub(super) fn lookup_v1(
     };
     #[cfg(test)]
     MATCHES_FOR_TEST_V1.with(|matches| matches.set(matches.get() + 1));
-    // The full loader's reads, in its order: the initialization manifest and
-    // the parameter payload, then the checkpoint.
-    fresh_initialization_source::reverify_input_files_v1(&entry.descriptor)?;
-    if let Some(pin) = &source.checkpoint {
-        read_pinned_bytes(pin)?;
+    match &entry.kind {
+        // The full loader's reads, in its order: the initialization manifest
+        // and the parameter payload, then the checkpoint.
+        KindV1::Fresh(descriptor) => {
+            fresh_initialization_source::reverify_input_files_v1(descriptor)?;
+            if let Some(pin) = &source.checkpoint {
+                read_pinned_bytes(pin)?;
+            }
+        }
+        KindV1::Converted { .. } => {
+            no_state_digest_v1::reverify_converted_v1(source, descriptor_bytes)?;
+        }
     }
     match (&entry.inputs, inputs) {
         (Some(recorded), Some(expected)) => expected.validate_v1(
@@ -140,7 +192,8 @@ pub(super) fn remember_v1(
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
         return;
     }
-    // A converted (no-state-digest) policy is never cached.
+    // A converted (no-state-digest) policy is kept only by
+    // `remember_converted_v1`.
     if source.checkpoint.is_some() != saved.is_some()
         || saved.is_some_and(|saved| saved.archive_distillation.is_some())
         || policy.input_contract_v1().is_some()
@@ -153,10 +206,10 @@ pub(super) fn remember_v1(
     let Ok(template) = policy.duplicate_loaded_v1() else {
         return;
     };
-    let entry = Arc::new(LoadedSourceV1 {
+    insert_v1(Arc::new(LoadedSourceV1 {
         source: source.clone(),
         descriptor_bytes: descriptor_bytes.to_vec(),
-        descriptor,
+        kind: KindV1::Fresh(descriptor),
         policy: template,
         state: state.clone(),
         inputs: saved.map(|saved| RecordedInputsV1 {
@@ -164,7 +217,57 @@ pub(super) fn remember_v1(
             learning_rate_bits: saved.learning_rate_bits,
             value_coefficient_bits: saved.value_coefficient_bits,
         }),
-    });
+    }));
+}
+
+/// Keep a full converted load's result (`no_state_digest_v1::initialize_training_v1`)
+/// when its base is a fresh-initialization source and its checkpoint names
+/// no further file. `descriptor_bytes` are the converted import's. Never
+/// inlined: its policy template stays out of the loader's frame.
+#[inline(never)]
+pub(super) fn remember_converted_v1(
+    source: &ExpandedModelSourceV1,
+    descriptor_bytes: &[u8],
+    policy: &FrozenPlayPolicyV1,
+    state: &NativePolicyValueTrainStateV1,
+    load: &no_state_digest_v1::ConvertedLoadV1,
+) {
+    #[cfg(test)]
+    if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
+        return;
+    }
+    let (run_start, inputs) = match &load.kind {
+        no_state_digest_v1::ConvertedLoadKindV1::RunStart => (true, None),
+        no_state_digest_v1::ConvertedLoadKindV1::Continuation(inputs) => (
+            false,
+            Some(RecordedInputsV1 {
+                trajectories: inputs.trajectories.clone(),
+                learning_rate_bits: inputs.learning_rate_bits,
+                value_coefficient_bits: inputs.value_coefficient_bits,
+            }),
+        ),
+        no_state_digest_v1::ConvertedLoadKindV1::NotCached => return,
+    };
+    if fresh_initialization_source::parse_source_v1(&load.base_bytes).is_err() {
+        return;
+    }
+    let Ok(template) = policy.duplicate_loaded_v1() else {
+        return;
+    };
+    insert_v1(Arc::new(LoadedSourceV1 {
+        source: source.clone(),
+        descriptor_bytes: descriptor_bytes.to_vec(),
+        kind: KindV1::Converted {
+            run_start,
+            check: load.check,
+        },
+        policy: template,
+        state: state.clone(),
+        inputs,
+    }));
+}
+
+fn insert_v1(entry: Arc<LoadedSourceV1>) {
     with_entries_v1(|entries| {
         // Concurrent loads of one source keep a single entry.
         entries.retain(|cached| {

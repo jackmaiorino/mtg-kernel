@@ -313,12 +313,18 @@ pub(super) fn read_trajectories_v1(
 /// fork that scored differently would fail the update rather than pass.
 /// Bounded and least-recently-used; entries are immutable once inserted. A
 /// policy that cannot be forked is used directly and never cached, as before.
+/// Converted (`no_state_digest_v1`) and ordinary entries share the bound, so
+/// either kind can evict the other.
 const OPPONENT_CACHE_ENTRIES: usize = 8;
 
 struct CachedOpponentV1 {
     source: ExpandedModelSourceV1,
     policy: Arc<FrozenPlayPolicyV1>,
     identity: ExpandedInferenceIdentityV1,
+    /// For a converted (`no_state_digest_v1`) policy, the per-forward check
+    /// setting it loaded under; a hit must match the current one, as a full
+    /// load would.
+    no_state_digest_check: Option<bool>,
 }
 
 static OPPONENT_CACHE: OnceLock<Mutex<VecDeque<CachedOpponentV1>>> = OnceLock::new();
@@ -333,7 +339,10 @@ pub(super) fn load_opponent_cached_v1(
         let mut entries = cache
             .lock()
             .map_err(|_| "opponent cache poisoned".to_string())?;
-        match entries.iter().position(|entry| &entry.source == source) {
+        let check = no_state_digest_v1::check_enabled_v1();
+        match entries.iter().position(|entry| {
+            &entry.source == source && entry.no_state_digest_check.is_none_or(|kept| kept == check)
+        }) {
             Some(index) => {
                 let entry = entries.remove(index).ok_or("opponent cache index")?;
                 let policy = Arc::clone(&entry.policy);
@@ -364,6 +373,11 @@ pub(super) fn load_opponent_cached_v1(
         ));
     }
     let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
+    // The tag is the check model the loaded policy actually holds, never a
+    // setting sampled apart from its load.
+    let no_state_digest_check = policy
+        .input_contract_v1()
+        .map(|_| policy.no_state_digest_check_v1());
     let behavior = ExpandedSeatBehaviorV1 {
         source: source.clone(),
         identity: identity.clone(),
@@ -386,6 +400,7 @@ pub(super) fn load_opponent_cached_v1(
                 source: source.clone(),
                 policy: Arc::new(policy),
                 identity,
+                no_state_digest_check,
             });
             Ok((
                 LoadedOpponentV1 {

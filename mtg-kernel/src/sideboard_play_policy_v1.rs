@@ -1415,6 +1415,12 @@ impl FrozenPlayPolicyV1 {
         Ok(())
     }
 
+    /// Whether the per-forward check model (`MTG_KERNEL_NO_STATE_DIGEST_CHECK`)
+    /// is kept: the caches tag converted entries with it.
+    pub(crate) fn no_state_digest_check_v1(&self) -> bool {
+        self.no_digest_check.is_some()
+    }
+
     /// The conversion record bound to the installed contract.
     pub(crate) fn input_contract_conversion_v1(
         &self,

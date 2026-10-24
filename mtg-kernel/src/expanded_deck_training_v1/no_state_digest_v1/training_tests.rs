@@ -7,13 +7,18 @@
 //! `native_policy_train_step_v1::no_state_digest_tests`.
 
 use super::*;
+use crate::expanded_deck_training_v1::loaded_source_cache_v1::{
+    bypassed_for_test_v1, matches_for_test_v1,
+};
 use crate::expanded_deck_training_v1::{
-    execute_v1, initialize_any_math_v1, loaded_source_cache_v1, ordered_update_preparation,
+    execute_v1, initialize_any_math_v1, load_expanded_inference_any_math_v1,
+    load_expanded_update_inference_v1, loaded_source_cache_v1, ordered_update_preparation,
     ordinary_checkpoint_schema_v1, publish_json, trajectory_generation_v1, validate_trajectory,
-    write_synthetic_fresh_source_with_parameters_v1, CollectionSamplerV1, ExpandedDeckListV1,
-    ExpandedEpisodeV1, ExpandedLossSelectionV1, ExpandedTrainingCommandV1, ExpandedTrajectoryV1,
-    ExpandedUpdateBackendV1, LineBUpdateOptionsV1, OptimizerMaskV1, UpdateBackwardExecutionV1,
-    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
+    verify_collection_opponent_sources_v1, write_synthetic_fresh_source_with_parameters_v1,
+    CollectionSamplerV1, ExpandedDeckListV1, ExpandedEpisodeV1, ExpandedLossSelectionV1,
+    ExpandedTrainingCommandV1, ExpandedTrajectoryV1, ExpandedUpdateBackendV1, LineBUpdateOptionsV1,
+    OptimizerMaskV1, UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
 };
 use crate::native_expanded_training_run_v1::{
     run_native_expanded_training_v1, ExpandedOpponentAssignmentV1, ExpandedRunIterationV1,
@@ -32,6 +37,19 @@ type SnapshotEditV1 = fn(&mut NativePolicyValueTrainSnapshotV1);
 
 /// One edit of the 1,403-wide conversion artifact's document.
 type ArtifactEditV1 = fn(&mut Value);
+
+/// Runs `body` on a 64 MiB thread. The nested converted and base loaders
+/// keep several policies in each unoptimized debug frame, beyond the default
+/// test thread's stack; release frames are far smaller.
+fn on_large_stack(body: fn()) {
+    let run = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(body)
+        .unwrap();
+    if let Err(payload) = run.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
 
 fn temp_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -241,6 +259,10 @@ fn the_resolver_admits_exactly_the_whole_pairs_and_their_own_conversions() {
 /// and the loaded-source cache never holds the converted source.
 #[test]
 fn conversion_keeps_the_optimizer_and_every_kept_bit() {
+    on_large_stack(conversion_keeps_the_optimizer_and_every_kept_bit_v1);
+}
+
+fn conversion_keeps_the_optimizer_and_every_kept_bit_v1() {
     let root = temp_root("conversion");
     let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let (outputs, converted) = convert(&root, &parent, "conversion");
@@ -293,11 +315,14 @@ fn conversion_keeps_the_optimizer_and_every_kept_bit() {
         hex(&after.state_sha256_v1().unwrap())
     );
     assert_ne!(identity.state_sha256, hex(&base.state_sha256_v1().unwrap()));
-    // Never cached.
+    // Cached under the load's own per-forward check setting.
     let bytes = read_pinned_bytes(&converted.play_import).unwrap();
-    assert!(loaded_source_cache_v1::lookup_v1(&converted, &bytes, None)
-        .unwrap()
-        .is_none());
+    with_check_for_test_v1(false, || {
+        initialize_any_math_v1(&converted).unwrap();
+        assert!(loaded_source_cache_v1::lookup_v1(&converted, &bytes, None)
+            .unwrap()
+            .is_some());
+    });
     // The narrow artifact, edited and republished with its enclosing pins:
     // a kept bit, any tensor's shape (the 1,403-wide state encoder included)
     // and its identity members are all checked.
@@ -436,6 +461,10 @@ fn conversion_keeps_the_optimizer_and_every_kept_bit() {
 /// converted checkpoint.
 #[test]
 fn continuation_admits_only_this_conversion_with_clean_columns() {
+    on_large_stack(continuation_admits_only_this_conversion_with_clean_columns_v1);
+}
+
+fn continuation_admits_only_this_conversion_with_clean_columns_v1() {
     let root = temp_root("continuation");
     let parent = with_trained_checkpoint(&root, &fresh_source(&root));
     let (outputs, converted) = convert(&root, &parent, "conversion-a");
@@ -572,6 +601,10 @@ fn continuation_admits_only_this_conversion_with_clean_columns() {
 /// before loading anything else.
 #[test]
 fn inference_only_bases_keep_the_converted_inference_install() {
+    on_large_stack(inference_only_bases_keep_the_converted_inference_install_v1);
+}
+
+fn inference_only_bases_keep_the_converted_inference_install_v1() {
     let root = temp_root("inference-only");
     let fixture =
         crate::expanded_deck_training_v1::fresh_registry_transfer_source::tests::fixture();
@@ -593,6 +626,365 @@ fn inference_only_bases_keep_the_converted_inference_install() {
         "this no-state-digest source's base is inference-only and does not train"
     );
     drop(fixture);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A published continuation of `converted`: moved kept parameters, moments
+/// and step, under its contract member.
+fn with_continuation(root: &Path, converted: &ExpandedModelSourceV1) -> ExpandedModelSourceV1 {
+    let (policy, state) = initialize_any_math_v1(converted).unwrap();
+    let mut trained = state.snapshot_v1().unwrap();
+    trained.adam_step += 1;
+    tensor_mut(&mut trained.parameters, STATE_ENCODER_WEIGHT)[9] += 0.125;
+    tensor_mut(&mut trained.first_moments, STATE_ENCODER_WEIGHT)[400] = -3.0e-4;
+    let record = policy_contract_record_v1(&policy).unwrap();
+    let directory = root.join("continuation");
+    fs::create_dir_all(&directory).unwrap();
+    ExpandedModelSourceV1 {
+        checkpoint: Some(
+            publish_json(
+                &directory,
+                "checkpoint.json",
+                &checkpoint_of(&policy, &trained, record),
+            )
+            .unwrap(),
+        ),
+        ..converted.clone()
+    }
+}
+
+/// Two loads agree exactly: state, model, contract, conversion, check model
+/// and receipt.
+fn assert_same_converted_load(
+    actual: &(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1),
+    expected: &(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1),
+    source: &ExpandedModelSourceV1,
+) {
+    let ((policy, state), (expected_policy, expected_state)) = (actual, expected);
+    assert_eq!(
+        state.snapshot_v1().unwrap(),
+        expected_state.snapshot_v1().unwrap()
+    );
+    assert_eq!(state.training_math_v1(), expected_state.training_math_v1());
+    assert_eq!(
+        state.no_state_digest_columns_v1(),
+        expected_state.no_state_digest_columns_v1()
+    );
+    assert_eq!(
+        policy.actual_model_identity_v1(),
+        expected_policy.actual_model_identity_v1()
+    );
+    assert_eq!(policy.identity_v1(), expected_policy.identity_v1());
+    assert_eq!(
+        policy.input_contract_v1(),
+        expected_policy.input_contract_v1()
+    );
+    assert_eq!(
+        policy.input_contract_conversion_v1(),
+        expected_policy.input_contract_conversion_v1()
+    );
+    assert_eq!(
+        policy.no_state_digest_check_v1(),
+        expected_policy.no_state_digest_check_v1()
+    );
+    assert_eq!(
+        super::super::inference_identity_v1(source, policy, state).unwrap(),
+        super::super::inference_identity_v1(source, expected_policy, expected_state).unwrap()
+    );
+    policy.duplicate_loaded_v1().unwrap();
+}
+
+/// The loaded-source cache serves converted run starts and continuations:
+/// a hit equals a full load, binds the update's inputs, matches only the
+/// per-forward check setting it loaded under, and a changed or missing
+/// input fails a hit with the full load's error.
+#[test]
+fn converted_loads_are_served_exactly_by_the_loaded_source_cache() {
+    on_large_stack(converted_loads_are_served_exactly_by_the_loaded_source_cache_v1);
+}
+
+fn converted_loads_are_served_exactly_by_the_loaded_source_cache_v1() {
+    let root = temp_root("loaded-cache");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let (outputs, converted) = convert(&root, &parent, "conversion");
+    let continuation = with_continuation(&root, &converted);
+    let base_descriptor: super::super::ExpandedFreshInitializationSourceV1 =
+        read_pinned(&parent.play_import).unwrap();
+    for check in [false, true] {
+        with_check_for_test_v1(check, || {
+            for source in [&converted, &continuation] {
+                let full = bypassed_for_test_v1(|| initialize_any_math_v1(source)).unwrap();
+                assert_eq!(full.0.no_state_digest_check_v1(), check);
+                let first = initialize_any_math_v1(source).unwrap();
+                let before = matches_for_test_v1();
+                let second = initialize_any_math_v1(source).unwrap();
+                assert_eq!(matches_for_test_v1(), before + 1, "a converted hit");
+                assert_same_converted_load(&first, &full, source);
+                assert_same_converted_load(&second, &full, source);
+            }
+        });
+    }
+    with_check_for_test_v1(false, || {
+        // An entry kept under the check is not served without it.
+        let before = matches_for_test_v1();
+        let (policy, _) = initialize_any_math_v1(&continuation).unwrap();
+        assert!(!policy.no_state_digest_check_v1());
+        assert!(
+            matches_for_test_v1() <= before + 1,
+            "at most the base's own hit"
+        );
+        // The update's input binding, on a hit as on a full load.
+        let load = |learning_rate: f32| {
+            load_expanded_update_inference_v1(&continuation, &[], learning_rate, 0.5)
+        };
+        let full = bypassed_for_test_v1(|| load(0.0003)).unwrap();
+        let before = matches_for_test_v1();
+        assert_eq!(load(0.0003).unwrap(), full);
+        assert_eq!(matches_for_test_v1(), before + 1);
+        let full = bypassed_for_test_v1(|| load(0.0001)).unwrap_err();
+        let before = matches_for_test_v1();
+        assert_eq!(load(0.0001).unwrap_err(), full);
+        assert_eq!(matches_for_test_v1(), before + 1);
+        assert_eq!(full, "checkpoint inputs or optimizer settings differ");
+        // A run start with update inputs loads in full, with its result.
+        let load = || load_expanded_update_inference_v1(&converted, &[], 0.0003, 0.5);
+        assert_eq!(load(), bypassed_for_test_v1(load));
+
+        // Every input of a converted load: a changed or missing file fails a
+        // hit with exactly the full load's error.
+        let files = [
+            (
+                &converted,
+                outputs.converted_checkpoint.clone().unwrap().path,
+            ),
+            (&converted, outputs.conversion.path.clone()),
+            (&continuation, outputs.conversion.path.clone()),
+            (&continuation, parent.play_import.path.clone()),
+            (&continuation, base_descriptor.parameters.path.clone()),
+            (&continuation, base_descriptor.initialization.path.clone()),
+            (&continuation, parent.checkpoint.clone().unwrap().path),
+            (&continuation, continuation.checkpoint.clone().unwrap().path),
+        ];
+        for (source, path) in files {
+            let reference = initialize_any_math_v1(source).unwrap();
+            let original = fs::read(&path).unwrap();
+            let mut changed = original.clone();
+            changed[original.len() / 2] ^= 1;
+            for (label, bytes) in [("changed", Some(changed)), ("missing", None)] {
+                match bytes {
+                    Some(bytes) => fs::write(&path, bytes).unwrap(),
+                    None => fs::remove_file(&path).unwrap(),
+                }
+                let full = bypassed_for_test_v1(|| refusal(source));
+                let before = matches_for_test_v1();
+                let cached = refusal(source);
+                assert_eq!(
+                    matches_for_test_v1(),
+                    before + 1,
+                    "{label} {}",
+                    path.display()
+                );
+                assert_eq!(cached, full, "{label} {}", path.display());
+                fs::write(&path, &original).unwrap();
+            }
+            let before = matches_for_test_v1();
+            let restored = initialize_any_math_v1(source).unwrap();
+            assert_eq!(matches_for_test_v1(), before + 1);
+            assert_same_converted_load(&restored, &reference, source);
+        }
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A converted opponent whose base trains is verified at the collection
+/// boundary and then served by the process opponent cache, like an ordinary
+/// one: a hit equals a full load, matches only its per-forward check
+/// setting, and a changed input fails the boundary check.
+#[test]
+fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache() {
+    on_large_stack(converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1);
+}
+
+fn converted_opponents_are_verified_and_served_exactly_by_the_opponent_cache_v1() {
+    let root = temp_root("opponent-cache");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let (outputs, converted) = convert(&root, &parent, "conversion");
+    let continuation = with_continuation(&root, &converted);
+    for source in [&converted, &continuation] {
+        let episodes = vec![episode("opponent", 2_026_102_401, Some(source.clone()))];
+        assert_eq!(
+            verify_collection_opponent_sources_v1(&episodes).unwrap(),
+            vec![source.clone()]
+        );
+        with_check_for_test_v1(false, || {
+            let (first, _) = ordered_update_preparation::load_opponent_cached_v1(source).unwrap();
+            let (second, hit) =
+                ordered_update_preparation::load_opponent_cached_v1(source).unwrap();
+            assert!(hit);
+            let full =
+                bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(source)).unwrap();
+            for loaded in [&first, &second] {
+                assert_eq!(loaded.behavior.identity, full.1);
+                assert_eq!(
+                    loaded.policy.actual_model_identity_v1(),
+                    full.0.actual_model_identity_v1()
+                );
+                assert_eq!(
+                    loaded.policy.input_contract_v1(),
+                    full.0.input_contract_v1()
+                );
+                assert_eq!(
+                    loaded.policy.input_contract_conversion_v1(),
+                    full.0.input_contract_conversion_v1()
+                );
+                assert!(!loaded.policy.no_state_digest_check_v1());
+            }
+        });
+        with_check_for_test_v1(true, || {
+            let (loaded, hit) =
+                ordered_update_preparation::load_opponent_cached_v1(source).unwrap();
+            assert!(
+                !hit,
+                "an entry kept without the check is not served with it"
+            );
+            assert!(loaded.policy.no_state_digest_check_v1());
+        });
+    }
+    // A changed input fails the boundary check, as it fails a full load.
+    let episodes = vec![episode("opponent", 2_026_102_401, Some(converted.clone()))];
+    for path in [
+        outputs.converted_checkpoint.clone().unwrap().path,
+        outputs.conversion.path.clone(),
+        parent.checkpoint.clone().unwrap().path,
+    ] {
+        let original = fs::read(&path).unwrap();
+        let mut changed = original.clone();
+        changed[original.len() / 2] ^= 1;
+        fs::write(&path, changed).unwrap();
+        assert!(verify_collection_opponent_sources_v1(&episodes).is_err());
+        assert!(bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(&converted)).is_err());
+        fs::write(&path, &original).unwrap();
+    }
+    assert_eq!(
+        verify_collection_opponent_sources_v1(&episodes).unwrap(),
+        vec![converted.clone()]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A converted source over a phase-1 archive-distillation base checkpoint
+/// (whose full load reads its named parent) is never served by either
+/// cache: its run start and its continuation load in full every time, the
+/// collection boundary leaves it to the full loader, and a corrupted or
+/// deleted parent is refused exactly as a full load refuses it.
+#[test]
+fn archive_distillation_bases_always_load_in_full() {
+    on_large_stack(archive_distillation_bases_always_load_in_full_v1);
+}
+
+fn archive_distillation_bases_always_load_in_full_v1() {
+    use crate::expanded_deck_training_v1::archive_distillation_v1::{
+        ArchiveDistillationArmV1, ArchiveDistillationProvenanceV1, PHASE1_LOSS_IDENTITY_V1,
+    };
+    let root = temp_root("archive-base");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let parent_pin = parent.checkpoint.clone().unwrap();
+    let parent_saved: ExpandedCheckpointV1 = read_pinned(&parent_pin).unwrap();
+    // A phase-1 checkpoint: the parent's optimizer state, moved parameters.
+    let (policy, state) = initialize_any_math_v1(&parent).unwrap();
+    let mut snapshot = state.snapshot_v1().unwrap();
+    tensor_mut(&mut snapshot.parameters, "value_head.2.bias")[0] += 0.0625;
+    let mut phase1 = checkpoint_of(&policy, &snapshot, None);
+    phase1.loss_identity = PHASE1_LOSS_IDENTITY_V1.into();
+    phase1.gamma_bits = None;
+    phase1.gae_lambda_bits = None;
+    phase1.entropy_coefficient_bits = None;
+    phase1.learning_rate_bits = 1e-4_f32.to_bits();
+    phase1.value_coefficient_bits = 0.0_f32.to_bits();
+    let pin = |name: &str, fill: char| PinnedFileV1 {
+        path: root.join(name),
+        sha256: fill.to_string().repeat(64),
+    };
+    phase1.archive_distillation = Some(ArchiveDistillationProvenanceV1 {
+        method: "spy-archive-distillation-phase1-v1".into(),
+        lineage: "r1".into(),
+        arm: ArchiveDistillationArmV1::Uniform,
+        parent: parent_pin.clone(),
+        parent_state_sha256: parent_saved.state_sha256.clone(),
+        games: pin("games.jsonl", 'd'),
+        archive_sources: vec![pin("ARCHIVE.jsonl", '5')],
+        bank: pin("bank.json", 'e'),
+        bank_rows_sha256: "f".repeat(64),
+        anchor_sha256: "1".repeat(64),
+        steps: 1,
+        learning_rate_bits: 1e-4_f32.to_bits(),
+        phase1_state_sha256: "2".repeat(64),
+        runtime_commit: "test".into(),
+        cell: None,
+        update_scope: Default::default(),
+        rules_pathway: None,
+    });
+    let directory = root.join("phase1");
+    fs::create_dir_all(&directory).unwrap();
+    let base = ExpandedModelSourceV1 {
+        checkpoint: Some(publish_json(&directory, "checkpoint.json", &phase1).unwrap()),
+        ..parent.clone()
+    };
+    initialize_any_math_v1(&base).unwrap();
+    let (_, converted) = convert(&root, &base, "conversion");
+    let continuation = with_continuation(&root, &converted);
+    let corrupt = |action: &str| {
+        let original = fs::read(&parent_pin.path).unwrap();
+        match action {
+            "changed" => {
+                let mut changed = original.clone();
+                changed[original.len() / 2] ^= 1;
+                fs::write(&parent_pin.path, changed).unwrap();
+            }
+            _ => fs::remove_file(&parent_pin.path).unwrap(),
+        }
+        original
+    };
+    with_check_for_test_v1(false, || {
+        for source in [&converted, &continuation] {
+            let bytes = read_pinned_bytes(&source.play_import).unwrap();
+            let reference = initialize_any_math_v1(source).unwrap();
+            let before = matches_for_test_v1();
+            let again = initialize_any_math_v1(source).unwrap();
+            assert_eq!(matches_for_test_v1(), before, "no cache served it");
+            assert_same_converted_load(&again, &reference, source);
+            assert!(loaded_source_cache_v1::lookup_v1(source, &bytes, None)
+                .unwrap()
+                .is_none());
+            // The collection boundary leaves it to the full loader.
+            let episodes = vec![episode("archive", 2_026_102_501, Some(source.clone()))];
+            let verified = verify_collection_opponent_sources_v1(&episodes).unwrap();
+            assert!(verified.is_empty());
+            let opponents = || super::super::OpponentCacheV1::for_collection(verified.clone());
+            opponents().load(source).unwrap();
+            for action in ["changed", "missing"] {
+                let original = corrupt(action);
+                let full = bypassed_for_test_v1(|| refusal(source));
+                assert_eq!(refusal(source), full, "{action}");
+                let opponent = match opponents().load(source) {
+                    Ok(_) => panic!("{action}: the opponent loaded"),
+                    Err(error) => error,
+                };
+                let full_opponent =
+                    match bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(source)) {
+                        Ok(_) => panic!("{action}: the full opponent load succeeded"),
+                        Err(error) => error,
+                    };
+                assert_eq!(opponent, full_opponent, "{action}");
+                fs::write(&parent_pin.path, &original).unwrap();
+            }
+            assert_same_converted_load(
+                &initialize_any_math_v1(source).unwrap(),
+                &reference,
+                source,
+            );
+        }
+    });
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -694,15 +1086,7 @@ fn read_value(pin: &Value) -> Value {
 /// the prepared opponent cache re-resolves a hit.
 #[test]
 fn a_converted_run_collects_updates_and_resumes_under_the_per_forward_check() {
-    // Real games, loaders and debug frames on one thread: a large stack, as
-    // the collection and preparation workers have.
-    let run = std::thread::Builder::new()
-        .stack_size(64 << 20)
-        .spawn(converted_run_end_to_end_v1)
-        .unwrap();
-    if let Err(payload) = run.join() {
-        std::panic::resume_unwind(payload);
-    }
+    on_large_stack(converted_run_end_to_end_v1);
 }
 
 fn converted_run_end_to_end_v1() {
