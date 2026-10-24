@@ -664,7 +664,7 @@ fn initialize_v1(
         )?
     };
     if run_start {
-        policy.bind_input_contract_conversion_v1(import.conversion)?;
+        policy.bind_input_contract_conversion_v1(import.conversion.clone())?;
     }
     state
         .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
