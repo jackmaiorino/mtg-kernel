@@ -886,7 +886,7 @@ fn with_phase1_checkpoint(root: &Path, parent: &ExpandedModelSourceV1) -> Expand
     let parent_pin = parent.checkpoint.clone().unwrap();
     let parent_saved: ExpandedCheckpointV1 = read_pinned(&parent_pin).unwrap();
     // A phase-1 checkpoint: the parent's optimizer state, moved parameters.
-    let (policy, state) = initialize_any_math_v1(&parent).unwrap();
+    let (policy, state) = initialize_any_math_v1(parent).unwrap();
     let mut snapshot = state.snapshot_v1().unwrap();
     tensor_mut(&mut snapshot.parameters, "value_head.2.bias")[0] += 0.0625;
     let mut phase1 = checkpoint_of(&policy, &snapshot, None);
