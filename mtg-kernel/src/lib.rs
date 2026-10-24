@@ -78,9 +78,9 @@ pub fn purge_delay_ms_v1() -> i64 {
 mod allocator_tests {
     #[test]
     fn retain_freed_memory_sets_the_purge_delay_option() {
-        // Option 15 is the purge delay: its built-in default is 10 ms.
+        // Option 15 is the purge delay: its built-in default is 1000 ms.
         assert!(std::env::var_os("MIMALLOC_PURGE_DELAY").is_none());
-        assert_eq!(super::purge_delay_ms_v1(), 10);
+        assert_eq!(super::purge_delay_ms_v1(), 1000);
         super::retain_freed_memory_v1();
         assert_eq!(super::purge_delay_ms_v1(), -1);
     }
