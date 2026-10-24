@@ -189,6 +189,10 @@ required-features = ["limited-fdn-fixtures"]
 name = "standard_integration"
 required-features = ["standard-magezero-fixtures"]
 
+[[test]]
+name = "retain_freed_memory"
+harness = false
+
 [[bin]]
 name = "kernel_limited_prepared_env_v5"
 path = "src/bin/kernel_limited_prepared_env_v5.rs"
