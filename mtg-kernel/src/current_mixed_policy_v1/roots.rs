@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 
 #[path = "attack_trigger_printing.rs"]
 mod attack_trigger_printing;
+#[path = "ward_discount_creature_printing.rs"]
+mod ward_discount_creature_printing;
 
 #[path = "bloodwitch_printing.rs"]
 mod bloodwitch_printing;
@@ -429,6 +431,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
 pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
     CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
         simple_trigger_printing::handles(d.name)
+            || ward_discount_creature_printing::handles(d.name)
             || attack_trigger_printing::handles(d.name)
             || observer_trigger_printing::handles(d.name)
             || triggered_enchantment_printing::handles(d.name)
@@ -565,6 +568,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let simple_trigger = simple_trigger_printing::printing(id, d)?;
     let observer_trigger = observer_trigger_printing::printing(id, d)?;
     let attack_trigger = attack_trigger_printing::printing(id, d)?;
+    let ward_discount_creature = ward_discount_creature_printing::printing(id, d)?;
     let ordinary_equipment = ordinary_equipment_printing::printing(id, d)?;
     let ordinary_aura = ordinary_aura_printing::printing(id, d)?;
     let goldvein = goldvein_printing(id, d)?;
@@ -728,7 +732,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || evolving.is_some()
             || surveil_one.is_some()
             || ordinary_equipment.is_some())
-        && d.ward_cost.is_none()
+        && (d.ward_cost.is_none() || ward_discount_creature.is_some())
         && d.alt_cost.is_none()
         && (d.mode2.is_none() || (ordinary_removal.is_some() && d.name == "Abrade"))
         && d.mode3.is_none()
@@ -745,6 +749,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && (d.controlled_counter_keyword.is_none() || paladin.is_some())
         && d.game_outcome_protection_v1.is_none()
         && (d.generic_cost_reduction.is_none()
+            || ward_discount_creature.is_some()
             || cost_reduced_spell.is_some()
             || luminous.is_some())
         && !d.spell_cannot_be_countered
@@ -798,6 +803,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || surveil_many.is_some()
             || threshold_loot.is_some()
             || attack_trigger.is_some()
+            || ward_discount_creature.is_some()
             || observer_trigger.is_some()))
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -838,6 +844,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = attack_trigger {
+        return Ok(printing);
+    }
+    if let Some(printing) = ward_discount_creature {
         return Ok(printing);
     }
     if let Some(printing) = ordinary_equipment {

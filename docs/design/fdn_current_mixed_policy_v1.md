@@ -180,3 +180,29 @@ identity. These newer source additions are unrun and do not change the observed
 records exact current sources, live jobs, retained results and remaining work.
 Issue110 remains open through full gameplay/consumer/model coverage, fair
 search, draft/decks, DraftZero and actual default-branch acceptance.
+
+October25 affected-check update: source12a8f3199 passed all seven native
+attack-trigger cases, with the canonical host-slot supervisor exiting0.
+Its source archive, logs and binary are hashed and retained on D and E under
+`fdn110-attack-20261025`; binary SHA256 is
+`d50cf2d01fbc952f7fbab26c8941d560c50db4f393a42a74988e219713996dd9`.
+Published ef6af606 CI40193776118 observed88 full-pool gaps per seat:
+63 missing numeric printing roots and25 owning refusals. This count does not
+include subsequent local meanings. The Archmage fixture now answers genuine
+two-trigger ordering before casting responses. The original combined Liliana
+both-seat/all-three-root case remains registered under its original 1800-second
+bound. Its ef6af606 timeout remains a failure; splitting the scenes would change
+the combined budget and does not qualify that original case.
+
+New source supplies exact Cackling Prowler, Tolarian Terror, Sire of Seven Deaths
+and Ghalta meanings, validating printed ward costs, generic reductions,
+characteristics and Prowler's full morbid program. Mandatory permanent
+supplements and producer identity include these roots. Paid both-seat tests
+retain countered casts, ward pay/decline, original-source departure, finalized
+discounts, graveyard/control exclusions, source-bound counters and native/model
+restore/replay. These new tests are unrun until a recorded native result.
+
+The transferred Haley attempt003 at exact18265557f passed Micromancer,
+Archmage and library-search checks with supervisor exit0. All original attempt
+records remain retained. This is affected correctness evidence, not full-pool
+acceptance. The current chat owns the transferred work by explicit user choice.
