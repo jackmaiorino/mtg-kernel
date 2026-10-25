@@ -241,3 +241,11 @@ response window after full payment, and two ordered draws. Authored both-seat
 cases use real land/creature discards, countering without cost refund, exact
 drawn cards, unpayable-cast omission, empty-library natural loss and replay.
 All three new cases are unrun. No source addition changes accepted coverage.
+
+Current f442 CI's full286 audit observes76 gaps per seat:51 missing meanings
+and25 owning refusals. The ward refusal test failed because its copy helper
+cleared the real ward and generic-reduction fields before checking the pristine
+copy. The helper now preserves those fields and the mandatory additional cost;
+other new refusal cases also check that their pristine copies are accepted
+before mutating one field. Production guards and the original failure remain
+unchanged. This fixture repair is source-only until its test executes.

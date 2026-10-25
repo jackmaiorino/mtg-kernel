@@ -1228,8 +1228,8 @@ mod paid {
             name: d.name,
             capability: d.capability,
             cost: d.cost,
-            generic_cost_reduction: None,
-            ward_cost: None,
+            generic_cost_reduction: d.generic_cost_reduction,
+            ward_cost: d.ward_cost,
             spell_cannot_be_countered: d.spell_cannot_be_countered,
             records_mana_spent: d.records_mana_spent,
             equipment: None,
@@ -1252,7 +1252,7 @@ mod paid {
             mana_ability: d.mana_ability,
             alt_cost: None,
             kicker_cost: None,
-            additional_cost: None,
+            additional_cost: d.additional_cost,
             flashback: None,
             activated_abilities: d.activated_abilities,
             plot_cost: None,
@@ -1398,6 +1398,10 @@ mod paid {
                 roots::registered_permanent_printing(id).unwrap(),
                 Some(original)
             );
+            assert_eq!(
+                roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                roots::baseline(id).unwrap()
+            );
             for field in 0..8 {
                 let mut d = ordinary_recipe(id);
                 let mut a = d.activated_abilities[0];
@@ -1429,6 +1433,10 @@ mod paid {
             assert_eq!(
                 roots::registered_permanent_printing(id).unwrap(),
                 Some(original)
+            );
+            assert_eq!(
+                roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                roots::baseline(id).unwrap()
             );
             for field in 0..10 {
                 let mut d = ordinary_recipe(id);
@@ -1462,6 +1470,10 @@ mod paid {
             roots::registered_spell_printing(id).unwrap(),
             Some(roots::baseline(id).unwrap())
         );
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
         for field in 0..6 {
             let mut d = ordinary_recipe(id);
             match field {
@@ -1489,6 +1501,10 @@ mod paid {
         assert_eq!(
             roots::registered_spell_printing(id).unwrap(),
             Some(roots::baseline(id).unwrap())
+        );
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
         );
         for field in 0..6 {
             let mut d = ordinary_recipe(id);
