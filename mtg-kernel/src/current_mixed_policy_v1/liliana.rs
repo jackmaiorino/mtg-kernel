@@ -22,13 +22,24 @@ pub struct LilianaSnapshot {
 #[derive(Clone)]
 pub struct LilianaDecision {
     backend: LilianaDecisionV73,
-    packet: Packet,
+    packet: Arc<Packet>,
+    issued_packet: Arc<Packet>,
     owner: Arc<()>,
     generation: u64,
 }
 impl LilianaDecision {
     pub fn packet(&self) -> &Packet {
         &self.packet
+    }
+    fn validate_issued_packet(&self) -> Result<()> {
+        // Both references originate at the sole private constructor below.
+        // Packet has no interior mutability and callers receive only &Packet.
+        // Keeping the second strong reference also makes Arc::make_mut detach
+        // any altered test packet, including an otherwise identical clone.
+        if !Arc::ptr_eq(&self.packet, &self.issued_packet) {
+            return Err(Error::StaleBinding);
+        }
+        Ok(())
     }
 }
 // The raw artifact path remains fully checked, including nested hashes.
@@ -131,9 +142,7 @@ impl LilianaSession {
         self.inner
             .validate_decision_v73(&decision.backend)
             .map_err(|_| Error::StaleBinding)?;
-        if packet_from_current(&decision.backend)? != decision.packet {
-            return Err(Error::StaleBinding);
-        }
+        decision.validate_issued_packet()?;
         let inner = self
             .inner
             .sampled_clone_v73(&decision.backend, seed)
@@ -186,9 +195,10 @@ impl LilianaSession {
         if backend.expected() != expected {
             return Err(Error::StaleBinding);
         }
-        let packet = packet_from_current(&backend)?;
+        let packet = Arc::new(packet_from_current(&backend)?);
         Ok(LilianaDecision {
             backend,
+            issued_packet: packet.clone(),
             packet,
             owner: self.owner.clone(),
             generation: self.generation,
@@ -211,12 +221,12 @@ impl LilianaSession {
         self.inner.step_with_current_decision_check(
             &decision.backend,
             selected_index,
-            |current| {
-                if packet_from_current(current)? != decision.packet {
-                    return Err(Error::StaleBinding);
-                }
-                Ok(())
-            },
+            // The backend first checks the complete current native binding,
+            // owner, revision and action order. The immutable packet was
+            // encoded from that same sealed backend at issuance. Authenticate
+            // its private allocation instead of serializing and encoding the
+            // entire unchanged projection again on every apply.
+            |_| decision.validate_issued_packet(),
             |_| Error::StaleBinding,
             |error| Error::Projection(error.to_string()),
         )

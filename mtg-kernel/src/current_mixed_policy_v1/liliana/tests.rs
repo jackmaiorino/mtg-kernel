@@ -324,14 +324,26 @@ fn paid_numeric_foreign_forged_packet_and_action_refusals_leave_native_unchanged
         assert!(b.apply(&d, 0).is_err());
         assert!(a.restore(&b.snapshot()).is_err());
         let mut erased = d.clone();
-        erased.packet.actions.clear();
+        Arc::make_mut(&mut erased.packet).actions.clear();
         assert!(a.apply(&erased, 0).is_err());
         let mut changed = d.clone();
-        changed.packet.state = crate::current_mixed_policy_v1::NumericTree::encode(
-            &serde_json::json!({"replacement":"forged"}),
-        )
-        .unwrap();
+        Arc::make_mut(&mut changed.packet).state =
+            crate::current_mixed_policy_v1::NumericTree::encode(
+                &serde_json::json!({"replacement":"forged"}),
+            )
+            .unwrap();
         assert!(a.apply(&changed, 0).is_err());
+        assert!(a.sampled_clone(&changed, 7).is_err());
+        // Equal numeric bytes from a substituted allocation are insufficient
+        // authority too. A genuine decision clone shares its issued packet.
+        let mut replaced = d.clone();
+        replaced.packet = Arc::new(d.packet().clone());
+        assert_eq!(replaced.packet(), d.packet());
+        assert!(a.apply(&replaced, 0).is_err());
+        assert!(a.sampled_clone(&replaced, 7).is_err());
+        let cloned = d.clone();
+        assert!(Arc::ptr_eq(&cloned.packet, &cloned.issued_packet));
+        assert!(cloned.validate_issued_packet().is_ok());
         let mut forged = d.backend.candidates_v73().clone();
         forged.observation.liliana.activations.clear();
         forged.observation.liliana.authorized_printings.clear();
