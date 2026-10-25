@@ -42,7 +42,7 @@ fn paid_micromancer_filtered_revealed_hand_optional_counter_departure_and_restor
         let q = p.opponent();
         let (mut s, source, counter, removal) = scene(p, "Micromancer", 40);
         let instant = put(&mut s, p, "Lightning Bolt", Zone::Library);
-        let sorcery = put(&mut s, p, "Stab", Zone::Library);
+        let sorcery = put(&mut s, p, "Boltwave", Zone::Library);
         put(&mut s, p, "Think Twice", Zone::Library);
         put(&mut s, p, "Healer's Hawk", Zone::Library);
         let (mut own, mut native) = sessions(s);

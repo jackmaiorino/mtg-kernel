@@ -194,7 +194,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             {"index":1,"ordered_instructions":[select,{"operation":"RevealSelectedCardIfAny"},{"operation":"ShuffleOwnLibrary","required_even_when_no_card_found":true},{"operation":"PutSelectedCardOnTopAfterShuffleIfAny","top_identity_known_to_both_players":true}]}]}])
     } else if micromancer {
         json!([{"operation":"ChooseWhetherToSearch","chooser":"CapturedResolutionController","at":"TriggerResolution","options":[
-            {"index":0,"ordered_instructions":[select,{"operation":"RevealSelectedCardIfAny"},{"operation":"MoveSelectedCardToOwnersHandIfAny","reveal":true},{"operation":"ShuffleOwnLibrary","required_even_when_no_card_found":true}]},
+            {"index":0,"ordered_instructions":[select,{"operation":"MoveSelectedCardToOwnersHandIfAny","reveal":false},{"operation":"RevealSelectedHandCardToBothPlayersIfAny","only_if_selected_object_successfully_ended_in_owners_hand":true},{"operation":"ShuffleOwnLibrary","required_even_when_no_card_found":true}]},
             {"index":1,"ordered_instructions":[],"searches":false,"shuffles":false,"preserves_library_order_knowledge_and_randomness":true}]}])
     } else {
         let mut instructions = vec![
