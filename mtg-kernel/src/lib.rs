@@ -88,6 +88,64 @@ pub fn purge_delay_ms_v1() -> std::ffi::c_long {
     unsafe { mi_option_get(MI_OPTION_PURGE_DELAY_V1) }
 }
 
+/// Opts this process out of Windows power throttling (EcoQoS): execution
+/// speed controlled and off, so the scheduler may run its threads on any core
+/// its affinity allows. Started through a host reservation, compute processes
+/// are otherwise throttled at normal priority too, and on a hybrid CPU Windows
+/// keeps them on the efficiency cores (measured 2026-10-25 on an i7-13700K:
+/// panel requests 2.4x and 8 training runs 1.6x faster opted out, with every
+/// match hash and per-update state hash identical). A scheduling hint: it
+/// changes no priority or affinity, and a run that does a fixed amount of work
+/// gives the same results. Work bounded by time instead (the census's
+/// CPU-second search profile, the searched-target packet timeout) is
+/// timing-dependent, as it is under host load, so faster cores can fit more
+/// into it; timing fields in receipts differ as they always do. The setting is
+/// not inherited by child processes. Returns whether the system accepted it;
+/// elsewhere than Windows it does nothing.
+pub fn opt_out_of_power_throttling_v1() -> bool {
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct ProcessPowerThrottlingStateV1 {
+            version: u32,
+            control_mask: u32,
+            state_mask: u32,
+        }
+        const PROCESS_POWER_THROTTLING_INFORMATION_CLASS_V1: i32 = 4;
+        const PROCESS_POWER_THROTTLING_CURRENT_VERSION_V1: u32 = 1;
+        const PROCESS_POWER_THROTTLING_EXECUTION_SPEED_V1: u32 = 0x1;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn SetProcessInformation(
+                process: *mut std::ffi::c_void,
+                class: i32,
+                information: *const std::ffi::c_void,
+                size: u32,
+            ) -> i32;
+        }
+        let state = ProcessPowerThrottlingStateV1 {
+            version: PROCESS_POWER_THROTTLING_CURRENT_VERSION_V1,
+            control_mask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED_V1,
+            state_mask: 0,
+        };
+        // SAFETY: the pseudo handle of this process and a correctly sized,
+        // live `PROCESS_POWER_THROTTLING_STATE`; the call keeps no pointer.
+        unsafe {
+            SetProcessInformation(
+                GetCurrentProcess(),
+                PROCESS_POWER_THROTTLING_INFORMATION_CLASS_V1,
+                (&raw const state).cast(),
+                std::mem::size_of::<ProcessPowerThrottlingStateV1>() as u32,
+            ) != 0
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
