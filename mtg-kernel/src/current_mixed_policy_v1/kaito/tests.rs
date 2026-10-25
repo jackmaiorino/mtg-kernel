@@ -22,6 +22,7 @@ mod library_search;
 mod lookout;
 mod luminous;
 mod lunar_insight;
+mod micromancer;
 mod observer_triggers;
 mod ordinary_auras;
 mod ordinary_batch_spells;

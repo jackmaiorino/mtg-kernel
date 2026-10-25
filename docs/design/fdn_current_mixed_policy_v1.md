@@ -39,6 +39,17 @@ and paid fixture errors, with CI run `40193776118` pending. Neither that repair
 nor these five source supplements establishes a new full-pool or default-branch
 acceptance. Research execution and current compute reservations remain separate.
 
+The next source supplement extends the existing exact library-search module to
+Micromancer. Its native choice order is search at index zero, decline at one.
+The search may fail to find even with matches, admits only front-face instant or
+sorcery cards with printed mana value one, reveals the selected card into its
+owner's hand, and shuffles on an accepted search. Decline changes neither library
+order nor knowledge nor RNG. Two authored tests cover both eligible card types,
+exclusion of creatures and other mana values, fail to find, decline, no matches,
+empty library, paid cast countering, source departure, revealed hand knowledge,
+owning/native snapshots, model forwards and repeated full-state replay. They
+remain uncompiled and unexecuted; no further coverage reduction is claimed.
+
 Separate V50, V51 and V52 owning entries consume genuine typed observations,
 original ordered ActionSemantic values and complete private family bindings.
 Apply authenticates the original owner, generation and current binding, then

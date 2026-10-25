@@ -9,7 +9,7 @@ use crate::{
 };
 use serde_json::{json, Value};
 pub(super) fn handles_permanent(name: &str) -> bool {
-    matches!(name, "Campus Guide" | "Rune-Scarred Demon")
+    matches!(name, "Campus Guide" | "Rune-Scarred Demon" | "Micromancer")
 }
 pub(super) fn handles_spell(name: &str) -> bool {
     name == "Grim Tutor"
@@ -19,17 +19,22 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         return Ok(None);
     }
     let campus = d.name == "Campus Guide";
+    let micromancer = d.name == "Micromancer";
     let spell = handles_spell(d.name);
     let cost = Cost {
         generic: if campus {
             2
         } else if spell {
             1
+        } else if micromancer {
+            3
         } else {
             5
         },
         pips: if campus {
             &[]
+        } else if micromancer {
+            &[Pip::Colored(ManaColor::U)]
         } else {
             &[Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::B)]
         },
@@ -46,6 +51,8 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         &[Subtype::Golem][..]
     } else if spell {
         &[][..]
+    } else if micromancer {
+        &[Subtype::Human, Subtype::Wizard][..]
     } else {
         &[Subtype::Demon][..]
     };
@@ -53,6 +60,8 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         Some(2)
     } else if spell {
         None
+    } else if micromancer {
+        Some(3)
     } else {
         Some(6)
     };
@@ -60,10 +69,12 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         Some(1)
     } else if spell {
         None
+    } else if micromancer {
+        Some(3)
     } else {
         Some(6)
     };
-    let keywords = if !campus && !spell {
+    let keywords = if !campus && !spell && !micromancer {
         Keywords::FLYING
     } else {
         Keywords::NONE
@@ -78,13 +89,22 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     } else {
         EffectOp::SearchLibraryToHand {
             player: PlayerRef::Controller,
-            filter: LibraryCardFilter::AnyCard,
+            filter: if micromancer {
+                LibraryCardFilter::InstantOrSorceryManaValue(1)
+            } else {
+                LibraryCardFilter::AnyCard
+            },
         }
     };
     let program = if campus {
         EffectOp::Choice {
             controller: PlayerRef::Controller,
             options: vec![EffectOp::Sequence(vec![]), search],
+        }
+    } else if micromancer {
+        EffectOp::Choice {
+            controller: PlayerRef::Controller,
+            options: vec![search, EffectOp::Sequence(vec![])],
         }
     } else if spell {
         EffectOp::Sequence(vec![
@@ -103,7 +123,14 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.types != types
         || d.subtypes != subtypes
         || !d.supertypes.is_empty()
-        || d.colors != if campus { &[][..] } else { &[ManaColor::B][..] }
+        || d.colors
+            != if campus {
+                &[][..]
+            } else if micromancer {
+                &[ManaColor::U][..]
+            } else {
+                &[ManaColor::B][..]
+            }
         || d.power != power
         || d.toughness != toughness
         || d.keywords != keywords
@@ -157,14 +184,18 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     let select = json!({"operation":"SearchOwnLibrary","player":"CapturedResolutionController","selection_is_not_targeting":true,
         "chooser":"CapturedResolutionController","choice_visibility":"ChooserOnly","scope":"EntireCurrentOwnLibrary",
-        "filter":if campus{"BasicLandCard"}else{"AnyCard"},"maximum":1,
-        "minimum":if campus{"ZeroEvenWhenMatchesExist"}else{"OneIfLibraryNonemptyOtherwiseZero"},
+        "filter":if campus{json!("BasicLandCard")}else if micromancer{json!({"any_front_face_type":["Instant","Sorcery"],"printed_mana_value_equals":1})}else{json!("AnyCard")},"maximum":1,
+        "minimum":if campus || micromancer{"ZeroEvenWhenMatchesExist"}else{"OneIfLibraryNonemptyOtherwiseZero"},
         "binds_exact_live_selected_incarnation":true,"may_not_select_another_players_library":true,
-        "selected_card_revealed":campus,"normal_zone_change_replacements_apply":true});
+        "selected_card_revealed":campus || micromancer,"normal_zone_change_replacements_apply":true});
     let resolution = if campus {
         json!([{"operation":"ChooseWhetherToSearch","chooser":"CapturedResolutionController","at":"TriggerResolution","options":[
             {"index":0,"ordered_instructions":[],"searches":false,"shuffles":false,"preserves_library_order_knowledge_and_randomness":true},
             {"index":1,"ordered_instructions":[select,{"operation":"RevealSelectedCardIfAny"},{"operation":"ShuffleOwnLibrary","required_even_when_no_card_found":true},{"operation":"PutSelectedCardOnTopAfterShuffleIfAny","top_identity_known_to_both_players":true}]}]}])
+    } else if micromancer {
+        json!([{"operation":"ChooseWhetherToSearch","chooser":"CapturedResolutionController","at":"TriggerResolution","options":[
+            {"index":0,"ordered_instructions":[select,{"operation":"RevealSelectedCardIfAny"},{"operation":"MoveSelectedCardToOwnersHandIfAny","reveal":true},{"operation":"ShuffleOwnLibrary","required_even_when_no_card_found":true}]},
+            {"index":1,"ordered_instructions":[],"searches":false,"shuffles":false,"preserves_library_order_knowledge_and_randomness":true}]}])
     } else {
         let mut instructions = vec![
             select,
