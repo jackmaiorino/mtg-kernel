@@ -24,8 +24,30 @@
 //! own ends. Once the queue is empty, a lane with no job left is masked (its
 //! state kept by a blend) while at least three jobs still run; the last one or
 //! two jobs finish through `sha2::compress512` from their chaining states.
+//!
+//! Shared-schedule groups: the six state messages of one decision differ only
+//! in the four counter bytes, and they resume from one checkpoint at one block
+//! index. Every other block (padding included, since the lengths match) is the
+//! same 128 bytes in all six, and the message schedule (byte swap, W
+//! expansion, `K + W`) depends only on the block. [`sha512_jobs_grouped_v1`]
+//! computes it once per block (four consecutive blocks per AVX2 schedule
+//! pass) and runs only the 80 rounds per stream: four streams in the AVX2
+//! lanes and the last two in scalar registers inside the same round loop, so
+//! their integer work issues beside the vector work. Blocks holding a counter
+//! byte go through `sha2::compress512` per stream.
+//!
+//! Measured on six counters over a 30,000-byte body (i7-13700K P-core,
+//! `shared_schedule_throughput_probe_v1`), in ns per block per stream: `sha2`
+//! 139, the multi-buffer path 95.5, shared schedule 62.3 with the scalar
+//! streams fused into the vector loop (1.53x), 71.6 with them in a half-empty
+//! AVX2 group (1.33x), 73.4 in a separate scalar loop (1.30x). With both
+//! hyperthreads of a core busy the fused tail is still 1.44x to 1.50x.
 
 use sha2::{Digest, Sha512};
+use std::ops::Range;
+
+/// Most jobs one shared-schedule group may hold (two AVX2 lane groups).
+pub(crate) const SHARED_GROUP_MAX_V1: usize = 8;
 
 /// One message `prefix || counter.to_le_bytes() || body`, optionally resumed
 /// from `start_state` after its first `start_block` blocks.
@@ -159,16 +181,6 @@ pub(crate) enum Sha512ModeV1 {
     Avx2,
 }
 
-/// Digests every job into `out` (same order) with the fastest mode the CPU
-/// supports.
-pub(crate) fn sha512_jobs_v1(
-    jobs: &[Sha512JobV1<'_>],
-    out: &mut [[u8; 64]],
-    checkpoints: Option<&mut Sha512CheckpointsV1>,
-) {
-    sha512_jobs_with_mode_v1(default_mode_v1(), jobs, out, checkpoints);
-}
-
 /// Digests with an explicit mode (AVX2 modes fall back to scalar without
 /// AVX2).
 pub(crate) fn sha512_jobs_with_mode_v1(
@@ -196,8 +208,142 @@ pub(crate) fn sha512_jobs_with_mode_v1(
     }
 }
 
+/// Digests every job into `out` (same order) with the fastest mode the CPU
+/// supports. Each `groups` range names jobs that may share one message
+/// schedule (see the module notes); ranges must not overlap. A group is taken
+/// by the shared-schedule path only when its jobs have the same prefix bytes,
+/// the same body slice (same address and length, hence the same bytes) and
+/// the same `start_block`, and the CPU has AVX2 and BMI2; anything else, and
+/// every job outside a group, goes through the multi-buffer path
+/// ([`sha512_jobs_with_mode_v1`]). Digests and checkpoints are the same
+/// either way.
+pub(crate) fn sha512_jobs_grouped_v1(
+    jobs: &[Sha512JobV1<'_>],
+    groups: &[Range<usize>],
+    out: &mut [[u8; 64]],
+    checkpoints: Option<&mut Sha512CheckpointsV1>,
+) {
+    sha512_jobs_grouped_tail_v1(
+        default_mode_v1(),
+        SharedTailV1::Fused,
+        jobs,
+        groups,
+        out,
+        checkpoints,
+    );
+}
+
+/// Where a shared-schedule group runs the streams left after its full groups
+/// of four AVX2 lanes. Every tail computes the same digests; production uses
+/// `Fused`, and the others stay for the differential tests and the probe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SharedTailV1 {
+    /// One or two leftover streams in a separate scalar rounds-only loop
+    /// (three in a masked AVX2 group).
+    #[cfg_attr(not(test), allow(dead_code))]
+    Scalar,
+    /// Every leftover stream in a masked AVX2 group.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Vector,
+    /// One or two leftover streams in scalar registers inside the round loop
+    /// of the last full AVX2 group (three in a masked AVX2 group).
+    Fused,
+}
+
+fn sha512_jobs_grouped_tail_v1(
+    mode: Sha512ModeV1,
+    tail: SharedTailV1,
+    jobs: &[Sha512JobV1<'_>],
+    groups: &[Range<usize>],
+    out: &mut [[u8; 64]],
+    mut checkpoints: Option<&mut Sha512CheckpointsV1>,
+) {
+    assert_eq!(jobs.len(), out.len());
+    #[cfg(target_arch = "x86_64")]
+    {
+        if mode != Sha512ModeV1::Scalar && shared_schedule_available_v1() {
+            if let Some(checkpoints) = checkpoints.as_deref_mut() {
+                assert!(checkpoints.every > 0);
+                checkpoints.states.clear();
+                checkpoints.states.resize(jobs.len(), Vec::new());
+            }
+            let mut grouped = vec![false; jobs.len()];
+            for group in groups {
+                let members = &jobs[group.clone()];
+                if !(1..=SHARED_GROUP_MAX_V1).contains(&members.len()) || !shares_body_v1(members) {
+                    continue;
+                }
+                assert!(
+                    grouped[group.clone()].iter().all(|taken| !taken),
+                    "overlapping shared-schedule groups"
+                );
+                grouped[group.clone()].fill(true);
+                // SAFETY: AVX2 and BMI2 support was checked at runtime.
+                unsafe {
+                    x86::sha512_shared_group_avx2_v1(
+                        tail,
+                        members,
+                        group.start,
+                        &mut out[group.clone()],
+                        checkpoints.as_deref_mut(),
+                    )
+                };
+            }
+            let rest: Vec<usize> = (0..jobs.len()).filter(|&index| !grouped[index]).collect();
+            if rest.is_empty() {
+                return;
+            }
+            let rest_jobs: Vec<Sha512JobV1<'_>> = rest.iter().map(|&index| jobs[index]).collect();
+            let mut rest_out = vec![[0u8; 64]; rest.len()];
+            let mut rest_checkpoints =
+                checkpoints
+                    .as_deref()
+                    .map(|checkpoints| Sha512CheckpointsV1 {
+                        every: checkpoints.every,
+                        states: Vec::new(),
+                    });
+            sha512_jobs_with_mode_v1(mode, &rest_jobs, &mut rest_out, rest_checkpoints.as_mut());
+            for (position, &index) in rest.iter().enumerate() {
+                out[index] = rest_out[position];
+            }
+            if let (Some(checkpoints), Some(rest_checkpoints)) =
+                (checkpoints.as_deref_mut(), rest_checkpoints.as_mut())
+            {
+                for (position, &index) in rest.iter().enumerate() {
+                    checkpoints.states[index] =
+                        std::mem::take(&mut rest_checkpoints.states[position]);
+                }
+            }
+            return;
+        }
+    }
+    let _ = (tail, groups);
+    sha512_jobs_with_mode_v1(mode, jobs, out, checkpoints);
+}
+
+/// True when every job's padded blocks equal the first job's outside the
+/// counter bytes: same prefix bytes, same body slice (address and length, so
+/// no byte comparison is needed), same start block. Start states may differ.
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+fn shares_body_v1(jobs: &[Sha512JobV1<'_>]) -> bool {
+    let lead = &jobs[0];
+    jobs[1..].iter().all(|job| {
+        job.prefix == lead.prefix
+            && std::ptr::eq(job.body.as_ptr(), lead.body.as_ptr())
+            && job.body.len() == lead.body.len()
+            && job.start_block == lead.start_block
+    })
+}
+
 fn default_mode_v1() -> Sha512ModeV1 {
     Sha512ModeV1::Avx2
+}
+
+#[cfg(target_arch = "x86_64")]
+fn shared_schedule_available_v1() -> bool {
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| avx2_available_v1() && std::arch::is_x86_feature_detected!("bmi2"))
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -400,7 +546,10 @@ const ROUND_CONSTANTS_V1: [u64; 80] = [
 
 #[cfg(target_arch = "x86_64")]
 mod x86 {
-    use super::{digest_bytes_v1, Sha512CheckpointsV1, Sha512JobV1, ROUND_CONSTANTS_V1};
+    use super::{
+        digest_bytes_v1, Sha512CheckpointsV1, Sha512JobV1, SharedTailV1, ROUND_CONSTANTS_V1,
+        SHARED_GROUP_MAX_V1,
+    };
     use std::arch::x86_64::*;
 
     // Every helper carries the `avx2` target feature itself, so the AVX2
@@ -541,6 +690,287 @@ mod x86 {
         for (slot, value) in state.iter_mut().zip(next) {
             let updated = _mm256_add_epi64(*slot, value);
             *slot = _mm256_blendv_epi8(*slot, updated, active);
+        }
+    }
+
+    /// `K + W` for four blocks at once: lane `j` of `wk[t]` is round `t`'s
+    /// `K[t] + W[t]` for `blocks[j]`. The same vector schedule as `compress`,
+    /// with the lanes holding consecutive blocks of one message instead of
+    /// one block of four messages.
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    unsafe fn shared_schedule(blocks: &[[u8; 128]; LANES], wk: &mut [[u64; LANES]; 80]) {
+        let mut w = [_mm256_setzero_si256(); 16];
+        load_words(blocks, &mut w);
+        for (t, out) in wk.iter_mut().enumerate() {
+            let wt = if t < 16 {
+                w[t]
+            } else {
+                let next = _mm256_add_epi64(
+                    _mm256_add_epi64(small_sigma1(w[(t - 2) & 15]), w[(t - 7) & 15]),
+                    _mm256_add_epi64(small_sigma0(w[(t - 15) & 15]), w[(t - 16) & 15]),
+                );
+                w[t & 15] = next;
+                next
+            };
+            let k = _mm256_set1_epi64x(ROUND_CONSTANTS_V1[t] as i64);
+            _mm256_storeu_si256(out.as_mut_ptr().cast(), _mm256_add_epi64(wt, k));
+        }
+    }
+
+    /// The 80 rounds of one compression of four lanes over one shared block,
+    /// whose `K + W` words are lane `block` of `wk` (broadcast to every lane),
+    /// plus the same rounds for `N` scalar streams in the same loop (their
+    /// integer work can issue beside the vector work). Every lane is
+    /// updated; a lane holding no stream carries junk.
+    #[inline]
+    #[target_feature(enable = "avx2,bmi2")]
+    unsafe fn rounds_shared<const N: usize>(
+        state: &mut [__m256i; 8],
+        scalar: &mut [[u64; 8]; N],
+        wk: &[[u64; LANES]; 80],
+        block: usize,
+    ) {
+        let mut a = state[0];
+        let mut b = state[1];
+        let mut c = state[2];
+        let mut d = state[3];
+        let mut e = state[4];
+        let mut f = state[5];
+        let mut g = state[6];
+        let mut h = state[7];
+        // Maj(a, b, c) = b ^ ((a ^ b) & (b ^ c)), and this round's `b ^ c` is
+        // the previous round's `a ^ b`.
+        let mut bc = _mm256_xor_si256(b, c);
+        let mut v = *scalar;
+        for words in wk {
+            let kw = _mm256_set1_epi64x(words[block] as i64);
+            let ch = _mm256_xor_si256(_mm256_and_si256(e, f), _mm256_andnot_si256(e, g));
+            let t1 = _mm256_add_epi64(_mm256_add_epi64(h, big_sigma1(e)), _mm256_add_epi64(ch, kw));
+            let ab = _mm256_xor_si256(a, b);
+            let maj = _mm256_xor_si256(b, _mm256_and_si256(ab, bc));
+            bc = ab;
+            let t2 = _mm256_add_epi64(big_sigma0(a), maj);
+            h = g;
+            g = f;
+            f = e;
+            e = _mm256_add_epi64(d, t1);
+            d = c;
+            c = b;
+            b = a;
+            a = _mm256_add_epi64(t1, t2);
+            scalar_round(&mut v, words[block]);
+        }
+        let next = [a, b, c, d, e, f, g, h];
+        for (slot, value) in state.iter_mut().zip(next) {
+            *slot = _mm256_add_epi64(*slot, value);
+        }
+        add_scalar_states(scalar, &v);
+    }
+
+    /// One round for each scalar stream's working variables.
+    #[inline]
+    #[target_feature(enable = "bmi2")]
+    unsafe fn scalar_round<const N: usize>(v: &mut [[u64; 8]; N], kw: u64) {
+        for s in v.iter_mut() {
+            let [a, b, c, d, e, f, g, h] = *s;
+            let sigma1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
+            let ch = (e & f) ^ (!e & g);
+            let t1 = h.wrapping_add(sigma1).wrapping_add(ch).wrapping_add(kw);
+            let sigma0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
+            let maj = (a & b) ^ (c & (a ^ b));
+            let t2 = sigma0.wrapping_add(maj);
+            *s = [t1.wrapping_add(t2), a, b, c, d.wrapping_add(t1), e, f, g];
+        }
+    }
+
+    #[inline]
+    fn add_scalar_states<const N: usize>(states: &mut [[u64; 8]; N], v: &[[u64; 8]; N]) {
+        for (state, value) in states.iter_mut().zip(v) {
+            for (word, add) in state.iter_mut().zip(value) {
+                *word = word.wrapping_add(*add);
+            }
+        }
+    }
+
+    /// The 80 rounds over one shared block for `N` scalar streams, advanced
+    /// together so their independent dependency chains overlap. `K + W` is
+    /// lane `block` of `wk`.
+    #[inline]
+    #[target_feature(enable = "bmi2")]
+    unsafe fn rounds_shared_scalar<const N: usize>(
+        states: &mut [[u64; 8]; N],
+        wk: &[[u64; LANES]; 80],
+        block: usize,
+    ) {
+        let mut v = *states;
+        for words in wk {
+            scalar_round(&mut v, words[block]);
+        }
+        add_scalar_states(states, &v);
+    }
+
+    /// One shared-schedule group (see `super::sha512_jobs_grouped_v1`): the
+    /// caller has checked that the jobs share prefix, body and start block,
+    /// so their padded blocks are equal except where the counter lies. Full
+    /// groups of four streams run in AVX2 lanes; per `tail`, one or two
+    /// leftover streams run in the scalar rounds-only loop or a masked lane
+    /// group. Chaining states stay in vectors across blocks and are
+    /// extracted only at checkpoints, counter blocks and the end.
+    #[target_feature(enable = "avx2,bmi2")]
+    pub(super) unsafe fn sha512_shared_group_avx2_v1(
+        tail: SharedTailV1,
+        jobs: &[Sha512JobV1<'_>],
+        first_index: usize,
+        out: &mut [[u8; 64]],
+        mut checkpoints: Option<&mut Sha512CheckpointsV1>,
+    ) {
+        use sha2::digest::generic_array::GenericArray;
+        let count = jobs.len();
+        assert!((1..=SHARED_GROUP_MAX_V1).contains(&count));
+        assert_eq!(out.len(), count);
+        let lead = &jobs[0];
+        let total = lead.block_count();
+        let data_blocks = lead.data_block_count();
+        // Blocks holding a counter byte differ per stream.
+        let counter_blocks = lead.prefix.len() / 128..=(lead.prefix.len() + 3) / 128;
+        let leftover = count % LANES;
+        let vector_groups = match tail {
+            SharedTailV1::Scalar | SharedTailV1::Fused if leftover <= 2 => count / LANES,
+            _ => count.div_ceil(LANES),
+        };
+        let scalar_streams = (vector_groups * LANES).min(count)..count;
+        // Scalar streams ride in the last vector group's round loop.
+        let fused = tail == SharedTailV1::Fused && vector_groups > 0;
+        let plain_groups = vector_groups - usize::from(fused);
+        // Chaining states; slots past `count` are padding lanes.
+        let mut states = [[0u64; 8]; SHARED_GROUP_MAX_V1];
+        for (state, job) in states.iter_mut().zip(jobs) {
+            *state = job.start_state;
+        }
+        let mut vectors = [[_mm256_setzero_si256(); 8]; SHARED_GROUP_MAX_V1 / LANES];
+        // True while `vectors` hold the current states of the vector streams.
+        let mut loaded = false;
+        let checkpoint_due = |blocks_done: usize, every: Option<usize>| {
+            every.is_some_and(|every| {
+                blocks_done.is_multiple_of(every) && blocks_done <= data_blocks
+            })
+        };
+        let every = checkpoints.as_deref().map(|checkpoints| checkpoints.every);
+        let mut blocks = [[0u8; 128]; LANES];
+        let mut wk = [[0u64; LANES]; 80];
+        let mut next = lead.start_block;
+        while next < total {
+            if counter_blocks.contains(&next) {
+                if loaded {
+                    extract_groups(&vectors, vector_groups, &mut states);
+                    loaded = false;
+                }
+                for (state, job) in states.iter_mut().zip(jobs) {
+                    job.block(next, &mut blocks[0]);
+                    sha2::compress512(
+                        state,
+                        std::slice::from_ref(GenericArray::from_slice(&blocks[0])),
+                    );
+                }
+                next += 1;
+                if let Some(checkpoints) = checkpoints.as_deref_mut() {
+                    for (offset, job) in jobs.iter().enumerate() {
+                        checkpoints.record(first_index + offset, job, next, states[offset]);
+                    }
+                }
+                continue;
+            }
+            // Up to four consecutive shared blocks; one schedule pass.
+            let mut run = 0;
+            while run < LANES && next + run < total && !counter_blocks.contains(&(next + run)) {
+                lead.block(next + run, &mut blocks[run]);
+                run += 1;
+            }
+            shared_schedule(&blocks, &mut wk);
+            if !loaded {
+                load_groups(&states, vector_groups, &mut vectors);
+                loaded = true;
+            }
+            for block in 0..run {
+                for vector in vectors.iter_mut().take(plain_groups) {
+                    rounds_shared::<0>(vector, &mut [], &wk, block);
+                }
+                let scalar = &mut states[scalar_streams.clone()];
+                let last = &mut vectors[plain_groups.min(vectors.len() - 1)];
+                match (fused, scalar.len()) {
+                    (false, 0) => {}
+                    (true, 0) => rounds_shared::<0>(last, &mut [], &wk, block),
+                    (true, 1) => rounds_shared::<1>(
+                        last,
+                        scalar.try_into().expect("one scalar stream"),
+                        &wk,
+                        block,
+                    ),
+                    (true, 2) => rounds_shared::<2>(
+                        last,
+                        scalar.try_into().expect("two scalar streams"),
+                        &wk,
+                        block,
+                    ),
+                    (false, 1) => rounds_shared_scalar::<1>(
+                        scalar.try_into().expect("one scalar stream"),
+                        &wk,
+                        block,
+                    ),
+                    (false, 2) => rounds_shared_scalar::<2>(
+                        scalar.try_into().expect("two scalar streams"),
+                        &wk,
+                        block,
+                    ),
+                    _ => unreachable!("at most two scalar streams"),
+                }
+                next += 1;
+                if checkpoint_due(next, every) {
+                    extract_groups(&vectors, vector_groups, &mut states);
+                    if let Some(checkpoints) = checkpoints.as_deref_mut() {
+                        for (offset, job) in jobs.iter().enumerate() {
+                            checkpoints.record(first_index + offset, job, next, states[offset]);
+                        }
+                    }
+                }
+            }
+        }
+        if loaded {
+            extract_groups(&vectors, vector_groups, &mut states);
+        }
+        for (digest, state) in out.iter_mut().zip(&states) {
+            *digest = digest_bytes_v1(state);
+        }
+    }
+
+    /// Copies the first `groups` lane groups' states out of `vectors`.
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    unsafe fn extract_groups(
+        vectors: &[[__m256i; 8]; SHARED_GROUP_MAX_V1 / LANES],
+        groups: usize,
+        states: &mut [[u64; 8]; SHARED_GROUP_MAX_V1],
+    ) {
+        for (group, vector) in vectors.iter().enumerate().take(groups) {
+            let lanes = vector_lane_states(vector);
+            states[group * LANES..group * LANES + LANES].copy_from_slice(&lanes);
+        }
+    }
+
+    /// Loads the first `groups` lane groups' states into `vectors`.
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    unsafe fn load_groups(
+        states: &[[u64; 8]; SHARED_GROUP_MAX_V1],
+        groups: usize,
+        vectors: &mut [[__m256i; 8]; SHARED_GROUP_MAX_V1 / LANES],
+    ) {
+        for (group, vector) in vectors.iter_mut().enumerate().take(groups) {
+            let lanes: &[[u64; 8]; LANES] = states[group * LANES..group * LANES + LANES]
+                .try_into()
+                .expect("four lane states");
+            *vector = load_lane_states(lanes);
         }
     }
 
@@ -815,6 +1245,256 @@ mod tests {
         }
         let abc: [u8; 64] = Sha512::digest(b"abc").into();
         assert_eq!(abc[..4], [0xdd, 0xaf, 0x35, 0xa1]);
+    }
+
+    const TAILS: [SharedTailV1; 3] = [
+        SharedTailV1::Scalar,
+        SharedTailV1::Vector,
+        SharedTailV1::Fused,
+    ];
+
+    /// Hashes `jobs` as one shared-schedule group in every mode and tail and
+    /// checks every digest against the scalar `sha2` path on the same jobs.
+    fn assert_group_matches_scalar(jobs: &[Sha512JobV1<'_>], label: &str) {
+        let mut expected = vec![[0u8; 64]; jobs.len()];
+        sha512_jobs_with_mode_v1(Sha512ModeV1::Scalar, jobs, &mut expected, None);
+        for mode in MODES {
+            for tail in TAILS {
+                let mut actual = vec![[0u8; 64]; jobs.len()];
+                sha512_jobs_grouped_tail_v1(mode, tail, jobs, &[0..jobs.len()], &mut actual, None);
+                assert_eq!(actual, expected, "{mode:?} {tail:?} {label}");
+            }
+        }
+    }
+
+    /// Every body length from 0 through four blocks and beyond (so every
+    /// position of the 0x80 byte and the length field, including messages of
+    /// 111, 112, 127 and 128 bytes), every group size, random counters, and
+    /// prefixes that put the counter in block 0, across blocks 0 and 1, and
+    /// in block 1.
+    #[test]
+    fn shared_groups_match_sha2_on_every_length_boundary() {
+        let mut random = 0x5ca1_ab1e_u64;
+        let body: Vec<u8> = (0..2_048).map(|_| next(&mut random) as u8).collect();
+        let long_prefix: Vec<u8> = (0..200).map(|_| next(&mut random) as u8).collect();
+        let prefixes: [&[u8]; 5] = [
+            b"observation-state",
+            b"legal-action",
+            b"",
+            &long_prefix[..125],
+            &long_prefix,
+        ];
+        let mut lengths: Vec<usize> = (0..=4 * 128 + 64).collect();
+        lengths.extend([1_000, 1_023, 1_024, 1_025, 2_048]);
+        for prefix in prefixes {
+            for &len in &lengths {
+                for size in 1..=SHARED_GROUP_MAX_V1 {
+                    let jobs: Vec<Sha512JobV1<'_>> = (0..size)
+                        .map(|_| Sha512JobV1::new(prefix, next(&mut random) as u32, &body[..len]))
+                        .collect();
+                    assert_group_matches_scalar(
+                        &jobs,
+                        &format!("prefix {} len {len} size {size}", prefix.len()),
+                    );
+                    // The `Sha512` reference for fresh jobs, not only
+                    // compress512.
+                    let mut actual = vec![[0u8; 64]; size];
+                    sha512_jobs_grouped_v1(&jobs, &[0..size], &mut actual, None);
+                    for (job, digest) in jobs.iter().zip(&actual) {
+                        assert_eq!(*digest, sha512_job_scalar_v1(job));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resumes from arbitrary chaining states (one per stream) at every
+    /// data-only block of several lengths, with the tensorizer's namespace.
+    #[test]
+    fn shared_groups_resume_from_arbitrary_states() {
+        let mut random = 0x00de_cade_u64;
+        let body: Vec<u8> = (0..3_000).map(|_| next(&mut random) as u8).collect();
+        for len in [
+            0, 90, 106, 107, 111, 112, 127, 128, 235, 236, 1_000, 2_999, 3_000,
+        ] {
+            let lead = Sha512JobV1::new(b"observation-state", 0, &body[..len]);
+            for start in 0..=lead.data_block_count() {
+                for size in 1..=SHARED_GROUP_MAX_V1 as u32 {
+                    let jobs: Vec<Sha512JobV1<'_>> = (0..size)
+                        .map(|counter| {
+                            // A job at block 0 always starts from the IV
+                            // (the scalar path ignores its start state).
+                            let state: [u64; 8] = if start == 0 {
+                                INITIAL_STATE_V1
+                            } else {
+                                std::array::from_fn(|_| next(&mut random))
+                            };
+                            Sha512JobV1::new(b"observation-state", counter, &body[..len])
+                                .resumed(start, state)
+                        })
+                        .collect();
+                    assert_group_matches_scalar(&jobs, &format!("len {len} start {start}"));
+                }
+            }
+        }
+    }
+
+    /// Checkpoints recorded by the grouped path equal the scalar path's, for
+    /// groups and the ungrouped jobs around them.
+    #[test]
+    fn shared_groups_record_the_same_checkpoints() {
+        let mut random = 0x0b10_c0de_u64;
+        let state_body: Vec<u8> = (0..30_000).map(|_| next(&mut random) as u8).collect();
+        let other_body = state_body[..5_000].to_vec();
+        let action = br#"{"semantic":{"action_kind":"pass"}}"#.repeat(40);
+        for every in [1, 2, 8] {
+            for start in [0, 8, 32] {
+                let mut jobs = Vec::new();
+                let mut groups = Vec::new();
+                for body in [&state_body[..], &other_body[..]] {
+                    groups.push(jobs.len()..jobs.len() + 6);
+                    for counter in 0..6 {
+                        let state: [u64; 8] = std::array::from_fn(|_| next(&mut random));
+                        let job = Sha512JobV1::new(b"observation-state", counter, body);
+                        jobs.push(if start == 0 {
+                            job
+                        } else {
+                            job.resumed(start, state)
+                        });
+                    }
+                    for counter in 0..6 {
+                        jobs.push(Sha512JobV1::new(b"legal-action", counter, &action));
+                    }
+                }
+                // Equal bytes at different addresses: not a shared group, so
+                // these take the general path.
+                groups.push(jobs.len()..jobs.len() + 2);
+                jobs.push(Sha512JobV1::new(
+                    b"observation-state",
+                    0,
+                    &state_body[..5_000],
+                ));
+                jobs.push(Sha512JobV1::new(b"observation-state", 1, &other_body));
+                let mut expected = vec![[0u8; 64]; jobs.len()];
+                let mut expected_checkpoints = Sha512CheckpointsV1 {
+                    every,
+                    states: Vec::new(),
+                };
+                sha512_jobs_with_mode_v1(
+                    Sha512ModeV1::Scalar,
+                    &jobs,
+                    &mut expected,
+                    Some(&mut expected_checkpoints),
+                );
+                assert!(expected_checkpoints.states[0].len() >= 3_000 / every / 128);
+                for tail in TAILS {
+                    let mut actual = vec![[0u8; 64]; jobs.len()];
+                    let mut checkpoints = Sha512CheckpointsV1 {
+                        every,
+                        states: vec![vec![(0, [0; 8])]; 3],
+                    };
+                    sha512_jobs_grouped_tail_v1(
+                        Sha512ModeV1::Avx2,
+                        tail,
+                        &jobs,
+                        &groups,
+                        &mut actual,
+                        Some(&mut checkpoints),
+                    );
+                    assert_eq!(actual, expected, "every {every} start {start} {tail:?}");
+                    assert!(
+                        checkpoints.states == expected_checkpoints.states,
+                        "every {every} start {start} {tail:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Throughput of the six-counter state shape (one body of
+    /// `MTG_KERNEL_SHA512_BENCH_BYTES`, default 30,000) through `sha2`, the
+    /// multi-buffer path and the shared-schedule group (both tails), fresh
+    /// and resumed after eight blocks (a prefix-cache hit). Prints ns per
+    /// block per stream; trials alternate paths and the minimum is kept.
+    #[test]
+    #[ignore = "timing probe: run explicitly"]
+    fn shared_schedule_throughput_probe_v1() {
+        let bytes: usize = std::env::var("MTG_KERNEL_SHA512_BENCH_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30_000);
+        let mut random = 11_u64;
+        let body: Vec<u8> = (0..bytes).map(|_| next(&mut random) as u8).collect();
+        let fresh: Vec<Sha512JobV1<'_>> = (0..6)
+            .map(|counter| Sha512JobV1::new(b"observation-state", counter, &body))
+            .collect();
+        let resumed: Vec<Sha512JobV1<'_>> = fresh
+            .iter()
+            .map(|job| {
+                let state: [u64; 8] = std::array::from_fn(|_| next(&mut random));
+                job.resumed(8, state)
+            })
+            .collect();
+        let threads: usize = std::env::var("MTG_KERNEL_SHA512_BENCH_THREADS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1);
+        let repetitions = 400;
+        let trials = 7;
+        for (shape, jobs) in [("fresh", &fresh), ("resumed8", &resumed)] {
+            let block_streams =
+                (jobs.iter().map(|job| job.remaining_blocks()).sum::<usize>() * repetitions) as f64;
+            let hash_repeatedly = |path: usize| {
+                let mut out = vec![[0u8; 64]; 6];
+                for _ in 0..repetitions {
+                    let jobs = std::hint::black_box(&jobs[..]);
+                    match path {
+                        0 => sha512_jobs_with_mode_v1(Sha512ModeV1::Scalar, jobs, &mut out, None),
+                        1 => sha512_jobs_with_mode_v1(Sha512ModeV1::Avx2, jobs, &mut out, None),
+                        _ => sha512_jobs_grouped_tail_v1(
+                            Sha512ModeV1::Avx2,
+                            TAILS[path - 2],
+                            jobs,
+                            &[0..6],
+                            &mut out,
+                            None,
+                        ),
+                    }
+                    std::hint::black_box(&out);
+                }
+            };
+            // Every thread hashes the same jobs; the time is per thread's
+            // block-stream.
+            let run = |path: usize| -> f64 {
+                let barrier = std::sync::Barrier::new(threads);
+                let start = std::time::Instant::now();
+                std::thread::scope(|scope| {
+                    for _ in 0..threads {
+                        scope.spawn(|| {
+                            barrier.wait();
+                            hash_repeatedly(path);
+                        });
+                    }
+                });
+                start.elapsed().as_nanos() as f64 / block_streams
+            };
+            let mut best = [f64::INFINITY; 5];
+            for _ in 0..trials {
+                for (path, slot) in best.iter_mut().enumerate() {
+                    *slot = slot.min(run(path));
+                }
+            }
+            let [sha2, multi, scalar_tail, vector_tail, fused_tail] = best;
+            println!(
+                "sha512 shared-schedule {shape} body={bytes} threads={threads} ns/block-stream: \
+                 sha2={sha2:.2} multi_buffer={multi:.2} scalar_tail={scalar_tail:.2} \
+                 vector_tail={vector_tail:.2} fused_tail={fused_tail:.2} speedup vs \
+                 multi_buffer: scalar_tail={:.3} vector_tail={:.3} fused_tail={:.3}",
+                multi / scalar_tail,
+                multi / vector_tail,
+                multi / fused_tail
+            );
+        }
     }
 
     /// Throughput of each mode on the tensorizer's state shape: six counters

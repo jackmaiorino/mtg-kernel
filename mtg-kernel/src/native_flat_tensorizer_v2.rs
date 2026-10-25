@@ -20,7 +20,7 @@ use crate::rl_session::{
     FLAT_ACTION_FLAG_CAST_IT_V1, FLAT_ACTION_FLAG_CHANGE_TARGET_V1, FLAT_ACTION_FLAG_INCLUDE_V1,
     FLAT_ACTION_FLAG_PAY_V1, FLAT_ACTION_FLAG_USE_COST_V1, FLAT_ACTION_FLAG_VALUE_V1,
 };
-use crate::sha512_multi_v1::{sha512_jobs_v1, Sha512CheckpointsV1, Sha512JobV1};
+use crate::sha512_multi_v1::{sha512_jobs_grouped_v1, Sha512CheckpointsV1, Sha512JobV1};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha512};
@@ -956,7 +956,9 @@ fn prepare_full_decision_v2(
 /// Digests every message of the given slots in one multi-buffer call: per
 /// slot, six state messages then six per action in row order. State messages
 /// resume from the prefix cache when an earlier state JSON shares their
-/// leading blocks byte for byte. Returns each slot's range in `batch.blocks`.
+/// leading blocks byte for byte. Each slot's six state jobs (one body, one
+/// resume point) form a shared-schedule group. Returns each slot's range in
+/// `batch.blocks`.
 fn hash_prepared_slots_v2(slots: &[DigestSlotV1], batch: &mut DigestBatchV1) -> Vec<usize> {
     let budget = digest_memo_budget_v1();
     if budget == 0 {
@@ -974,9 +976,11 @@ fn hash_prepared_slots_unmemoized_v2(
 ) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(slots.len() + 1);
     let mut resumes = Vec::with_capacity(slots.len());
+    let mut groups = Vec::with_capacity(slots.len());
     let mut jobs = Vec::new();
     for slot in slots {
         offsets.push(jobs.len());
+        groups.push(jobs.len()..jobs.len() + ACTION_HASH_BLOCK_COUNT_V1);
         let state = slot.state_message();
         let resume = (!slot.state_digest_off)
             .then(|| state_prefix_cache_lookup_v1(state))
@@ -1017,8 +1021,9 @@ fn hash_prepared_slots_unmemoized_v2(
     batch.blocks.clear();
     batch.blocks.resize(jobs.len(), [0; 64]);
     let caching = state_prefix_cache_enabled_v1();
-    sha512_jobs_v1(
+    sha512_jobs_grouped_v1(
         &jobs,
+        &groups,
         &mut batch.blocks,
         caching.then_some(&mut batch.checkpoints),
     );
@@ -1057,6 +1062,7 @@ fn hash_prepared_slots_memoized_v2(
     let mut offsets = Vec::with_capacity(slots.len() + 1);
     let mut messages: Vec<(&'static [u8], &[u8], u64, Source)> = Vec::new();
     let mut state_resumes = Vec::new();
+    let mut groups = Vec::new();
     let mut jobs = Vec::new();
     let mut stored: Vec<[[u8; 64]; N]> = Vec::new();
     let (mut hits, mut misses) = (0u64, 0u64);
@@ -1079,6 +1085,7 @@ fn hash_prepared_slots_memoized_v2(
                 .then(|| state_prefix_cache_lookup_v1(state))
                 .flatten();
             let first = jobs.len();
+            groups.push(first..first + N);
             for counter in 0..N as u32 {
                 let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
                 jobs.push(match &resume {
@@ -1121,8 +1128,9 @@ fn hash_prepared_slots_memoized_v2(
     let mut hashed = vec![[0u8; 64]; jobs.len()];
     let caching = state_prefix_cache_enabled_v1();
     if !jobs.is_empty() {
-        sha512_jobs_v1(
+        sha512_jobs_grouped_v1(
             &jobs,
+            &groups,
             &mut hashed,
             caching.then_some(&mut batch.checkpoints),
         );
@@ -9529,6 +9537,75 @@ mod tests {
             "{case} {name} values"
         );
         assert!(expected.f32_le_hex.is_none(), "{case} {name} mixed payload");
+    }
+
+    /// The six state digests of every golden canonical observation through
+    /// the shared-schedule groups of `hash_prepared_slots_*` (fresh, again so
+    /// it resumes from the prefix cache, then edited tails that resume from
+    /// a shared prefix), batched with action messages and a second slot,
+    /// equal the multi-buffer path without groups and the pinned Python
+    /// digests.
+    #[test]
+    fn shared_schedule_state_digests_match_golden_and_multi_buffer_path() {
+        use crate::sha512_multi_v1::{sha512_jobs_with_mode_v1, Sha512ModeV1};
+        let document = full_golden();
+        let mut memo = DigestMemoV1::default();
+        for case in &document.cases {
+            let json = case.canonical_observation_json.as_bytes();
+            let mut variants = vec![json.to_vec(), json.to_vec()];
+            for cut in [json.len() / 2, json.len() * 3 / 4, json.len() - 5] {
+                let mut edited = json[..cut].to_vec();
+                edited.extend_from_slice(br#"{"edited":true}"#);
+                variants.push(edited);
+            }
+            for (variant, message) in variants.iter().enumerate() {
+                let slots = [
+                    DigestSlotV1 {
+                        state_json: message.clone(),
+                        action_json: br#"{"a":1}{"b":22}"#.to_vec(),
+                        action_ranges: vec![(0, 7), (7, 15)],
+                        ..DigestSlotV1::default()
+                    },
+                    DigestSlotV1 {
+                        state_json: json[..json.len() / 3].to_vec(),
+                        ..DigestSlotV1::default()
+                    },
+                ];
+                let mut jobs = Vec::new();
+                for slot in &slots {
+                    for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
+                        jobs.push(Sha512JobV1::new(
+                            STATE_HASH_NAMESPACE_V2,
+                            counter,
+                            &slot.state_json,
+                        ));
+                    }
+                    for &(start, end) in &slot.action_ranges {
+                        for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
+                            jobs.push(Sha512JobV1::new(
+                                ACTION_HASH_NAMESPACE_V1,
+                                counter,
+                                &slot.action_json[start..end],
+                            ));
+                        }
+                    }
+                }
+                let mut expected = vec![[0u8; 64]; jobs.len()];
+                sha512_jobs_with_mode_v1(Sha512ModeV1::Avx2, &jobs, &mut expected, None);
+                let mut plain = DigestBatchV1::default();
+                let offsets = hash_prepared_slots_unmemoized_v2(&slots, &mut plain);
+                assert_eq!(offsets, vec![0, 18, 24], "{}", case.name);
+                assert_eq!(plain.blocks, expected, "{} variant {variant}", case.name);
+                let mut memoized = DigestBatchV1::default();
+                hash_prepared_slots_memoized_v2(&slots, &mut memoized, &mut memo, 1 << 20);
+                assert_eq!(memoized.blocks, expected, "{} variant {variant}", case.name);
+                if variant < 2 {
+                    let state_hex: Vec<String> =
+                        plain.blocks[..6].iter().map(|block| hex(block)).collect();
+                    assert_eq!(state_hex, case.state_sha512_blocks_hex, "{}", case.name);
+                }
+            }
+        }
     }
 
     #[test]
