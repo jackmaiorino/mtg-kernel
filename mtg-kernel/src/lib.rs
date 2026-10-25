@@ -93,10 +93,15 @@ pub fn purge_delay_ms_v1() -> std::ffi::c_long {
 /// its affinity allows. Started through a host reservation, compute processes
 /// are otherwise throttled at normal priority too, and on a hybrid CPU Windows
 /// keeps them on the efficiency cores (measured 2026-10-25 on an i7-13700K:
-/// panel requests 2.4x and 8 training runs 1.6x faster opted out, every output
-/// identical). A scheduling hint only: it changes no priority, affinity or
-/// result. The setting is not inherited by child processes. Returns whether
-/// the system accepted it; elsewhere than Windows it does nothing.
+/// panel requests 2.4x and 8 training runs 1.6x faster opted out, with every
+/// match hash and per-update state hash identical). A scheduling hint: it
+/// changes no priority or affinity, and a run that does a fixed amount of work
+/// gives the same results. Work bounded by time instead (the census's
+/// CPU-second search profile, the searched-target packet timeout) is
+/// timing-dependent, as it is under host load, so faster cores can fit more
+/// into it; timing fields in receipts differ as they always do. The setting is
+/// not inherited by child processes. Returns whether the system accepted it;
+/// elsewhere than Windows it does nothing.
 pub fn opt_out_of_power_throttling_v1() -> bool {
     #[cfg(windows)]
     {
