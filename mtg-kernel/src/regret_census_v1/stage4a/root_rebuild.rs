@@ -14,7 +14,9 @@
 //! Every failed check voids the game with its reason (nothing is dropped
 //! silently):
 //! - record: a search-arm `budget_game` row with repaired-v2 keys and no
-//!   interchange or best-line backup fields, a valid natural game and, when
+//!   interchange or best-line backup fields, the same rollout opponent as
+//!   this run (`rollout_opponent`, absent when `S4A_ROLLOUT_OPPONENT` is
+//!   unset in both), a valid natural game and, when
 //!   a schedule is given (`S4A_ROOT_SCHEDULE`), every case field the record
 //!   carries equal to its case's there (id, decks, seat, opponent, starting
 //!   player, seed, guide seeds as `live_policy_seeds`, search root). Per
@@ -577,10 +579,18 @@ fn replay(spec: &BankSpec, row: &Value) -> Result<Value, String> {
 }
 
 /// One recorded search game, checked and rebuilt: a `root_rebuild` row,
-/// `void` null for a kept game or the reason it is void.
-pub(super) fn game(spec: &BankSpec, row: &Value, schedule: Option<&Schedule>) -> Value {
+/// `void` null for a kept game or the reason it is void. `rollout` is this
+/// run's `S4A_ROLLOUT_OPPONENT` label (None when unset); a record whose
+/// rollout opponent differs is void.
+pub(super) fn game(
+    spec: &BankSpec,
+    row: &Value,
+    schedule: Option<&Schedule>,
+    rollout: Option<&str>,
+) -> Value {
     let mut out = header(row, schedule);
     match record_checks(row)
+        .and_then(|()| super::refresh::check_rollout(row, rollout))
         .and_then(|()| schedule.map_or(Ok(()), |s| s.check(row)))
         .and_then(|()| replay(spec, row))
     {
@@ -596,12 +606,17 @@ pub(super) fn game(spec: &BankSpec, row: &Value, schedule: Option<&Schedule>) ->
 }
 
 /// A record's case fields, as every `root_rebuild` row starts, with the
-/// SHA-256 of the schedule it was checked against (null without one).
+/// SHA-256 of the schedule it was checked against (null without one), and
+/// the record's rollout opponent only when it carries one.
 fn header(row: &Value, schedule: Option<&Schedule>) -> Value {
-    json!({"kind":ROW_KIND,"schema":SCHEMA,"id":row["id"],"lineage":row["lineage"],
+    let mut out = json!({"kind":ROW_KIND,"schema":SCHEMA,"id":row["id"],"lineage":row["lineage"],
         "own":row["own"],"other":row["other"],"seat":row["seat"],"opp":row["opp"],
         "seed":row["seed"],"starting_player":row["starting_player"],
-        "key_mode":row["game"]["key_mode"],"schedule_sha256":schedule.map(|s| s.sha256.clone())})
+        "key_mode":row["game"]["key_mode"],"schedule_sha256":schedule.map(|s| s.sha256.clone())});
+    if let Some(label) = row.get(super::refresh::ROLLOUT_FIELD) {
+        out[super::refresh::ROLLOUT_FIELD] = label.clone();
+    }
+    out
 }
 
 /// The void row of a listed file that cannot be read, or of one of its
@@ -618,8 +633,13 @@ fn input_void(file: &str, reason: String) -> String {
 /// lineage, rebuilt on its own thread (a panic voids its game), and an
 /// input void row for each listed file that cannot be read and each line
 /// that is not JSON, after which the run continues. Rows of another kind or
-/// lineage are skipped without a row.
-pub(super) fn rows(spec: &BankSpec, list: &str, schedule: Option<&Schedule>) -> String {
+/// lineage are skipped without a row. `rollout` is as in [`game`].
+pub(super) fn rows(
+    spec: &BankSpec,
+    list: &str,
+    schedule: Option<&Schedule>,
+    rollout: Option<&str>,
+) -> String {
     let mut out = String::new();
     for file in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let text = match std::fs::read_to_string(file) {
@@ -652,7 +672,7 @@ pub(super) fn rows(spec: &BankSpec, list: &str, schedule: Option<&Schedule>) -> 
             let mut rebuilt = std::thread::scope(|scope| {
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
-                    .spawn_scoped(scope, || game(spec, &row, schedule))
+                    .spawn_scoped(scope, || game(spec, &row, schedule, rollout))
                     .map_err(|e| e.to_string())?
                     .join()
                     .map_err(|_| "root rebuild worker panicked".to_owned())
@@ -922,7 +942,7 @@ mod tests {
     }
 
     fn void(spec: &BankSpec, row: &Value) -> String {
-        game(spec, row, None)["void"]
+        game(spec, row, None, None)["void"]
             .as_str()
             .unwrap_or_else(|| panic!("the game was kept"))
             .to_owned()
@@ -936,7 +956,7 @@ mod tests {
     fn root_rebuild_keeps_a_consistent_record_and_voids_each_failed_check() {
         let spec = spec();
         let row = record(&spec);
-        let out = game(&spec, &row, None);
+        let out = game(&spec, &row, None, None);
         assert!(out["void"].is_null(), "{}", out["void"]);
         let roots = out["roots"].as_array().unwrap();
         let recorded = row["game"]["decisions"].as_array().unwrap();
@@ -1232,24 +1252,52 @@ mod tests {
             let text: String = cases.iter().map(|c| format!("{c}\n")).collect();
             Schedule::parse(&text, "f".repeat(64)).unwrap()
         };
-        let kept = game(&spec, &row, Some(&schedule(&[case(11)])));
+        let kept = game(&spec, &row, Some(&schedule(&[case(11)])), None);
         assert!(kept["void"].is_null(), "{}", kept["void"]);
         assert_eq!(kept["schedule_sha256"], json!("f".repeat(64)));
         assert!(out["schedule_sha256"].is_null());
-        let moved = game(&spec, &row, Some(&schedule(&[case(12)])));
+        let moved = game(&spec, &row, Some(&schedule(&[case(12)])), None);
         assert!(moved["void"].as_str().unwrap().contains("seed differs"));
         let mut guided = case(11);
         guided["guide_policy_seeds"] = json!([0, 1]);
-        let guided = game(&spec, &row, Some(&schedule(&[guided])));
+        let guided = game(&spec, &row, Some(&schedule(&[guided])), None);
         assert!(guided["void"]
             .as_str()
             .unwrap()
             .contains("live_policy_seeds differs"));
         let mut other = case(11);
         other["id"] = json!("elsewhere");
-        let missing = game(&spec, &row, Some(&schedule(&[other])));
+        let missing = game(&spec, &row, Some(&schedule(&[other])), None);
         assert!(missing["void"].as_str().unwrap().contains("no case"));
         assert!(Schedule::parse(&format!("{}\n{}\n", case(11), case(11)), String::new()).is_err());
+    }
+
+    /// The rebuild uses the run's rollout model: a record is kept only when
+    /// its `rollout_opponent` (absent when unset) equals this run's, and a
+    /// kept record's row carries its label; an unset record's row is
+    /// unchanged.
+    #[test]
+    fn root_rebuild_requires_the_records_rollout_opponent() {
+        let spec = spec();
+        let row = record(&spec);
+        let unset = game(&spec, &row, None, None);
+        assert!(unset["void"].is_null(), "{}", unset["void"]);
+        assert!(unset.get("rollout_opponent").is_none());
+        let mut set = row.clone();
+        set["rollout_opponent"] = json!("SELF");
+        let kept = game(&spec, &set, None, Some("SELF"));
+        assert!(kept["void"].is_null(), "{}", kept["void"]);
+        assert_eq!(kept["rollout_opponent"], "SELF");
+        let mut without = kept.clone();
+        without.as_object_mut().unwrap().remove("rollout_opponent");
+        assert_eq!(without, unset);
+        for (recorded, rollout) in [(&row, Some("SELF")), (&set, None), (&set, Some("T1"))] {
+            let reason = game(&spec, recorded, None, rollout)["void"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            assert!(reason.contains("rollout opponent"), "{reason}");
+        }
     }
 
     /// An input error voids only what it reaches, and the run goes on: a
@@ -1288,7 +1336,7 @@ mod tests {
             path("binary.jsonl"),
             path("last.jsonl")
         );
-        let out = rows(&spec, &list, None);
+        let out = rows(&spec, &list, None, None);
         let _ = std::fs::remove_dir_all(&dir);
         let expected = [
             (

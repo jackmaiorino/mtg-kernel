@@ -3,6 +3,28 @@ use super::play::{Meter, PlayErr};
 use super::*;
 
 #[test]
+fn rollout_opponent_is_refused_outside_the_budget_player_and_its_checks() {
+    for mode in ROLLOUT_MODES {
+        assert!(validate_rollout_mode(mode, true).is_ok(), "{mode}");
+    }
+    for mode in [
+        "s4a-refresh",
+        "s4a-branch",
+        "s4a-search-profile",
+        "s4a-utility-root",
+        "s4a-reuse-prefix",
+        "s4a-policy-ensemble",
+        "s4a-diag",
+        "s4a-run",
+        "corpus",
+    ] {
+        let refused = validate_rollout_mode(mode, true).unwrap_err();
+        assert!(refused.contains("S4A_ROLLOUT_OPPONENT"), "{refused}");
+        assert!(validate_rollout_mode(mode, false).is_ok(), "{mode}");
+    }
+}
+
+#[test]
 fn selection_setting_refuses_invalid_encoding_unknown_rule_and_formal_modes() {
     use std::env::VarError;
     assert_eq!(
