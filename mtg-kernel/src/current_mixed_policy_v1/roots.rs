@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 mod attack_trigger_printing;
 #[path = "counter_return_creature_printing.rs"]
 mod counter_return_creature_printing;
+#[path = "discard_cost_spell_printing.rs"]
+mod discard_cost_spell_printing;
 #[path = "utility_activation_printing.rs"]
 mod utility_activation_printing;
 #[path = "ward_discount_creature_printing.rs"]
@@ -416,6 +418,7 @@ pub(super) fn is_mandatory_ordinary_spell(id: u16) -> bool {
         || CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
             targeted_spell_printing::handles(d.name)
                 || ordinary_batch_spell_printing::handles(d.name)
+                || discard_cost_spell_printing::handles(d.name)
                 || conditional_player_spell_printing::handles(d.name)
                 || graveyard_batch_spell_printing::handles(d.name)
                 || cost_reduced_spell_printing::handles(d.name)
@@ -549,6 +552,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let targeted_spell = targeted_spell_printing::printing(id, d)?;
     let ordinary_batch_spell = ordinary_batch_spell_printing::printing(id, d)?;
     let conditional_player_spell = conditional_player_spell_printing::printing(id, d)?;
+    let discard_cost_spell = discard_cost_spell_printing::printing(id, d)?;
     let graveyard_batch_spell = graveyard_batch_spell_printing::printing(id, d)?;
     let cost_reduced_spell = cost_reduced_spell_printing::printing(id, d)?;
     let creature_power_spell = creature_power_spell_printing::printing(id, d)?;
@@ -749,7 +753,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.additional_modes.is_empty()
         && (d.flashback.is_none() || think_twice)
         && d.kicker_cost.is_none()
-        && d.additional_cost.is_none()
+        && (d.additional_cost.is_none() || discard_cost_spell.is_some())
         && d.optional_additional_cost.is_none()
         && (d.equipment.is_none() || goldvein.is_some() || ordinary_equipment.is_some())
         && (d.attachment.is_none() || ordinary_aura.is_some())
@@ -866,6 +870,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = ordinary_batch_spell {
+        return Ok(printing);
+    }
+    if let Some(printing) = discard_cost_spell {
         return Ok(printing);
     }
     if let Some(printing) = conditional_player_spell {

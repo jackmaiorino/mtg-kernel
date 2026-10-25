@@ -12,6 +12,7 @@ mod conditional_player_spell;
 mod cost_reduced_spell;
 mod counter_return_creatures;
 mod creature_power_spell;
+mod discard_cost_spell;
 mod dragon_observers;
 mod entry_branch;
 mod entry_destruction;

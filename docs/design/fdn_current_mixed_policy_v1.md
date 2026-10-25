@@ -234,3 +234,10 @@ public stack's exact X, natural terminal winner and restore/replay. A separate
 labelled mixed-pool primitive checks a wide quote/selected value and serialized
 restore; existing generic u16 arithmetic boundary coverage remains. This is
 source preparation with three new cases unrun, not a paid65535-mana claim.
+
+Thrill of Possibility's new checked meaning includes the mandatory additional
+discard and its native cost staging, private payer choice, public discard,
+response window after full payment, and two ordered draws. Authored both-seat
+cases use real land/creature discards, countering without cost refund, exact
+drawn cards, unpayable-cast omission, empty-library natural loss and replay.
+All three new cases are unrun. No source addition changes accepted coverage.

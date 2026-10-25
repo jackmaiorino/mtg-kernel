@@ -1480,6 +1480,41 @@ mod paid {
     }
 
     #[test]
+    fn mandatory_discard_draw_changed_additional_cost_draw_count_target_and_modes_refuse() {
+        use crate::{
+            card_def::{CostComponent, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Thrill of Possibility").unwrap();
+        assert_eq!(
+            roots::registered_spell_printing(id).unwrap(),
+            Some(roots::baseline(id).unwrap())
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.additional_cost = None,
+                1 => d.additional_cost = Some(&[CostComponent::DiscardCards(2)]),
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DrawCards {
+                            player: PlayerRef::Controller,
+                            count: 3,
+                        })
+                    }
+                }
+                3 => d.target_spec = TargetSpec::AnyPlayer,
+                4 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                _ => d.cost = crate::mana::Cost::zero(),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Thrill changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};

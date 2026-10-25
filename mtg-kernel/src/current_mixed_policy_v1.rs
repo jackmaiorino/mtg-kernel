@@ -116,6 +116,7 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/ordinary_aura_printing.rs"),
             include_str!("current_mixed_policy_v1/ordinary_batch_spell_printing.rs"),
             include_str!("current_mixed_policy_v1/conditional_player_spell_printing.rs"),
+            include_str!("current_mixed_policy_v1/discard_cost_spell_printing.rs"),
             include_str!("current_mixed_policy_v1/graveyard_batch_spell_printing.rs"),
             include_str!("current_mixed_policy_v1/cost_reduced_spell_printing.rs"),
             include_str!("current_mixed_policy_v1/creature_power_spell_printing.rs"),
