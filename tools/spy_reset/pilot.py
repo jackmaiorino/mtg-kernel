@@ -60,8 +60,15 @@ OH1_PANEL_NS = "oh1-panel-20261022"
 OH2_PANEL_NS_A = "oh2-panel-20261024a"
 OH2_PANEL_NS_B = "oh2-panel-20261024b"
 OH2_SCREEN_NS = "oh2-screen-20261024"
+# D1 late learning-rate step (collab LANES/lr-decay-d1-20261025, DESIGN.md section 3): two panel namespaces of 12
+# seed families each (H plays both), and the head-to-head namespace (each decay endpoint against its own chain's
+# control endpoint).
+D1_PANEL_NS_A = "d1-panel-20261025a"
+D1_PANEL_NS_B = "d1-panel-20261025b"
+D1_H2H_NS = "d1-h2h-20261025"
 PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS,
-                    OH1_PANEL_NS, OH2_PANEL_NS_A, OH2_PANEL_NS_B, OH2_SCREEN_NS)
+                    OH1_PANEL_NS, OH2_PANEL_NS_A, OH2_PANEL_NS_B, OH2_SCREEN_NS, D1_PANEL_NS_A, D1_PANEL_NS_B,
+                    D1_H2H_NS)
 
 
 def key(parts: list) -> bytes:
