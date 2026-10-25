@@ -223,3 +223,14 @@ activation for either player's creature. Both-seat paid tests retain native
 model/binding parity, exclusion menus, cost outcomes, source/target departure,
 repeat activation or cleanup expiration, and snapshot/replay. Changed definitions
 refuse. These additions are not counted as observed audit coverage until run.
+
+Exsanguinate now has a checked ordinary X-cast and complete life-loss meaning.
+Its native quote previously stopped at255. The exact Exsanguinate program now
+uses the existing u16 quote and pending-selection path; unrelated frozen X
+roots keep their prior scope. The authored consumer case preserves the complete
+currently payable native menu, both seats, actual zero/positive/lethal/X256
+payments from lands, countering, Crystal's damage-prevention exclusion, the
+public stack's exact X, natural terminal winner and restore/replay. A separate
+labelled mixed-pool primitive checks a wide quote/selected value and serialized
+restore; existing generic u16 arithmetic boundary coverage remains. This is
+source preparation with three new cases unrun, not a paid65535-mana claim.

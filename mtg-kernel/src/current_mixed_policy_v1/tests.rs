@@ -1455,6 +1455,31 @@ mod paid {
     }
 
     #[test]
+    fn exsanguinate_changed_x_pips_target_life_loss_program_or_foreign_cost_refuses() {
+        use crate::{card_def::TargetSpec, effect::EffectOp};
+        let id = crate::card_def::card_id_by_name("Exsanguinate").unwrap();
+        assert_eq!(
+            roots::registered_spell_printing(id).unwrap(),
+            Some(roots::baseline(id).unwrap())
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost.x_count = 0,
+                1 => d.cost = crate::mana::Cost::zero(),
+                2 => d.target_spec = TargetSpec::TargetOpponent,
+                3 => d.spell_effect = || Some(EffectOp::Sequence(vec![])),
+                4 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                _ => d.mana_value = 3,
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Exsanguinate changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};

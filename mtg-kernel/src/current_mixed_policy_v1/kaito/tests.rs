@@ -17,6 +17,7 @@ mod entry_branch;
 mod entry_destruction;
 mod entry_exile;
 mod evolving;
+mod exsanguinate;
 mod graveyard_batch_spell;
 mod guarded_heir;
 mod library_search;

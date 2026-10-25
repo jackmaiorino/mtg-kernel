@@ -8499,17 +8499,27 @@ fn maximum_payable_x(
         pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
             .is_some()
     };
-    if crate::rules_meaning_next_five_v59::owns_definition(
-        crate::rules_meaning_next_five_v59::FamilyV59::Goblin,
-        pending.source_contract.card_def,
-        def,
-    ) || effect::genesis_wave_v1::definition(pending.source_contract.card_def)
-    {
+    if supports_wide_cast_x_v59(pending.source_contract.card_def, def) {
         maximum_monotone_x_v59(u16::MAX, payable)
     } else {
         // Retain the frozen query domain and descending order for other roots.
         (0..=u8::MAX).rev().map(u16::from).find(|&x| payable(x))
     }
+}
+
+fn supports_wide_cast_x_v59(id: u16, def: &card_def::CardDef) -> bool {
+    crate::rules_meaning_next_five_v59::owns_definition(
+        crate::rules_meaning_next_five_v59::FamilyV59::Goblin,
+        id,
+        def,
+    ) || effect::genesis_wave_v1::definition(id)
+        // The complete Exsanguinate successor reuses the existing u16 native
+        // quote and decision path. Do not widen unrelated frozen X roots.
+        || (def.name == "Exsanguinate"
+            && card_def::card_id_by_name(def.name) == Some(id)
+            && def.cost.x_count == 1
+            && def.target_spec == card_def::TargetSpec::None
+            && (def.spell_effect)() == Some(EffectOp::LoseOpponentsLifeXThenGainLifeLost))
 }
 
 /// Once the form, targets and cost branches are fixed, X only adds a
@@ -12095,14 +12105,9 @@ pub(crate) fn validate_pending_cast(
         .get(source.card_def as usize)
         .ok_or("pending cast source definition is missing")?;
     if pending.wide_x_value_v59.is_some()
-        && !crate::rules_meaning_next_five_v59::owns_definition(
-            crate::rules_meaning_next_five_v59::FamilyV59::Goblin,
-            pending.source_contract.card_def,
-            def,
-        )
-        && !effect::genesis_wave_v1::definition(pending.source_contract.card_def)
+        && !supports_wide_cast_x_v59(pending.source_contract.card_def, def)
     {
-        return Err("wide cast X requires the exact Goblin recipe".into());
+        return Err("wide cast X requires an admitted full-range definition".into());
     }
     if !def.is_executable() || !def.is_castable() {
         return Err("pending cast source is not an executable spell".to_string());

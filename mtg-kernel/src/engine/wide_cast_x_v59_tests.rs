@@ -1,5 +1,40 @@
 use super::*;
 #[test]
+fn exsanguinate_native_mixed_pool_quote_and_wide_pending_selection_both_seats() {
+    // Declared native mana-pool operands, not a claim of a gameplay mana loop.
+    // The consumer case separately uses real lands and payment beyond255.
+    let id = crate::card_def::card_id_by_name("Exsanguinate").unwrap();
+    let maximum = u16::from(u8::MAX) * 6 - 2;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        state.players[actor.index()].mana_pool = [u8::MAX; 6];
+        let spell =
+            crate::policy_observation_v6::tests::put(&mut state, actor, "Exsanguinate", Zone::Hand);
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(
+            matches!(advance_until_decision(&mut state), Decision::ChooseEffectOption { player, source, option_count } if player==actor && source==spell && option_count==maximum+1)
+        );
+        assert_eq!(
+            maximum_payable_x(
+                &card_def::CARD_DEFS[usize::from(id)],
+                state.engine.pending_cast.as_ref().unwrap(),
+                &state
+            ),
+            Some(maximum)
+        );
+        step(&mut state, Action::ChooseEffectOption(maximum)).unwrap();
+        let pending = state.engine.pending_cast.as_ref().unwrap();
+        assert_eq!(pending.selected_x_v59(), Some(maximum));
+        assert_eq!(pending.x_value, None);
+        validate_pending_cast(&state, pending).unwrap();
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored, state);
+        validate_pending_cast(&restored, restored.engine.pending_cast.as_ref().unwrap()).unwrap();
+    }
+}
+
+#[test]
 fn u16_x_boundary_primitive_keeps_65535_and_65536_choice_cardinality_without_casting_stress() {
     // Arithmetic boundary operands, not a claim of a paid65535-mana cast.
     for (budget, expected) in [
