@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 
 #[path = "attack_trigger_printing.rs"]
 mod attack_trigger_printing;
+#[path = "counter_return_creature_printing.rs"]
+mod counter_return_creature_printing;
 #[path = "ward_discount_creature_printing.rs"]
 mod ward_discount_creature_printing;
 
@@ -431,6 +433,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
 pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
     CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
         simple_trigger_printing::handles(d.name)
+            || counter_return_creature_printing::handles(d.name)
             || ward_discount_creature_printing::handles(d.name)
             || attack_trigger_printing::handles(d.name)
             || observer_trigger_printing::handles(d.name)
@@ -551,6 +554,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let triggered_enchantment = triggered_enchantment_printing::printing(id, d)?;
     let shivan = shivan_printing::printing(id, d)?;
     let sacrifice = sacrifice_printing::printing(id, d)?;
+    let counter_return_creature = counter_return_creature_printing::printing(id, d)?;
     let sailor = sailor_printing::printing(id, d)?;
     let lookout = lookout_printing::printing(id, d)?;
     let library_search = library_search_printing::printing(id, d)?;
@@ -726,6 +730,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || goldvein.is_some()
             || hart.is_some()
             || shivan.is_some()
+            || counter_return_creature.is_some()
             || sacrifice.is_some()
             || sailor.is_some()
             || lookout.is_some()
@@ -880,6 +885,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = shivan {
+        return Ok(printing);
+    }
+    if let Some(printing) = counter_return_creature {
         return Ok(printing);
     }
     if let Some(printing) = sacrifice {

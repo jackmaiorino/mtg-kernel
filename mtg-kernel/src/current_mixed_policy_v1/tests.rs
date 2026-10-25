@@ -1389,6 +1389,38 @@ mod paid {
     }
 
     #[test]
+    fn counter_return_creature_changed_activation_zone_timing_payment_target_and_program_refuse() {
+        use crate::{card_def::TargetSpec, effect::EffectOp, state::Zone};
+        for name in ["Reassembling Skeleton", "Treetop Snarespinner"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let original = roots::baseline(id).unwrap();
+            assert_eq!(
+                roots::registered_permanent_printing(id).unwrap(),
+                Some(original)
+            );
+            for field in 0..8 {
+                let mut d = ordinary_recipe(id);
+                let mut a = d.activated_abilities[0];
+                match field {
+                    0 => a.activation_zone = Zone::Hand,
+                    1 => a.sorcery_speed_only = !a.sorcery_speed_only,
+                    2 => a.cost = &[],
+                    3 => a.target_spec = TargetSpec::AnyTarget,
+                    4 => a.effect = || EffectOp::Sequence(vec![]),
+                    5 => a.max_activations_per_turn = Some(1),
+                    6 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                    _ => d.keywords = crate::card_def::Keywords::FLYING,
+                }
+                d.activated_abilities = Box::leak(vec![a].into_boxed_slice());
+                assert!(
+                    roots::baseline_recipe(id, &d).is_err(),
+                    "{name} changed field {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};

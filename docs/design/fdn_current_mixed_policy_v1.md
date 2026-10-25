@@ -206,3 +206,10 @@ The transferred Haley attempt003 at exact18265557f passed Micromancer,
 Archmage and library-search checks with supervisor exit0. All original attempt
 records remain retained. This is affected correctness evidence, not full-pool
 acceptance. The current chat owns the transferred work by explicit user choice.
+
+New source also describes Reassembling Skeleton's paid graveyard-incarnation
+return and Treetop Snarespinner's sorcery-speed controlled-creature counter
+activation. Their exact zones, timing, payment, programs and targets are checked.
+Paid both-seat cases cover original cast/counter, death, tapped return, competing
+returns of the same incarnation, repeat counters, source departure and replay.
+The three new cases remain unrun pending a recorded native or CI result.
