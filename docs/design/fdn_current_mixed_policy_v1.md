@@ -12,6 +12,33 @@ Implementation and executed checks do not by themselves admit the whole pool,
 new model checkpoints, search or training. Frozen encoders and measurements
 retain their existing contracts.
 
+October 25 source continuation adds exact attack-printing supplements for
+Armasaur Guide, Battlesong Berserker, Crypt Feaster, Dauntless Veteran and
+Courageous Goblin. They authenticate the native definitions, trigger conditions,
+target filters and complete ordered programs through the existing common
+exclusion guard. Guide and Berserker select a controlled creature at trigger
+placement even when the observer stays back. Crypt rechecks the captured
+controller's seven-card threshold; Goblin tests four effective power only at
+declaration. Veteran samples the controlled creature set at resolution. Source
+and target effects retain the original incarnation, layer and expiration rules.
+Feature identity includes the new source; no registry identity changes.
+
+Seven authored regressions cover actual paid casts and counters, both seats,
+target and source departure, Crypt's response-time threshold loss, Goblin's
+response-time power loss, same-turn later entry, expiration, capture boundaries,
+nonattacking observers, paired native/owning restore and full state replay.
+They also reject altered cost, stats, cast program, target specification, ward
+and kicker. These regressions are not yet compiled or executed. Pinned rustfmt
+and diff checks pass; read-only source review found no blocking native-recipe
+or driver mismatch and prompted the additional capture-boundary cases.
+
+The retained `39efbfdd` full-pool job `120199333494` reports 90 gaps per seat:
+64 missing printing roots, Cathar Commando's reserved-key collision and 25
+owning-interface refusals. The published `ef6af606` repair addresses the collision
+and paid fixture errors, with CI run `40193776118` pending. Neither that repair
+nor these five source supplements establishes a new full-pool or default-branch
+acceptance. Research execution and current compute reservations remain separate.
+
 Separate V50, V51 and V52 owning entries consume genuine typed observations,
 original ordered ActionSemantic values and complete private family bindings.
 Apply authenticates the original owner, generation and current binding, then

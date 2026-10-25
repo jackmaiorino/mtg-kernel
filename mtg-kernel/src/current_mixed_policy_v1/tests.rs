@@ -1302,6 +1302,38 @@ mod paid {
     }
 
     #[test]
+    fn attack_printing_changed_cost_program_fields_and_target_specs_refuse() {
+        for name in [
+            "Armasaur Guide",
+            "Battlesong Berserker",
+            "Crypt Feaster",
+            "Dauntless Veteran",
+            "Courageous Goblin",
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            assert_eq!(
+                super::super::roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+                super::super::roots::baseline(id).unwrap()
+            );
+            for field in 0..6 {
+                let mut changed = ordinary_recipe(id);
+                match field {
+                    0 => changed.cost = crate::mana::Cost::zero(),
+                    1 => changed.power = Some(99),
+                    2 => changed.target_spec = crate::card_def::TargetSpec::AnyTarget,
+                    3 => changed.spell_effect = || None,
+                    4 => changed.ward_cost = Some(crate::card_def::WardCostDef::Generic(1)),
+                    _ => changed.kicker_cost = Some(crate::mana::Cost::zero()),
+                }
+                assert!(
+                    super::super::roots::baseline_recipe(id, &changed).is_err(),
+                    "{name} changed field {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};
