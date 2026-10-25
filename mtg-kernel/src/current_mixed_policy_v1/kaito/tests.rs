@@ -43,6 +43,7 @@ mod threshold_loot;
 mod triggered_enchantments;
 mod trufflesnout;
 mod unicorn;
+mod utility_activations;
 mod ward_discount_creatures;
 
 /// Full-pool opening-hand coverage is distinct from paid branch qualification.

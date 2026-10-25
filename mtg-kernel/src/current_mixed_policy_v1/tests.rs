@@ -1421,6 +1421,40 @@ mod paid {
     }
 
     #[test]
+    fn utility_activation_changed_cost_timing_zone_target_program_and_mana_refuse() {
+        use crate::{card_def::TargetSpec, effect::EffectOp, state::Zone};
+        for name in ["Hungry Ghoul", "Rogue's Passage"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let original = roots::baseline(id).unwrap();
+            assert_eq!(
+                roots::registered_permanent_printing(id).unwrap(),
+                Some(original)
+            );
+            for field in 0..10 {
+                let mut d = ordinary_recipe(id);
+                let mut a = d.activated_abilities[0];
+                match field {
+                    0 => a.cost = &[],
+                    1 => a.activation_zone = Zone::Hand,
+                    2 => a.sorcery_speed_only = true,
+                    3 => a.target_spec = TargetSpec::AnyTarget,
+                    4 => a.effect = || EffectOp::Sequence(vec![]),
+                    5 => a.max_activations_per_turn = Some(1),
+                    6 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                    7 => d.produces_mana = &[crate::mana::ManaColor::G],
+                    8 => d.mana_ability = || Some(EffectOp::Sequence(vec![])),
+                    _ => d.enters_battlefield_tapped = true,
+                }
+                d.activated_abilities = Box::leak(vec![a].into_boxed_slice());
+                assert!(
+                    roots::baseline_recipe(id, &d).is_err(),
+                    "{name} changed field {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};

@@ -213,3 +213,13 @@ activation. Their exact zones, timing, payment, programs and targets are checked
 Paid both-seat cases cover original cast/counter, death, tapped return, competing
 returns of the same incarnation, repeat counters, source departure and replay.
 The three new cases remain unrun pending a recorded native or CI result.
+
+New unrun source adds Hungry Ghoul and Rogue's Passage meanings, validating
+all printed characteristics, ability costs, source zones, targets and programs.
+Ghoul describes a selected other controlled creature as a sacrifice cost, not
+a target, with incarnation-bound source counters. Passage describes ordinary
+land play, its separate colorless mana ability and the paid, tapped evasion
+activation for either player's creature. Both-seat paid tests retain native
+model/binding parity, exclusion menus, cost outcomes, source/target departure,
+repeat activation or cleanup expiration, and snapshot/replay. Changed definitions
+refuse. These additions are not counted as observed audit coverage until run.
