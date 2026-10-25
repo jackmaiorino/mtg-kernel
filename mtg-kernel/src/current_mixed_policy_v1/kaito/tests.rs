@@ -25,6 +25,7 @@ mod library_search;
 mod lookout;
 mod luminous;
 mod lunar_insight;
+mod macabre_waltz;
 mod micromancer;
 mod observer_triggers;
 mod ordinary_auras;

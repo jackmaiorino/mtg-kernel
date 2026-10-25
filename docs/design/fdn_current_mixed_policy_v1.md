@@ -249,3 +249,12 @@ copy. The helper now preserves those fields and the mandatory additional cost;
 other new refusal cases also check that their pristine copies are accepted
 before mutating one field. Production guards and the original failure remain
 unchanged. This fixture repair is source-only until its test executes.
+
+Macabre Waltz source now describes all zero/one/two-target cast branches,
+original graveyard incarnations, simultaneous legal returns, the subsequent
+resolution-time hand discard, and the distinction between zero targets and
+all chosen targets becoming illegal. Authored paid cases cover both seats,
+wrong graveyards/types, early finish, duplicate exclusion, real Ooze responses,
+partial/all illegality, returned-card discard, countering, and restore/replay.
+A changed-definition test preserves exact return/discard order. These two
+new cases are unrun; the existing queued20-case source remains1aab6de74.

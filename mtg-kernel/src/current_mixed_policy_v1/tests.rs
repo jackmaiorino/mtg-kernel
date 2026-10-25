@@ -1531,6 +1531,47 @@ mod paid {
     }
 
     #[test]
+    fn macabre_changed_target_cardinality_return_discard_order_and_cost_refuse() {
+        use crate::{
+            card_def::{CostComponent, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+            state::Zone,
+        };
+        let id = crate::card_def::card_id_by_name("Macabre Waltz").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.target_spec = TargetSpec::None,
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Sequence(vec![
+                            EffectOp::DiscardCards {
+                                player: PlayerRef::Controller,
+                                count: 1,
+                            },
+                            EffectOp::MoveAllTargets {
+                                to_zone: Zone::Hand,
+                            },
+                        ]))
+                    }
+                }
+                3 => d.additional_cost = Some(&[CostComponent::DiscardCards(1)]),
+                4 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                _ => d.types = &[crate::card_def::CardType::Instant],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Macabre changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};
