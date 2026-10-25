@@ -1261,7 +1261,14 @@ mod tests {
         for mode in MODES {
             for tail in TAILS {
                 let mut actual = vec![[0u8; 64]; jobs.len()];
-                sha512_jobs_grouped_tail_v1(mode, tail, jobs, &[0..jobs.len()], &mut actual, None);
+                sha512_jobs_grouped_tail_v1(
+                    mode,
+                    tail,
+                    jobs,
+                    std::slice::from_ref(&(0..jobs.len())),
+                    &mut actual,
+                    None,
+                );
                 assert_eq!(actual, expected, "{mode:?} {tail:?} {label}");
             }
         }
@@ -1299,7 +1306,12 @@ mod tests {
                     // The `Sha512` reference for fresh jobs, not only
                     // compress512.
                     let mut actual = vec![[0u8; 64]; size];
-                    sha512_jobs_grouped_v1(&jobs, &[0..size], &mut actual, None);
+                    sha512_jobs_grouped_v1(
+                        &jobs,
+                        std::slice::from_ref(&(0..size)),
+                        &mut actual,
+                        None,
+                    );
                     for (job, digest) in jobs.iter().zip(&actual) {
                         assert_eq!(*digest, sha512_job_scalar_v1(job));
                     }
@@ -1455,7 +1467,7 @@ mod tests {
                             Sha512ModeV1::Avx2,
                             TAILS[path - 2],
                             jobs,
-                            &[0..6],
+                            std::slice::from_ref(&(0..6)),
                             &mut out,
                             None,
                         ),
