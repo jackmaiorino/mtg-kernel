@@ -16,6 +16,7 @@ use crate::expanded_deck_training_v1::search_targets_v1::{
 use crate::expanded_deck_training_v1::soft_q_teacher_v1::{
     continuation_identity as soft_q_continuation_identity_v1, SoftQArmV1, SoftQTeacherOptionsV1,
 };
+use crate::expanded_deck_training_v1::verified_bytes_cache_v1;
 use crate::expanded_deck_training_v1::{
     execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_bound_v1,
     load_expanded_update_inference_v1, take_collection_fields_v1, CollectionSamplerV1,
@@ -574,11 +575,36 @@ fn read_json(path: &Path, cap: u64) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(err)
 }
 fn verify_pin(pin: &PinnedFileV1) -> Result<(), String> {
+    verify_pin_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+/// `verify_pin` against the verified-bytes cache `cache`.
+fn verify_pin_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<(), String> {
     let mut file = File::open(&pin.path).map_err(err)?;
     check(
         file.metadata().map_err(err)?.is_file(),
         "pinned artifact is not a file",
     )?;
+    let held = cache.held_v1(&pin.path, &pin.sha256);
+    verify_pin_stream_v1(&mut file, held.as_deref().map(Vec::as_slice), &pin.sha256)?;
+    Ok(())
+}
+/// `verify_pin`'s read loop over `file`, returning whether it hashed.
+///
+/// `held` are bytes this process already verified against `sha256`
+/// (`verified_bytes_cache_v1`): while the file's chunks equal them, they are
+/// compared instead of hashed, and a file that ends equal to all of them has
+/// the pinned digest. At the first difference the bytes read so far, which
+/// equal the held prefix, enter the hasher, so from there on and at the end
+/// it holds exactly what the plain loop would. Every read and the size bound
+/// run per chunk as before.
+fn verify_pin_stream_v1(
+    file: &mut impl Read,
+    mut held: Option<&[u8]>,
+    sha256: &str,
+) -> Result<bool, String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     let mut size = 0u64;
@@ -587,14 +613,29 @@ fn verify_pin(pin: &PinnedFileV1) -> Result<(), String> {
         if count == 0 {
             break;
         }
+        let start = size as usize;
         size += count as u64;
         check(size <= ARTIFACT_CAP, "pinned artifact exceeds 512 MiB")?;
+        if let Some(bytes) = held.take() {
+            if bytes.get(start..start + count) == Some(&buffer[..count]) {
+                held = Some(bytes);
+                continue;
+            }
+            hasher.update(&bytes[..start]);
+        }
         hasher.update(&buffer[..count]);
     }
+    if let Some(bytes) = held {
+        if bytes.len() as u64 == size {
+            return Ok(false);
+        }
+        hasher.update(&bytes[..size as usize]);
+    }
     check(
-        format!("{:x}", hasher.finalize()) == pin.sha256,
+        format!("{:x}", hasher.finalize()) == sha256,
         "pinned artifact hash differs",
-    )
+    )?;
+    Ok(true)
 }
 fn pin(path: &Path) -> Result<PinnedFileV1, String> {
     check(
@@ -615,6 +656,14 @@ fn read_pin_bounded(pin: &PinnedFileV1, cap: u64) -> Result<Value, String> {
 }
 /// `read_pin_bounded`'s checks, returning the verified bytes.
 fn read_pin_bounded_bytes(pin: &PinnedFileV1, cap: u64) -> Result<Vec<u8>, String> {
+    read_pin_bounded_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin, cap)
+}
+/// `read_pin_bounded_bytes` against the verified-bytes cache `cache`.
+fn read_pin_bounded_bytes_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+    cap: u64,
+) -> Result<Vec<u8>, String> {
     let file = File::open(&pin.path).map_err(err)?;
     let meta = file.metadata().map_err(err)?;
     check(
@@ -624,7 +673,13 @@ fn read_pin_bounded_bytes(pin: &PinnedFileV1, cap: u64) -> Result<Vec<u8>, Strin
     let mut bytes = Vec::with_capacity(meta.len() as usize);
     file.take(cap + 1).read_to_end(&mut bytes).map_err(err)?;
     check(bytes.len() as u64 <= cap, "artifact grew beyond bound")?;
-    check(digest(&bytes) == pin.sha256, "pinned artifact hash differs")?;
+    // Bytes equal to bytes this process already verified against this pin
+    // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
+    // before.
+    check(
+        cache.digest_matches_v1(&pin.path, &pin.sha256, &bytes, digest),
+        "pinned artifact hash differs",
+    )?;
     Ok(bytes)
 }
 fn publish(
@@ -1705,6 +1760,9 @@ pub fn run_native_expanded_training_v1(
     drop(lock);
     Ok(result)
 }
+
+#[cfg(test)]
+mod verified_pin_tests;
 
 #[cfg(test)]
 mod tests {
