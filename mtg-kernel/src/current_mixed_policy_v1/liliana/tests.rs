@@ -219,58 +219,79 @@ fn complete(own: &mut LilianaSession, native: &mut FastActorSessionV1) {
     }
     panic!("numeric native root incomplete")
 }
-#[test]
-fn paid_numeric_all_three_original_loyalty_roots_and_native_choice_restore_both_seats() {
-    for p in [PlayerId::P0, PlayerId::P1] {
-        for index in [0, 1, 2] {
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: setup");
-            let (s, id) = owning_ready(p, index == 2, "Island");
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: ready");
-            let mut native = FastActorSessionV1::from_liliana_v73_fixture_state(s.clone());
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: native session ready");
-            let own_native = FastActorSessionV1::from_liliana_v73_fixture_state(s);
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: owning native ready");
-            let mut own = LilianaSession::from_session(own_native).unwrap();
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: owning session ready");
-            act(
-                &mut own,
-                &mut native,
-                |a| matches!(a,A::ActivateAbility{source,ability_index,..}if source.arena_id==id.0&&*ability_index==index),
-            );
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: activated");
-            let FastActorResponseV1::Decision(h) = own.current_response() else {
-                panic!()
-            };
-            let old = own.encode(h).unwrap();
-            let saved = own.snapshot();
-            let raw = native.snapshot_v1();
-            complete(&mut own, &mut native);
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: completed");
-            let expected = own.fixture_state().clone();
-            let FastActorResponseV1::Decision(h) = own.current_response() else {
-                panic!()
-            };
-            let completed = own.encode(h).unwrap();
-            let facts = &completed.backend.observation().liliana;
-            assert_eq!(facts.activations[0].ability_index, index);
-            if index == 0 {
-                assert_eq!(facts.activations[0].created_zombies.len(), 1);
-                assert!(printing(492).unwrap().is_some());
-            } else {
-                assert!(facts.resolutions[0].finished);
-                assert_eq!(facts.resolutions[0].ultimate, index == 2);
-            }
-            own.restore(&saved).unwrap();
-            native.liliana_restore_v73(&raw).unwrap();
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: restored");
-            let before = own.fixture_state().clone();
-            assert!(own.apply(&old, 0).is_err());
-            assert_eq!(own.fixture_state(), &before);
-            complete(&mut own, &mut native);
-            eprintln!("Liliana numeric root seat={p:?} ability={index}: replay completed");
-            assert_eq!(own.fixture_state(), &expected);
-        }
+// Each independent seat/root scene has its own ordinary per-case deadline.
+// Keep the original paid activation, completion, stale-packet and replay checks.
+fn paid_numeric_original_loyalty_root_and_native_choice_restore(p: PlayerId, index: u8) {
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: setup");
+    let (s, id) = owning_ready(p, index == 2, "Island");
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: ready");
+    let mut native = FastActorSessionV1::from_liliana_v73_fixture_state(s.clone());
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: native session ready");
+    let own_native = FastActorSessionV1::from_liliana_v73_fixture_state(s);
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: owning native ready");
+    let mut own = LilianaSession::from_session(own_native).unwrap();
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: owning session ready");
+    act(
+        &mut own,
+        &mut native,
+        |a| matches!(a,A::ActivateAbility{source,ability_index,..}if source.arena_id==id.0&&*ability_index==index),
+    );
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: activated");
+    let FastActorResponseV1::Decision(h) = own.current_response() else {
+        panic!()
+    };
+    let old = own.encode(h).unwrap();
+    let saved = own.snapshot();
+    let raw = native.snapshot_v1();
+    complete(&mut own, &mut native);
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: completed");
+    let expected = own.fixture_state().clone();
+    let FastActorResponseV1::Decision(h) = own.current_response() else {
+        panic!()
+    };
+    let completed = own.encode(h).unwrap();
+    let facts = &completed.backend.observation().liliana;
+    assert_eq!(facts.activations[0].ability_index, index);
+    if index == 0 {
+        assert_eq!(facts.activations[0].created_zombies.len(), 1);
+        assert!(printing(492).unwrap().is_some());
+    } else {
+        assert!(facts.resolutions[0].finished);
+        assert_eq!(facts.resolutions[0].ultimate, index == 2);
     }
+    own.restore(&saved).unwrap();
+    native.liliana_restore_v73(&raw).unwrap();
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: restored");
+    let before = own.fixture_state().clone();
+    assert!(own.apply(&old, 0).is_err());
+    assert_eq!(own.fixture_state(), &before);
+    complete(&mut own, &mut native);
+    eprintln!("Liliana numeric root seat={p:?} ability={index}: replay completed");
+    assert_eq!(own.fixture_state(), &expected);
+}
+#[test]
+fn paid_numeric_original_plus_one_and_native_choice_restore_p0() {
+    paid_numeric_original_loyalty_root_and_native_choice_restore(PlayerId::P0, 0);
+}
+#[test]
+fn paid_numeric_original_plus_one_and_native_choice_restore_p1() {
+    paid_numeric_original_loyalty_root_and_native_choice_restore(PlayerId::P1, 0);
+}
+#[test]
+fn paid_numeric_original_minus_four_and_native_choice_restore_p0() {
+    paid_numeric_original_loyalty_root_and_native_choice_restore(PlayerId::P0, 1);
+}
+#[test]
+fn paid_numeric_original_minus_four_and_native_choice_restore_p1() {
+    paid_numeric_original_loyalty_root_and_native_choice_restore(PlayerId::P1, 1);
+}
+#[test]
+fn paid_numeric_original_ultimate_and_native_choice_restore_p0() {
+    paid_numeric_original_loyalty_root_and_native_choice_restore(PlayerId::P0, 2);
+}
+#[test]
+fn paid_numeric_original_ultimate_and_native_choice_restore_p1() {
+    paid_numeric_original_loyalty_root_and_native_choice_restore(PlayerId::P1, 2);
 }
 #[test]
 fn paid_numeric_original_sourcegone_and_same_incarnation_concealment_bind_native_both_seats() {
