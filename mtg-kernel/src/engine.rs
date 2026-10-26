@@ -11531,8 +11531,22 @@ pub(crate) fn validate_pending_cast(
                             generation,
                         )
                     });
+            // Bilbo, Thief in the Night: a resolving instruction casts this
+            // card from its owner's graveyard, paying its costs.
+            let has_resolution_graveyard_permission = cfg!(feature = "eternal-fixtures")
+                && pending.origin_zone == Zone::Graveyard
+                && source.owner == pending.controller
+                && pending.source_contract.spell_cast_origin.is_some_and(|origin| {
+                    matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { holder, .. } if holder == pending.controller)
+                })
+                && resolution_cast_v1::permit(state, pending.spell).is_some_and(|permission| {
+                    permission.card.expected_zone == Zone::Graveyard
+                        && permission.controller == pending.controller
+                        && !permission.land
+                });
             if pending.origin_zone != Zone::Hand
                 && !has_graveyard_permission
+                && !has_resolution_graveyard_permission
                 && !(pending.origin_zone == Zone::Exile
                     && (has_prior_exile_permission() || has_adventure_exile_permission))
                 && !pending.source_contract.spell_cast_origin.is_some_and(|origin| matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { holder, .. } if holder == pending.controller))

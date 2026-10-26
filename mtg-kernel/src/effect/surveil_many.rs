@@ -20,18 +20,24 @@ fn metadata(
         private_keep_one_v1::validate_snapshot(state, pending, player, library)?;
         Some(1)
     } else {
-        let EffectOp::Surveil {
+        // The eternal catalog also surveils as one step of a longer program
+        // ("Surveil 2, then draw a card"); the leaf is read at its path.
+        let leaf = if cfg!(feature = "eternal-fixtures") {
+            effect_op_at_path(&root, path).cloned()
+        } else {
+            Some((*root).clone())
+        };
+        let Some(EffectOp::Surveil {
             player: printed_player,
             count: printed_count,
-        } = *root
+        }) = leaf
         else {
             return Err("library partition lost its definition-owned root program".into());
         };
         if count <= 1
             || printed_count != count
             || pending.ctx.resolve_player(printed_player, state) != player
-            || !path.is_empty()
-            || !remainder.is_empty()
+            || (!cfg!(feature = "eternal-fixtures") && (!path.is_empty() || !remainder.is_empty()))
         {
             return Err("surveil batch changed its source, count or continuation".into());
         }

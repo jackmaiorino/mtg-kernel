@@ -396,9 +396,10 @@ fn surveil_lands_enter_tapped_and_surveil_one() {
         act(&mut state, Action::PlayLand(land));
         assert!(state.objects.get(land).tapped, "{name}");
         match settle(&mut state) {
-            Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
-                assert_eq!(legal_targets, vec![Target::Object(top)], "{name}");
-                act(&mut state, Action::ChooseEffectTarget(Target::Object(top)));
+            // Option 1 puts the top card into the graveyard.
+            Some(Decision::ChooseEffectOption { option_count, .. }) => {
+                assert_eq!(option_count, 2, "{name}");
+                act(&mut state, Action::ChooseEffectOption(1));
             }
             other => panic!("{name}: expected the surveil, got {other:?}"),
         }
@@ -1045,9 +1046,9 @@ fn dragons_rage_channeler_surveils_on_noncreature_spells() {
     pool(&mut state, P0, &[ManaColor::R], 0);
     cast(&mut state, bolt, &[Target::Player(P1)]);
     match settle(&mut state) {
-        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
-            assert_eq!(legal_targets, vec![Target::Object(top)]);
-            act(&mut state, Action::ChooseEffectTarget(Target::Object(top)));
+        Some(Decision::ChooseEffectOption { option_count, .. }) => {
+            assert_eq!(option_count, 2);
+            act(&mut state, Action::ChooseEffectOption(1));
         }
         other => panic!("expected the surveil, got {other:?}"),
     }
