@@ -132,6 +132,19 @@ pub(super) fn is_mode(mode: &str) -> bool {
     )
 }
 
+/// Per-thread digest memo budget (MiB) that Stage 4a modes use when
+/// `MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB` is unset.
+const DIGEST_MEMO_DEFAULT_MIB: usize = 64;
+
+/// Exact cost defaults for the Stage 4a modes, set before the policy loads:
+/// the tensorizer's whole-message digest memo is on, and the vector tanh
+/// proof is settled now (its record read, or the proof run), so neither
+/// lands inside a timed search. Neither changes a result bit.
+pub(super) fn exact_cost_defaults_v1() {
+    crate::native_flat_tensorizer_v2::set_default_digest_memo_mib_v1(DIGEST_MEMO_DEFAULT_MIB);
+    crate::vector_tanh_v1::prepare_v1();
+}
+
 const SPY_DECK: &str = "Spy";
 
 fn hex(bytes: &[u8]) -> String {

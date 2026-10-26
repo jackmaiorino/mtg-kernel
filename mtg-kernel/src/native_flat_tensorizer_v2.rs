@@ -558,14 +558,39 @@ struct DigestMemoV1 {
     bytes: usize,
 }
 
+/// The budget (MiB per thread) used when `MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB`
+/// is unset: 0 (off) unless a program set a default before its first fill.
+static DIGEST_MEMO_DEFAULT_MIB_V1: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Turns the digest memo on by default for this process (Stage 4a search,
+/// where rollouts offer the same actions again and again). The environment
+/// variable still wins, so `MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB=0` turns it
+/// off. Call before the first fill: the budget is read once per process.
+/// Features are the same bits with the memo on or off.
+pub(crate) fn set_default_digest_memo_mib_v1(mib: usize) {
+    DIGEST_MEMO_DEFAULT_MIB_V1.store(mib, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn digest_memo_budget_v1() -> usize {
     static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *BUDGET.get_or_init(|| {
-        std::env::var("MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .map_or(0, |mib| mib.saturating_mul(1 << 20))
+        digest_memo_budget_from_v1(
+            std::env::var("MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB").ok(),
+            DIGEST_MEMO_DEFAULT_MIB_V1.load(std::sync::atomic::Ordering::Relaxed),
+        )
     })
+}
+
+/// The memo's byte budget from the variable's value (unparsable means off,
+/// as before) or, when it is unset, the program default in MiB.
+fn digest_memo_budget_from_v1(value: Option<String>, default_mib: usize) -> usize {
+    match value {
+        Some(value) => value
+            .parse::<usize>()
+            .map_or(0, |mib| mib.saturating_mul(1 << 20)),
+        None => default_mib.saturating_mul(1 << 20),
+    }
 }
 
 /// Bucketing hash (not an identity: hits compare bytes in full).

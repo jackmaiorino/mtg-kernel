@@ -109,3 +109,16 @@ fn digest_memo_separates_namespaces() {
         .get(hash_state, STATE_HASH_NAMESPACE_V2, message)
         .is_some());
 }
+
+#[test]
+fn digest_memo_budget_honours_the_variable_then_the_program_default() {
+    const MIB: usize = 1 << 20;
+    // Unset: the program default (0 keeps it off).
+    assert_eq!(digest_memo_budget_from_v1(None, 0), 0);
+    assert_eq!(digest_memo_budget_from_v1(None, 64), 64 * MIB);
+    // Set: the variable wins, including 0 to turn a default off.
+    assert_eq!(digest_memo_budget_from_v1(Some("0".into()), 64), 0);
+    assert_eq!(digest_memo_budget_from_v1(Some("8".into()), 64), 8 * MIB);
+    // Unparsable means off, as before.
+    assert_eq!(digest_memo_budget_from_v1(Some("lots".into()), 64), 0);
+}
