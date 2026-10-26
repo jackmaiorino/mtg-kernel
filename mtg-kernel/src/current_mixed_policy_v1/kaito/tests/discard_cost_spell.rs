@@ -111,7 +111,7 @@ fn paid_thrill_mandatory_land_or_creature_discard_counter_two_draws_and_restore_
                     assert!(hand.iter().all(|o| s.players[p.index()].hand.contains(o)));
                     assert!(drawn
                         .iter()
-                        .all(|o| s.players[p.index()].hand.contains(o) == !countered));
+                        .all(|o| s.players[p.index()].hand.contains(o) != countered));
                     if let Some(expected) = &expected {
                         assert_eq!(s, expected);
                     } else {
