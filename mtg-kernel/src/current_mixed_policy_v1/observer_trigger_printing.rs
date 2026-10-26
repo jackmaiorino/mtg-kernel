@@ -1,7 +1,7 @@
 //! Closed battlefield observers. Executable recipes are compared, never encoded.
 use super::{Error, Result};
 use crate::{
-    card_def::{CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec},
+    card_def::{CardDef, CardType, DynamicValueDef, Keywords, Subtype, Supertype, TargetSpec},
     effect::{EffectCond, EffectOp, ObjectRef, PlayerRef, TargetRef},
     mana::{Cost, ManaColor, Pip},
     state::Zone,
