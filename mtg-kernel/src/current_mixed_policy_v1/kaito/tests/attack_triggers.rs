@@ -85,6 +85,9 @@ fn paid(name: &str) {
         for _ in 0..3 {
             put(&mut s, p.opponent(), "Forest", Zone::Battlefield);
         }
+        if name == "Ruby, Daring Tracker" {
+            put(&mut s, p, "Forest", Zone::Battlefield);
+        }
         let hawk = put(&mut s, p, "Healer's Hawk", Zone::Battlefield);
         let angel = put(&mut s, p, "Serra Angel", Zone::Battlefield);
         let late = put(&mut s, p, "Healer's Hawk", Zone::Hand);
@@ -210,6 +213,7 @@ fn paid(name: &str) {
                             "Crypt Feaster" if branch != 3 => (2, 0),
                             "Dauntless Veteran" => (1, 1),
                             "Courageous Goblin" => (1, 0),
+                            "Ruby, Daring Tracker" => (2, 2),
                             _ => (0, 0),
                         };
                         let d = &crate::card_def::CARD_DEFS[usize::from(id)];
@@ -280,6 +284,93 @@ fn paid_courageous_attack_power_condition_departure_expiry_and_restore_both_seat
 }
 
 #[test]
+fn paid_ruby_attack_power_condition_departure_expiry_and_restore_both_seats() {
+    paid("Ruby, Daring Tracker");
+}
+
+#[test]
+fn paid_ruby_haste_attacks_or_chooses_one_red_or_green_mana_immediately_after_entry_both_seats() {
+    use crate::{
+        mana::ManaColor,
+        state::{GameState, Step},
+    };
+    let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = GameState::new_from_libraries_with_starting_player_v1(
+            &[forest; 40],
+            &[forest; 40],
+            crate::rl::card_name,
+            110_409,
+            p,
+        );
+        s.step = Step::Main1;
+        let lands = ["Mountain", "Forest"].map(|n| put(&mut s, p, n, Zone::Battlefield));
+        let source = put(&mut s, p, "Ruby, Daring Tracker", Zone::Hand);
+        let (mut own, mut native) = sessions(s);
+        cast(&mut own, &mut native, source);
+        assert!(lands
+            .iter()
+            .all(|&o| own.fixture_state().objects.get(o).tapped));
+        assert_eq!(own.fixture_state().players[p.index()].mana_pool, [0; 6]);
+        settle(&mut own, &mut native);
+        assert!(own.fixture_state().objects.get(source).summoning_sick);
+        assert!(crate::engine::has_effective_keyword(
+            own.fixture_state(),
+            source,
+            Keywords::HASTE
+        ));
+        let choices = actions(&own)
+            .into_iter()
+            .filter_map(|a| match a {
+                A::ActivateManaAbility {
+                    source: s,
+                    mana_choice,
+                    ..
+                } if s.arena_id == source.0 => mana_choice,
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(choices.len(), 2);
+        assert!(choices.contains(&ManaColor::R) && choices.contains(&ManaColor::G));
+        checkpoint(&mut own, &mut native);
+        let saved = own.snapshot();
+        let raw = native.snapshot_v1();
+        for color in [ManaColor::R, ManaColor::G] {
+            for _ in 0..2 {
+                own.restore(&saved).unwrap();
+                native.kaito_restore_v75(&raw).unwrap();
+                act(
+                    &mut own,
+                    &mut native,
+                    |a| matches!(a,A::ActivateManaAbility{source:s,mana_choice:Some(c),..}if s.arena_id==source.0&&*c==color),
+                );
+                assert!(own.fixture_state().objects.get(source).tapped);
+                assert!(own.fixture_state().stack.is_empty());
+                let mut expected = [0; 6];
+                expected[color.pool_index()] = 1;
+                assert_eq!(own.fixture_state().players[p.index()].mana_pool, expected);
+                assert!(!actions(&own).iter().any(
+                    |a| matches!(a,A::ActivateManaAbility{source:s,..}if s.arena_id==source.0)
+                ));
+            }
+        }
+        own.restore(&saved).unwrap();
+        native.kaito_restore_v75(&raw).unwrap();
+        declare(&mut own, &mut native, &[source]);
+        assert!(own.fixture_state().objects.get(source).summoning_sick);
+        assert!(own.fixture_state().objects.get(source).tapped);
+        assert!(own.fixture_state().stack.is_empty());
+        assert_eq!(
+            crate::engine::checked_effective_pt(own.fixture_state(), source).unwrap(),
+            (1, 2)
+        );
+        checkpoint(&mut own, &mut native);
+        second_main(&mut own, &mut native, p);
+        assert_eq!(own.fixture_state().players[p.opponent().index()].life, 19);
+    }
+}
+
+#[test]
 fn paid_attack_capture_boundaries_and_nonattacking_observers_restore_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         for name in [
@@ -287,6 +378,7 @@ fn paid_attack_capture_boundaries_and_nonattacking_observers_restore_both_seats(
             "Battlesong Berserker",
             "Crypt Feaster",
             "Courageous Goblin",
+            "Ruby, Daring Tracker",
         ] {
             for enabled in [false, true] {
                 let (mut s, source, _, _) = scene(p, name, 40);
@@ -298,7 +390,10 @@ fn paid_attack_capture_boundaries_and_nonattacking_observers_restore_both_seats(
                 let hawks = (0..3)
                     .map(|_| put(&mut s, p, "Healer's Hawk", Zone::Battlefield))
                     .collect::<Vec<_>>();
-                if name == "Courageous Goblin" && enabled {
+                if name == "Ruby, Daring Tracker" {
+                    put(&mut s, p, "Forest", Zone::Battlefield);
+                }
+                if matches!(name, "Courageous Goblin" | "Ruby, Daring Tracker") && enabled {
                     put(&mut s, p, "Serra Angel", Zone::Battlefield);
                 }
                 for _ in 0..(6 + usize::from(enabled)) {
@@ -350,17 +445,34 @@ fn paid_attack_capture_boundaries_and_nonattacking_observers_restore_both_seats(
                                 .plus1_plus1,
                             i32::from(enabled)
                         );
-                    } else if name == "Crypt Feaster" || name == "Courageous Goblin" {
+                    } else if matches!(
+                        name,
+                        "Crypt Feaster" | "Courageous Goblin" | "Ruby, Daring Tracker"
+                    ) {
                         let base = if name == "Crypt Feaster" {
                             (3, 4)
+                        } else if name == "Ruby, Daring Tracker" {
+                            (1, 2)
                         } else {
                             (2, 2)
                         };
-                        let boost = if name == "Crypt Feaster" { 2 } else { 1 };
+                        let boost = if matches!(name, "Crypt Feaster" | "Ruby, Daring Tracker") {
+                            2
+                        } else {
+                            1
+                        };
                         assert_eq!(
                             crate::engine::checked_effective_pt(own.fixture_state(), source)
                                 .unwrap(),
-                            (base.0 + boost * i32::from(enabled), base.1)
+                            (
+                                base.0 + boost * i32::from(enabled),
+                                base.1
+                                    + if name == "Ruby, Daring Tracker" {
+                                        2 * i32::from(enabled)
+                                    } else {
+                                        0
+                                    }
+                            )
                         );
                     } else {
                         assert_eq!(

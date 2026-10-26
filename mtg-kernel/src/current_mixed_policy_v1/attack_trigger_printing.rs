@@ -1,7 +1,7 @@
 //! Closed attack observers. Programs authenticate the printing and stay private.
 use super::{Error, Result};
 use crate::{
-    card_def::{CardDef, CardType, DynamicValueDef, Keywords, Subtype, TargetSpec},
+    card_def::{CardDef, CardType, DynamicValueDef, Keywords, Subtype, Supertype, TargetSpec},
     effect::{EffectCond, EffectOp, ObjectRef, TargetRef},
     mana::{Cost, ManaColor, Pip},
     state::Zone,
@@ -17,16 +17,17 @@ pub(super) fn handles(name: &str) -> bool {
             | "Crypt Feaster"
             | "Dauntless Veteran"
             | "Courageous Goblin"
+            | "Ruby, Daring Tracker"
     )
 }
 
 /// The caller additionally enforces every unrelated CardDef field.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
-    let (generic, pips, color, subtypes, power, toughness, keywords) = match d.name {
+    let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
         "Armasaur Guide" => (
             4,
             &[Pip::Colored(ManaColor::W)][..],
-            ManaColor::W,
+            &[ManaColor::W][..],
             &[Subtype::Dinosaur][..],
             4,
             4,
@@ -35,7 +36,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "Battlesong Berserker" => (
             3,
             &[Pip::Colored(ManaColor::R)][..],
-            ManaColor::R,
+            &[ManaColor::R][..],
             &[Subtype::Human, Subtype::Berserker][..],
             3,
             4,
@@ -44,7 +45,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "Crypt Feaster" => (
             3,
             &[Pip::Colored(ManaColor::B)][..],
-            ManaColor::B,
+            &[ManaColor::B][..],
             &[Subtype::Zombie][..],
             3,
             4,
@@ -53,7 +54,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "Dauntless Veteran" => (
             1,
             &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::W)][..],
-            ManaColor::W,
+            &[ManaColor::W][..],
             &[Subtype::Human, Subtype::Soldier][..],
             2,
             2,
@@ -62,14 +63,24 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "Courageous Goblin" => (
             1,
             &[Pip::Colored(ManaColor::R)][..],
-            ManaColor::R,
+            &[ManaColor::R][..],
             &[Subtype::Goblin][..],
             2,
             2,
             Keywords::NONE,
         ),
+        "Ruby, Daring Tracker" => (
+            0,
+            &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::G)][..],
+            &[ManaColor::R, ManaColor::G][..],
+            &[Subtype::Human, Subtype::Scout][..],
+            1,
+            2,
+            Keywords::HASTE,
+        ),
         _ => return Ok(None),
     };
+    let ruby = d.name == "Ruby, Daring Tracker";
     let cost = Cost {
         generic,
         pips,
@@ -80,8 +91,13 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || usize::from(d.mana_value) != usize::from(generic) + pips.len()
         || d.types != [CardType::Creature]
         || d.subtypes != subtypes
-        || !d.supertypes.is_empty()
-        || d.colors != [color]
+        || d.supertypes
+            != if ruby {
+                &[Supertype::Legendary][..]
+            } else {
+                &[][..]
+            }
+        || d.colors != colors
         || d.power != Some(power)
         || d.toughness != Some(toughness)
         || d.keywords != keywords
@@ -90,8 +106,13 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.enters_battlefield_tapped
         || d.target_spec != TargetSpec::None
         || !d.activated_abilities.is_empty()
-        || !d.produces_mana.is_empty()
-        || !d.mana_ability_choices.is_empty()
+        || d.produces_mana
+            != if ruby {
+                &[ManaColor::R, ManaColor::G][..]
+            } else {
+                &[][..]
+            }
+        || d.mana_ability_choices != d.produces_mana
         || (d.mana_ability)().is_some()
         || (d.spell_effect)()
             != Some(EffectOp::MoveObject {
@@ -185,6 +206,14 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             ],
             Value::Null,
         ),
+        "Ruby, Daring Tracker" => (
+            TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+            json!({"event":"OriginalSourceDeclaredAttacker","controller_has_current_effective_creature_power_at_least":4,
+                "source_may_satisfy_power_condition":true,"checks_at_capture_only":true,"does_not_recheck_power_at_resolution":true}),
+            bound_boost(2, 2),
+            vec![boost_meaning(2, 2)],
+            Value::Null,
+        ),
         "Courageous Goblin" => (
             TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
             json!({"event":"OriginalSourceDeclaredAttacker","controller_has_current_effective_creature_power_at_least":4,
@@ -233,9 +262,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "normal_target_legality_and_protection_apply":true,"rechecked_at_resolution":true
         }])
     };
-    Ok(Some(json!({"card_id":id,"attack_trigger_printing":{
+    let mut value = json!({"card_id":id,"attack_trigger_printing":{
         "schema":"printed-attack-observer/v1","cost":cost,"mana_value":d.mana_value,"types":d.types,
-        "subtypes":d.subtypes,"supertypes":[],"colors":d.colors,"power":power,"toughness":toughness,
+        "subtypes":d.subtypes,"supertypes":d.supertypes,"colors":d.colors,"power":power,"toughness":toughness,
         "keywords":keywords.0,"token":false,
         "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
             "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
@@ -249,5 +278,15 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "required_target_absence_prevents_stack_placement":target_spec != TargetSpec::None,
             "all_chosen_targets_illegal_skips_resolution":target_spec != TargetSpec::None,
             "ordered_resolution":ordered}]
-    }})))
+    }});
+    if ruby {
+        value["attack_trigger_printing"]["ordered_mana_abilities"] = json!([{
+            "cost":"TapThisSource","recipient":"CurrentController","amount":1,
+            "choose_exactly_one_color_from":[ManaColor::R, ManaColor::G],
+            "requires_untapped_controlled_battlefield_source":true,
+            "summoning_sickness_restriction_uses_current_effective_haste":true,
+            "uses_stack":false,"is_activated_mana_ability":true
+        }]);
+    }
+    Ok(Some(value))
 }

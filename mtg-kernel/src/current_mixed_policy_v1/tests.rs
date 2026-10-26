@@ -1676,6 +1676,7 @@ mod paid {
             "Crypt Feaster",
             "Dauntless Veteran",
             "Courageous Goblin",
+            "Ruby, Daring Tracker",
         ] {
             let id = crate::card_def::card_id_by_name(name).unwrap();
             assert_eq!(
@@ -1697,6 +1698,33 @@ mod paid {
                     "{name} changed field {field}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn ruby_legend_haste_exact_mana_choice_and_capture_only_power_condition_refuse_changes() {
+        use crate::{card_def::Keywords, mana::ManaColor};
+        let id = crate::card_def::card_id_by_name("Ruby, Daring Tracker").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let meaning = &value["attack_trigger_printing"];
+        assert_eq!(
+            meaning["ordered_triggers"][0]["event"]["does_not_recheck_power_at_resolution"],
+            true
+        );
+        assert!(meaning["ordered_triggers"][0]["intervening_if"].is_null());
+        assert_eq!(meaning["ordered_mana_abilities"][0]["amount"], 1);
+        assert_eq!(meaning["ordered_mana_abilities"][0]["uses_stack"], false);
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.supertypes = &[],
+                1 => d.keywords = Keywords::NONE,
+                2 => d.colors = &[ManaColor::R],
+                3 => d.produces_mana = &[ManaColor::R],
+                4 => d.mana_ability_choices = &[ManaColor::G],
+                _ => d.mana_ability = || Some(crate::effect::EffectOp::Sequence(vec![])),
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
         }
     }
 
