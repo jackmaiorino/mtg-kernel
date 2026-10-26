@@ -16981,8 +16981,8 @@ fn advance_step(state: &mut GameState) {
             }
             // Time Vault: a player who chose to skip this turn skips it and
             // untaps the Vault; the next turn begins instead.
-            if !(cfg!(feature = "eternal-fixtures")
-                && crate::eternal_vintage_v1::take_turn_skip(state))
+            if !cfg!(feature = "eternal-fixtures")
+                || !crate::eternal_vintage_v1::take_turn_skip(state)
             {
                 break;
             }
@@ -17113,8 +17113,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     state.objects.get_mut(id).v4.skip_next_untap = false;
                 } else if !prevented_by_attachment
                     && !crate::slumbering_cerberus_v1::prevents_untap_step(state, id)
-                    && !(cfg!(feature = "eternal-fixtures")
-                        && crate::eternal_vintage_v1::prevents_untap_step(state, id))
+                    && (!cfg!(feature = "eternal-fixtures")
+                        || !crate::eternal_vintage_v1::prevents_untap_step(state, id))
                 {
                     attempt_untap(state, id);
                 }
