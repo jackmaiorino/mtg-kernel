@@ -50,6 +50,7 @@ mod pilfer;
 mod revenge_rats;
 mod sacrifice;
 mod sailor;
+mod searslicer;
 mod seekers_folly;
 mod self_reflection;
 mod shivan;

@@ -34,6 +34,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Eager Trufflesnout"
             | "Nessian Hornbeetle"
             | "Mossborn Hydra"
+            | "Searslicer Goblin"
     )
 }
 
@@ -41,6 +42,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Searslicer Goblin" => (
+            1,
+            &[Pip::Colored(ManaColor::R)][..],
+            &[ManaColor::R][..],
+            &[Subtype::Goblin, Subtype::Warrior][..],
+            2,
+            1,
+            Keywords::NONE,
+        ),
         "Mossborn Hydra" => (
             2,
             &[Pip::Colored(ManaColor::G)][..],
@@ -308,6 +318,28 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Searslicer Goblin" => {
+            let token_def = crate::card_def::card_id_by_name("Goblin Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            (
+                TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
+                json!({"event":"BeginningOfObserverControllersEndStep","requires_controller_declared_at_least_one_attacker_this_turn":true,"current_turn_round_and_active_seat_bind_declaration_history":true,"no_trigger_on_opponents_end_step":true,"observer_need_not_have_been_present_during_attack":true}),
+                EffectOp::Conditional {
+                    cond: EffectCond::ControllerAttackedThisTurn,
+                    then: Box::new(EffectOp::CreateToken {
+                        token_def,
+                        controller: PlayerRef::Controller,
+                    }),
+                    else_: Box::new(EffectOp::Sequence(vec![])),
+                },
+                vec![
+                    json!({"operation":"IfCapturedControllerAttackedThisTurn","condition_rechecked_at_resolution":true,
+                 "requires_actual_current_turn_attacker_declaration_not_current_attacking_status_or_damage":true,
+                 "attacker_can_have_left_combat_or_battlefield":true,
+                 "if_true":[{"operation":"CreateToken","controller":"CapturedTriggerController","count":1,"token_definition":super::baseline(token_def)?,"enters_untapped_and_not_attacking_without_added_haste":true,"normal_token_replacements_and_entry_triggers_apply":true}],"if_false":[]}),
+                ],
+            )
+        }
         "Nessian Hornbeetle" => (
             TriggerCondition::BeginningControllerCombatWithOtherCreaturePowerAtLeast(4),
             json!({"event":"BeginningOfObserverControllersCombat",
@@ -630,6 +662,13 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "current_effective_types_power_and_control_apply":true,
             "no_trigger_if_false_at_beginning_even_if_later_becomes_true":true,
             "no_counter_if_false_at_resolution_even_if_true_at_beginning":true});
+    }
+    if d.name == "Searslicer Goblin" {
+        meaning["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"] = json!({
+            "operation":"CapturedControllerAttackedThisTurn","check_at_trigger_time_and_resolution":true,
+            "actual_declaration_history_for_current_turn_and_active_seat":true,
+            "not_satisfied_by_damage_dealt_or_put_onto_battlefield_attacking":true,
+            "not_required_that_observer_itself_attacked_or_witnessed_declaration":true});
     }
     Ok(Some(meaning))
 }

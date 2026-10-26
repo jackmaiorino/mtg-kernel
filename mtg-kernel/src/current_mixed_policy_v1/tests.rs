@@ -1375,6 +1375,34 @@ mod paid {
         }
     }
 
+    #[test]
+    fn searslicer_intervening_raid_and_changed_printings_refuse() {
+        let id = crate::card_def::card_id_by_name("Searslicer Goblin").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"]
+                ["check_at_trigger_time_and_resolution"],
+            true
+        );
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["event"]
+                ["observer_need_not_have_been_present_during_attack"],
+            true
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.power = Some(3),
+                2 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                3 => d.keywords = crate::card_def::Keywords::HASTE,
+                4 => d.subtypes = &[crate::card_def::Subtype::Goblin],
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {
