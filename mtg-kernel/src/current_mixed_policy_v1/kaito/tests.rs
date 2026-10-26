@@ -48,6 +48,7 @@ mod revenge_rats;
 mod sacrifice;
 mod sailor;
 mod seekers_folly;
+mod self_reflection;
 mod shivan;
 mod simple_triggers;
 mod solemn;

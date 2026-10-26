@@ -30,6 +30,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Condemn"
             | "Run Away Together"
             | "Uncharted Voyage"
+            | "Self-Reflection"
     )
 }
 fn pump(power: i32, toughness: i32) -> EffectOp {
@@ -52,6 +53,9 @@ fn grant_meaning(keyword: Keywords) -> Value {
 /// All other CardDef fields and trigger absence are checked by the caller's
 /// shared exclusion guard before this printing can be published.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    if d.name == "Self-Reflection" {
+        return self_reflection(id, d);
+    }
     if d.name == "Bulk Up" {
         return bulk_up(id, d);
     }
@@ -418,6 +422,81 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "all_targets_illegal_skips_entire_resolution":true,"ordered_resolution":ordered,
             "physical_stack_departure":"GraveyardAfterResolutionOrCounter","virtual_spell_copy_ceases":true,
             "other_cast_permissions_require_current_candidate_authority":true}]
+    }})))
+}
+
+fn self_reflection(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::rules_meaning_self_reflection_v1 as family;
+    let normal = Cost {
+        generic: 4,
+        pips: &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)],
+        x_count: 0,
+    };
+    let flashback = Cost {
+        generic: 3,
+        pips: &[Pip::Colored(ManaColor::U)],
+        x_count: 0,
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != normal
+        || d.mana_value != 6
+        || d.types != [CardType::Sorcery]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::U]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.target_spec != TargetSpec::ControlledCreature
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)() != Some(EffectOp::CreateControlledCreatureTargetCopyV1)
+        || !d
+            .flashback
+            .as_ref()
+            .is_some_and(|f| f.cost == [CostComponent::Mana(flashback)])
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let selector = family::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+    for root in [family::CastRootV1::Normal, family::CastRootV1::Flashback] {
+        family::meaning(&selector, id, root).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+    }
+    let anonymous =
+        crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)
+            .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let anonymous_printing = super::baseline(anonymous)?;
+    let roots = [false, true].into_iter().map(|fb| json!({
+        "method":if fb{"Flashback"}else{"Normal"},"route":if fb{"GraveyardFlashback"}else{"Hand"},
+        "origin":if fb{"OwnGraveyard"}else{"OwnHand"},"origin_owner_must_be_caster":true,
+        "timing":"OwnMainPhaseEmptyStackWithPriority",
+        "ordered_costs":[{"operation":if fb{"PayFlashbackAlternativeMana"}else{"PayPrintedMana"},"cost":if fb{flashback}else{normal},"normal_cost_increases_and_reductions_apply":true}],
+        "target_count":1,"target_slot":0,"target_filter":{"zone":"Battlefield","effective_type":"Creature","controller":"Caster","owner_unrestricted":true,"tokens_and_legends_allowed":true},
+        "requires_original_target_incarnation":true,"recheck_current_control_and_creature_legality_at_resolution":true,
+        "copy_layer_definition_change_preserves_original_physical_incarnation":true,
+        "ordered_resolution":[{"operation":"CreateTokenCopy","target_slot":0,"count":1,"sample_time":"Resolution",
+            "values":"CurrentCopiableCharacteristicsIncludingCopiedFaceAndCopiableGrantedAbilities",
+            "token_owner_and_controller":"CapturedSpellController","noncopiable_counters_damage_tap_attachments_temporary_modifiers_and_animation_not_copied":true,
+            "animated_land_target_can_produce_noncreature_land_token":true,
+            "face_down_target_uses_anonymous_face_up_blueprint":anonymous_printing,
+            "anonymous_copy_contains_no_underlying_identity_or_face_up_permission":true,
+            "adds_no_haste_or_delayed_sacrifice":true,"normal_token_replacements_and_battlefield_entry_triggers_apply":true,
+            "normal_legend_rule_and_state_based_actions_follow_resolution":true}],
+        "all_targets_illegal_creates_no_token":true,"countering_skips_resolution_without_refunding_cost":true,
+        "physical_stack_departure":if fb{"ExileInsteadOfAnyOtherDeparture"}else{"GraveyardAfterResolutionOrCounter"},
+        "other_cast_permissions_require_current_candidate_authority":true
+    })).collect::<Vec<_>>();
+    Ok(Some(json!({"card_id":id,"self_reflection_printing":{
+        "schema":"printed-controlled-creature-token-copy-flashback/v1","cost":normal,"mana_value":6,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":roots,"flashback_cost_is_alternative_not_additional":true,
+        "flashback_does_not_change_printed_or_stack_mana_value":true,
+        "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","normal_zone_replacements_apply":true
     }})))
 }
 

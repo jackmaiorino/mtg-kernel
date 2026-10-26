@@ -1220,6 +1220,59 @@ mod paid {
         run!(RavenousSession, from_ravenous_v51_fixture_state);
     }
 
+    #[test]
+    fn self_reflection_both_roots_and_nameless_copy_reject_changed_printings() {
+        use crate::card_def::{CardType, Keywords, TargetSpec};
+        let id = crate::card_def::card_id_by_name("Self-Reflection").unwrap();
+        let original = ordinary_recipe(id);
+        let meaning = roots::baseline_recipe(id, &original).unwrap();
+        let roots = &meaning["self_reflection_printing"]["ordered_cast_roots"];
+        assert_eq!(roots[0]["ordered_costs"][0]["cost"]["generic"], 4);
+        assert_eq!(roots[1]["ordered_costs"][0]["cost"]["generic"], 3);
+        assert_eq!(
+            roots[1]["physical_stack_departure"],
+            "ExileInsteadOfAnyOtherDeparture"
+        );
+        macro_rules! reject {
+            ($field:ident,$value:expr) => {{
+                let mut d = ordinary_recipe(id);
+                d.$field = $value;
+                assert!(roots::baseline_recipe(id, &d).is_err(), stringify!($field));
+            }};
+        }
+        reject!(cost, crate::mana::Cost::zero());
+        reject!(mana_value, 4);
+        reject!(types, &[CardType::Instant]);
+        reject!(target_spec, TargetSpec::Creature);
+        reject!(flashback, None);
+        reject!(spell_effect, || None);
+        reject!(keywords, Keywords::HASTE);
+        reject!(object_name, "Other");
+        reject!(
+            mode2,
+            Some(crate::card_def::ModeDef {
+                target_spec: TargetSpec::None,
+                effect: || crate::effect::EffectOp::Sequence(vec![])
+            })
+        );
+        let token =
+            crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)
+                .unwrap();
+        let printed = roots::baseline(token).unwrap();
+        assert_eq!(printed["primitive_printing"]["object_name"], "");
+        assert_eq!(printed["primitive_printing"]["power"], 2);
+        for field in 0..4 {
+            let mut d = ordinary_recipe(token);
+            match field {
+                0 => d.object_name = "Named",
+                1 => d.power = Some(3),
+                2 => d.colors = &[crate::mana::ManaColor::U],
+                _ => d.is_token = false,
+            }
+            assert!(roots::baseline_recipe(token, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {

@@ -713,6 +713,32 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     // name. Their actual object name is shared; authenticate this exact variant
     // before allowing that difference through the common guard.
     let dragon_token = d.name == "Dragon 5/5 Token";
+    // A face-down copy has no object name. This internal catalog lookup name
+    // must not become a public name or a route to casting the token.
+    let anonymous_token = d.name == crate::self_reflection_v1::ANONYMOUS_BLUEPRINT;
+    if anonymous_token
+        && (crate::card_def::card_id_by_name(d.name) != Some(id)
+            || !crate::self_reflection_v1::anonymous_blueprint_is_exact(id)
+            || !d.object_name.is_empty()
+            || !d.is_token
+            || d.is_land
+            || d.cost != crate::mana::Cost::zero()
+            || d.mana_value != 0
+            || d.types != [CardType::Creature]
+            || !d.subtypes.is_empty()
+            || !d.supertypes.is_empty()
+            || !d.colors.is_empty()
+            || d.power != Some(2)
+            || d.toughness != Some(2)
+            || d.keywords != crate::card_def::Keywords::NONE
+            || d.target_spec != TargetSpec::None
+            || (d.spell_effect)().is_some()
+            || (d.mana_ability)().is_some()
+            || !d.produces_mana.is_empty()
+            || !d.mana_ability_choices.is_empty())
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
     if dragon_token
         && (crate::card_def::card_id_by_name(d.name) != Some(id)
             || d.object_name != "Dragon Token"
@@ -733,7 +759,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
     if !(d.capability == CardCapability::Full
-        && (d.object_name == d.name || dragon_token)
+        && (d.object_name == d.name || dragon_token || anonymous_token)
         && (d.activated_abilities.is_empty()
             || goldvein.is_some()
             || hart.is_some()
@@ -757,7 +783,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.additional_modes.is_empty()
         && (d.flashback.is_none()
             || think_twice
-            || (targeted_spell.is_some() && d.name == "Bulk Up")
+            || (targeted_spell.is_some() && matches!(d.name, "Bulk Up" | "Self-Reflection"))
             || (ordinary_batch_spell.is_some() && d.name == "Revenge of the Rats"))
         && (d.kicker_cost.is_none()
             || (targeted_spell.is_some() && d.name == "Burst Lightning")
@@ -1070,7 +1096,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         "ordered_instructions":[instruction],
         "mana_ability":mana.map(|colors|json!({"cost":"TapSelf","recipient":"Controller","colors":colors,"amount":1}))
     }});
-    if dragon_token {
+    if dragon_token || anonymous_token {
         value["primitive_printing"]["object_name"] = json!(d.object_name);
     }
     Ok(value)
