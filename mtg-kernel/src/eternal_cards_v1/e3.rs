@@ -16,7 +16,7 @@ use crate::effect::{
 };
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
-use crate::mana::ManaColor;
+use crate::mana::{ManaColor, Pip};
 use crate::state::{
     AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, StackTargetContractV4, Target,
     Zone,
@@ -31,6 +31,7 @@ pub(crate) const CAVERN_OF_SOULS: &str = "Cavern of Souls";
 pub(crate) const CITY_OF_TRAITORS: &str = "City of Traitors";
 pub(crate) const STREET_WRAITH: &str = "Street Wraith";
 pub(crate) const FLUSTERSTORM: &str = "Flusterstorm";
+pub(crate) const THASSAS_ORACLE: &str = "Thassa's Oracle";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -182,6 +183,15 @@ pub enum E3ChoiceKindV1 {
         copy: StackItemId,
         rest: Vec<StackItemId>,
     },
+    /// Doomsday: exactly five (or all) cards from the controller's library
+    /// and graveyard, in order; the first chosen ends on top.
+    DoomsdayV1,
+    /// Thassa's Oracle: up to one of the looked-at top cards stays on top.
+    /// `devotion` is X, `prefix` the cards looked at.
+    OracleV1 {
+        devotion: u32,
+        prefix: Vec<EffectObjectBinding>,
+    },
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -203,18 +213,25 @@ impl E3ChoiceV1 {
     /// Whether the candidates are hidden from the other player (hand or
     /// library cards).
     pub(crate) fn chooser_private(&self) -> bool {
-        matches!(self.kind, E3ChoiceKindV1::ImprintV1 { .. })
+        matches!(
+            self.kind,
+            E3ChoiceKindV1::ImprintV1 { .. }
+                | E3ChoiceKindV1::DoomsdayV1
+                | E3ChoiceKindV1::OracleV1 { .. }
+        )
     }
 
     /// Whether the chooser sees library cards it has not looked at before
     /// (a search).
     pub(crate) fn library_search(&self) -> bool {
-        false
+        matches!(self.kind, E3ChoiceKindV1::DoomsdayV1)
     }
 
     pub(crate) fn public_purpose(&self) -> crate::rl::TargetSelectionPurposeV4 {
         match self.kind {
-            E3ChoiceKindV1::ImprintV1 { .. } => crate::rl::TargetSelectionPurposeV4::CardSelection,
+            E3ChoiceKindV1::ImprintV1 { .. }
+            | E3ChoiceKindV1::DoomsdayV1
+            | E3ChoiceKindV1::OracleV1 { .. } => crate::rl::TargetSelectionPurposeV4::CardSelection,
             E3ChoiceKindV1::RetargetSpellV1 { .. } | E3ChoiceKindV1::RetargetCopyV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::EffectTargets
             }
@@ -375,6 +392,19 @@ pub(crate) fn finish_selection(
             crate::engine::finish_spell_copy_targets(state, *copy, target)?;
             stage_copy_retargets(state, continuation, rest.clone(), choice.path.clone())
         }
+        E3ChoiceKindV1::DoomsdayV1 => {
+            let chosen = bindings
+                .iter()
+                .map(|binding| binding.object)
+                .collect::<Vec<_>>();
+            apply_doomsday(state, choice.player, &chosen)?;
+            Ok(false)
+        }
+        E3ChoiceKindV1::OracleV1 { devotion, prefix } => {
+            let kept = bindings.first().map(|binding| binding.object);
+            apply_oracle(state, choice.player, *devotion, prefix, kept)?;
+            Ok(false)
+        }
     }
 }
 
@@ -484,6 +514,80 @@ pub(crate) fn drive(
             }
             Ok(false)
         }
+        EternalOpV1::DoomsdayPileV1 => {
+            let player = continuation.ctx.controller;
+            let cards = state.players[player.index()]
+                .library
+                .iter()
+                .copied()
+                .chain(graveyard_card_ids(state, player))
+                .map(|card| bind(state, card))
+                .collect::<Vec<_>>();
+            let count = cards.len().min(5);
+            if count <= 1 && count == cards.len() {
+                let chosen = cards.iter().map(|card| card.object).collect::<Vec<_>>();
+                apply_doomsday(state, player, &chosen)?;
+                return Ok(false);
+            }
+            let count = u16::try_from(count).unwrap_or(5);
+            offer(
+                continuation,
+                E3ChoiceV1 {
+                    kind: E3ChoiceKindV1::DoomsdayV1,
+                    player,
+                    candidates: cards
+                        .iter()
+                        .map(|card| Target::Object(card.object))
+                        .collect(),
+                    bindings: cards,
+                    min: count,
+                    max: count,
+                    ordered: true,
+                    path,
+                    remaining: continuation.frames.clone(),
+                },
+            );
+            Ok(true)
+        }
+        EternalOpV1::ThassasOracleV1 => {
+            let player = continuation.ctx.controller;
+            let devotion = devotion_to_blue(state, player);
+            let library = state.players[player.index()].library.clone();
+            let looked = library
+                .len()
+                .min(usize::try_from(devotion).unwrap_or(usize::MAX));
+            // Only the controller looks.
+            state.reveal_library_top(player, player, looked);
+            let prefix = library[..looked]
+                .iter()
+                .map(|&card| bind(state, card))
+                .collect::<Vec<_>>();
+            if prefix.is_empty() {
+                apply_oracle(state, player, devotion, &prefix, None)?;
+                return Ok(false);
+            }
+            offer(
+                continuation,
+                E3ChoiceV1 {
+                    kind: E3ChoiceKindV1::OracleV1 {
+                        devotion,
+                        prefix: prefix.clone(),
+                    },
+                    player,
+                    candidates: prefix
+                        .iter()
+                        .map(|card| Target::Object(card.object))
+                        .collect(),
+                    bindings: prefix,
+                    min: 0,
+                    max: 1,
+                    ordered: false,
+                    path,
+                    remaining: continuation.frames.clone(),
+                },
+            );
+            Ok(true)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -498,7 +602,205 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
         EternalOpV1::MayImprintFromHandV1
             | EternalOpV1::ChangeTargetOfTargetSpellV1
             | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. }
+            | EternalOpV1::DoomsdayPileV1
+            | EternalOpV1::ThassasOracleV1
     )
+}
+
+/// The cards (not tokens or copies) in `player`'s graveyard, in order.
+fn graveyard_card_ids(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .graveyard
+        .iter()
+        .copied()
+        .filter(|&card| {
+            let object = state.objects.get(card);
+            object.owner == player && !object.v4.is_token && object.spell_copy_origin.is_none()
+        })
+        .collect()
+}
+
+/// "The player wins the game": in a two-player game the opponent loses.
+fn win_game(state: &mut GameState, player: PlayerId) {
+    state.players[player.opponent().index()].has_lost = true;
+}
+
+// ---- Doomsday ----------------------------------------------------------------------
+
+/// Doomsday: "Search your library and graveyard for five cards and exile
+/// the rest. Put the chosen cards on top of your library in any order. You
+/// lose half your life, rounded up."
+pub fn doomsday() -> EffectOp {
+    EffectOp::Sequence(vec![
+        eternal(EternalOpV1::DoomsdayPileV1),
+        EffectOp::LoseHalfLifeRoundedUp {
+            player: PlayerRef::Controller,
+        },
+    ])
+}
+
+/// Exiles every other card of `player`'s library and graveyard, then makes
+/// `chosen` (first on top) the whole library. Only `player` knows its order.
+fn apply_doomsday(
+    state: &mut GameState,
+    player: PlayerId,
+    chosen: &[ObjectId],
+) -> Result<(), String> {
+    let exiled = state.players[player.index()]
+        .library
+        .iter()
+        .copied()
+        .chain(graveyard_card_ids(state, player))
+        .filter(|card| !chosen.contains(card))
+        .map(|card| ProposedEvent::zone_change(card, Zone::Exile))
+        .collect::<Vec<_>>();
+    if !exiled.is_empty() {
+        event::propose_and_commit_batch(state, exiled);
+    }
+    for &card in chosen {
+        if state.objects.get(card).zone == Zone::Graveyard {
+            event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Library));
+        }
+    }
+    let library = &state.players[player.index()].library;
+    if library.len() != chosen.len() || chosen.iter().any(|card| !library.contains(card)) {
+        return Err("Doomsday's pile is not the whole library".to_string());
+    }
+    state.reorder_library_top(player, chosen, &[player])
+}
+
+// ---- Thassa's Oracle -----------------------------------------------------------------
+
+/// "Each {U} in the mana costs of permanents you control counts toward
+/// your devotion to blue." Permanents showing a face without a mana cost
+/// count nothing.
+pub(crate) fn devotion_to_blue(state: &GameState, player: PlayerId) -> u32 {
+    let blue = |pip: &Pip| match *pip {
+        Pip::Colored(color) | Pip::Phyrexian(color) | Pip::PhyrexianAnyColor(color) => {
+            color == ManaColor::U
+        }
+        Pip::Hybrid(first, second) => first == ManaColor::U || second == ManaColor::U,
+    };
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .map(|&permanent| {
+            let object = state.objects.get(permanent);
+            if object.v4.face_index != 0 || object.v4.face_down_v1.is_some() {
+                return 0;
+            }
+            CARD_DEFS.get(object.card_def as usize).map_or(0, |def| {
+                def.cost.pips.iter().filter(|pip| blue(pip)).count()
+            })
+        })
+        .sum::<usize>()
+        .try_into()
+        .unwrap_or(u32::MAX)
+}
+
+/// Thassa's Oracle's entry: "look at the top X cards of your library,
+/// where X is your devotion to blue. Put up to one of them on top of your
+/// library and the rest on the bottom of your library in a random order. If
+/// X is greater than or equal to the number of cards in your library, you
+/// win the game."
+fn thassas_oracle() -> EffectOp {
+    eternal(EternalOpV1::ThassasOracleV1)
+}
+
+fn apply_oracle(
+    state: &mut GameState,
+    player: PlayerId,
+    devotion: u32,
+    prefix: &[EffectObjectBinding],
+    kept: Option<ObjectId>,
+) -> Result<(), String> {
+    if !prefix.is_empty() {
+        let expected = prefix
+            .iter()
+            .map(|card| ObjectLinkV4 {
+                object: card.object,
+                zone_change_count: card.expected_zone_change_count,
+            })
+            .collect::<Vec<_>>();
+        let top = kept.into_iter().collect::<Vec<_>>();
+        let bottom = prefix
+            .iter()
+            .map(|card| card.object)
+            .filter(|card| Some(*card) != kept)
+            .collect::<Vec<_>>();
+        state.apply_scry_result(player, &expected, &top, &bottom)?;
+        state
+            .randomize_library_bottom_v1(player, bottom.len())
+            .map_err(|error| error.to_string())?;
+    }
+    let library = u32::try_from(state.players[player.index()].library.len()).unwrap_or(u32::MAX);
+    if devotion >= library {
+        win_game(state, player);
+    }
+    Ok(())
+}
+
+// ---- Jace, Wielder of Mysteries ------------------------------------------------------
+
+pub(crate) const JACE: &str = "Jace, Wielder of Mysteries";
+
+/// Jace's +1: "Target player mills two cards. Draw a card."
+pub fn jace_plus_one() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::MillCards {
+            player: PlayerRef::Target(0),
+            count: 2,
+        },
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+    ])
+}
+
+/// Jace's -8: "Draw seven cards. Then if your library has no cards in it,
+/// you win the game."
+pub fn jace_minus_eight() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 7,
+        },
+        eternal(EternalOpV1::WinIfLibraryEmptyV1),
+    ])
+}
+
+/// Jace's static ability: "If you would draw a card while your library has
+/// no cards in it, you win the game instead."
+pub(crate) fn wins_instead_of_drawing_from_empty_library(
+    state: &GameState,
+    player: PlayerId,
+) -> bool {
+    state.players[player.index()].library.is_empty()
+        && state.players[player.index()]
+            .battlefield
+            .iter()
+            .any(|&permanent| {
+                state.objects.get(permanent).controller == player
+                    && printed_battlefield_source(state, permanent, JACE)
+            })
+}
+
+/// Applies Jace's replacement for a draw `player` would make.
+pub(crate) fn replace_empty_library_draw(state: &mut GameState, player: PlayerId) {
+    win_game(state, player);
+}
+
+// ---- Lion's Eye Diamond -----------------------------------------------------------------
+
+/// "Activate only as an instant": while `player` holds priority with no
+/// spell being cast, ability being activated or effect resolving.
+pub(crate) fn instant_speed_mana_ability_allowed(state: &GameState, player: PlayerId) -> bool {
+    state.priority_player == player
+        && state.engine.pending_cast.is_none()
+        && state.engine.pending_activation.is_none()
+        && state.engine.pending_effect.is_none()
+        && state.engine.pending_discard.is_none()
 }
 
 // ---- Ancient Tomb -------------------------------------------------------------
@@ -888,6 +1190,8 @@ const THE_ONE_RING_TRIGGERS: [TriggeredAbilityDef; 2] = [
 ];
 const CHROME_MOX_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::Etb, chrome_mox_imprint)];
+const THASSAS_ORACLE_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::Etb, thassas_oracle)];
 /// Storm: "When you cast this spell, copy it ..." functions from the stack.
 const FLUSTERSTORM_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Stack,
@@ -899,13 +1203,16 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
         FLUSTERSTORM => &FLUSTERSTORM_TRIGGERS,
+        THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         _ => &[],
     }
 }
 
 pub(crate) fn trigger_target_spec(name: &str, _effect: &EffectOp) -> Option<TargetSpec> {
     match name {
-        THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM => Some(TargetSpec::None),
+        THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | THASSAS_ORACLE => {
+            Some(TargetSpec::None)
+        }
         _ => None,
     }
 }
@@ -1037,9 +1344,16 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 permanents,
             });
         }
+        EternalOpV1::WinIfLibraryEmptyV1 => {
+            if state.players[ctx.controller.index()].library.is_empty() {
+                win_game(state, ctx.controller);
+            }
+        }
         EternalOpV1::MayImprintFromHandV1
         | EternalOpV1::ChangeTargetOfTargetSpellV1
-        | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. } => {
+        | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. }
+        | EternalOpV1::DoomsdayPileV1
+        | EternalOpV1::ThassasOracleV1 => {
             // Choice leaves run only inside the resumable interpreter.
             halt(state, ctx.source);
         }

@@ -1718,6 +1718,11 @@ pub enum ManaAbilityCostDef {
     /// needs at least N life (119.4). Appended; existing discriminants
     /// remain fixed.
     TapSelfPayLife(u8),
+    /// "Discard your hand, Sacrifice this artifact" with "Activate only as
+    /// an instant" (Lion's Eye Diamond): only while its controller holds
+    /// priority with nothing being cast, activated or resolved. Appended for
+    /// the eternal catalog.
+    DiscardHandAndSacrificeSelfV1,
 }
 
 /// Amount of the chosen color added by a mana ability.

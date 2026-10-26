@@ -285,6 +285,22 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             out.cost(CostAtom::PayLife(life));
         }
         ManaAbilityCostDef::None => {}
+        ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Hand,
+                to: ZoneF::Graveyard,
+                obj: ObjF::AnyCard,
+                amount: AmtF::Dynamic,
+            });
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Battlefield,
+                to: ZoneF::Graveyard,
+                obj: ObjF::ThisObject,
+                amount: AmtF::Unit,
+            });
+            // "Activate only as an instant" has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
     }
     let amount = match amount {
         ManaAbilityAmountDef::Fixed(n) => AmtF::fixed(i64::from(n)),

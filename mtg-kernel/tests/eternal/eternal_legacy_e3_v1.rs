@@ -12,7 +12,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E3_CARDS: [&str; 15] = [
+const E3_CARDS: [&str; 19] = [
     "Ancient Tomb",
     "The One Ring",
     "Chrome Mox",
@@ -28,6 +28,10 @@ const E3_CARDS: [&str; 15] = [
     "Personal Tutor",
     "Veil of Summer",
     "Flusterstorm",
+    "Doomsday",
+    "Thassa's Oracle",
+    "Jace, Wielder of Mysteries",
+    "Lion's Eye Diamond",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -878,4 +882,212 @@ fn flusterstorm_copies_itself_for_each_earlier_spell() {
     assert_eq!(retargets, 1, "one spell was cast before it");
     assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
     assert_eq!(state.players[0].life, 20, "the copy countered the Bolt");
+}
+
+// ---- Doomsday ------------------------------------------------------------------------------
+
+#[test]
+fn doomsday_builds_a_five_card_library_from_library_and_graveyard() {
+    let mut state = game(&[
+        "Island",
+        "Ponder",
+        "Island",
+        "Brainstorm",
+        "Island",
+        "Island",
+        "Island",
+        "Island",
+    ]);
+    let library = state.players[0].library.clone();
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    let spare = put(&mut state, P0, "Counterspell", Zone::Graveyard);
+    let doomsday = put(&mut state, P0, "Doomsday", Zone::Hand);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B],
+        0,
+    );
+    cast(&mut state, doomsday, &[]);
+    // The pile, top first: the Bolt from the graveyard, then four library
+    // cards in a new order.
+    let pile = [bolt, library[3], library[1], library[0], library[7]];
+    let mut picked = 0;
+    while picked < pile.len() {
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets {
+                legal_targets,
+                max_targets,
+                min_targets,
+                ..
+            }) => {
+                assert_eq!((min_targets, max_targets), (5, 5));
+                assert!(legal_targets.contains(&Target::Object(pile[picked])));
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(pile[picked])),
+                );
+                picked += 1;
+            }
+            other => panic!("expected the pile, got {other:?}"),
+        }
+    }
+    settled(&mut state);
+    assert_eq!(state.players[0].library, pile.to_vec());
+    assert_eq!(state.objects.get(spare).zone, Zone::Exile);
+    for card in [library[2], library[4], library[5], library[6]] {
+        assert_eq!(state.objects.get(card).zone, Zone::Exile);
+    }
+    assert_eq!(state.players[0].life, 10, "half of 20");
+    let known = state.known_library_cards(P0, P0);
+    assert_eq!(known.len(), 5, "its controller knows the order");
+    assert!(state.known_library_cards(P1, P0).is_empty());
+}
+
+// ---- Thassa's Oracle ---------------------------------------------------------------------------
+
+#[test]
+fn thassas_oracle_wins_when_devotion_covers_the_library() {
+    let mut state = game(&["Island", "Ponder"]);
+    let oracle = put(&mut state, P0, "Thassa's Oracle", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, oracle, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(legal_targets.len(), 2, "devotion two looks at two");
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        other => panic!("expected the look, got {other:?}"),
+    }
+    assert!(matches!(
+        next(&mut state),
+        Decision::GameOver {
+            winner: Some(PlayerId::P0)
+        }
+    ));
+}
+
+#[test]
+fn thassas_oracle_keeps_one_on_top_and_bottoms_the_rest() {
+    let mut state = game(&["Island", "Ponder", "Brainstorm", "Island", "Island"]);
+    let library = state.players[0].library.clone();
+    let oracle = put(&mut state, P0, "Thassa's Oracle", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, oracle, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(
+                legal_targets,
+                vec![Target::Object(library[0]), Target::Object(library[1])]
+            );
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(library[1])),
+            );
+        }
+        other => panic!("expected the look, got {other:?}"),
+    }
+    settled(&mut state);
+    let after = &state.players[0].library;
+    assert_eq!(after[0], library[1]);
+    assert_eq!(*after.last().unwrap(), library[0]);
+    assert!(
+        !state.players[1].has_lost,
+        "devotion two is below five cards"
+    );
+}
+
+// ---- Jace, Wielder of Mysteries ---------------------------------------------------------------
+
+#[test]
+fn jace_plus_one_mills_two_and_draws() {
+    let mut state = islands();
+    let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::U, ManaColor::U, ManaColor::U],
+        1,
+    );
+    cast(&mut state, jace, &[]);
+    settled(&mut state);
+    assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&state, jace), Some(4));
+    activate(&mut state, jace, 0, &[Target::Player(P1)]);
+    settle_declining_selections(&mut state);
+    assert_eq!(state.players[1].graveyard.len(), 2);
+    assert_eq!(state.players[0].hand.len(), 1);
+    assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&state, jace), Some(5));
+}
+
+#[test]
+fn jace_wins_instead_of_drawing_from_an_empty_library() {
+    let mut state = game(&[]);
+    let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(jace, Zone::Battlefield),
+    );
+    event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
+    assert!(!state.players[0].drew_from_empty);
+    assert!(matches!(
+        next(&mut state),
+        Decision::GameOver {
+            winner: Some(PlayerId::P0)
+        }
+    ));
+}
+
+#[test]
+fn jace_minus_eight_draws_seven_and_wins_with_an_empty_library() {
+    let mut state = game(&["Island"; 7]);
+    let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(jace, Zone::Battlefield),
+    );
+    mtg_kernel::planeswalker_v1::change_loyalty(&mut state, jace, 4);
+    activate(&mut state, jace, 1, &[]);
+    for _ in 0..20 {
+        match next(&mut state) {
+            Decision::GameOver { winner } => {
+                assert_eq!(winner, Some(PlayerId::P0));
+                assert_eq!(state.players[0].hand.len(), 7);
+                return;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    panic!("the game did not end");
+}
+
+// ---- Lion's Eye Diamond -------------------------------------------------------------------------
+
+#[test]
+fn lions_eye_diamond_discards_the_hand_for_three_mana_of_one_color() {
+    let mut state = islands();
+    let diamond = put(&mut state, P0, "Lion's Eye Diamond", Zone::Battlefield);
+    let first = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let second = put(&mut state, P0, "Ponder", Zone::Hand);
+    next(&mut state);
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(diamond, ManaColor::B),
+    );
+    assert_eq!(mana(&state, P0, ManaColor::B), 3);
+    assert!(state.players[0].hand.is_empty());
+    for card in [diamond, first, second] {
+        assert_eq!(state.objects.get(card).zone, Zone::Graveyard);
+    }
+}
+
+#[test]
+fn lions_eye_diamond_is_not_an_automatic_mana_source() {
+    let mut state = islands();
+    put(&mut state, P0, "Lion's Eye Diamond", Zone::Battlefield);
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Hand);
+    assert!(
+        !castable(&mut state, ritual),
+        "it is activated only as an instant"
+    );
 }

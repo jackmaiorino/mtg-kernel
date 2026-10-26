@@ -259,8 +259,25 @@ const EDGE_OF_AUTUMN: [ActivatedAbilityRecipe; 1] = [cycling(&[
     DiscardSelf,
 ])];
 
+/// Jace, Wielder of Mysteries: "+1: Target player mills two cards. Draw a
+/// card." and "-8: Draw seven cards. Then if your library has no cards in
+/// it, you win the game."
+const JACE: [ActivatedAbilityRecipe; 2] = [
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(1)],
+        "crate::eternal_cards_v1::jace_plus_one",
+        "AnyPlayer",
+    ),
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(-8)],
+        "crate::eternal_cards_v1::jace_minus_eight",
+        "None",
+    ),
+];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Jace, Wielder of Mysteries" => &JACE,
         "The One Ring" => &THE_ONE_RING,
         "Street Wraith" => &STREET_WRAITH,
         "Edge of Autumn" => &EDGE_OF_AUTUMN,
@@ -330,6 +347,10 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec:
                 "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::SpellWithSingleTargetV1)",
             program: "crate::eternal_cards_v1::misdirection",
+        },
+        "Doomsday" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::doomsday",
         },
         "Dark Ritual" => Special::StandardProgram {
             target_spec: "TargetSpec::None",
@@ -426,6 +447,13 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "City of Traitors" => "controller_plays_another_land:sacrifice_source",
         "Flusterstorm" => "cast:storm:copies_may_choose_new_targets",
         "Street Wraith" => "static:swampwalk",
+        "Thassa's Oracle" => {
+            "etb:private_look_top_devotion_to_blue:keep_up_to_one_on_top_rest_bottom_random:win_if_devotion_at_least_library"
+        }
+        "Jace, Wielder of Mysteries" => {
+            "static:controller_draw_from_empty_library_wins_instead;minus8:win_if_library_empty_after_draw_seven"
+        }
+        "Lion's Eye Diamond" => "mana:discard_hand_sacrifice_self:instant_timing_only",
         "Cavern of Souls" => {
             "as_enters:choose_creature_type_of_owned_creature_cards;restricted_mana_spell_cant_be_countered"
         }
@@ -462,6 +490,9 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         "Dimir Aqueduct" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::B]), controller_damage: 0, max_activations_per_turn: None })",
         // "{T}: Add {C}{C}. This land deals 2 damage to you."
         "Ancient Tomb" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 2, max_activations_per_turn: None })",
+        // "Discard your hand, Sacrifice this artifact: Add three mana of
+        // any one color. Activate only as an instant."
+        "Lion's Eye Diamond" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1, amount: ManaAbilityAmountDef::Fixed(3), controller_damage: 0, max_activations_per_turn: None })",
         // "{T}: Add {C}{C}."
         "City of Traitors" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         _ => "None",

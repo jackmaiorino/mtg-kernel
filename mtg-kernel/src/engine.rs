@@ -8931,6 +8931,9 @@ fn rich_mana_ability_is_payable(
         ManaAbilityCostDef::SacrificeSelf
         | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
         | ManaAbilityCostDef::None => true,
+        ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+            crate::eternal_cards_v1::e3::instant_speed_mana_ability_allowed(state, player)
+        }
         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
             // The allocating candidate enumeration must stay behind the two
             // cheap checks: the flat-encode zero-allocation contract counts
@@ -9486,6 +9489,13 @@ fn activate_mana_ability_for_with_checkpoint(
                 event::propose_and_commit(state, ProposedEvent::life_loss(player, i32::from(life)));
             }
             ManaAbilityCostDef::None => {}
+            ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+                let hand = state.players[player.index()].hand.clone();
+                for card in hand {
+                    commit_discarded_card(state, card);
+                }
+                commit_sacrifice(state, &[source]);
+            }
         }
         if let Some(colors) = bundle {
             if !colors.is_empty() {

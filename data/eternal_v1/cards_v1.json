@@ -1825,6 +1825,139 @@
     "copy_spell"
    ],
    "java_file": "Mage.Sets/src/mage/cards/f/Flusterstorm.java"
+  },
+  {
+   "name": "Doomsday",
+   "engine_capability": "full",
+   "mana_cost": "{B}{B}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "library_construction",
+    "exile_library",
+    "exile_graveyard",
+    "lose_half_life"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Doomsday.java"
+  },
+  {
+   "name": "Thassa's Oracle",
+   "engine_capability": "full",
+   "mana_cost": "{U}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Merfolk",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "devotion",
+    "library_look",
+    "win_game"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThassasOracle.java"
+  },
+  {
+   "name": "Jace, Wielder of Mysteries",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{U}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Jace"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "mill",
+    "draw_replacement",
+    "win_game"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/j/JaceWielderOfMysteries.java",
+   "starting_loyalty": 4
+  },
+  {
+   "name": "Lion's Eye Diamond",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "discard_hand_cost",
+    "sacrifice_cost",
+    "instant_timing"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LionsEyeDiamond.java"
   }
  ]
 }

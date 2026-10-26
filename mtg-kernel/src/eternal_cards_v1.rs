@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod e3;
 pub use e3::{
-    dark_ritual, edge_of_autumn, flusterstorm, misdirection, personal_tutor, sink_into_stupor,
-    the_one_ring_draw, veil_of_summer,
+    dark_ritual, doomsday, edge_of_autumn, flusterstorm, jace_minus_eight, jace_plus_one,
+    misdirection, personal_tutor, sink_into_stupor, the_one_ring_draw, veil_of_summer,
 };
 
 /// Per-game state for this module's cards. Absent until one of them needs
@@ -196,6 +196,14 @@ pub enum EternalOpV1 {
     SacrificeSourceV1,
     /// Veil of Summer's effect.
     VeilOfSummerV1,
+    /// Doomsday's pile: exactly five (or all) cards of the controller's
+    /// library and graveyard become the library in a chosen order; the rest
+    /// are exiled. A choice.
+    DoomsdayPileV1,
+    /// Thassa's Oracle's entry look and devotion win. A choice.
+    ThassasOracleV1,
+    /// "If your library has no cards in it, you win the game" (Jace's -8).
+    WinIfLibraryEmptyV1,
 }
 
 impl EternalOpV1 {
@@ -991,7 +999,10 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::ChangeTargetOfTargetSpellV1
         | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. }
         | EternalOpV1::SacrificeSourceV1
-        | EternalOpV1::VeilOfSummerV1 => e3::execute(op, ctx, state),
+        | EternalOpV1::VeilOfSummerV1
+        | EternalOpV1::DoomsdayPileV1
+        | EternalOpV1::ThassasOracleV1
+        | EternalOpV1::WinIfLibraryEmptyV1 => e3::execute(op, ctx, state),
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
