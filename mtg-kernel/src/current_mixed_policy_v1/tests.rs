@@ -1773,9 +1773,10 @@ mod paid {
         assert_eq!(roots.len(), 2);
         for (route, kicked) in roots.iter().zip([false, true]) {
             assert_eq!(route["kicked"], kicked);
+            assert_eq!(route["ordered_costs"].as_array().unwrap().len(), 1);
             assert_eq!(
-                route["ordered_costs"].as_array().unwrap().len(),
-                if kicked { 2 } else { 1 }
+                route["ordered_costs"][0]["base_total_before_increases_and_reductions"]["generic"],
+                if kicked { 4 } else { 0 }
             );
             assert_eq!(route["ordered_resolution"].as_array().unwrap().len(), 1);
             assert_eq!(

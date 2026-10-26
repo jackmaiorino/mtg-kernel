@@ -446,8 +446,10 @@ fn burst_lightning(id: u16, d: &CardDef) -> Result<Option<Value>> {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
     let roots = [false, true].into_iter().map(|kicked| {
-        let mut costs = vec![json!({"operation":"PayPrintedMana","cost":cost})];
-        if kicked { costs.push(json!({"operation":"PayKickerAdditionalMana","cost":kicker})); }
+        let total = Cost { generic: if kicked { 4 } else { 0 }, pips: cost.pips, x_count: 0 };
+        let costs = json!([{"operation":"PayTotalManaCost","printed_mana_component":cost,
+            "chosen_kicker_additional_component":if kicked { Some(kicker) } else { None },
+            "base_total_before_increases_and_reductions":total,"one_native_payment_plan":true}]);
         json!({"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
             "timing":"InstantWithPriority","kicked":kicked,"kicker_chosen_during_cast_before_payment":true,
             "ordered_costs":costs,"normal_cost_increases_and_reductions_apply_to_total_cost":true,
