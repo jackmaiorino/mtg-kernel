@@ -196,3 +196,8 @@ harness = false
 [[bin]]
 name = "kernel_limited_prepared_env_v5"
 path = "src/bin/kernel_limited_prepared_env_v5.rs"
+
+[[bin]]
+name = "kernel_limited_match_v1"
+path = "src/bin/kernel_limited_match_v1.rs"
+required-features = ["limited-fdn-fixtures"]

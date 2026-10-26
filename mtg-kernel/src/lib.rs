@@ -337,6 +337,8 @@ pub mod limited_common_session_v1;
 pub mod limited_common_session_v2;
 pub mod limited_common_session_v3;
 pub mod limited_elenda_session_v4;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub mod limited_match_v1;
 pub mod limited_prepared_session_v5;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;

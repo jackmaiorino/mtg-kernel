@@ -7544,6 +7544,38 @@ impl FastActorSessionV1 {
         Ok(sampled)
     }
 
+    /// Limited match search (issue #110 milestone 6): the census world with a
+    /// caller rewrite of the actor's unknown slots. Unlike the census clone,
+    /// every unknown slot of both owners counts as changed, whether or not its
+    /// identity moved, so a rejection depends only on public structure and
+    /// never on which hidden card sat in a slot.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_belief_clone_v1(
+        &self,
+        seed: u64,
+        rewrite: impl FnOnce(&mut crate::state::GameState, PlayerId, &[ObjectId]) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        use crate::kernel_native_search_opponent_v1::{
+            pending_selection_hidden_objects_v1, redeterminize_hidden_zones_pinned_v1,
+        };
+        let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
+        let slots: Vec<_> = [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .flat_map(|owner| {
+                crate::limited_match_v1::unknown_slots_v1(&self.state, actor, owner, &pinned)
+            })
+            .collect();
+        if flat_action_v4::census_hidden_source_conflicts_v1(&self.state, &slots) {
+            return Err("hidden-source provenance conflict".to_string());
+        }
+        let mut sampled = self.clone();
+        redeterminize_hidden_zones_pinned_v1(&mut sampled.state, actor, seed, &pinned)
+            .map_err(|error| error.to_string())?;
+        rewrite(&mut sampled.state, actor, &pinned)?;
+        Ok(sampled)
+    }
+
     /// Diagnostic only: a clone whose game state is edited by `edit`. The
     /// current decision's cached candidates are kept, so edits must not
     /// change the legal action set.
