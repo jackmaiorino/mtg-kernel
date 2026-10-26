@@ -57,6 +57,50 @@ fn rules_only_candidates_v1(
     }
 }
 
+/// `crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1`
+/// without its Full-support preflight (admission is checked by the reset):
+/// the same environment-v2 shuffles, library construction and opening hands.
+fn rules_only_deck_pair_state_v1(
+    pair_environment_seed: u64,
+    mainboards: &[Vec<u16>; 2],
+    starting_player: PlayerId,
+) -> Result<crate::state::GameState, crate::rl::DeckPairBuildErrorV2> {
+    use crate::environment_randomization_v2 as env2;
+    let mut libraries = Vec::with_capacity(2);
+    for (owner, deck) in [env2::PhysicalOwnerV2::P0, env2::PhysicalOwnerV2::P1]
+        .into_iter()
+        .zip(mainboards)
+    {
+        let seed = env2::derive_environment_randomization_seed_v2(
+            pair_environment_seed,
+            owner,
+            env2::ShufflePurposeV2::InitialLibraryShuffle,
+            0,
+        )
+        .map_err(crate::rl::DeckPairBuildErrorV2::EnvironmentRandomization)?;
+        libraries.push(env2::permutation_v2(seed, deck));
+    }
+    let mut state =
+        crate::state::GameState::new_from_libraries_environment_v2_with_starting_player_v1(
+            &libraries[0],
+            &libraries[1],
+            crate::rl::card_name,
+            pair_environment_seed,
+            starting_player,
+        );
+    for _ in 0..7 {
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::draw(PlayerId::P0),
+        );
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::draw(PlayerId::P1),
+        );
+    }
+    Ok(state)
+}
+
 impl FastActorSessionV1 {
     /// A Limited game (40 or more cards per seat) whose every card is Full or
     /// accepted by `admit`. Same state, combat, mulligans, priority windows
@@ -102,13 +146,8 @@ impl FastActorSessionV1 {
                 &format!("card {card} is not admitted to rules-only play"),
             ));
         }
-        let mut state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
-            env_seed,
-            &mainboards[0],
-            &mainboards[1],
-            starting_player,
-        )
-        .map_err(map_deck_pair_build_error_v2)?;
+        let mut state = rules_only_deck_pair_state_v1(env_seed, &mainboards, starting_player)
+            .map_err(map_deck_pair_build_error_v2)?;
         crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)

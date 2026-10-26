@@ -65,11 +65,12 @@ class MtgKernel:
     `command` is the binary path, or an argv prefix (tests use a Python stub)."""
 
     def __init__(self, command: Path | str | Sequence[str], decks: Path, pool: Path, *, max_turns: int = 100,
-                 max_decisions: int = 20000):
+                 max_decisions: int = 20000, session: str = "prepared"):
         self.command = [str(command)] if isinstance(command, (str, Path)) else [str(c) for c in command]
         self.decks = Path(decks).absolute()
         self.pool = Path(pool).absolute()
         self.max_turns, self.max_decisions = int(max_turns), int(max_decisions)
+        self.session = session  # prepared | rules-only | rules-only-all
 
     def _run(self, args: Sequence[str], timeout_s: float | None = None) -> subprocess.CompletedProcess:
         done = subprocess.run(self.command + [str(a) for a in args], capture_output=True, text=True,
@@ -86,7 +87,8 @@ class MtgKernel:
         supported: [deck names]}, the same shape as Gorge.coverage()."""
         with tempfile.TemporaryDirectory(prefix="mkcov-") as tmp:
             out = Path(tmp) / "supported.txt"
-            text = self._run(["coverage", "-decks", self.decks, "-pool", self.pool, "-out", out]).stdout
+            text = self._run(["coverage", "-decks", self.decks, "-pool", self.pool, "-out", out,
+                              "-session", self.session]).stdout
             supported = out.read_text().split() if out.exists() else []
         return parse_coverage(text, supported)
 
@@ -96,7 +98,8 @@ class MtgKernel:
         argv = ["play", "-decks", str(self.decks), "-pool", str(self.pool), "-split", split,
                 "-seed", str(int(seed)), "-first-pair", str(int(first_pair)), "-pairs", str(int(pairs)),
                 "-workers", str(int(workers)), "-a", a, "-b", b, "-out", str(out),
-                "-max-turns", str(self.max_turns), "-max-decisions", str(self.max_decisions)]
+                "-max-turns", str(self.max_turns), "-max-decisions", str(self.max_decisions),
+                "-session", self.session]
         if belief is not None:
             argv += ["-belief-decks", str(belief.decks), "-belief-pool", str(belief.pool),
                      "-belief-split", belief.split]
@@ -224,6 +227,44 @@ def smoke(binary: Path) -> dict:
         return report
 
 
+DRAFTZERO_SAMPLE = REPO_ROOT / "data/limited/draftzero_sample_v1"
+
+
+def draftzero(binary: Path, pairs: int = 20, seed: int = 1, workers: int = 4) -> dict:
+    """DraftZero's 80 sample decks: playable decks per session, then random rules-only games on the eval
+    split with every executable card admitted. A halted game counts against every non-Full card in its two
+    decks, so a card that appears only in natural games is a candidate for the admission list."""
+    decks, pool = DRAFTZERO_SAMPLE / "decks", DRAFTZERO_SAMPLE / "pool.tsv"
+    report: dict = {"coverage": {}}
+    non_full: set[str] = set()
+    for session in ("prepared", "rules-only", "rules-only-all"):
+        cov = MtgKernel(binary, decks, pool, session=session).coverage()
+        report["coverage"][session] = {"supported_decks": cov["supported_decks"], "decks": cov["decks"],
+                                       "unsupported_cards": cov["unsupported_cards"]}
+        if session == "prepared":
+            non_full = set(cov["unsupported"])
+    kernel = MtgKernel(binary, decks, pool, session="rules-only-all", max_decisions=6000)
+    with tempfile.TemporaryDirectory(prefix="mkdz-") as tmp:
+        result = kernel.play("random", "random", pairs=pairs, seed=seed,
+                             out_dir=Path(tmp), split="eval", workers=workers, single=True)
+    contents = {f.stem: {c["name"] for c in json.loads(f.read_text())["cards"]} for f in decks.glob("*.json")}
+    seen: dict[str, list[int]] = {}
+    for g in result.games:
+        halted = g["result"] == "error"
+        for name in set().union(*(contents[d] for d in g["decks"])) & non_full:
+            tally = seen.setdefault(name, [0, 0])
+            tally[0] += 1
+            tally[1] += halted
+    report["play"] = {"games": len(result.games), "results": {r: sum(g["result"] == r for g in result.games)
+                                                              for r in sorted(RESULTS)},
+                      "decisions": sum(g.get("decisions", 0) for g in result.games),
+                      "wall_s": result.summary["wall_s"],
+                      "errors": sorted({g.get("error", "")[:200] for g in result.games if g["result"] == "error"})}
+    report["partial_cards"] = {name: {"games": n, "halted_games": h} for name, (n, h) in sorted(seen.items())}
+    report["admission_candidates"] = sorted(name for name, (n, h) in seen.items() if n and not h)
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -231,10 +272,17 @@ def main(argv: list[str] | None = None) -> int:
     fixture.add_argument("out", type=Path)
     check = sub.add_parser("smoke")
     check.add_argument("--binary", type=Path, required=True)
+    dz = sub.add_parser("draftzero")
+    dz.add_argument("--binary", type=Path, required=True)
+    dz.add_argument("--pairs", type=int, default=20)
+    dz.add_argument("--seed", type=int, default=1)
+    dz.add_argument("--workers", type=int, default=4)
     args = parser.parse_args(argv)
     if args.command == "fixture-pool":
         decks, pool = write_fixture_pool(args.out)
         print(json.dumps({"decks": str(decks), "pool": str(pool)}))
+    elif args.command == "draftzero":
+        print(json.dumps(draftzero(args.binary, args.pairs, args.seed, args.workers), indent=1))
     else:
         print(json.dumps(smoke(args.binary), indent=1))
     return 0
