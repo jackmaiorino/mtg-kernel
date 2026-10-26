@@ -311,6 +311,7 @@ fn the_one_ring_cast_grants_protection_from_everything_until_the_next_turn() {
     pool(&mut state, P0, &[], 4);
     cast(&mut state, ring, &[]);
     settled(&mut state);
+    pass_until(&mut state, |state| state.active_player == P1);
     pass_until(&mut state, |state| {
         state.active_player == P0 && state.step == Step::Main1
     });
@@ -346,6 +347,7 @@ fn the_one_ring_draws_per_burden_counter_and_drains_each_upkeep() {
     assert_eq!(state.players[0].hand.len(), 1, "one burden counter");
     assert!(state.objects.get(ring).tapped);
     // P0's next upkeep: lose 1 life for the one counter.
+    pass_until(&mut state, |state| state.active_player == P1);
     pass_until(&mut state, |state| {
         state.active_player == P0 && state.step == Step::Main1
     });
@@ -412,6 +414,7 @@ fn misdirection_pitches_a_blue_card_and_redirects_a_single_target_spell() {
     let brainstorm = put(&mut state, P0, "Brainstorm", Zone::Hand);
     let bolt = opponent_bolts(&mut state, Target::Player(P0));
     cast(&mut state, misdirection, &[Target::Object(bolt)]);
+    priority(&mut state);
     assert_eq!(state.objects.get(brainstorm).zone, Zone::Exile);
     match settle(&mut state) {
         Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
@@ -516,6 +519,7 @@ fn cavern_of_souls_names_a_type_and_its_creature_spells_cant_be_countered() {
     }
     // Cavern's restricted blue mana pays for the Faerie.
     cast(&mut state, miscreant, &[]);
+    priority(&mut state);
     assert!(state.objects.get(cavern).tapped);
     act(&mut state, Action::Pass);
     let counterspell = put(&mut state, P1, "Counterspell", Zone::Hand);
@@ -553,7 +557,10 @@ fn cavern_of_souls_colored_mana_pays_only_for_its_chosen_type() {
     );
     assert!(!castable(&mut state, strix), "a Bird needs other blue mana");
     next(&mut state);
-    act(&mut state, Action::ActivateManaAbility(cavern));
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(cavern, ManaColor::C),
+    );
     assert_eq!(mana(&state, P0, ManaColor::C), 1, "{{T}}: Add {{C}}");
 }
 
@@ -808,11 +815,13 @@ fn veil_of_summer_draws_after_a_blue_spell_and_protects_its_controllers_spells()
     let veil = put(&mut state, P0, "Veil of Summer", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
     cast(&mut state, bolt, &[Target::Player(P1)]);
+    priority(&mut state);
     act(&mut state, Action::Pass);
     // P1 answers with a blue Counterspell; P0 responds with Veil.
     let counterspell = put(&mut state, P1, "Counterspell", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 0);
     cast(&mut state, counterspell, &[Target::Object(bolt)]);
+    priority(&mut state);
     act(&mut state, Action::Pass);
     let hand = state.players[0].hand.len();
     cast(&mut state, veil, &[]);
@@ -834,12 +843,12 @@ fn veil_of_summer_gives_hexproof_from_blue_and_black_this_turn() {
     cast(&mut state, veil, &[]);
     settled(&mut state);
     assert_eq!(state.players[0].hand.len(), 0, "no blue or black spell yet");
-    // A black Thoughtseize from P1 can't target P0; a red Bolt can.
+    // A blue Thought Scour from P1 can't target P0; a red Bolt can.
     state.priority_player = P1;
-    let thoughtseize = put(&mut state, P1, "Thoughtseize", Zone::Hand);
+    let scour = put(&mut state, P1, "Thought Scour", Zone::Hand);
     let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
-    pool(&mut state, P1, &[ManaColor::B, ManaColor::R], 0);
-    act(&mut state, Action::CastSpell(thoughtseize));
+    pool(&mut state, P1, &[ManaColor::U, ManaColor::R], 0);
+    act(&mut state, Action::CastSpell(scour));
     match next(&mut state) {
         Decision::ChooseTargets { legal_targets, .. } => {
             assert_eq!(legal_targets, vec![Target::Player(P1)]);

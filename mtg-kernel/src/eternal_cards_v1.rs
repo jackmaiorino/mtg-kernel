@@ -233,6 +233,24 @@ pub enum EternalOpV1 {
     AcererakAttacksV1,
 }
 
+/// Whether `condition` triggers on its source's own arrival in the zone it
+/// now occupies (entering the battlefield, or Emrakul put into a
+/// graveyard), so the trigger's source is that new incarnation rather than
+/// the one that left.
+pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && matches!(
+            condition,
+            crate::trigger::TriggerCondition::StandardV1(
+                crate::standard_cards_v1::StandardTriggerV1::EternalV1(
+                    EternalTriggerV1::EntersAfterCastV1
+                        | EternalTriggerV1::EntersIfTombNotCompletedV1
+                        | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1
+                )
+            )
+        )
+}
+
 impl EternalOpV1 {
     /// Whether this leaf can yield a player decision, so its program must use
     /// the resumable interpreter.
