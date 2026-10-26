@@ -10,7 +10,8 @@ is the Pauper prefix, the Standard registry and `data/eternal_v1/cards_v1.json`:
   to the eternal registry is a copy, not new rules work.
 - ``missing``: no Full definition anywhere.
 
-A deck is playable when every mainboard card is ``full``. Shares are the
+A deck is playable when every mainboard card and its companion, if it has
+one, are ``full``. Shares are the
 snapshot's metagame percentages, so the playable share is the fraction of the
 field the eternal build can play.
 """
@@ -81,6 +82,8 @@ def census(snapshot: dict[str, Any], full: set[str], fdn_only: set[str]) -> dict
         playable = 0.0
         for archetype in archetypes:
             main = {name for _, name in archetype["mainboard"]}
+            if archetype.get("companion"):
+                main.add(archetype["companion"])
             side = {name for _, name in archetype["sideboard"]} - main
             status = {name: classify(name, full, fdn_only) for name in main | side}
             union.update(status)

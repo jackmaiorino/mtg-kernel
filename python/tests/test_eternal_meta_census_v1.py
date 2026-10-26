@@ -29,14 +29,19 @@ class EternalMetaCensusTest(unittest.TestCase):
             {"archetype": "a", "share": 10.0, "mainboard": [[4, "Bolt"]], "sideboard": [[1, "Pyre"]]},
             {"archetype": "b", "share": 5.0, "mainboard": [[4, "Bolt"], [4, "Ported"]], "sideboard": []},
             {"archetype": "c", "share": 2.0, "mainboard": [[4, "Daze"]], "sideboard": []},
+            {"archetype": "d", "share": 1.0, "mainboard": [[4, "Bolt"]], "sideboard": [[1, "Lurrus"]],
+             "companion": "Lurrus"},
         ]}}
         report = census.census(snapshot, full={"Bolt"}, fdn_only={"Ported"})
         legacy = report["formats"]["legacy"]
         self.assertEqual(legacy["playable_share"], 10.0)
-        self.assertEqual(legacy["card_status"], {"full": 1, "fdn_only": 1, "missing": 2})
+        self.assertEqual(legacy["card_status"], {"full": 1, "fdn_only": 1, "missing": 3})
         self.assertEqual(legacy["unsupported_by_share"],
-                         [["Pyre", 10.0, "missing"], ["Ported", 5.0, "fdn_only"], ["Daze", 2.0, "missing"]])
-        self.assertEqual(report["union_card_status"], {"full": 1, "fdn_only": 1, "missing": 2})
+                         [["Pyre", 10.0, "missing"], ["Ported", 5.0, "fdn_only"], ["Daze", 2.0, "missing"],
+                          ["Lurrus", 1.0, "missing"]])
+        # The companion is required, so deck d is not playable.
+        self.assertEqual(legacy["decks"][3]["unsupported_mainboard_cards"], ["Lurrus"])
+        self.assertEqual(report["union_card_status"], {"full": 1, "fdn_only": 1, "missing": 3})
 
     def test_registries_load_with_disjoint_status(self):
         full, fdn_only = census.load_status()

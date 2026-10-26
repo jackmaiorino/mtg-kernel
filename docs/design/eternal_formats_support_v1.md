@@ -1,39 +1,44 @@
 # Pauper, Legacy and Vintage card support
 
-Status: design, 2026-10-26. Owner: the Claude session assigned "general Pauper, Legacy and
-Vintage card support". Codex's FDN work (#110, PR #308) is unaffected.
+Status: design, 2026-10-26, revised after an adversarial review (Fable, same day; all six
+required changes applied). Codex's FDN work (#110, PR #308) is unaffected.
 
 ## Goal and measure
 
 "Support a format" means the kernel can play the decks people actually play in it. The
 measure is the **playable metagame share**: the summed metagame percentage of archetypes
-whose whole mainboard is Full in one build. Best-of-one mainboards come first, as in the
-roadmap; sideboards follow once a format's mainboards are playable.
+whose whole mainboard, and companion if the deck has one, is Full in the `eternal-fixtures`
+build. Best-of-one mainboards come first, as in the roadmap; sideboards follow once a
+format's mainboards are playable.
 
 `python/tools/eternal_meta_census_v1.py` computes it from a committed snapshot
 (`data/eternal_v1/meta_snapshot_mtggoldfish_20261026.json`: 153 archetypes, one
-representative MTGGoldfish paper list each). The snapshot is refreshed when the metagame
-moves, and the census numbers in each PR come from it.
+representative MTGGoldfish paper list each, with the companion named where a sideboard
+holds one). The snapshot is refreshed when the metagame moves, and each wave's PR reports
+the census before and after.
 
-## Baseline (snapshot 2026-10-26)
+## Baseline (snapshot 2026-10-26, eternal build with an empty eternal registry)
 
-| Format | Archetypes | Distinct cards | Full now | Program exists in FDN or Standard | Missing | Playable share |
+| Format | Archetypes | Distinct cards | Full | FDN only | Missing | Playable share |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Pauper | 60 | 535 | 164 | 13 | 358 | 20.6% |
-| Legacy | 60 | 563 | 38 | 25 | 500 | 0% |
-| Vintage | 33 | 427 | 22 | 17 | 388 | 0% |
-| All three | | 1,225 | 164 | 42 | 1,019 | |
+| Pauper | 60 | 535 | 173 | 4 | 358 | 20.9% |
+| Legacy | 60 | 563 | 62 | 1 | 500 | 0% |
+| Vintage | 33 | 427 | 38 | 1 | 388 | 0% |
+| All three | | 1,225 | 200 | 6 | 1,019 | |
 
-Completing decks greedily by share per new card gives these card counts:
+"Full" counts the Pauper and Standard registries. "FDN only" cards have a program that has
+to be copied into the eternal registry. Completing decks greedily by share per new card
+needs these card counts (companions not yet required in this count):
 
 | Format | 50% of field | 75% | 90% |
 | --- | ---: | ---: | ---: |
-| Pauper | 15 | 79 | 154 |
-| Legacy | 102 | 190 | 289 |
-| Vintage | 84 | 110 | 159 |
+| Pauper | 13 | 76 | 148 |
+| Legacy | 95 | 181 | 277 |
+| Vintage | 82 | 111 | 154 |
 
-Legacy and Vintage share most of their staples, so the joint count is lower than the sum.
-For scale, the MageZero Standard completion delivered 225 cards in four days.
+Legacy and Vintage share most staples, so the joint count is lower than the sum. About
+37% of the Vintage field plays Lurrus as a companion, so Vintage's curve depends on
+companion support.
 
 ## Catalog
 
@@ -41,49 +46,72 @@ All three formats share one build, `eternal-fixtures`. Its registry is the froze
 Pauper prefix, then the Standard registry unchanged, then `data/eternal_v1/cards_v1.json`.
 
 - The feature enables `standard-magezero-fixtures` (and through it FDN rules code), as
-  Standard enables FDN. Every existing Standard card keeps its ID and program, so no
-  Standard-gated code sees a different catalog.
-- Cards whose program exists only in FDN are copied into the eternal file, as Standard
-  copied Burst Lightning.
+  Standard enables FDN. Every Standard card keeps its id and program; the catalog hash
+  differs (`kernel_carddb_eternal/v1`), so Standard identity tests are gated off in this
+  build while the rest of the Standard suite runs on it in CI.
 - The default Pauper build, its hash and every frozen store are unchanged. New Pauper cards
   go in the eternal file, since the Pauper registry is frozen.
-- Eternal IDs are not frozen until a model trains on them. If Standard ever appends a card,
-  eternal IDs shift; that is acceptable before the first eternal model and is recorded in
-  the catalog identity.
+- Eternal ids follow the 254 Standard definitions; the catalog test pins that count. A
+  Standard append would shift eternal ids, which is acceptable only before the first
+  eternal model trains. The eternal hash is pinned in a test once CI first reports it.
+- FDN-only cards are copied into the eternal file. Some FDN programs are compiled only when
+  `standard-magezero-fixtures` is off, so a copy could stay flagged Full with no behavior.
+  Every copy therefore ships with a rules test compiled under `eternal-fixtures`, and the
+  FDN cards gated that way (Herald of Eternal Dawn, Bloodthirsty Conqueror, Twinflame
+  Tyrant, Elenda, Heraldic Banner, Ajani, Dwynen) are not copied until their gate is
+  widened.
 
 ## Work order
 
 Waves are ordered by share gained per card. Each wave is one PR (one coherent deliverable),
-built and tested on CI or HaleysPC while the desktop is reserved.
+built and tested on hosted CI or under a HaleysPC reservation while the desktop is
+reserved.
 
-| Wave | Content | Cards | Result |
+| Wave | Content | New cards | Result |
 | --- | --- | ---: | --- |
-| E0 | Feature, empty eternal registry, catalog identity, deck-resolution test, CI job, census | 0 | Infrastructure |
-| E1 | Pauper close-ins: Mono-Red Madness, Rally, Grixis Affinity, Dimir Faeries, Grixis and Dimir Control | 16 | Pauper 21% to about 53% |
-| E2 | Eternal staples: fetchlands, original and modern duals, Wasteland/Strip Mine, Force of Will/Negation, Daze, Misstep, Thoughtseize, Swords, Fatal Push, Dismember, Moxen, Lotus, Sol Ring, Crypt, Vault, Ancient Tomb, Ancestral, Time Walk, Demonic Tutor, Bauble | about 60 | Shared base for both formats |
-| E3 | Legacy decks greedily: Dimir Tempo, Izzet Delver, Doomsday, Sneak and Show, Aluren, Eldrazi, Boros Energy | about 100 | Legacy about 50% |
-| E4 | Vintage decks: Initiative, Jewel and Raker Shops, Lurrus control lists | about 60 | Vintage about 55% |
+| E0 | Feature, empty eternal registry, catalog test, session games, CI group, census | 0 | Infrastructure |
+| E1 | Pauper close-ins: Mono-Red Madness, Rally, Grixis Affinity, Dimir Faeries, Grixis and Dimir Control | 14 | Pauper 21% to about 53% |
+| E2 | Eternal staples: fetchlands, original duals, Wasteland, Strip Mine, Force of Will and Negation, Daze, Mental Misstep, Thoughtseize, Swords, Fatal Push, Dismember, Moxen, Lotus, Sol Ring, Crypt, Vault, Ancient Tomb, Ancestral, Time Walk, Demonic Tutor, Bauble | about 60 | Shared base for both formats |
+| E3 | Legacy decks greedily: Dimir Tempo, Izzet Delver, Doomsday, Sneak and Show, Aluren, Eldrazi, Boros Energy | about 95 | Legacy about 50% |
+| E4 | Vintage: Initiative, Jewel and Raker Shops, then companions and the Lurrus lists | about 80 | Vintage about 50% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
-Rules primitives the waves need, beyond what the engine has: two-subtype intrinsic land
-mana; pay-life and pitch alternative costs with "not your turn" conditions; extra turns;
-naming a card (Pithing Needle, Disruptor Flute, Cavern of Souls); restricted mana
-(Workshop); "can't be activated" and cost-tax statics (Null Rod, Trinisphere,
-Thalia-style); companions (Lurrus); coin flips (Mana Crypt, seeded); delayed draws
-(Mishra's Bauble); Leyline opening-hand placement. Each is built once, in the first wave
-that needs it.
+## Rules primitives
+
+Derived from the missing cards of each wave's decks. Already in the engine and reused:
+extra turns, initiative and dungeons, monarch, Phyrexian mana, delve, planeswalkers,
+Sagas, transform, temporary control, flashback, affinity, ninjutsu, kicker, madness.
+
+New, each built once in the first wave that needs it:
+
+- E1: energy counters; replicate; cast-from-graveyard conditions (Plunder the Trollshaws);
+  karoo lands; two-target spells.
+- E2: two-subtype intrinsic land mana (original duals); pay-life fetch costs; pitch and
+  "not your turn" alternative costs; restricted mana; delayed draws; seeded coin flips.
+- E3: storm as a general keyword (today it is keyed to Weather the Storm), Thassa's Oracle
+  and Doomsday library construction, Show and Tell's simultaneous choice, free-cast
+  permissions (Sneak Attack, Aluren, Omniscience), Chalice of the Void, Misdirection
+  retargeting, Emrakul (cast trigger, annihilator, protection), naming a card (Pithing
+  Needle, Disruptor Flute, Cavern of Souls), "can't be activated" and cost-tax statics
+  (Null Rod, Trinisphere, Thalia).
+- E4: Urza's Saga as a land Saga with Construct tokens; Karn's wish, where "outside the
+  game" is empty in best-of-one mainboard sessions; Time Vault; Coveted Jewel's control
+  change; Vexing Bauble; Archon of Emeria's cast limit; companions (reveal, pay 3, put
+  into hand) and Lurrus's graveyard casting; Workshop's artifact-only mana.
 
 ## Card contract and verification
 
-Each card follows the existing contract: an explicit `engine_capability` of Full only when
-every reachable branch is implemented, a typed program (no name-only behavior), and native
-rules tests for each new mechanic family. Every wave adds:
+Each card follows the existing contract: `engine_capability` Full only when every
+reachable branch is implemented, a typed program (no name-only behavior), and a native
+rules test for every new card (not only per family), modeled on `tests/standard/*`. Every
+wave also adds:
 
-- Python deck resolution of every newly playable snapshot deck (no build).
-- A public-session test that plays each newly playable deck against a field opponent to a
-  natural terminal for fixed seeds, with transcript hashes for deterministic replay, like
-  `standard_sessions_completion_v1`.
-- The census output for the wave, in the PR description.
+- The newly playable decks to `PLAYABLE` in `tests/eternal/eternal_catalog_v1.rs`, which
+  resolves them, preflights them and plays each against the next with a ranked action
+  preference and with seeded random actions (so lands, mana rocks and activated abilities
+  run), checking natural terminals and transcript replay. A deck with a companion stays
+  out of `PLAYABLE` until companions are supported and the test exercises the companion.
+- The census output, before and after, in the PR description.
 
 Gameplay support is engineering, not playing-strength evidence. Policy encoders, training
 and Spellbench entries for eternal formats are separate work; frozen Pauper encoders keep
@@ -92,10 +120,9 @@ refusing unsupported state.
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
-cross-family repairs, CI and the wave PR. Builds and tests run on hosted CI or under a
-HaleysPC reservation; no local build runs while `host_slots` shows the desktop claimed.
-Cards absent from the local XMage data (59, mostly 2026 sets) take Oracle text from
-Scryfall at implementation time.
+cross-family repairs, CI and the wave PR. No local build runs while `host_slots` shows the
+desktop claimed. Cards absent from the local XMage data (59, mostly 2026 sets) take Oracle
+text from Scryfall at implementation time.
 
-Out of scope here: the long tail of cards outside the snapshot (a later Oracle-template
-generator can cover vanilla and templated cards), Commander-only mechanics, and model work.
+Out of scope here: cards outside the snapshot (a later Oracle-template generator can cover
+vanilla and templated cards), Commander-only mechanics, and model work.
