@@ -11338,9 +11338,8 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
     {
         return drain_pending_discard_or_decide(state);
     }
-    if effect::validate_pending_effect_choice(state).is_err() {
-        #[cfg(test)]
-        eprintln!("native_continuation::pending_boundary_validation_rejected");
+    if let Err(_error) = effect::validate_pending_effect_choice(state) {
+        eprintln!("TEMPDIAG pending_boundary_validation_rejected: {_error}");
         let source = state
             .engine
             .pending_effect
@@ -11569,10 +11568,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         Ok(effect::ResumableProgress::Suspended) => {
             resolution_cast_v1::restore_parent(state, item);
         }
-        Err(_) => {
+        Err(_error) => {
             state.stack.push(item.clone());
-            #[cfg(test)]
-            eprintln!("native_continuation::resume::driver_rejected");
+            eprintln!("TEMPDIAG driver_rejected: {_error}");
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
         }

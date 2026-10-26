@@ -536,6 +536,20 @@ pub(super) fn validate_child(
     land: bool,
     owned_parent: bool,
 ) -> Result<(), String> {
+    let result = validate_child_tempdiag(state, source, controller, land, owned_parent);
+    if let Err(error) = &result {
+        eprintln!("TEMPDIAG validate_child: {error}");
+    }
+    result
+}
+
+fn validate_child_tempdiag(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    land: bool,
+    owned_parent: bool,
+) -> Result<(), String> {
     let object = state
         .objects
         .try_get(source)

@@ -1636,13 +1636,11 @@ fn deep_mines_scries_three() {
             ..
         }) => {
             assert_eq!((min_targets, max_targets), (2, 2));
+            // The last card of an ordered, forced selection is placed
+            // automatically.
             act(
                 &mut state,
                 Action::ChooseEffectTarget(Target::Object(library[1])),
-            );
-            act(
-                &mut state,
-                Action::ChooseEffectTarget(Target::Object(library[0])),
             );
         }
         other => panic!("expected the bottom order, got {other:?}"),
