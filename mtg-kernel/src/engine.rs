@@ -2183,12 +2183,16 @@ fn validate_physical_spell_cast_origin(
     }
     let route_supports_method = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
-            // A resolving instruction casts from exile for free, or (Bilbo)
-            // from the caster's graveyard paying its costs.
+            // A resolving instruction casts from exile for free, (Bilbo)
+            // from the caster's graveyard paying its costs, or (Mad Wizard's
+            // Lair) from the caster's hand for free.
             let from_graveyard = cfg!(feature = "eternal-fixtures")
                 && origin.origin_zone == Zone::Graveyard
                 && source.owner == item.controller;
-            (origin.origin_zone == Zone::Exile || from_graveyard)
+            let from_hand = cfg!(feature = "eternal-fixtures")
+                && origin.origin_zone == Zone::Hand
+                && source.owner == item.controller;
+            (origin.origin_zone == Zone::Exile || from_graveyard || from_hand)
                 && holder == item.controller
                 && (from_graveyard || item.v4.x_value == 0)
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
@@ -2710,7 +2714,8 @@ fn storm_source_contract_is_structurally_valid(
     let route_is_valid = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
             (origin.origin_zone == Zone::Exile
-                || (cfg!(feature = "eternal-fixtures") && origin.origin_zone == Zone::Graveyard))
+                || (cfg!(feature = "eternal-fixtures")
+                    && matches!(origin.origin_zone, Zone::Graveyard | Zone::Hand)))
                 && holder == contract.controller
         }
         SpellCastRouteV4::Hand => {
