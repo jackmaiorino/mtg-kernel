@@ -406,6 +406,7 @@ fn agony_warp_targets_two_creatures_which_may_be_the_same() {
         warp,
         &[Target::Object(enforcer), Target::Object(enforcer)],
     );
+    next(&mut state);
     assert_eq!(
         state.stack.last().unwrap().targets,
         vec![Target::Object(enforcer), Target::Object(enforcer)]
@@ -442,6 +443,7 @@ fn agony_warp_still_affects_its_legal_target_when_the_other_is_gone() {
         warp,
         &[Target::Object(thorn), Target::Object(enforcer)],
     );
+    next(&mut state);
     // The -3/-0 target leaves before resolution (608.2b).
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(thorn, Zone::Hand));
     settled(&mut state);
@@ -826,20 +828,14 @@ fn dimir_aqueduct_taps_for_blue_and_black_at_once() {
     let mut state = islands();
     let aqueduct = put(&mut state, P0, "Dimir Aqueduct", Zone::Battlefield);
     next(&mut state);
-    act(
-        &mut state,
-        Action::ActivateManaAbilityChoice(aqueduct, ManaColor::U),
-    );
+    // One action identifies the whole {U}{B} ability.
+    act(&mut state, Action::ActivateManaAbility(aqueduct));
     let mut expected = [0; 6];
     expected[ManaColor::U.pool_index()] = 1;
     expected[ManaColor::B.pool_index()] = 1;
     assert_eq!(state.players[0].mana_pool, expected);
     assert!(state.objects.get(aqueduct).tapped);
-    assert!(engine::step(
-        &mut state,
-        Action::ActivateManaAbilityChoice(aqueduct, ManaColor::U)
-    )
-    .is_err());
+    assert!(engine::step(&mut state, Action::ActivateManaAbility(aqueduct)).is_err());
 }
 
 // ---- Seething Landscape -----------------------------------------------------------
@@ -1004,6 +1000,7 @@ fn inventors_axe_gives_energy_attaches_on_entry_and_equips_for_energy() {
         }
         other => panic!("expected the equip target, got {other:?}"),
     }
+    next(&mut state);
     assert_eq!(energy(&state, P0), 0, "energy is paid on activation");
     settled(&mut state);
     assert_eq!(

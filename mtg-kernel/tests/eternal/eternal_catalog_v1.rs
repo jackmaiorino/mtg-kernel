@@ -158,6 +158,20 @@ fn rank(action: &Value) -> u8 {
     }
 }
 
+/// Whether the public session can follow this action. Policy observation v5
+/// fails closed while an Escape cast stages its graveyard exile (Sleep of the
+/// Dead), so these games never begin one; every other action is admitted.
+fn session_can_follow(action: &Value) -> bool {
+    let s = &action["semantic"];
+    if s["action_kind"] != "cast_spell"
+        || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
+    {
+        return true;
+    }
+    let id = s["source"]["card_db_id"].as_u64().unwrap() as usize;
+    CARD_DEFS[id].escape.is_none()
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -220,11 +234,16 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
             };
         }
         let decision = &reply["decision"];
-        let actions = decision["legal_actions"].as_array().unwrap();
+        let actions: Vec<&Value> = decision["legal_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|action| session_can_follow(action))
+            .collect();
         let action = match policy {
-            Policy::Ranked => actions.iter().min_by_key(|a| rank(a)).unwrap(),
+            Policy::Ranked => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
             Policy::Random(_) => {
-                &actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
+                actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }
         };
         if action["semantic"]["action_kind"] == "cast_spell" {
