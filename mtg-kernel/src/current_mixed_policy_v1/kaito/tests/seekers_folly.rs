@@ -122,6 +122,8 @@ fn paid_folly_opponent_private_two_card_choices_empty_single_hand_payment_and_re
             hidden(own.fixture_state(), p);
             begin(&mut own, &mut native, source, p, 0);
             if count < 2 {
+                let saved = own.snapshot();
+                let raw = native.snapshot_v1();
                 settle(&mut own, &mut native);
                 assert!(own.fixture_state().players[p.opponent().index()]
                     .hand
@@ -135,6 +137,11 @@ fn paid_folly_opponent_private_two_card_choices_empty_single_hand_payment_and_re
                 );
                 hidden(own.fixture_state(), p);
                 checkpoint(&mut own, &mut native);
+                let result = own.fixture_state().clone();
+                own.restore(&saved).unwrap();
+                native.kaito_restore_v75(&raw).unwrap();
+                settle(&mut own, &mut native);
+                assert_eq!(own.fixture_state(), &result);
                 continue;
             }
             for _ in 0..32 {

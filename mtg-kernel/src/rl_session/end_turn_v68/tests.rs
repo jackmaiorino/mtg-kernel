@@ -278,9 +278,18 @@ fn genuine_paid_time_stop_cleanup_discard_complete_context_native_parity_and_res
 #[test]
 fn genuine_paid_disposed_drake_erased_overlay_is_not_a_fresh_owner_binding_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
+        let started = std::time::Instant::now();
+        let stage = |name: &str| {
+            eprintln!(
+                "V68 disposed Drake seat={p:?} stage={name} elapsed_ms={}",
+                started.elapsed().as_millis()
+            )
+        };
+        stage("setup");
         let mut s = ready(p);
         let h = crate::engine::time_stop_v1::tests::cast(&mut s, p, "Drake Hatcher", &[], 2);
         crate::engine::time_stop_v1::tests::finish(&mut s);
+        stage("drake_paid");
         // Genuine native combat-commit primitive, not declared combat.
         crate::engine::commit_combat_damage_events(
             &mut s,
@@ -297,8 +306,11 @@ fn genuine_paid_disposed_drake_erased_overlay_is_not_a_fresh_owner_binding_both_
             .any(|r| r.source == h && r.kind == crate::state::StackItemKind::TriggeredAbility));
         crate::engine::time_stop_v1::tests::cast(&mut s, p, "Time Stop", &[], 6);
         crate::engine::time_stop_v1::tests::end_turn(&mut s);
+        stage("time_stop_completed");
         let pair = Pair::new(s);
+        stage("owning_session");
         let d = pair.own.decision_v68().unwrap();
+        stage("complete_decision");
         assert_eq!(d.observation().end_turn.compatibility_terminals.len(), 1);
         let before = pair.own.fixture_state_v68().clone();
         let counts = pair.own.fixture_counts_v68();
@@ -307,13 +319,17 @@ fn genuine_paid_disposed_drake_erased_overlay_is_not_a_fresh_owner_binding_both_
         observation.end_turn.compatibility_terminals.clear();
         observation.projection_sha256 =
             crate::end_turn_observation_v68::commitment(observation).unwrap();
+        stage("omitted_overlay_recommitted");
         // Supplemental value checks cannot authenticate an omitted inventory.
         // The actual owner recaptures the complete native publication roster.
         crate::time_stop_public_v68::validate(&observation.end_turn).unwrap();
         crate::end_turn_observation_v68::validate_artifact(observation).unwrap();
+        stage("supplemental_artifact_validation");
         assert!(pair.own.validate_decision_v68(&forged).is_err());
+        stage("forgery_refused");
         assert_eq!(pair.own.fixture_state_v68(), &before);
         assert_eq!(pair.own.fixture_counts_v68(), counts);
         pair.own.validate_decision_v68(&d).unwrap();
+        stage("genuine_validated");
     }
 }
