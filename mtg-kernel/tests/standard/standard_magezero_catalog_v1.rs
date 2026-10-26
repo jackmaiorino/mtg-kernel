@@ -583,10 +583,14 @@ fn fully_supported(name: &str) -> bool {
 
 #[test]
 fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
-    assert_eq!(CARD_DEFS.len(), 192 + STANDARD_APPENDED.len());
     for (offset, name) in STANDARD_APPENDED.iter().enumerate() {
         assert_eq!(card_id_by_name(name), Some((192 + offset) as u16), "{name}");
     }
+    // The eternal build appends its own registry after these ids.
+    if cfg!(feature = "eternal-fixtures") {
+        return;
+    }
+    assert_eq!(CARD_DEFS.len(), 192 + STANDARD_APPENDED.len());
     // FDN-only definitions never enter the Standard catalog.
     assert_eq!(card_id_by_name("Dwynen, Gilt-Leaf Daen"), None);
     assert_eq!(card_id_by_name("Ajani, Caller of the Pride"), None);
@@ -596,6 +600,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 }
 
 #[test]
+#[cfg(not(feature = "eternal-fixtures"))]
 fn standard_catalog_identity_is_frozen() {
     // Observed from the pinned native build, including the shared Aura fixture.
     const EXPECTED_STANDARD_COMPLETION: u64 = 0xd237_d074_94e5_3952;

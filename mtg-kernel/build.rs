@@ -1910,6 +1910,12 @@ fn standard_magezero_fixtures() -> bool {
     env::var_os("CARGO_FEATURE_STANDARD_MAGEZERO_FIXTURES").is_some()
 }
 
+/// True for `eternal-fixtures` builds, which also enable the Standard feature
+/// and append `data/eternal_v1/cards_v1.json` after the Standard registry.
+fn eternal_fixtures() -> bool {
+    env::var_os("CARGO_FEATURE_ETERNAL_FIXTURES").is_some()
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let repo_root = Path::new(&manifest_dir).join("..");
@@ -1949,6 +1955,8 @@ fn main() {
     println!("cargo:rerun-if-changed={}", fdn_path.display());
     let standard_path = repo_root.join("data/standard/magezero_v1/cards_v1.json");
     println!("cargo:rerun-if-changed={}", standard_path.display());
+    let eternal_path = repo_root.join("data/eternal_v1/cards_v1.json");
+    println!("cargo:rerun-if-changed={}", eternal_path.display());
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         assert_eq!(
             data.cards.len(),
@@ -1972,6 +1980,17 @@ fn main() {
             "extension registry schema mismatch"
         );
         data.cards.extend(extension.cards);
+        if eternal_fixtures() {
+            let eternal_text = fs::read_to_string(&eternal_path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", eternal_path.display()));
+            let eternal: CardsFile = serde_json::from_str(&eternal_text)
+                .unwrap_or_else(|e| panic!("failed to parse {}: {e}", eternal_path.display()));
+            assert_eq!(
+                eternal.version, EXPECTED_SCHEMA_VERSION,
+                "eternal registry schema mismatch"
+            );
+            data.cards.extend(eternal.cards);
+        }
     }
 
     let mut seen_names = HashSet::new();
@@ -10543,6 +10562,11 @@ fn codegen(cards: &[CardJson]) -> String {
         // `data/standard/magezero_v1/cards_v1.json`, versioned separately
         // from the FDN Limited catalog.
         canon = String::from("kernel_carddb_standard/v7\n");
+    }
+    if eternal_fixtures() {
+        // `eternal-fixtures` builds: the Standard catalog plus
+        // `data/eternal_v1/cards_v1.json`, versioned separately.
+        canon = String::from("kernel_carddb_eternal/v1\n");
     }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
