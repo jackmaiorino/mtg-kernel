@@ -26,6 +26,7 @@ mod exsanguinate;
 mod goblin_surprise;
 mod grappling_kraken;
 mod graveyard_batch_spell;
+mod grow_ashes;
 mod guarded_heir;
 mod incinerating_blast;
 mod indrik;

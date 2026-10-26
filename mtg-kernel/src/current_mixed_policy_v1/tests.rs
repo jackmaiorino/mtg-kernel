@@ -1716,6 +1716,54 @@ mod paid {
     }
 
     #[test]
+    fn grow_changed_kicker_cost_search_branch_filter_target_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{
+                EffectCond, EffectOp, LibraryCardFilter, LibrarySearchDestinationV1, PlayerRef,
+            },
+            mana::Cost,
+        };
+        fn search(filter: LibraryCardFilter, maximum: u16) -> EffectOp {
+            EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Controller,
+                filter,
+                max_targets: maximum,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+            }
+        }
+        let id = crate::card_def::card_id_by_name("Grow from the Ashes").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.kicker_cost = None,
+                1 => d.kicker_cost = Some(Cost::zero()),
+                2 => d.cost = Cost::zero(),
+                3 => d.spell_effect = || Some(search(LibraryCardFilter::BasicLand, 1)),
+                4 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Conditional {
+                            cond: EffectCond::WasKicked,
+                            then: Box::new(search(LibraryCardFilter::AnyCard, 2)),
+                            else_: Box::new(search(LibraryCardFilter::AnyCard, 1)),
+                        })
+                    }
+                }
+                5 => d.target_spec = TargetSpec::AnyPlayer,
+                _ => d.types = &[CardType::Instant],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Grow changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn nessian_changed_cost_power_subtype_keyword_or_sorcery_cast_effect_refuses() {
         use crate::{
             card_def::{Keywords, Subtype},

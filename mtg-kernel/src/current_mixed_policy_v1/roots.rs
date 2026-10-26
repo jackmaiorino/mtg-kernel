@@ -758,7 +758,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && (d.flashback.is_none()
             || think_twice
             || (targeted_spell.is_some() && d.name == "Bulk Up"))
-        && (d.kicker_cost.is_none() || (targeted_spell.is_some() && d.name == "Burst Lightning"))
+        && (d.kicker_cost.is_none()
+            || (targeted_spell.is_some() && d.name == "Burst Lightning")
+            || (library_search.is_some() && d.name == "Grow from the Ashes"))
         && (d.additional_cost.is_none() || discard_cost_spell.is_some())
         && d.optional_additional_cost.is_none()
         && (d.equipment.is_none() || goldvein.is_some() || ordinary_equipment.is_some())

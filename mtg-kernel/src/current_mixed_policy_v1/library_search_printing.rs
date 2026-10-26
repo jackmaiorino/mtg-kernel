@@ -2,7 +2,9 @@
 use super::{Error, Result};
 use crate::{
     card_def::{CardDef, CardType, Keywords, Subtype, TargetSpec},
-    effect::{EffectOp, LibraryCardFilter, LibrarySearchDestinationV1, ObjectRef, PlayerRef},
+    effect::{
+        EffectCond, EffectOp, LibraryCardFilter, LibrarySearchDestinationV1, ObjectRef, PlayerRef,
+    },
     mana::{Cost, ManaColor, Pip},
     state::Zone,
     trigger::{TriggerCondition, TriggeredAbilityDef},
@@ -12,7 +14,7 @@ pub(super) fn handles_permanent(name: &str) -> bool {
     matches!(name, "Campus Guide" | "Rune-Scarred Demon" | "Micromancer")
 }
 pub(super) fn handles_spell(name: &str) -> bool {
-    matches!(name, "Grim Tutor" | "Bushwhack")
+    matches!(name, "Grim Tutor" | "Bushwhack" | "Grow from the Ashes")
 }
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     if !handles_permanent(d.name) && !handles_spell(d.name) {
@@ -20,6 +22,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     if d.name == "Bushwhack" {
         return bushwhack(id, d);
+    }
+    if d.name == "Grow from the Ashes" {
+        return grow_from_ashes(id, d);
     }
     let campus = d.name == "Campus Guide";
     let micromancer = d.name == "Micromancer";
@@ -224,6 +229,90 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     Ok(Some(
         json!({"card_id":id,"library_search_printing":{"schema":"printed-owned-library-search/v1","cost":cost,"mana_value":d.mana_value,"types":d.types,"subtypes":d.subtypes,"supertypes":[],"colors":d.colors,"power":power,"toughness":toughness,"keywords":keywords.0,"token":false,"ordered_cast_roots":[cast],"ordered_triggers":triggers}}),
     ))
+}
+
+fn grow_from_ashes(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 2,
+        pips: &[Pip::Colored(ManaColor::G)],
+        x_count: 0,
+    };
+    let kicker = Cost {
+        generic: 2,
+        pips: &[],
+        x_count: 0,
+    };
+    let search = |max_targets| EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: LibraryCardFilter::BasicLand,
+        max_targets,
+        destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.kicker_cost != Some(kicker)
+        || d.mana_value != 3
+        || d.types != [CardType::Sorcery]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::G]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::None
+        || d.mode2.is_some()
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::Conditional {
+                cond: EffectCond::WasKicked,
+                then: Box::new(search(2)),
+                else_: Box::new(search(1)),
+            })
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let roots = [false, true].into_iter().map(|kicked| {
+        let total = Cost { generic: if kicked { 4 } else { 2 }, ..cost };
+        let resolution = json!([{"operation":"SearchOwnLibraryForBasicLandCardsToBattlefieldThenShuffle",
+            "searcher":"CapturedSpellController","filter":{"card_type":"Land","supertype":"Basic"},
+            "minimum_selected":0,"maximum_selected":if kicked {2} else {1},
+            "distinct_original_card_incarnations":true,"selection_is_not_targeting":true,
+            "may_fail_to_find_even_when_eligible_cards_exist":true,
+            "search_and_unselected_identities_private_to_searcher":true,
+            "hold_all_selected_cards_in_library_until_complete_selection":true,
+            "destination":"BattlefieldUnderSpellControllersControl","entry_tapped":false,
+            "selected_cards_enter_as_one_simultaneous_batch":true,
+            "normal_zone_and_entry_replacements_and_observers_apply":true,
+            "shuffle_remaining_library_after_entry_batch_even_if_selection_is_empty":true,
+            "empty_library_completes_without_drawing_or_losing":true}]);
+        json!({"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
+            "timing":"OwnMainPhaseEmptyStackWithPriority","kicked":kicked,
+            "kicker_choice_before_final_mana_payment":true,"targets":[],
+            "ordered_costs":[{"operation":"PayOneCombinedNativeManaPlan","printed_cost":cost,
+                "additional_kicker_cost":if kicked {Some(kicker)} else {None},
+                "base_total_before_increases_and_reductions":total,
+                "normal_cast_cost_adjustments_and_mana_restrictions_apply":true}],
+            "ordered_resolution":resolution,
+            "normal_queued_triggers_and_state_based_actions_follow_complete_resolution":true,
+            "countering_skips_search_entry_and_shuffle_without_refunding_mana":true,
+            "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
+            "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+            "copies_use_original_native_kicked_status_without_paying_cast_costs":true,
+            "other_cast_permissions_require_current_candidate_authority":true})
+    }).collect::<Vec<_>>();
+    Ok(Some(json!({"card_id":id,"kicker_land_search_printing":{
+        "schema":"printed-kicker-basic-land-search-to-battlefield/v1","cost":cost,"kicker_cost":kicker,
+        "mana_value":3,"kicker_does_not_change_printed_or_stack_mana_value":true,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+        "power":null,"toughness":null,"keywords":0,"token":false,"ordered_cast_roots":roots
+    }})))
 }
 
 fn bushwhack(id: u16, d: &CardDef) -> Result<Option<Value>> {
