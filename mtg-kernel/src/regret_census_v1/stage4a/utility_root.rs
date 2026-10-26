@@ -217,6 +217,10 @@ fn row_actions(
     {
         return Err("utility row schema, arm, lineage or bank binding differs".into());
     }
+    // Utility modes search with the scheduled opponent only.
+    if row.get(super::refresh::ROLLOUT_FIELD).is_some() {
+        return Err("utility rows with a rollout opponent are not supported".into());
+    }
     for (key, expected) in [
         ("id", json!(src.id)),
         ("own", json!(src.own)),
@@ -805,6 +809,7 @@ mod tests {
             ("search_root", json!("other-root")),
             ("lineage", json!("other-model")),
             ("bank_binding_sha256", json!("other-binding")),
+            ("rollout_opponent", json!("fixture")),
         ] {
             let mut r = original.clone();
             r[field] = value;
