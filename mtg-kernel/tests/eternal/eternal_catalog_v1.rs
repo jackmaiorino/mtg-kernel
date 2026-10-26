@@ -16,7 +16,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails.
 /// Companion decks stay out until the engine supports companions.
-const PLAYABLE: [(&str, &str); 14] = [
+const PLAYABLE: [(&str, &str); 17] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -43,6 +43,9 @@ const PLAYABLE: [(&str, &str); 14] = [
     ("pauper", "pauper-grixis-faeries"),
     ("legacy", "legacy-dimir-tempo"),
     ("legacy", "legacy-izzet-delver"),
+    ("legacy", "legacy-doomsday"),
+    ("legacy", "legacy-sneak-and-show"),
+    ("legacy", "legacy-omni-tell"),
 ];
 
 fn read_json(relative: &str) -> Value {
@@ -162,16 +165,20 @@ fn rank(action: &Value) -> u8 {
 
 /// Whether the public session can follow this action. Policy observation v5
 /// fails closed while an Escape cast stages its graveyard exile (Sleep of the
-/// Dead), so these games never begin one; every other action is admitted.
+/// Dead) and once an extra turn is scheduled (Emrakul, the Aeons Torn's cast
+/// trigger), so these games never begin either; every other action is
+/// admitted.
 fn session_can_follow(action: &Value) -> bool {
     let s = &action["semantic"];
-    if s["action_kind"] != "cast_spell"
-        || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
-    {
+    if s["action_kind"] != "cast_spell" {
         return true;
     }
     let id = s["source"]["card_db_id"].as_u64().unwrap() as usize;
-    CARD_DEFS[id].escape.is_none()
+    if CARD_DEFS[id].name == "Emrakul, the Aeons Torn" {
+        return false;
+    }
+    s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
+        || CARD_DEFS[id].escape.is_none()
 }
 
 /// Whether this action chooses a Ward permanent as a target.
