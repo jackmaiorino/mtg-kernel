@@ -1249,6 +1249,7 @@ pub fn stack_target_contract_is_structurally_valid(
             StackTargetContractV4::Player(_) => matches!(
                 filter,
                 crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
+                    | crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1
             ),
         };
         if !matches_kind {
@@ -3366,6 +3367,34 @@ impl GameState {
                     && !card.v4.is_token
                     && !crate::card_def::CARD_DEFS[card.card_def as usize].is_token
                     && card.spell_copy_origin.is_none()
+            })
+            .collect::<Vec<_>>();
+        if cards.len() < 2 {
+            return Ok(cards.first().copied());
+        }
+        let mut projected = self.clone();
+        projected.players[owner.index()].library = cards;
+        projected.shuffle_library(owner)?;
+        let chosen = projected.players[owner.index()].library.first().copied();
+        self.randomness = projected.randomness;
+        Ok(chosen)
+    }
+
+    /// Sample one card in `owner`'s hand at random without changing any zone
+    /// order or knowledge (Urza's Bauble). Same checked randomness
+    /// transaction as `random_graveyard_card_v1`.
+    pub(crate) fn random_hand_card_v1(
+        &mut self,
+        owner: PlayerId,
+    ) -> Result<Option<ObjectId>, LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let cards = self.players[owner.index()]
+            .hand
+            .iter()
+            .copied()
+            .filter(|id| {
+                let card = self.objects.get(*id);
+                card.zone == Zone::Hand && card.owner == owner
             })
             .collect::<Vec<_>>();
         if cards.len() < 2 {

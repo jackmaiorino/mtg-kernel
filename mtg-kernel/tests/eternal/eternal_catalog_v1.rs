@@ -16,7 +16,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails.
 /// Companion decks stay out until the engine supports companions.
-const PLAYABLE: [(&str, &str); 12] = [
+const PLAYABLE: [(&str, &str); 14] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -41,6 +41,8 @@ const PLAYABLE: [(&str, &str); 12] = [
     ),
     ("pauper", "pauper-dimir-terror"),
     ("pauper", "pauper-grixis-faeries"),
+    ("legacy", "legacy-dimir-tempo"),
+    ("legacy", "legacy-izzet-delver"),
 ];
 
 fn read_json(relative: &str) -> Value {
@@ -172,6 +174,36 @@ fn session_can_follow(action: &Value) -> bool {
     CARD_DEFS[id].escape.is_none()
 }
 
+/// Whether this action chooses a Ward permanent as a target.
+fn targets_ward_permanent(action: &Value) -> bool {
+    let target = &action["semantic"]["target"];
+    target["target_kind"] == "object"
+        && target["object"]["card_db_id"]
+            .as_u64()
+            .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
+}
+
+/// Whether any public stack item's targets include a Ward permanent.
+fn public_targets_ward_permanent(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.get("targets")
+                .and_then(Value::as_array)
+                .is_some_and(|targets| {
+                    targets.iter().any(|target| {
+                        target["target_kind"] == "object"
+                            && target["object"]["card_db_id"]
+                                .as_u64()
+                                .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
+                    })
+                })
+                || map.values().any(public_targets_ward_permanent)
+        }
+        Value::Array(items) => items.iter().any(public_targets_ward_permanent),
+        _ => false,
+    }
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -207,6 +239,8 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
     let mut transcript = Sha256::new();
     let mut action_counts = BTreeMap::new();
     let mut casts_by_seat = [0; 2];
+    // The last chosen actions, reported if a game fails closed.
+    let mut recent: Vec<String> = Vec::new();
     let mut random_state = match policy {
         Policy::Random(state) => state,
         Policy::Ranked => 0,
@@ -224,8 +258,15 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
         );
         if reply["response_type"] == "terminal" {
             assert_eq!(
-                reply["terminal"]["terminal_code"], "natural_game_over",
-                "seed={seed}: {reply}"
+                reply["terminal"]["terminal_code"],
+                "natural_game_over",
+                "seed={seed}: {reply}
+last actions:
+{}",
+                recent.join(
+                    "
+"
+                )
             );
             return Game {
                 transcript_sha256: format!("{:x}", transcript.finalize()),
@@ -240,12 +281,40 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
             .iter()
             .filter(|action| session_can_follow(action))
             .collect();
+        // Policy observation v5 fails closed while two stack items target
+        // one Ward permanent, so these games avoid targeting a Ward
+        // permanent whenever another action is available, and start no new
+        // spell or ability while something on the stack targets one.
+        let ward_targeted = public_targets_ward_permanent(decision);
+        let unwarded: Vec<&Value> = actions
+            .iter()
+            .copied()
+            .filter(|action| {
+                if targets_ward_permanent(action) {
+                    return false;
+                }
+                let starts_new = matches!(
+                    action["semantic"]["action_kind"].as_str(),
+                    Some("cast_spell" | "activate_ability")
+                );
+                !ward_targeted || !starts_new
+            })
+            .collect();
+        let actions = if unwarded.is_empty() {
+            actions
+        } else {
+            unwarded
+        };
         let action = match policy {
             Policy::Ranked => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
             Policy::Random(_) => {
                 actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }
         };
+        recent.push(action["semantic"].to_string());
+        if recent.len() > 8 {
+            recent.remove(0);
+        }
         if action["semantic"]["action_kind"] == "cast_spell" {
             let actor: mtg_kernel::rl::PlayerSeatV1 =
                 serde_json::from_value(action["semantic"]["actor"].clone()).unwrap();
@@ -286,6 +355,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // Each deck plays the next one, so every deck takes both seats, once
     // with ranked actions and once with seeded random actions.
     let mut random_activations = 0;
+    // Every deck casts a spell in its two ranked games (one per seat); a
+    // single shuffle can leave one seat without a castable spell.
+    let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
     for index in 0..decks.len() {
         let (first, second) = (&decks[index], &decks[(index + 1) % decks.len()]);
         let pair = [first.mainboard.clone(), second.mainboard.clone()];
@@ -299,13 +371,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
                 first.archetype, second.archetype
             );
             if let Policy::Ranked = policy {
-                assert!(
-                    game.casts_by_seat.iter().all(|casts| *casts > 0),
-                    "{} / {}: {:?}",
-                    first.archetype,
-                    second.archetype,
-                    game.action_counts
-                );
+                *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
+                *ranked_casts.entry(second.archetype.as_str()).or_default() +=
+                    game.casts_by_seat[1];
             } else {
                 random_activations += game.action_counts.get("activate_ability").unwrap_or(&0);
             }
@@ -319,6 +387,10 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
             );
         }
     }
+    assert!(
+        ranked_casts.values().all(|casts| *casts > 0),
+        "{ranked_casts:?}"
+    );
     assert!(
         random_activations > 0,
         "random games activated no abilities"

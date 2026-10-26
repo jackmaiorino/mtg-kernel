@@ -260,6 +260,9 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
                     && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
             })
             .count(),
+        #[cfg(feature = "eternal-fixtures")]
+        _ => return crate::eternal_cards_v1::characteristic_defining_power(state, id),
+        #[cfg(not(feature = "eternal-fixtures"))]
         _ => return None,
     };
     Some(i32::try_from(count).unwrap_or(i32::MAX))
@@ -270,7 +273,14 @@ pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId)
     if CARD_DEFS.get(object.card_def as usize)?.name == "Regal Bunnicorn" {
         characteristic_defining_power(state, id)
     } else {
-        None
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            crate::eternal_cards_v1::characteristic_defining_toughness(state, id)
+        }
+        #[cfg(not(feature = "eternal-fixtures"))]
+        {
+            None
+        }
     }
 }
 

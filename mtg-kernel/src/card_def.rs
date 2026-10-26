@@ -353,6 +353,12 @@ pub enum Subtype {
     Utrom,
     Scientist,
     Robot,
+    /// Appended for the eternal catalog's Legacy decks (the Orc Army token,
+    /// Nethergoyf, Bilbo, Tamiyo). Tamiyo is a planeswalker type.
+    Army,
+    Lhurgoyf,
+    Halfling,
+    Tamiyo,
 }
 
 impl Subtype {
@@ -659,6 +665,12 @@ impl Subtype {
         Subtype::Scientist,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Robot,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Army,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Lhurgoyf,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Halfling,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -746,7 +758,15 @@ impl Subtype {
         }
         // The eternal catalog's creature types, absent from every other build.
         if cfg!(feature = "eternal-fixtures")
-            && matches!(self, Subtype::Utrom | Subtype::Scientist | Subtype::Robot)
+            && matches!(
+                self,
+                Subtype::Utrom
+                    | Subtype::Scientist
+                    | Subtype::Robot
+                    | Subtype::Army
+                    | Subtype::Lhurgoyf
+                    | Subtype::Halfling
+            )
         {
             return true;
         }
@@ -1452,6 +1472,16 @@ pub enum CostComponent {
     /// "Pay {E}{E}..." (107.14): remove this many energy counters from the
     /// payer. Appended for the eternal catalog (Inventor's Axe's equip).
     PayEnergyV1(u8),
+    /// "Exile a blue card from your hand" (Force of Will): one card of this
+    /// color from the payer's hand, other than the spell itself, chosen
+    /// privately through `Decision::ChooseCostTargets`. Appended for the
+    /// eternal catalog.
+    ExileCardFromHandWithColorV1(ManaColor),
+    /// "Exile any number of other cards from your graveyard with N or more
+    /// card types among them" (Nethergoyf's escape). Cards are chosen one
+    /// at a time until the chosen set covers N card types. Appended for the
+    /// eternal catalog.
+    ExileOtherGraveyardCardsWithCardTypesV1(u8),
 }
 
 impl CostComponent {
@@ -3006,7 +3036,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x10c0_d7b4_eba9_0916;
+        const EXPECTED_ETERNAL: u64 = 0x2c29_b36c_17aa_bd16;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

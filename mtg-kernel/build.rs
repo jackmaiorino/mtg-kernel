@@ -4627,7 +4627,10 @@ fn transform_face_for(name: &str) -> &'static str {
         "Graveyard Trespasser" => "Some(TransformFaceDef { name: \"Graveyard Glutton\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::B], power: Some(4), toughness: Some(4), keywords: Keywords::NONE })",
         "Brutal Cathar" => "Some(TransformFaceDef { name: \"Moonrage Brute\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::R], power: Some(3), toughness: Some(3), keywords: Keywords::FIRST_STRIKE })",
         "Incubator Token" => "Some(TransformFaceDef { name: \"Phyrexian Token\", types: &[CardType::Artifact, CardType::Creature], subtypes: &[Subtype::Phyrexian], colors: &[], power: Some(0), toughness: Some(0), keywords: Keywords::NONE })",
-        _ => build_standard_v1::transform_face_for(name),
+        _ => match build_standard_v1::transform_face_for(name) {
+            "None" => build_eternal_v1::transform_face_for(name),
+            face => face,
+        },
     }
 }
 
@@ -4643,7 +4646,8 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Incubator Token" => Some("Phyrexian Token"),
         "Brutal Cathar" => Some("Moonrage Brute"),
         "Graveyard Trespasser" => Some("Graveyard Glutton"),
-        _ => build_standard_v1::transform_face_name_for(name),
+        _ => build_standard_v1::transform_face_name_for(name)
+            .or_else(|| build_eternal_v1::transform_face_name_for(name)),
     }
 }
 
@@ -4792,7 +4796,10 @@ fn alt_cost_for(name: &str) -> &'static str {
         "Knight-Errant of Eos" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 })], condition: AltCostCondition::Always })",
         "Overlord of the Mistmoors" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::W)], generic: 2, x_count: 0 })], condition: AltCostCondition::ImpendingFromHand { time_counters: 4 } })",
         "Nova Hellkite" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
-        _ => build_standard_v1::alt_cost_for(name),
+        _ => match build_standard_v1::alt_cost_for(name) {
+            "None" => build_eternal_v1::alt_cost_for(name),
+            alt => alt,
+        },
     }
 }
 
@@ -4944,7 +4951,7 @@ fn escape_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => build_eternal_v1::escape_for(name),
     }
 }
 
@@ -6710,6 +6717,7 @@ fn signed_fn_token(value: i8) -> String {
 
 fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
     build_standard_v1::activated_ability_face_for(name, index)
+        .or_else(|| build_eternal_v1::activated_ability_face_for(name, index))
 }
 
 /// Rust source for a card's activated abilities. `canonical` omits the
@@ -6862,7 +6870,7 @@ fn mode2_for(name: &str) -> String {
             program_target_spec_src(mode.target),
             program_function_suffix(name)
         ),
-        _ => "None".to_string(),
+        _ => build_eternal_v1::mode2_for(name).to_string(),
     }
 }
 
@@ -6882,7 +6890,7 @@ fn mode3_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::AnyPlayer, effect: mode3_effect_piracy_charm_discard })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::UpToTwoPlayers, effect: mode3_effect_thraben_charm_exile_graveyards })".to_string(),
         Special::PhantomInterference => "Some(ModeDef { target_spec: TargetSpec::AnySpellOnStack, effect: mode2_effect_phantom_interference_counter })".to_string(),
-        _ => "None".to_string(),
+        _ => build_eternal_v1::mode3_for(name).to_string(),
     }
 }
 
@@ -6925,7 +6933,7 @@ fn adventure_for(name: &str) -> String {
         "Fang Dragon" => {
             "Some(AdventureDef { name: \"Forktail Sweep\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_damage_all_creatures_opponent_controlled_1 })".to_string()
         }
-        _ => "None".to_string(),
+        _ => build_eternal_v1::adventure_for(name).to_string(),
     }
 }
 
@@ -6948,7 +6956,7 @@ fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
             amount: 1,
             filter: CreatureEffectFilterRecipe::OpponentControlled,
         }),
-        _ => None,
+        _ => build_eternal_v1::adventure_effect_recipe_for(name),
     }
 }
 
@@ -6962,7 +6970,7 @@ fn adventure_face_name_for(name: &str) -> Option<&'static str> {
         "Imodane's Recruiter" => Some("Train Troops"),
         "Virtue of Loyalty" => Some("Ardenvale Fealty"),
         "Fang Dragon" => Some("Forktail Sweep"),
-        _ => None,
+        _ => build_eternal_v1::adventure_face_name_for(name),
     }
 }
 
@@ -7115,7 +7123,7 @@ fn changeling_for(name: &str) -> bool {
 
 /// True iff this card has Delve (702.65) -- see `CardDef::delve`'s doc.
 fn delve_for(name: &str) -> bool {
-    name == "Gurmag Angler"
+    name == "Gurmag Angler" || build_eternal_v1::delve_for(name)
 }
 
 /// Stable semantic binding for definition-owned triggered abilities. Runtime
@@ -7285,7 +7293,11 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Harrier Strix" => "etb:target_any_permanent:tap",
         "Bojuka Bog" => "etb:target_player:exile_graveyard",
         "Conduit Pylons" => "etb:surveil:1",
-        "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => "etb:surveil:1",
+        "Elegant Parlor"
+        | "Lush Portico"
+        | "Underground Mortuary"
+        | "Undercity Sewers"
+        | "Thundering Falls" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
         "Banishing Light" => "self_etb:target_opponent_nonland_permanent:exile_until_exact_source_incarnation_leaves:no_exile_if_source_already_left:immediate_return_exact_exile_incarnation_under_owner:independent_of_removed_source_abilities",
@@ -11127,6 +11139,10 @@ fn subtype_variant(t: &str) -> &'static str {
         "Utrom" => "Subtype::Utrom",
         "Scientist" => "Subtype::Scientist",
         "Robot" => "Subtype::Robot",
+        "Army" => "Subtype::Army",
+        "Lhurgoyf" => "Subtype::Lhurgoyf",
+        "Halfling" => "Subtype::Halfling",
+        "Tamiyo" => "Subtype::Tamiyo",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

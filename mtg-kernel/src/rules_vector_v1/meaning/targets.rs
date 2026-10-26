@@ -690,7 +690,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         | S::TappedOpponentCreature
         | S::CrewedSourceThisTurn
         | S::TwoCreaturesV1 => creature(),
-        S::UpToTwoAnyTargets => ObjF::PlayerOrPermanent,
+        S::UpToTwoAnyTargets | S::OneOrTwoAnyTargetsV1 => ObjF::PlayerOrPermanent,
+        S::NonbasicLandV1 => typed(CardType::Land),
     }
 }
 
@@ -710,8 +711,10 @@ pub(super) fn standard_target_origin(
         | S::TappedOpponentCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
         S::AnotherNonlandPermanent
         | S::UpToTwoAnyTargets
+        | S::OneOrTwoAnyTargetsV1
         | S::UpToOneCreature
         | S::TwoCreaturesV1
+        | S::NonbasicLandV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -770,6 +773,18 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             out.target(TargetAtom::MultipleTargets);
             // Both target words may name the same creature.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::OneOrTwoAnyTargetsV1 => {
+            out.target(TargetAtom::PlayerYou);
+            out.target(TargetAtom::PlayerOpponent);
+            object(out, creature(), None, zone);
+            object(out, typed(CardType::Planeswalker), None, zone);
+            out.target(TargetAtom::MultipleTargets);
+        }
+        S::NonbasicLandV1 => {
+            object(out, typed(CardType::Land), relation, zone);
+            // The nonbasic refinement has no facet.
             out.atoms.push(Atom::Opaque);
         }
     }
