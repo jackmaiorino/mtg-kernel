@@ -155,6 +155,9 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) convoke: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
     pub(super) replicate: Option<Cost>,
+    /// The spell's sorted creature subtype ids, for mana restricted to a
+    /// chosen creature type (Cavern of Souls).
+    pub(super) spell_subtype_ids: Vec<u16>,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -388,6 +391,7 @@ impl SelectedSpellManaCostsV1 {
                 additional_life,
                 self.legendary_spell,
                 self.types.contains(&CardType::Artifact),
+                &self.spell_subtype_ids,
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -464,6 +468,7 @@ pub(super) fn selected_spell_mana_costs_v1(
         delve: false,
         convoke: false,
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
+        spell_subtype_ids: spell_subtype_ids(definition),
     };
     match method {
         CastMethodV4::Normal => {
@@ -533,6 +538,27 @@ pub(super) fn selected_spell_mana_costs_v1(
     Some(selected)
 }
 
+/// The sorted subtype ids a spell of `definition` has, every creature type
+/// for a changeling.
+fn spell_subtype_ids(definition: &card_def::CardDef) -> Vec<u16> {
+    let mut ids = definition
+        .subtypes
+        .iter()
+        .map(|subtype| subtype.stable_id())
+        .collect::<Vec<_>>();
+    if definition.changeling {
+        ids.extend(
+            card_def::Subtype::CREATURE_TYPES
+                .iter()
+                .filter(|subtype| subtype.is_creature_type())
+                .map(|subtype| subtype.stable_id()),
+        );
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 // Keep selected form, payment and source inputs explicit at this shared quote boundary.
 pub(super) fn selected_spell_mana_costs_for_source_v1(
     source: ObjectId,
@@ -560,6 +586,12 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
         if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {
             return None;
         }
+        selected.costs.remove(0);
+    } else if cfg!(feature = "eternal-fixtures")
+        && method == CastMethodV4::Normal
+        && crate::eternal_cards_v1::e3::free_hand_cast_selected(state, source, player, mode)
+    {
+        // Omniscience, Aluren: "without paying its mana cost".
         selected.costs.remove(0);
     }
     Some(selected)
@@ -646,7 +678,14 @@ pub(super) fn selected_spell_quote_branch_v1(
     reserved_graveyard: &[ObjectId],
     forced_branch: Option<bool>,
 ) -> Option<SpellManaPaymentV1> {
-    if x != 0 && super::resolution_cast_v1::free_cast_for(state, source, player) {
+    if x != 0
+        && (super::resolution_cast_v1::free_cast_for(state, source, player)
+            || (cfg!(feature = "eternal-fixtures")
+                && method == CastMethodV4::Normal
+                && crate::eternal_cards_v1::e3::free_hand_cast_selected(
+                    state, source, player, mode,
+                )))
+    {
         return None;
     }
     if method == CastMethodV4::Alternative
@@ -899,6 +938,12 @@ impl PreparedSpellPaymentV1 {
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn delve_exiled(&self) -> &[ObjectId] {
         &self.mana.delve_exiled
+    }
+
+    /// The mana sources this payment taps and the color each adds.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn mana_taps(&self) -> &[(ObjectId, crate::mana::ManaColor)] {
+        &self.mana.mana.taps
     }
 
     /// Whether this payment spends colored mana (Void Mirror): a source

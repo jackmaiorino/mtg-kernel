@@ -3256,6 +3256,19 @@ fn commit_with_entry_batch_and_source_color(
                 amount: g.amount,
             }
         }
+        ProposedEvent::Draw(d)
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::wins_instead_of_drawing_from_empty_library(
+                    state, d.player,
+                ) =>
+        {
+            // Jace, Wielder of Mysteries replaces this draw with a win.
+            crate::eternal_cards_v1::e3::replace_empty_library_draw(state, d.player);
+            CommittedEvent::Draw {
+                player: d.player,
+                object: None,
+            }
+        }
         ProposedEvent::Draw(d) => {
             let empty_before = state.players[d.player.index()].library.is_empty();
             let drawn = state.draw_card(d.player);

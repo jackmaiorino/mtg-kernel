@@ -3713,6 +3713,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         | "Lush Portico"
         | "Underground Mortuary"
         | "Undercity Sewers"
+        | "Hedge Maze"
         | "Thundering Falls" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
@@ -5554,11 +5555,16 @@ fn triggers_from_events(
                             CommittedEvent::ZoneChange {
                                 object,
                                 from,
+                                to,
                                 controller_before,
                                 ..
                             } if *object == id
                                 && uses_leave_lki
-                                && def.condition != TriggerCondition::DiesIfWasCreature =>
+                                && def.condition != TriggerCondition::DiesIfWasCreature
+                                && !(*to == obj.zone
+                                    && crate::eternal_cards_v1::arrival_condition(
+                                        def.condition,
+                                    )) =>
                             {
                                 let Some(zone_change_count) = obj.zone_change_count.checked_sub(1)
                                 else {

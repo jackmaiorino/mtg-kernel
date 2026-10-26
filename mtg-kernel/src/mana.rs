@@ -493,6 +493,7 @@ pub(crate) fn plan_spell_mana_total_v1(
         additional_life,
         false,
         false,
+        &[],
     )
 }
 
@@ -507,6 +508,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
     additional_life: u32,
     legendary_spell: bool,
     artifact_spell: bool,
+    spell_subtypes: &[u16],
 ) -> Option<PaymentPlan> {
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
@@ -519,6 +521,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
         creature_spell,
         legendary_spell,
         artifact_spell,
+        spell_subtypes,
     )
     .into_iter()
     .filter(|source| !excluded.contains(&source.id))
@@ -749,7 +752,7 @@ pub fn gather_sources_for_spell(
     state: &GameState,
     creature_spell: bool,
 ) -> Vec<ManaSource> {
-    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false, false)
+    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false, false, &[])
 }
 
 fn restriction_permits(
@@ -765,6 +768,8 @@ fn restriction_permits(
             creature_spell
         }
         crate::card_def::ManaSpendRestrictionDef::LegendarySpell => legendary_spell,
+        // Offered only while paying a spell of the chosen type; never floats.
+        crate::card_def::ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1 => false,
         crate::card_def::ManaSpendRestrictionDef::ArtifactSpellV1 => artifact_spell,
     }
 }
@@ -775,6 +780,7 @@ fn gather_sources_for_spell_restrictions_v1(
     creature_spell: bool,
     legendary_spell: bool,
     artifact_spell: bool,
+    spell_subtypes: &[u16],
 ) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
@@ -818,12 +824,21 @@ fn gather_sources_for_spell_restrictions_v1(
         }
         {
             for restricted in def.restricted_mana_abilities {
-                if !restriction_permits(
-                    restricted.restriction,
-                    creature_spell,
-                    legendary_spell,
-                    artifact_spell,
-                ) {
+                let permitted = if restricted.restriction
+                    == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1
+                {
+                    // Cavern of Souls: a creature spell of the chosen type.
+                    creature_spell
+                        && crate::eternal_cards_v1::e3::cavern_permits(state, id, spell_subtypes)
+                } else {
+                    restriction_permits(
+                        restricted.restriction,
+                        creature_spell,
+                        legendary_spell,
+                        artifact_spell,
+                    )
+                };
+                if !permitted {
                     continue;
                 }
                 for &color in restricted.colors {

@@ -1124,12 +1124,6 @@ pub(crate) fn activation_allowed(
     name != URZAS_SAGA || saga_level(state, source) >= 2
 }
 
-/// Whether `name` is a modal double-faced card whose back face is a land
-/// (Witch Enchanter // Witch-Blessed Meadow).
-pub(crate) fn modal_land_face(name: &str) -> bool {
-    cfg!(feature = "eternal-fixtures") && name == WITCH_ENCHANTER
-}
-
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
 /// abilities apply, with that Peacekeeper's controller.
 fn chosen_names(state: &GameState) -> Vec<(u16, PlayerId)> {
@@ -1807,7 +1801,7 @@ pub(crate) fn restrict_produced_mana(
 pub fn tinker() -> EffectOp {
     EffectOp::SearchLibraryCardsToDestination {
         player: PlayerRef::Controller,
-        filter: crate::effect::LibraryCardFilter::ArtifactV1,
+        filter: crate::effect::LibraryCardFilter::CardWithTypeV1(CardType::Artifact),
         max_targets: 1,
         destination: crate::effect::LibrarySearchDestinationV1::Battlefield { tapped: false },
     }

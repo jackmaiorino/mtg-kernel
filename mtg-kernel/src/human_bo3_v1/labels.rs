@@ -979,6 +979,9 @@ fn label_common(
                         ManaAbilityCostDef::TapSelfPayLife(life) => {
                             format!("Tap {source_name} and pay {life} life")
                         }
+                        ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+                            format!("Discard your hand and sacrifice {source_name}")
+                        }
                     };
                     if !matches!(
                         ability.cost,

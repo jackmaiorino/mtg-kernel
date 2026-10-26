@@ -35,6 +35,30 @@ pub fn recipe() -> EffectOp {
     EffectOp::TakeExtraTurnAfterThisOneV1
 }
 
+/// Emrakul, the Aeons Torn: "When you cast this spell, take an extra turn
+/// after this one." Its trigger owns an extra turn like a resolving
+/// Temporal Manipulation.
+const EMRAKUL: &str = "Emrakul, the Aeons Torn";
+
+fn cast_trigger(item: &StackItem) -> bool {
+    item.kind == StackItemKind::TriggeredAbility
+        && !item.is_copy
+        && item.inline_effect == Some(recipe())
+        && item
+            .v4
+            .source_contract
+            .and_then(|source| card_def::CARD_DEFS.get(usize::from(source.card_def)))
+            .is_some_and(|definition| definition.name == EMRAKUL)
+}
+
+/// Publishes a just-placed extra-turn trigger, as `record_publication` does
+/// for a paid spell.
+pub(crate) fn record_trigger_publication(state: &mut GameState, item: &StackItem) {
+    if cast_trigger(item) {
+        record_publication(state, item.v4.stack_item_id);
+    }
+}
+
 pub(crate) fn selected_definition(id: u16) -> bool {
     card_def::CARD_DEFS
         .get(usize::from(id))
@@ -50,6 +74,9 @@ fn selected_name(name: &str) -> bool {
 fn selected(item: &StackItem, state: &GameState) -> bool {
     if time_vault_ability(item) {
         return true;
+    }
+    if item.kind == StackItemKind::TriggeredAbility {
+        return cast_trigger(item);
     }
     [
         item.v4.source_contract.map(|source| source.card_def),
@@ -98,6 +125,12 @@ fn exact_recipe(item: &StackItem) -> bool {
         .is_none_or(|source| source.source != item.source || source.controller != item.controller)
     {
         return false;
+    }
+    if item.kind == StackItemKind::TriggeredAbility {
+        return cast_trigger(item)
+            && item.targets.is_empty()
+            && item.v4.target_contracts.is_empty()
+            && item.mode_chosen == 0;
     }
     item.v4
         .source_contract
@@ -564,9 +597,11 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                                     if *object==item.source && *controller_before==item.controller)
                             }
                         }).count();
-                        // An activated ability leaves no card behind.
+                        // An activated ability (Time Vault) leaves no card
+                        // behind; a cast trigger's source (Emrakul) departs the
+                        // stack on its own, so only spells are counted.
                         let expected = usize::from(item.kind != StackItemKind::ActivatedAbility);
-                        if departures != expected {
+                        if item.kind != StackItemKind::TriggeredAbility && departures != expected {
                             return Err("removed Temporal spell lacks its unique independent actual Stack departure".into());
                         }
                     }

@@ -703,6 +703,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         | S::TwoCreaturesV1 => creature(),
         S::UpToTwoAnyTargets | S::OneOrTwoAnyTargetsV1 => ObjF::PlayerOrPermanent,
         S::NonbasicLandV1 => typed(CardType::Land),
+        S::InstantOrSorcerySpellV1 | S::SpellWithSingleTargetV1 => ObjF::Spell,
+        S::OpponentSpellOrNonlandPermanentV1 => ObjF::NonlandPermanent,
         S::AnotherArtifactV1 | S::UpToOneNoncreatureArtifactV1 => typed(CardType::Artifact),
         S::AttackingClericRogueWarriorOrWizardV1 => creature(),
         S::AnyNumberControlledNonlandNontokenPermanentsV1 => ObjF::NonlandPermanent,
@@ -725,7 +727,9 @@ pub(super) fn standard_target_origin(
         S::OpponentNonlandPermanentManaValueAtMost(_)
         | S::OpponentNonlandPermanent
         | S::OpponentArtifactOrCreature
-        | S::TappedOpponentCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        | S::TappedOpponentCreature
+        | S::OpponentSpellOrNonlandPermanentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        S::InstantOrSorcerySpellV1 | S::SpellWithSingleTargetV1 => (Some(ZoneF::Stack), None),
         S::AnotherNonlandPermanent
         | S::UpToTwoAnyTargets
         | S::OneOrTwoAnyTargetsV1
@@ -805,6 +809,20 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Land), relation, zone);
             // The nonbasic refinement has no facet.
             out.atoms.push(Atom::Opaque);
+        }
+        S::InstantOrSorcerySpellV1 => {
+            object(out, ObjF::Spell, relation, zone);
+            // The instant-or-sorcery refinement of a spell has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::SpellWithSingleTargetV1 => {
+            object(out, ObjF::Spell, relation, zone);
+            // "With a single target" has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::OpponentSpellOrNonlandPermanentV1 => {
+            object(out, ObjF::NonlandPermanent, relation, zone);
+            object(out, ObjF::Spell, relation, ZoneF::Stack);
         }
         S::AnotherArtifactV1 | S::AttackingClericRogueWarriorOrWizardV1 => {
             object(out, standard_target_obj(filter), relation, zone);

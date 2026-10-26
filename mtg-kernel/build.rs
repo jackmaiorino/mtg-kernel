@@ -3267,6 +3267,8 @@ enum PermanentFilterRecipe {
     ArtifactOrCreature,
     AnotherArtifact,
     Creature,
+    /// A controlled land (Edge of Autumn's "Cycling--Sacrifice a land").
+    Land,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6332,6 +6334,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
         PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
         PermanentFilterRecipe::Creature => "PermanentFilter::Creature",
+        PermanentFilterRecipe::Land => "PermanentFilter::Land",
     }
 }
 
@@ -6342,6 +6345,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
         PermanentFilterRecipe::AnotherArtifact => "another_artifact",
         PermanentFilterRecipe::Creature => "creature",
+        PermanentFilterRecipe::Land => "land",
     }
 }
 
@@ -7308,6 +7312,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         | "Lush Portico"
         | "Underground Mortuary"
         | "Undercity Sewers"
+        | "Hedge Maze"
         | "Thundering Falls" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
@@ -11150,10 +11155,13 @@ fn subtype_variant(t: &str) -> &'static str {
         "Utrom" => "Subtype::Utrom",
         "Scientist" => "Subtype::Scientist",
         "Robot" => "Subtype::Robot",
+        "Wraith" => "Subtype::Wraith",
         "Army" => "Subtype::Army",
         "Lhurgoyf" => "Subtype::Lhurgoyf",
         "Halfling" => "Subtype::Halfling",
         "Tamiyo" => "Subtype::Tamiyo",
+        "Mutant" => "Subtype::Mutant",
+        "Jace" => "Subtype::Jace",
         "Archon" => "Subtype::Archon",
         "Karn" => "Subtype::Karn",
         "Tezzeret" => "Subtype::Tezzeret",

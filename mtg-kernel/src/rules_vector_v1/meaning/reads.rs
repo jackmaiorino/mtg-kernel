@@ -577,7 +577,7 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             ObjF::Typed(CardTypeF::Land)
         }
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
-        LibraryCardFilter::ArtifactV1 => ObjF::Typed(CardTypeF::Artifact),
+        LibraryCardFilter::CardWithTypeV1(card_type) => ObjF::Typed(card_type.into()),
         LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
             // The frozen vocabulary has no library mana-value bound.
             let _ = maximum;

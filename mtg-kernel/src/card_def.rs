@@ -359,6 +359,11 @@ pub enum Subtype {
     Lhurgoyf,
     Halfling,
     Tamiyo,
+    /// Appended for the eternal catalog's wave-E3 cards (Street Wraith, Raph
+    /// & Mikey, Jace). Jace is a planeswalker type.
+    Wraith,
+    Mutant,
+    Jace,
     /// Appended for the eternal catalog's Vintage decks (Archon of Emeria,
     /// and the planeswalker types Karn and Tezzeret).
     Archon,
@@ -677,6 +682,10 @@ impl Subtype {
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Halfling,
         #[cfg(feature = "eternal-fixtures")]
+        Subtype::Wraith,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Mutant,
+        #[cfg(feature = "eternal-fixtures")]
         Subtype::Archon,
     ];
 
@@ -773,6 +782,8 @@ impl Subtype {
                     | Subtype::Army
                     | Subtype::Lhurgoyf
                     | Subtype::Halfling
+                    | Subtype::Wraith
+                    | Subtype::Mutant
                     | Subtype::Archon
             )
         {
@@ -1719,6 +1730,11 @@ pub enum ManaAbilityCostDef {
     /// needs at least N life (119.4). Appended; existing discriminants
     /// remain fixed.
     TapSelfPayLife(u8),
+    /// "Discard your hand, Sacrifice this artifact" with "Activate only as
+    /// an instant" (Lion's Eye Diamond): only while its controller holds
+    /// priority with nothing being cast, activated or resolved. Appended for
+    /// the eternal catalog.
+    DiscardHandAndSacrificeSelfV1,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -1858,6 +1874,10 @@ pub enum ManaSpendRestrictionDef {
     LegendarySpell,
     Unrestricted,
     CreatureSpellOrCreatureAbility,
+    /// "Spend this mana only to cast a creature spell of the chosen type"
+    /// (Cavern of Souls): the creature type chosen as the source entered.
+    /// Appended for the eternal catalog.
+    CreatureSpellOfChosenTypeV1,
     /// "Spend this mana only to cast artifact spells" (Mishra's Workshop).
     /// Appended for the eternal catalog.
     ArtifactSpellV1,
@@ -3051,8 +3071,11 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x393b_fa3e_2057_af1f;
-        assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_ETERNAL);
+        const EXPECTED_ETERNAL: u64 = 0x0000_0000_0000_0000;
+        assert_eq!(
+            KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
+            "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
+        );
     }
 
     #[test]

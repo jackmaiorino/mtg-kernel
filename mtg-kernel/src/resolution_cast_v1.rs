@@ -68,7 +68,12 @@ pub(super) fn free_cast_for(state: &GameState, source: ObjectId, controller: Pla
                 })
         }
         Zone::Stack => object.v4.spell_cast_origin.is_some_and(|origin| {
-            origin.origin_zone == Zone::Exile
+            // Mad Wizard's Lair casts a hand card for free during a
+            // resolution.
+            (origin.origin_zone == Zone::Exile
+                || (cfg!(feature = "eternal-fixtures")
+                    && origin.origin_zone == Zone::Hand
+                    && matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })))
                 && origin.origin_zone_change_count.checked_add(1) == Some(object.zone_change_count)
                 && match origin.route {
                     SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => holder == controller,
@@ -97,6 +102,14 @@ pub(super) fn timing_override(state: &GameState, source: ObjectId) -> bool {
 fn live(state: &GameState, binding: EffectObjectBinding) -> bool {
     let indexed = match binding.expected_zone {
         Zone::Exile => state.exile.contains(&binding.object),
+        // A free hand cast (Mad Wizard's Lair).
+        Zone::Hand if cfg!(feature = "eternal-fixtures") => {
+            state.objects.try_get(binding.object).is_some_and(|o| {
+                state.players[o.owner.index()]
+                    .hand
+                    .contains(&binding.object)
+            })
+        }
         // A paid graveyard cast (Bilbo, Thief in the Night).
         Zone::Graveyard if cfg!(feature = "eternal-fixtures") => {
             state.objects.try_get(binding.object).is_some_and(|o| {
@@ -296,7 +309,8 @@ pub(crate) fn can_cast_exiled_without_mana(
     card: EffectObjectBinding,
     maximum_mana_value: Option<u16>,
 ) -> bool {
-    if card.expected_zone != Zone::Exile || !live(state, card) {
+    let hand = cfg!(feature = "eternal-fixtures") && card.expected_zone == Zone::Hand;
+    if !(card.expected_zone == Zone::Exile || hand) || !live(state, card) {
         return false;
     }
     let def = &card_def::CARD_DEFS[state.objects.get(card.object).card_def as usize];
@@ -558,7 +572,7 @@ pub(super) fn validate_child(
         || permission.card.object != source
         || !(permission.card.expected_zone == Zone::Exile
             || (cfg!(feature = "eternal-fixtures")
-                && permission.card.expected_zone == Zone::Graveyard
+                && matches!(permission.card.expected_zone, Zone::Graveyard | Zone::Hand)
                 && !land
                 && permission.maximum_mana_value.is_none()))
         || state.engine.pending_effect.is_some()
@@ -630,6 +644,8 @@ pub(super) fn validate_child(
             projected.players[original.owner.index()]
                 .graveyard
                 .push(source);
+        } else if permission.card.expected_zone == Zone::Hand {
+            projected.players[original.owner.index()].hand.push(source);
         } else {
             projected.exile.push(source);
         }
