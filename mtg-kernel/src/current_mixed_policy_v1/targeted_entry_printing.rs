@@ -19,12 +19,27 @@ pub(super) fn handles(name: &str) -> bool {
             | "Tragic Banshee"
             | "Affectionate Indrik"
             | "Grappling Kraken"
+            | "Felidar Savior"
     )
 }
 
 /// The caller still checks all unrelated CardDef fields in the common guard.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (cost, color, subtypes, power, toughness, keywords, target_spec, filter) = match d.name {
+        "Felidar Savior" => (
+            Cost {
+                generic: 3,
+                pips: &[Pip::Colored(ManaColor::W)],
+                x_count: 0,
+            },
+            ManaColor::W,
+            &[Subtype::Cat, Subtype::Beast][..],
+            2,
+            3,
+            Keywords::LIFELINK,
+            TargetSpec::UpToTwoOtherControlledCreatures,
+            json!({"zone":"Battlefield","type":"Creature","relation":"ControlledByCapturedTriggerController","excludes_original_source_incarnation":true,"uses_current_effective_type":true}),
+        ),
         "Grappling Kraken" => (
             Cost {
                 generic: 4,
@@ -129,7 +144,28 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let banshee = d.name == "Tragic Banshee";
     let indrik = d.name == "Affectionate Indrik";
     let kraken = d.name == "Grappling Kraken";
-    let program = if kraken {
+    let felidar = d.name == "Felidar Savior";
+    let optional_targets = pup || felidar;
+    let program = if felidar {
+        EffectOp::Sequence(
+            (0..2)
+                .map(|target_index| EffectOp::Conditional {
+                    cond: EffectCond::TargetIsLegalForAbility {
+                        index: target_index,
+                        spec: target_spec,
+                    },
+                    then: Box::new(EffectOp::AddCountersToTarget {
+                        target_index,
+                        optional: true,
+                        plus1_plus1: 1,
+                        lifelink: 0,
+                        stun: 0,
+                    }),
+                    else_: Box::new(EffectOp::Sequence(vec![])),
+                })
+                .collect(),
+        )
+    } else if kraken {
         EffectOp::Sequence(vec![
             EffectOp::TapObject {
                 object: ObjectRef::Target(0),
@@ -228,11 +264,20 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "ordered_resolution":[{"operation":"MoveOriginalSpellToBattlefield","controller":"Caster"}],
         "countering_skips_entry_and_does_not_refund_cost":true,"countered_spell_destination":"OwnersGraveyard",
         "normal_zone_replacements_and_entry_triggers_apply":true,"other_cast_permissions_require_current_candidate_authority":true});
-    let target = json!({"slot":0,"kind":"Object","filter":filter,"minimum":if pup {0} else {1},"maximum":1,
+    let target = json!({"slot":0,"kind":"Object","filter":filter,"minimum":if optional_targets {0} else {1},"maximum":if felidar {2}else{1},
         "chooser":"CapturedTriggerController","selected_at":"TriggerStackPlacement",
         "normal_target_legality_and_protection_apply":true,"rechecked_at_resolution":true,
         "binding":"OriginalSelectedObjectIncarnation"});
-    let resolution = if kraken {
+    let resolution = if felidar {
+        json!([{"operation":"PutPlusOnePlusOneCounterOnEachLegalChosenCreature","target_slots":[0,1],"count_per_target":1,
+            "choose_zero_one_or_two_distinct_other_creatures":true,"missing_optional_slots_skipped":true,
+            "each_slot_rechecks_original_incarnation_current_creature_type_control_and_normal_target_legality":true,
+            "an_illegal_slot_does_not_cancel_other_legal_slots":true,"exclude_original_source_incarnation":true,
+            "counter_placement_mandatory_on_each_legal_chosen_target":true,"retains_existing_counters":true,
+            "normal_counter_replacements_apply":true,"permanent_counter_not_until_end_of_turn":true,
+            "source_departure_does_not_remove_counters_or_prevent_resolution":true,
+            "choosing_zero_places_no_counters":true}])
+    } else if kraken {
         json!([{"operation":"TapCreature","target_slot":0,
                 "binding":"OriginalSelectedCreatureIncarnation","already_tapped_target_is_legal":true,
                 "normal_tapping_rules_apply":true},
@@ -281,8 +326,8 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "requires_active_printed_abilities_at_capture":true,"intervening_if":null,"mandatory":true,"uses_stack":true,
         "controller":"CapturedSourceControllerAtEntry","captures_original_source_incarnation":true,
         "survives_source_departure_and_later_control_change":true,"targets":[target],
-        "zero_targets_allowed":pup,"zero_targets_perform_no_moves":pup,
-        "required_target_absence_prevents_stack_placement":!pup,"all_chosen_targets_illegal_skips_resolution":true,
+        "zero_targets_allowed":optional_targets,"zero_targets_perform_no_moves":optional_targets,
+        "required_target_absence_prevents_stack_placement":!optional_targets,"all_chosen_targets_illegal_skips_resolution":true,
         "ordered_resolution":resolution});
     Ok(Some(json!({"card_id":id,"targeted_entry_printing":{
         "schema":"printed-targeted-entry/v1","cost":cost,"mana_value":d.mana_value,

@@ -1301,6 +1301,34 @@ mod paid {
         }
     }
 
+    #[test]
+    fn felidar_optional_target_count_and_changed_printing_refusals() {
+        use crate::card_def::{Keywords, TargetSpec};
+        let id = crate::card_def::card_id_by_name("Felidar Savior").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let trigger = &value["targeted_entry_printing"]["ordered_triggers"][0];
+        assert_eq!(trigger["targets"][0]["minimum"], 0);
+        assert_eq!(trigger["targets"][0]["maximum"], 2);
+        assert_eq!(trigger["zero_targets_allowed"], true);
+        assert_eq!(
+            trigger["ordered_resolution"][0]["an_illegal_slot_does_not_cancel_other_legal_slots"],
+            true
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.keywords = Keywords::NONE,
+                2 => d.power = Some(3),
+                3 => d.subtypes = &[crate::card_def::Subtype::Cat],
+                4 => d.target_spec = TargetSpec::Creature,
+                5 => d.mana_value = 3,
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {

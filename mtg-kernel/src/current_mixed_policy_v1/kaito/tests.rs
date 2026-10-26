@@ -23,6 +23,7 @@ mod entry_destruction;
 mod entry_exile;
 mod evolving;
 mod exsanguinate;
+mod felidar;
 mod goblin_surprise;
 mod grappling_kraken;
 mod graveyard_batch_spell;
