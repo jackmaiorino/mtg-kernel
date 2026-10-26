@@ -43,6 +43,7 @@ mod seekers_folly;
 mod shivan;
 mod simple_triggers;
 mod solemn;
+mod stroke_midnight;
 mod surveil_many;
 mod surveil_one;
 mod syphoner;

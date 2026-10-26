@@ -26,6 +26,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Bulk Up"
             | "Incinerating Blast"
             | "Burst Lightning"
+            | "Stroke of Midnight"
     )
 }
 fn pump(power: i32, toughness: i32) -> EffectOp {
@@ -132,6 +133,36 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                         "token_card_id":food,"token_printing":food_meaning,
                         "does_not_require_successful_destruction":true,
                         "normal_entry_replacements_and_triggers_apply":true}),
+                ],
+            )
+        }
+        "Stroke of Midnight" => {
+            let human = crate::card_def::card_id_by_name("Human Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            let human_meaning = super::baseline(human)?;
+            (
+                ManaColor::W,
+                2,
+                &[Pip::Colored(ManaColor::W)][..],
+                CardType::Instant,
+                TargetSpec::NonlandPermanent,
+                json!({"type":"Permanent","must_not_have_effective_type":"Land","either_controller":true}),
+                EffectOp::DestroyObjectThenCreateTokens {
+                    object: ObjectRef::Target(0),
+                    token_def: human,
+                    count: 1,
+                },
+                vec![
+                    json!({"operation":"DestroyPermanentThenCreateTokensForCapturedController",
+                    "target_slot":0,"capture_target_current_controller_before_destruction":true,
+                    "token_recipient_is_captured_controller_not_owner_or_spell_controller":true,
+                    "requires_current_battlefield_incarnation":true,
+                    "respects_indestructible_and_normal_zone_replacements":true,
+                    "token_count":1,"token_card_id":human,"token_printing":human_meaning,
+                    "create_even_if_legal_target_is_not_destroyed":true,
+                    "tokens_enter_under_captured_controllers_control_and_ownership":true,
+                    "normal_token_creation_entry_replacements_and_triggers_apply":true,
+                    "no_priority_or_state_based_actions_between_destruction_and_creation":true}),
                 ],
             )
         }

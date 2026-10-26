@@ -1716,6 +1716,71 @@ mod paid {
     }
 
     #[test]
+    fn stroke_changed_token_recipient_binding_count_definition_target_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, ObjectRef},
+        };
+        let id = crate::card_def::card_id_by_name("Stroke of Midnight").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DestroyObjectThenCreateTokens {
+                            object: ObjectRef::ThisSource,
+                            token_def: crate::card_def::card_id_by_name("Human Token").unwrap(),
+                            count: 1,
+                        })
+                    }
+                }
+                1 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DestroyObjectThenCreateTokens {
+                            object: ObjectRef::Target(0),
+                            token_def: crate::card_def::card_id_by_name("Human Token").unwrap(),
+                            count: 2,
+                        })
+                    }
+                }
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DestroyObjectThenCreateTokens {
+                            object: ObjectRef::Target(0),
+                            token_def: crate::card_def::card_id_by_name("Soldier Token").unwrap(),
+                            count: 1,
+                        })
+                    }
+                }
+                3 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Sequence(vec![
+                            EffectOp::DestroyObject {
+                                object: ObjectRef::Target(0),
+                            },
+                            EffectOp::CreateToken {
+                                token_def: crate::card_def::card_id_by_name("Human Token").unwrap(),
+                                controller: crate::effect::PlayerRef::Controller,
+                            },
+                        ]))
+                    }
+                }
+                4 => d.target_spec = TargetSpec::Creature,
+                5 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Sorcery],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Stroke changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn bulk_changed_signed_program_target_normal_or_flashback_cost_and_timing_refuse() {
         use crate::{
             card_def::{CardType, CostComponent, TargetSpec},
