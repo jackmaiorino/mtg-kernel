@@ -1716,6 +1716,39 @@ mod paid {
     }
 
     #[test]
+    fn nessian_changed_cost_power_subtype_keyword_or_sorcery_cast_effect_refuses() {
+        use crate::{
+            card_def::{Keywords, Subtype},
+            effect::EffectOp,
+        };
+        let id = crate::card_def::card_id_by_name("Nessian Hornbeetle").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        let value = roots::baseline(id).unwrap();
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"]
+                ["minimum_power"],
+            4
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.power = Some(3),
+                2 => d.subtypes = &[Subtype::Elf],
+                3 => d.keywords = Keywords::FLYING,
+                _ => d.spell_effect = || Some(EffectOp::Sequence(vec![])),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Nessian changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn kraken_changed_double_blue_cost_size_subtype_keyword_or_cast_target_refuses() {
         use crate::{
             card_def::{Keywords, Subtype, TargetSpec},

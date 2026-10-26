@@ -35,6 +35,7 @@ mod luminous;
 mod lunar_insight;
 mod macabre_waltz;
 mod micromancer;
+mod nessian;
 mod observer_triggers;
 mod ordinary_auras;
 mod ordinary_batch_spells;

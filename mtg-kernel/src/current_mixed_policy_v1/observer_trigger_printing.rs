@@ -2,7 +2,7 @@
 use super::{Error, Result};
 use crate::{
     card_def::{CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec},
-    effect::{EffectOp, ObjectRef, PlayerRef, TargetRef},
+    effect::{EffectCond, EffectOp, ObjectRef, PlayerRef, TargetRef},
     mana::{Cost, ManaColor, Pip},
     state::Zone,
     trigger::TriggerCondition,
@@ -32,6 +32,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Sanguine Syphoner"
             | "Balmor, Battlemage Captain"
             | "Eager Trufflesnout"
+            | "Nessian Hornbeetle"
     )
 }
 
@@ -39,6 +40,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Nessian Hornbeetle" => (
+            1,
+            &[Pip::Colored(ManaColor::G)][..],
+            &[ManaColor::G][..],
+            &[Subtype::Insect][..],
+            2,
+            2,
+            Keywords::NONE,
+        ),
         "Archmage of Runes" => (
             3,
             &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)][..],
@@ -284,6 +294,27 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Nessian Hornbeetle" => (
+            TriggerCondition::BeginningControllerCombatWithOtherCreaturePowerAtLeast(4),
+            json!({"event":"BeginningOfObserverControllersCombat",
+                "opponents_combat_does_not_trigger":true,"trigger_count_per_matching_beginning":1,
+                "requires_condition_at_trigger_time":true}),
+            EffectOp::Conditional {
+                cond: EffectCond::ControlsOtherIncarnationCreaturePowerAtLeast(4),
+                then: Box::new(EffectOp::BindPlusOnePlusOneCounterToTriggerSource),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            },
+            vec![
+                json!({"operation":"IfOtherControlledCreatureHasPowerAtLeast",
+                "minimum_power":4,"controller":"CapturedTriggerController",
+                "use_current_effective_creature_types_control_and_power_at_resolution":true,
+                "exclude_original_source_battlefield_incarnation":true,
+                "include_creature_tokens_and_currently_animated_creatures":true,
+                "opposing_creatures_do_not_satisfy_condition":true,
+                "only_one_counter_instruction_regardless_of_number_of_qualifying_creatures":true,
+                "if_true":[counter_meaning()],"if_false":[]}),
+            ],
+        ),
         "Archmage of Runes" => (
             TriggerCondition::CastInstantOrSorcery,
             json!({"event":"ObserverControllerCastsInstantOrSorcery","current_cast_characteristics":true,"opponent_casts_and_copies_without_cast_do_not_trigger":true,"creature_artifact_or_enchantment_only_casts_do_not_trigger":true,"trigger_count_per_cast":1,"countering_cast_spell_does_not_remove_trigger":true}),
@@ -556,6 +587,16 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }});
     if d.name == "Archmage of Runes" {
         meaning["observer_trigger_printing"]["ordered_static_roots"] = json!([{"operation":"ReduceControllerInstantOrSorcerySpellGenericCost","source_zone":"Battlefield","requires_active_printed_source_abilities":true,"controller":"CurrentSourceController","current_effective_copied_printing_selects_rule":true,"spell_types_match_any":["Instant","Sorcery"],"reduction_per_live_source":1,"independent_sources_add":true,"minimum_generic_component":0,"does_not_reduce_colored_pips":true,"apply_to_total_cost_after_additional_costs_and_chosen_x":true,"normal_final_cost_floor_rules_apply_afterward":true,"does_not_reduce_activated_abilities_or_spell_mana_value":true,"recompute_at_cost_determination":true,"does_not_reprice_already_paid_spell":true,"ends_when_source_leaves_or_loses_printed_abilities":true}]);
+    }
+    if d.name == "Nessian Hornbeetle" {
+        meaning["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"] = json!({
+            "operation":"ControlAnotherCreatureWithEffectivePowerAtLeast","minimum_power":4,
+            "check_at_trigger_time_and_resolution":true,
+            "controller_at_resolution":"CapturedTriggerController",
+            "exclude_original_source_battlefield_incarnation":true,
+            "current_effective_types_power_and_control_apply":true,
+            "no_trigger_if_false_at_beginning_even_if_later_becomes_true":true,
+            "no_counter_if_false_at_resolution_even_if_true_at_beginning":true});
     }
     Ok(Some(meaning))
 }
