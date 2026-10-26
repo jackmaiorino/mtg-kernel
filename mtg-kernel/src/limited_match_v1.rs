@@ -155,6 +155,7 @@ fn observed_cards_v1(state: &GameState, owner: PlayerId, unknown: &HashSet<Objec
             o.owner == owner
                 && !o.v4.is_token
                 && o.spell_copy_origin.is_none()
+                && o.v4.face_down_v1.is_none()
                 && !unknown.contains(id)
                 && matches!(
                     o.zone,
@@ -255,7 +256,20 @@ pub(crate) fn apply_belief_v1(
     }
     let unknown: HashSet<ObjectId> = slots.iter().copied().collect();
     let observed = observed_cards_v1(state, opponent, &unknown);
-    let total = observed.len() + slots.len();
+    // Face-down cards outside hand and library are deck cards the actor cannot
+    // identify: they count toward the deck size but constrain nothing.
+    let face_down = state
+        .objects
+        .iter()
+        .filter(|(id, o)| {
+            o.owner == opponent
+                && !o.v4.is_token
+                && o.spell_copy_origin.is_none()
+                && o.v4.face_down_v1.is_some()
+                && !unknown.contains(id)
+        })
+        .count();
+    let total = observed.len() + slots.len() + face_down;
     let mut rng = SplitMix64::seed(derive_seed(b"mtg-kernel/limited-belief/v1\0", &[seed]));
     let consistent: Vec<usize> = (0..belief.decks.len())
         .filter(|&d| belief.decks[d].len() == total && is_submultiset(&observed, &belief.decks[d]))
@@ -400,6 +414,7 @@ pub struct PimcStatsV1 {
     pub value_sum: Vec<f64>,
     pub rejected: u32,
     pub rollout_errors: u32,
+    pub first_rollout_error: Option<String>,
 }
 
 fn seat(player: PlayerSeatV1) -> PlayerId {
@@ -419,25 +434,31 @@ fn step_index(session: &mut FastActorSessionV1, index: u32) -> Result<(), String
     }
 }
 
-/// Value in [-1, 1] for `root` of a finished or cut-off rollout.
-fn rollout_value(session: &FastActorSessionV1, root: PlayerId) -> f64 {
+/// Value in [-1, 1] for `root` of a finished or cut-off rollout. A halted
+/// rollout (an unsupported runtime mechanic) is an error, not a score.
+fn rollout_value(session: &FastActorSessionV1, root: PlayerId) -> Result<f64, String> {
     use crate::kernel_native_search_opponent_v1::evaluate_state_v1;
-    match session.current_response() {
-        FastActorResponseV1::Terminal(t)
-            if t.terminal_classification == TerminalClassificationV1::Natural =>
-        {
-            match (t.terminal_outcome, root) {
+    Ok(match session.current_response() {
+        FastActorResponseV1::Terminal(t) => match t.terminal_classification {
+            TerminalClassificationV1::Natural => match (t.terminal_outcome, root) {
                 (TerminalOutcomeV1::P0Win, PlayerId::P0)
                 | (TerminalOutcomeV1::P1Win, PlayerId::P1) => 1.0,
                 (TerminalOutcomeV1::P0Win | TerminalOutcomeV1::P1Win, _) => -1.0,
                 _ => 0.0,
+            },
+            TerminalClassificationV1::Truncated => {
+                PIMC_HEURISTIC_SCALE_V1 * f64::from(evaluate_state_v1(session.game_state(), root))
+                    / 10_000.0
             }
-        }
-        _ => {
+            TerminalClassificationV1::Halted => {
+                return Err(format!("rollout halted: {}", t.terminal_reason))
+            }
+        },
+        FastActorResponseV1::Decision(_) => {
             PIMC_HEURISTIC_SCALE_V1 * f64::from(evaluate_state_v1(session.game_state(), root))
                 / 10_000.0
         }
-    }
+    })
 }
 
 /// A decision always offers at least one action; index 0 for a malformed empty menu.
@@ -509,10 +530,11 @@ pub fn pimc_choose_v1(
                 let pick = random_index(&mut rng, d.legal_action_count);
                 step_index(&mut world_session, pick)?;
             }
-            Ok::<f64, String>(rollout_value(&world_session, root))
+            rollout_value(&world_session, root)
         })();
-        let value = value.unwrap_or_else(|_| {
+        let value = value.unwrap_or_else(|error| {
             stats.rollout_errors += 1;
+            stats.first_rollout_error.get_or_insert(error);
             0.0
         });
         stats.visits[action] += 1;
@@ -560,6 +582,10 @@ pub struct GameResultV1 {
     pub turns: u32,
     pub decisions: u64,
     pub rejected_worlds: u64,
+    /// Search simulations whose root step or rollout the engine refused or
+    /// halted. They score 0, so a nonzero count weakens the search.
+    pub rollout_errors: u64,
+    pub first_rollout_error: Option<String>,
 }
 
 /// One game: `decks[seat]`, `policies[seat]`, `beliefs[seat]` (the corpus a
@@ -577,6 +603,8 @@ pub fn play_game_v1(
         turns: 0,
         decisions: 0,
         rejected_worlds: 0,
+        rollout_errors: 0,
+        first_rollout_error: None,
     };
     let identities = decks.map(|deck| {
         let mut hash = Sha256::new();
@@ -651,6 +679,10 @@ pub fn play_game_v1(
                 ) {
                     Ok((index, stats)) => {
                         result.rejected_worlds += u64::from(stats.rejected);
+                        result.rollout_errors += u64::from(stats.rollout_errors);
+                        if result.first_rollout_error.is_none() {
+                            result.first_rollout_error = stats.first_rollout_error;
+                        }
                         index
                     }
                     Err(error) => {

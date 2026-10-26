@@ -41,17 +41,27 @@ A `closedlist` world is built from public facts only:
    structure, never on which hidden card sat in a slot. A rejected simulation is skipped, not
    retried.
 
-The belief corpus defaults to the pool's `train` split, as with gorge's closed-list worlds; the
-driver refuses a belief split equal to the games' own non-train split.
+The belief corpus defaults to the pool's `train` split, as with gorge's closed-list worlds. The
+corpus may then hold the decks being played (the summary's `belief_overlap` counts them by name);
+the property above still holds, but such a belief is weaker evidence of fair play than a disjoint
+one. Outside the train split the driver refuses any overlap, including `-belief-split all`.
+
+Face-down cards outside hand and library count toward the opponent's deck size but are not seen
+cards. Search simulations whose root step or rollout the engine refuses or halts score 0 and are
+counted in each row's `rollout_errors` (with `first_rollout_error`); the fixture tests require
+zero.
 
 Acceptance tests (`limited_match_v1::tests`):
 
 - `closedlist_worlds_and_decisions_ignore_hidden_opponent_composition`: replacing the opponent's
-  unknown cards while public evidence is unchanged leaves every sampled world and the search's
-  action and statistics identical. `truelist` does see the change, so the test is not blind.
+  unknown cards while public evidence is unchanged leaves every sampled world (whole state) and the
+  search's action and statistics identical. `truelist` does see the change, so the test is not blind.
 - `belief_conditions_on_observed_opponent_cards`: a corpus deck lacking a seen card is never
   drawn while a consistent deck exists, and a consistent draw reproduces that deck's whole
   multiset across seen and unknown cards.
+- `hidden_source_rejection_does_not_depend_on_hidden_identity`: with a frozen trigger source in a
+  hidden library slot, every seed is rejected in both world modes, while the older census clone
+  admits or rejects depending on the hidden redraw.
 
 Known approximation: seen cards are those the actor can see now. A card seen earlier and then
 shuffled back into a hidden zone is not remembered, so the belief uses less than the full public

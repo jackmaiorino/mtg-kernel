@@ -197,9 +197,13 @@ def smoke(binary: Path) -> dict:
             if own:
                 raise MtgKernelError(f"{name}: driver errors {own}")
             decisions = sum(g.get("decisions", 0) for g in first.games)
+            if "belief_overlap" not in first.summary or "playable_decks_sha256" not in first.summary:
+                raise MtgKernelError(f"{name}: summary lacks belief/deal provenance")
             report[name] = {"games": len(first.games), "results": [g["result"] for g in first.games],
                             "turns": [g["turns"] for g in first.games], "decisions": decisions,
                             "engine_refusals": errors, "wall_s": first.summary["wall_s"],
+                            "rollout_errors": sum(g.get("rollout_errors", 0) for g in first.games),
+                            "belief_overlap": first.summary["belief_overlap"],
                             "decisions_per_s": decisions / first.summary["wall_s"] if first.summary["wall_s"] else 0,
                             "games_per_hour": first.summary["games_per_hour"]}
         return report

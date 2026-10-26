@@ -177,6 +177,9 @@ fn closedlist_worlds_and_decisions_ignore_hidden_opponent_composition() {
             a.game_state().players[1].hand.len(),
             b.game_state().players[1].hand.len()
         );
+        // Every other field too: nothing of the true hidden cards survives.
+        assert_eq!(a.game_state(), b.game_state(), "seed {seed}: whole world");
+        assert_eq!(a.diagnostic_state_hash(), b.diagnostic_state_hash());
     }
     let leaks = (0..8).any(|seed| {
         let a = sample_world_v1(&session, WorldModeV1::TrueList, None, seed).unwrap();
@@ -191,8 +194,45 @@ fn closedlist_worlds_and_decisions_ignore_hidden_opponent_composition() {
     let fair = |s: &FastActorSessionV1| {
         pimc_choose_v1(s, 12, 16, WorldModeV1::ClosedList, Some(&belief), 99).unwrap()
     };
-    assert_eq!(fair(&session), fair(&variant));
-    assert_eq!(fair(&session), fair(&session), "deterministic");
+    let (choice, stats) = fair(&session);
+    assert_eq!((choice, stats.clone()), fair(&variant));
+    assert_eq!((choice, stats.clone()), fair(&session), "deterministic");
+    assert_eq!(stats.rollout_errors, 0, "{:?}", stats.first_rollout_error);
+    assert_eq!(stats.visits.iter().sum::<u32>() + stats.rejected, 12);
+}
+
+/// A frozen trigger source shuffled into the actor's own library: the census
+/// clone rejects only when the redraw happens to change that card, which leaks
+/// the hidden identity. The Limited world rejects for every seed, whatever the
+/// hidden card is.
+#[test]
+fn hidden_source_rejection_does_not_depend_on_hidden_identity() {
+    let (mut state, source, _, _) =
+        crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+    crate::rl_session::shuffle_trigger_source_into_library_v1(&mut state, source, PlayerId::P0);
+    for name in ["Forest", "Island", "Mountain"] {
+        crate::policy_observation_v6::tests::put(&mut state, PlayerId::P0, name, Zone::Library);
+    }
+    let session = FastActorSessionV1::from_v3_fixture_state(state);
+    let mut census_outcomes = HashSet::new();
+    for seed in 1..=32 {
+        census_outcomes.insert(session.census_redeterminized_clone_v1(seed).is_ok());
+        for mode in [WorldModeV1::TrueList, WorldModeV1::ClosedList] {
+            let belief = LimitedBeliefV1::new([vec![0u16; 1]]);
+            assert_eq!(
+                sample_world_v1(&session, mode, Some(&belief), seed)
+                    .err()
+                    .as_deref(),
+                Some("hidden-source provenance conflict"),
+                "seed {seed} {mode:?}"
+            );
+        }
+    }
+    assert_eq!(
+        census_outcomes.len(),
+        2,
+        "the census contrast must vary with the hidden draw"
+    );
 }
 
 /// Known-card conditioning: a corpus deck lacking an observed card is never
@@ -285,4 +325,5 @@ fn fair_search_plays_a_bounded_game_without_errors() {
         result.outcome
     );
     assert!(result.decisions > 0);
+    assert_eq!(result.rollout_errors, 0, "{:?}", result.first_rollout_error);
 }
