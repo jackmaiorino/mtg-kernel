@@ -7576,6 +7576,30 @@ impl FastActorSessionV1 {
         Ok(sampled)
     }
 
+    /// Limited self-play and search rollouts (issue #364): a Prepared V57 step
+    /// without the pre-step contract re-check. The advance that built the
+    /// current decision already validated this state and menu, and only
+    /// `step`/`restore` change them, so the re-check repeats that work. Callers
+    /// must not use it on a session whose state was edited after its last
+    /// advance (a redeterminized world): those take the full `step`.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_trusted_step_v1(
+        &mut self,
+        episode_id: u64,
+        expected_step: u64,
+        selected_index: u32,
+    ) -> Result<FastActorResponseV1, RlSessionError> {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::PreparedV57 {
+            return self.step(episode_id, expected_step, selected_index);
+        }
+        self.apply_prechecked_step_v1(
+            episode_id,
+            expected_step,
+            selected_index,
+            FastActorApplyPathV1::InPlace,
+        )
+    }
+
     /// Diagnostic only: a clone whose game state is edited by `edit`. The
     /// current decision's cached candidates are kept, so edits must not
     /// change the legal action set.
@@ -7837,6 +7861,19 @@ impl FastActorSessionV1 {
                 "extra turns require V23 owning transport",
             ));
         }
+        self.apply_prechecked_step_v1(episode_id, expected_step, selected_index, apply_path)
+    }
+
+    /// The binding checks, apply and advance of a step whose contract checks
+    /// above already passed (or, for the trusted Limited step, whose state is
+    /// unchanged since the advance that validated it).
+    fn apply_prechecked_step_v1(
+        &mut self,
+        episode_id: u64,
+        expected_step: u64,
+        selected_index: u32,
+        apply_path: FastActorApplyPathV1,
+    ) -> Result<FastActorResponseV1, RlSessionError> {
         if episode_id != self.episode_id {
             return Err(session_error(
                 RlSessionErrorCode::EpisodeIdMismatch,
