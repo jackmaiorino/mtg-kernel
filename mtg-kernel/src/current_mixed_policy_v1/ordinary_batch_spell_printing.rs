@@ -10,7 +10,11 @@ use serde_json::{json, Value};
 pub(super) fn handles(name: &str) -> bool {
     matches!(
         name,
-        "Seismic Rupture" | "Heroic Reinforcements" | "Brass's Bounty" | "Lunar Insight"
+        "Seismic Rupture"
+            | "Heroic Reinforcements"
+            | "Brass's Bounty"
+            | "Lunar Insight"
+            | "Goblin Surprise"
     )
 }
 
@@ -18,6 +22,9 @@ pub(super) fn handles(name: &str) -> bool {
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     if !handles(d.name) {
         return Ok(None);
+    }
+    if d.name == "Goblin Surprise" {
+        return goblin_surprise(id, d);
     }
     let heroic = d.name == "Heroic Reinforcements";
     let bounty = d.name == "Brass's Bounty";
@@ -167,5 +174,88 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
         "power":null,"toughness":null,"keywords":0,"token":false,
         "ordered_cast_roots":cast_roots
+    }})))
+}
+
+fn goblin_surprise(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 2,
+        pips: &[Pip::Colored(ManaColor::R)],
+        x_count: 0,
+    };
+    let token = crate::card_def::card_id_by_name("Goblin Token")
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let create = EffectOp::CreateTokensDynamic {
+        token_def: token,
+        controller: PlayerRef::Controller,
+        count: DynamicValueDef::Fixed(2),
+        tapped: false,
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != 3
+        || d.types != [CardType::Instant]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::R]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::None
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+                power: 2,
+                toughness: 0,
+                keywords: Keywords::NONE,
+            })
+        || !d
+            .mode2
+            .as_ref()
+            .is_some_and(|mode| mode.target_spec == TargetSpec::None && (mode.effect)() == create)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let token_meaning = super::baseline(token)?;
+    Ok(Some(json!({"card_id":id,"ordinary_batch_spell_printing":{
+        "schema":"printed-modal-untargeted-spell/v1","cost":cost,"mana_value":3,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+        "power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand",
+            "timing":"InstantWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+            "targets":[],"mode_selection":{"chooser":"CastingPlayer","choose_exactly":1,
+                "native_indices":[0,1],"before_targeting_and_final_payment":true,
+                "selected_mode_bound_to_original_pending_cast_and_stack_item":true,
+                "empty_creature_set_does_not_remove_first_mode":true},
+            "ordered_modes":[{"native_index":0,"targets":[],"ordered_resolution":[{
+                "operation":"ModifyCurrentControlledCreatureSet","controller":"CapturedSpellController",
+                "samples_set_once_at_resolution":true,"binds_exact_current_battlefield_incarnations":true,
+                "power_delta":2,"toughness_delta":0,"keyword_bits":0,"places_no_counters":true,
+                "includes_current_tokens_and_animated_creatures":true,
+                "opposing_creatures_noncreature_permanents_and_later_entries_excluded":true,
+                "departed_and_reentered_incarnations_do_not_retain_modification":true,
+                "duration":"UntilCleanupExpirationAfterDiscard",
+                "normal_continuous_layers_and_control_changes_apply":true}]},
+                {"native_index":1,"targets":[],"ordered_resolution":[{
+                    "operation":"CreateTokens","controller":"CapturedSpellController","count":2,
+                    "token_definition":token_meaning,"entry_tapped":false,
+                    "entry_batch":"SimultaneousBeforeEntryObservations",
+                    "normal_token_replacements_and_entry_triggers_apply":true}],
+                    "new_tokens_gain_no_haste_or_other_mode_bonus_from_this_spell":true}],
+            "no_priority_between_ordered_instructions":true,
+            "normal_queued_triggers_and_state_based_actions_follow_resolution":true,
+            "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
+            "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+            "countering_skips_selected_mode":true,"countering_does_not_refund_cost":true,
+            "copy_uses_original_native_bound_mode":true,
+            "other_cast_permissions_require_current_candidate_authority":true,
+            "normal_zone_replacements_apply":true}]
     }})))
 }

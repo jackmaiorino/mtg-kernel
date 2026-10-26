@@ -9723,7 +9723,7 @@ fn codegen(cards: &[CardJson]) -> String {
                 )
                 .unwrap();
                 writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
-                writeln!(out, "    EffectOp::Sequence(vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}])").unwrap();
+                writeln!(out, "    EffectOp::CreateTokensDynamic {{ token_def: token, controller: PlayerRef::Controller, count: crate::card_def::DynamicValueDef::Fixed({count}), tapped: false }}").unwrap();
                 writeln!(out, "}}").unwrap();
             }
             _ => {}

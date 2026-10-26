@@ -19,6 +19,7 @@ mod entry_destruction;
 mod entry_exile;
 mod evolving;
 mod exsanguinate;
+mod goblin_surprise;
 mod graveyard_batch_spell;
 mod guarded_heir;
 mod library_search;

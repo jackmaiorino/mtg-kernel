@@ -1257,7 +1257,10 @@ mod paid {
             activated_abilities: d.activated_abilities,
             plot_cost: None,
             madness_cost: None,
-            mode2: None,
+            mode2: d.mode2.as_ref().map(|m| crate::card_def::ModeDef {
+                target_spec: m.target_spec,
+                effect: m.effect,
+            }),
             mode3: None,
             additional_modes: d.additional_modes,
             kicked_target_spec: None,
@@ -1567,6 +1570,53 @@ mod paid {
             assert!(
                 roots::baseline_recipe(id, &d).is_err(),
                 "Macabre changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn goblin_surprise_changed_mode_count_targets_program_tokens_cost_and_timing_refuse() {
+        use crate::{
+            card_def::{CardType, ModeDef, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Goblin Surprise").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.mode2 = None,
+                1 => d.mode2.as_mut().unwrap().target_spec = TargetSpec::Creature,
+                2 => {
+                    d.mode2.as_mut().unwrap().effect = || EffectOp::CreateToken {
+                        token_def: crate::card_def::card_id_by_name("Goblin Token").unwrap(),
+                        controller: PlayerRef::Controller,
+                    }
+                }
+                3 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+                            power: 2,
+                            toughness: 1,
+                            keywords: crate::card_def::Keywords::NONE,
+                        })
+                    }
+                }
+                4 => d.cost = crate::mana::Cost::zero(),
+                5 => d.types = &[CardType::Sorcery],
+                _ => {
+                    d.mode3 = Some(ModeDef {
+                        target_spec: TargetSpec::None,
+                        effect: || EffectOp::Sequence(vec![]),
+                    })
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Goblin Surprise changed field {field}"
             );
         }
     }

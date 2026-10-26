@@ -22324,34 +22324,23 @@ fn execute_with_native_row_v1(
             );
             let controller = ctx.resolve_player(*controller, state);
             let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller).max(0);
-            if crate::doubling_season_v48::requires_successor(state)
-                || crate::doubling_season_v48::owns_definition(*token_def)
-            {
-                let events = (0..count)
-                    .map(|_| {
-                        let mut event = event::ProposedEvent::create_token(*token_def, controller);
-                        if let event::ProposedEvent::CreateToken(t) = &mut event {
-                            t.entry_tapped = *tapped;
-                        }
-                        event
-                    })
-                    .collect();
-                event::propose_and_commit_batch(state, events);
+            if count == 0 {
                 return;
             }
-            for _ in 0..count {
-                event::propose_and_commit(
-                    state,
-                    event::ProposedEvent::create_token(*token_def, controller),
-                );
-                if *tapped {
-                    if let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
-                        state.engine.event_log.last().cloned()
-                    {
-                        state.objects.get_mut(object).tapped = true;
+            // One token-creation instruction creates its entire set together.
+            // Initialize entry flags before any observer, even when no Season
+            // has ever existed. Per-token commits exposed a partial entry set
+            // and only marked tapped tokens after their entry observations.
+            let events = (0..count)
+                .map(|_| {
+                    let mut event = event::ProposedEvent::create_token(*token_def, controller);
+                    if let event::ProposedEvent::CreateToken(t) = &mut event {
+                        t.entry_tapped = *tapped;
                     }
-                }
-            }
+                    event
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
         }
         EffectOp::MayPayCostThen {
             discard,
@@ -24859,6 +24848,100 @@ mod tests {
                 .get_mut(original_hand[0].object)
                 .zone_change_count += 1;
             assert!(revealed_discard_eligible_hand(&stale, &original_hand, false).is_err());
+        }
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn dynamic_token_instruction_commits_whole_initialized_batch_without_season_both_seats() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let token = crate::card_def::card_id_by_name("Goblin Token").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for tapped in [false, true] {
+                for count in [0, 1, 2] {
+                    let mut initial = GameState::new_from_libraries(
+                        &[forest; 7],
+                        &[forest; 7],
+                        crate::rl::card_name,
+                        110_282,
+                    );
+                    let source = initial.draw_card(player).unwrap();
+                    let saved = serde_json::to_vec(&initial).unwrap();
+                    let mut result = None;
+                    for _ in 0..2 {
+                        let mut state: GameState = serde_json::from_slice(&saved).unwrap();
+                        assert!(!crate::doubling_season_v48::requires_successor(&state));
+                        let start = state.engine.event_history.len();
+                        execute(
+                            &EffectOp::CreateTokensDynamic {
+                                token_def: token,
+                                controller: PlayerRef::Controller,
+                                count: crate::card_def::DynamicValueDef::Fixed(count),
+                                tapped,
+                            },
+                            &ExecCtx::no_targets(source, player),
+                            &mut state,
+                        );
+                        assert!(state.engine.halted.is_none());
+                        let created = state.engine.event_history[start..]
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, event)| match event {
+                                event::CommittedEvent::CreateToken {
+                                    object,
+                                    token_def,
+                                    controller,
+                                    ..
+                                } if *token_def == token && *controller == player => {
+                                    Some((i, *object))
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(created.len(), count as usize);
+                        let observed = state.engine.event_history[start..]
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, event)| match event {
+                                event::CommittedEvent::GarrukEntryObservationV1 {
+                                    entry, ..
+                                } if created.iter().any(|(_, object)| *object == entry.object) => {
+                                    Some((i, entry))
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(observed.len(), created.len());
+                        for (index, entry) in observed {
+                            assert!(
+                                created
+                                    .iter()
+                                    .all(|(created_index, _)| *created_index < index),
+                                "entry observer saw only part of the token set"
+                            );
+                            assert_eq!(
+                                entry.snapshot.tapped, tapped,
+                                "entry observer saw pre-initialized tapped state"
+                            );
+                            let object = state.objects.get(entry.object);
+                            assert_eq!(object.tapped, tapped);
+                            assert_eq!((object.owner, object.controller), (player, player));
+                            assert!(object.v4.is_token && object.summoning_sick);
+                        }
+                        if count == 0 {
+                            assert_eq!(state, initial);
+                        }
+                        if let Some(ref previous) = result {
+                            assert_eq!(&state, previous);
+                        } else {
+                            result = Some(state);
+                        }
+                    }
+                }
+            }
         }
     }
 
