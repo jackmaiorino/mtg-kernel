@@ -10,6 +10,7 @@ mod balmor;
 mod bloodwitch;
 mod bulk_up;
 mod burst_lightning;
+mod bushwhack;
 mod condemn;
 mod conditional_player_spell;
 mod cost_reduced_spell;

@@ -12,11 +12,14 @@ pub(super) fn handles_permanent(name: &str) -> bool {
     matches!(name, "Campus Guide" | "Rune-Scarred Demon" | "Micromancer")
 }
 pub(super) fn handles_spell(name: &str) -> bool {
-    name == "Grim Tutor"
+    matches!(name, "Grim Tutor" | "Bushwhack")
 }
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     if !handles_permanent(d.name) && !handles_spell(d.name) {
         return Ok(None);
+    }
+    if d.name == "Bushwhack" {
+        return bushwhack(id, d);
     }
     let campus = d.name == "Campus Guide";
     let micromancer = d.name == "Micromancer";
@@ -221,4 +224,88 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     Ok(Some(
         json!({"card_id":id,"library_search_printing":{"schema":"printed-owned-library-search/v1","cost":cost,"mana_value":d.mana_value,"types":d.types,"subtypes":d.subtypes,"supertypes":[],"colors":d.colors,"power":power,"toughness":toughness,"keywords":keywords.0,"token":false,"ordered_cast_roots":[cast],"ordered_triggers":triggers}}),
     ))
+}
+
+fn bushwhack(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 0,
+        pips: &[Pip::Colored(ManaColor::G)],
+        x_count: 0,
+    };
+    let search = EffectOp::SearchLibraryToHand {
+        player: PlayerRef::Controller,
+        filter: LibraryCardFilter::BasicLand,
+    };
+    let fight = EffectOp::FightObjects {
+        first: ObjectRef::Target(0),
+        second: ObjectRef::Target(1),
+        target_spec: TargetSpec::ControlledCreatureThenOpponentCreature,
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != 1
+        || d.types != [CardType::Sorcery]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::G]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::None
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)() != Some(search)
+        || !d.mode2.as_ref().is_some_and(|m| {
+            m.target_spec == TargetSpec::ControlledCreatureThenOpponentCreature
+                && (m.effect)() == fight
+        })
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let search_mode = json!({"native_index":0,"targets":[],"ordered_resolution":[{
+        "operation":"SearchOwnLibraryForBasicLandCardToHand","searcher":"CapturedSpellController",
+        "filter":{"card_type":"Land","supertype":"Basic"},"choose_zero_or_one":true,
+        "may_fail_to_find_even_when_matching_card_exists":true,
+        "search_and_unselected_identities_private_to_searcher":true,
+        "reveal_selected_card_before_moving_to_searchers_hand":true,
+        "shuffle_remaining_library_after_selection_or_failure":true,
+        "empty_library_still_completes_search_and_shuffle_without_drawing":true,
+        "selection_is_resolution_choice_not_spell_target":true,
+        "normal_zone_replacements_apply":true}]});
+    let fight_mode = json!({"native_index":1,"target_count":2,"ordered_targets":[
+        {"slot":0,"zone":"Battlefield","effective_type":"Creature","controller":"Caster"},
+        {"slot":1,"zone":"Battlefield","effective_type":"Creature","controller":"OpponentOfCaster"}],
+        "bind_and_recheck_each_original_incarnation_type_controller_and_targeting_restriction":true,
+        "illegal_slots_never_compacted_or_reassigned":true,
+        "ordered_resolution":[{"operation":"Fight","creature_source_slots":[0,1],
+            "requires_both_targets_still_legal":true,"either_illegal_target_prevents_both_damage_packets":true,
+            "sample_both_current_effective_powers_before_either_damage_packet":true,
+            "negative_or_zero_power_deals_no_damage":true,"damage_class":"Noncombat",
+            "damage_sources_are_the_two_original_creatures_not_the_spell":true,
+            "recipients_are_each_other":true,"one_simultaneous_damage_batch":true,
+            "current_source_keywords_protection_replacements_and_prevention_apply":true,
+            "no_intermediate_state_based_actions_between_damage_packets":true}]});
+    let casts = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
+        "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+        "mode_selection":{"chooser":"CastingPlayer","choose_exactly":1,"native_indices":[0,1],
+            "before_targeting_and_final_payment":true,"fight_requires_a_complete_legal_target_pair":true,
+            "search_mode_remains_available_with_empty_library_or_no_basic_lands":true,
+            "selected_mode_bound_to_original_pending_cast_and_stack_item":true},
+        "ordered_modes":[search_mode,fight_mode],"all_targets_illegal_skips_entire_selected_mode":true,
+        "normal_queued_triggers_and_state_based_actions_follow_complete_resolution":true,
+        "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
+        "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+        "countering_skips_selected_mode_without_refunding_cost":true,
+        "other_cast_permissions_require_current_candidate_authority":true}]);
+    Ok(Some(json!({"card_id":id,"modal_search_fight_printing":{
+        "schema":"printed-modal-basic-land-search-or-fight/v1","cost":cost,"mana_value":1,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+        "power":null,"toughness":null,"keywords":0,"token":false,"ordered_cast_roots":casts
+    }})))
 }

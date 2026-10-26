@@ -751,6 +751,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && (d.mode2.is_none()
             || (ordinary_removal.is_some() && d.name == "Abrade")
             || (ordinary_batch_spell.is_some() && d.name == "Goblin Surprise")
+            || (library_search.is_some() && d.name == "Bushwhack")
             || (conditional_player_spell.is_some() && d.name == "Seeker's Folly"))
         && d.mode3.is_none()
         && d.additional_modes.is_empty()

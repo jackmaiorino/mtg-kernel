@@ -1716,6 +1716,51 @@ mod paid {
     }
 
     #[test]
+    fn bushwhack_changed_basic_search_fight_source_target_modes_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, LibraryCardFilter, ObjectRef, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Bushwhack").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::SearchLibraryToHand {
+                            player: PlayerRef::Controller,
+                            filter: LibraryCardFilter::AnyCard,
+                        })
+                    }
+                }
+                1 => d.mode2 = None,
+                2 => {
+                    d.mode2.as_mut().unwrap().target_spec =
+                        TargetSpec::TwoCreaturesWithDifferentControllers
+                }
+                3 => {
+                    d.mode2.as_mut().unwrap().effect = || EffectOp::FightObjects {
+                        first: ObjectRef::ThisSource,
+                        second: ObjectRef::Target(1),
+                        target_spec: TargetSpec::ControlledCreatureThenOpponentCreature,
+                    }
+                }
+                4 => d.target_spec = TargetSpec::Creature,
+                5 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Instant],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Bushwhack changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn voyage_changed_instruction_order_surveil_player_target_cost_or_timing_refuses() {
         use crate::{
             card_def::{CardType, TargetSpec},
