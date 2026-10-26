@@ -1148,6 +1148,10 @@ struct FastActorCurrentDecisionV1 {
     /// V2 cache is populated only for sessions created in V2 contract mode.
     flat_action_cache_v2: Option<FlatActionDecisionCacheV2>,
     flat_action_cache_error_v2: Option<FlatActionDecisionSliceErrorV1>,
+    /// Complete immutable projection produced while preparing this exact
+    /// Liliana native decision. Replaced on advance, restore and sampling.
+    liliana_projection_v73:
+        Option<std::sync::Arc<crate::liliana_observation_v73::LilianaPublicPartsV73>>,
 }
 
 fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {
@@ -4086,6 +4090,7 @@ fn flat_validate_current_binding_header_v2(
         flat_action_cache_error: None,
         flat_action_cache_v2: None,
         flat_action_cache_error_v2: None,
+        liliana_projection_v73: None,
     };
     flat_validate_current_binding_header_v1(session, &original)?;
     flat_validate_origin_decision_v1(&original, &session.state)?;
@@ -9929,6 +9934,7 @@ impl FastActorSessionV1 {
             flat_action_cache_error: None,
             flat_action_cache_v2: None,
             flat_action_cache_error_v2: None,
+            liliana_projection_v73: None,
         };
         match self.flat_action_contract_mode {
             FlatActionContractModeV1::V1 => {

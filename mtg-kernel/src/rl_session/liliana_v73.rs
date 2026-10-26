@@ -13,6 +13,9 @@ pub(crate) struct IssuedOriginV73<'a> {
     current: &'a FastActorCurrentDecisionV1,
 }
 impl<'a> IssuedOriginV73<'a> {
+    pub(crate) fn prepared_projection(&self) -> Option<&observation::LilianaPublicPartsV73> {
+        self.current.liliana_projection_v73.as_deref()
+    }
     pub(crate) fn validate(
         &self,
         state: &GameState,
@@ -116,13 +119,14 @@ pub(super) fn prepare_current(
     session: &FastActorSessionV1,
     current: &mut FastActorCurrentDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    current.liliana_projection_v73 = None;
     let (candidates, validated) = normalized_origin_with_validated_state(session, current)?;
     current.candidates = candidates;
     current.flat_action_cache = None;
     current.flat_action_cache_error = None;
     current.flat_action_cache_v2 = None;
     current.flat_action_cache_error_v2 = None;
-    observation::observe_parts_validated_v73(
+    let projection = observation::observe_parts_validated_v73(
         validated,
         &session.surface,
         (current.actor, &current.origin_decision),
@@ -131,6 +135,7 @@ pub(super) fn prepare_current(
         (current.substep_index, current.substep_count),
     )
     .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    current.liliana_projection_v73 = Some(std::sync::Arc::new(projection));
     Ok(())
 }
 impl FastActorSessionV1 {

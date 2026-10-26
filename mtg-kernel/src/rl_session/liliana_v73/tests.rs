@@ -8,6 +8,65 @@ struct Pair {
     own: LilianaSessionV73,
     native: FastActorSessionV1,
 }
+
+fn assert_prepared_projection_matches_fresh_native_capture(session: &FastActorSessionV1) {
+    fn project(
+        session: &FastActorSessionV1,
+    ) -> (
+        LilianaCandidatesV73,
+        candidates::NativeCandidateProjectionV73,
+    ) {
+        let current = session.current.as_ref().unwrap();
+        let proof = IssuedOriginV73 { session, current };
+        candidates::project_issued_parts_v73(
+            &proof,
+            &session.state,
+            &session.surface,
+            (current.actor, &current.origin_decision),
+            session.policy_step_count,
+            current.physical_decision_id,
+            (current.substep_index, current.substep_count),
+        )
+        .unwrap()
+    }
+    assert!(session
+        .current
+        .as_ref()
+        .unwrap()
+        .liliana_projection_v73
+        .is_some());
+    let (cached, original) = project(session);
+    let mut fresh = session.clone();
+    fresh.current.as_mut().unwrap().liliana_projection_v73 = None;
+    let (uncached, reconstructed) = project(&fresh);
+    assert_eq!(cached, uncached);
+    assert_eq!(original.original, reconstructed.original);
+    assert_eq!(
+        original.public_to_original,
+        reconstructed.public_to_original
+    );
+    assert_eq!(original.families, reconstructed.families);
+}
+
+#[test]
+fn paid_native_preparation_retains_every_projected_field_and_original_action_before_after_activation_and_restore_both_seats(
+) {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (state, id) = owning_ready(p, false, "Island");
+        let mut pair = Pair::new(state);
+        assert_prepared_projection_matches_fresh_native_capture(&pair.own.inner);
+        let saved = pair.own.snapshot_v73();
+        let raw = pair.native.snapshot_v1();
+        let old = pair.own.decision_v73().unwrap();
+        pair.activate(id, 0);
+        assert_prepared_projection_matches_fresh_native_capture(&pair.own.inner);
+        pair.own.restore_v73(&saved).unwrap();
+        pair.native.liliana_restore_v73(&raw).unwrap();
+        pair.equal();
+        assert!(pair.own.validate_decision_v73(&old).is_err());
+        assert_prepared_projection_matches_fresh_native_capture(&pair.own.inner);
+    }
+}
 impl Pair {
     fn new(s: GameState) -> Self {
         let native = FastActorSessionV1::from_liliana_v73_fixture_state(s.clone());

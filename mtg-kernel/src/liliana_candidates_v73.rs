@@ -610,7 +610,7 @@ pub(crate) fn project_parts_v73(
         ));
     }
     project_authenticated_parts_v73(
-        (validated, None),
+        (validated, None, None),
         surface,
         actor_and_origin,
         step,
@@ -631,7 +631,7 @@ pub(crate) fn project_issued_parts_v73(
     let (validated, original) =
         proof.validate(state, surface, actor_and_origin, step, physical, substep)?;
     project_authenticated_parts_v73(
-        (validated, Some(original)),
+        (validated, Some(original), proof.prepared_projection()),
         surface,
         actor_and_origin,
         step,
@@ -643,6 +643,7 @@ fn project_authenticated_parts_v73(
     validated_origin: (
         observation::ValidatedStateV73<'_>,
         Option<Vec<crate::rl::CorePolicyActionCandidateV1>>,
+        Option<&observation::LilianaPublicPartsV73>,
     ),
     surface: &PolicySurfaceV5,
     actor_and_origin: (PlayerId, &PolicyDecisionV5),
@@ -650,16 +651,23 @@ fn project_authenticated_parts_v73(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(LilianaCandidatesV73, NativeCandidateProjectionV73), RlContractError> {
-    let (validated, original) = validated_origin;
+    let (validated, original, prepared) = validated_origin;
     let state = validated.state();
-    let (observation, families) = observation::observe_parts_validated_v73(
-        validated,
-        surface,
-        actor_and_origin,
-        step,
-        physical,
-        substep,
-    )?;
+    // The issued-origin proof above still authenticates this exact immutable
+    // native state, origin, counters, revision and complete action vector.
+    // Reuse the complete projection that preparation already constructed and
+    // validated. Public DTO and exact-bound source calls recapture normally.
+    let (observation, families) = match prepared {
+        Some(parts) => parts.clone(),
+        None => observation::observe_parts_validated_v73(
+            validated,
+            surface,
+            actor_and_origin,
+            step,
+            physical,
+            substep,
+        )?,
+    };
     let authorized = authorized_references(&observation)?;
     // No native action or original semantic enters the public value. Keep the
     // original vector intact so index i continues to bind its exact native pair.
@@ -764,8 +772,9 @@ fn project_authenticated_parts_v73(
         projection_sha256: String::new(),
     };
     value.projection_sha256 = commitment(&value)?;
-    // The observation above was constructed and completely validated in this
-    // call. Nothing can mutate it after it moves into this owned envelope.
+    // The observation was completely validated either in this call or during
+    // preparation of this exact privately borrowed immutable native decision.
+    // Nothing can mutate it after it moves into this owned envelope.
     // Keep all candidate checks, reusing only that validation and the root
     // commitment just computed here. Supplied DTOs take the full path below.
     validate_artifact_inner(&value, false)?;
