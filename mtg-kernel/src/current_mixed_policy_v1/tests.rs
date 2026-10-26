@@ -1622,6 +1622,53 @@ mod paid {
     }
 
     #[test]
+    fn pilfer_changed_opponent_target_nonland_filter_chooser_timing_and_cost_refuse() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Pilfer").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.target_spec = TargetSpec::AnyPlayer,
+                1 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard {
+                            player: PlayerRef::Target(0),
+                        })
+                    }
+                }
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::RevealTargetHandChooseNonlandDiscard {
+                            player: PlayerRef::Controller,
+                        })
+                    }
+                }
+                3 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DiscardCards {
+                            player: PlayerRef::Target(0),
+                            count: 1,
+                        })
+                    }
+                }
+                4 => d.types = &[CardType::Instant],
+                _ => d.cost = crate::mana::Cost::zero(),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Pilfer changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};

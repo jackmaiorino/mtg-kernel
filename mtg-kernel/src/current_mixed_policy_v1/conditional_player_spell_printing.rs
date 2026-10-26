@@ -2,13 +2,13 @@
 use super::{Error, Result};
 use crate::{
     card_def::{CardDef, CardType, Keywords, TargetSpec},
-    effect::{EffectCond, EffectOp, TargetRef},
+    effect::{EffectCond, EffectOp, PlayerRef, TargetRef},
     mana::{Cost, ManaColor, Pip},
 };
 use serde_json::{json, Value};
 
 pub(super) fn handles(name: &str) -> bool {
-    matches!(name, "Hidetsugu's Second Rite" | "Exsanguinate")
+    matches!(name, "Hidetsugu's Second Rite" | "Exsanguinate" | "Pilfer")
 }
 
 /// Shared CardDef exclusions still run before the caller publishes this value.
@@ -18,6 +18,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     if d.name == "Exsanguinate" {
         return exsanguinate(id, d);
+    }
+    if d.name == "Pilfer" {
+        return pilfer(id, d);
     }
     let cost = Cost {
         generic: 3,
@@ -84,6 +87,64 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "ordered_cast_roots":cast_roots
         }}),
     ))
+}
+
+fn pilfer(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 1,
+        pips: &[Pip::Colored(ManaColor::B)],
+        x_count: 0,
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != 2
+        || d.types != [CardType::Sorcery]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::B]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::TargetOpponent
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::RevealTargetHandChooseNonlandDiscard {
+                player: PlayerRef::Target(0),
+            })
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(Some(json!({"card_id":id,"pilfer_printing":{
+        "schema":"printed-revealed-opponent-hand-nonland-discard/v1","cost":cost,"mana_value":2,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"OwnMainPhaseEmptyStackWithPriority",
+            "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],"target_count":1,"target_slot":0,
+            "target_kind":"OpponentPlayer","caster_is_not_legal_target":true,"empty_hand_is_legal_target":true,
+            "recheck_original_player_target_legality_at_resolution":true,"all_targets_illegal_skips_entire_resolution":true,
+            "ordered_resolution":[{"operation":"RevealEntireCurrentTargetPlayerHand","target_slot":0,"audience":"BothPlayers",
+                "capture_time":"Resolution","binds_every_current_hand_card_and_original_zone_incarnation":true,
+                "does_not_reveal_future_draws_or_other_hidden_zones":true,
+                "public_identity_knowledge_is_retained_only_under_normal_native_card_knowledge_rules":true},
+                {"operation":"ChooseNonlandCardFromThatRevealedHand","chooser":"CapturedSpellController",
+                    "required_count_if_eligible":1,"zero_eligible_cards_skips_choice":true,"cannot_decline_when_nonempty":true,
+                    "creature_cards_are_eligible":true,"land_cards_are_ineligible_even_if_also_other_types":true,
+                    "full_current_native_candidate_order_and_zone_incarnations_preserved":true},
+                {"operation":"TargetPlayerDiscardsChosenCard","target_slot":0,"count":1,
+                    "binding":"OriginalChosenHandCardIncarnation","is_cost":false,"normal_discard_and_zone_replacements_apply":true}],
+            "no_priority_between_reveal_choice_and_discard":true,
+            "countering_skips_reveal_choice_and_discard":true,"countering_does_not_refund_cost":true,
+            "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
+            "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+            "normal_triggers_and_state_based_actions_follow_resolution":true,
+            "other_cast_permissions_require_current_candidate_authority":true}]
+    }})))
 }
 
 fn exsanguinate(id: u16, d: &CardDef) -> Result<Option<Value>> {

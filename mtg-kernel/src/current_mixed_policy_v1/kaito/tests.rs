@@ -33,6 +33,7 @@ mod ordinary_auras;
 mod ordinary_batch_spells;
 mod ordinary_equipment;
 mod paladin;
+mod pilfer;
 mod sacrifice;
 mod sailor;
 mod shivan;
