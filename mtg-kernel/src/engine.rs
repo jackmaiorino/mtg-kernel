@@ -26163,8 +26163,8 @@ mod tests {
                     assert_eq!(receipts.len(), 2);
                     for i in receipts {
                         assert!(moves.iter().all(|&at| at < i));
-                        tinybones_v72::discard(&state, i as u64).unwrap();
                     }
+                    tinybones_v72::validate_state(&state).unwrap();
                     assert_eq!(
                         state
                             .engine
