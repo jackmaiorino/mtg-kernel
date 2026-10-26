@@ -190,10 +190,17 @@ def smoke(binary: Path) -> dict:
             strip = lambda rows: [{k: v for k, v in r.items() if k != "ms"} for r in rows]
             if strip(first.games) != strip(again.games):
                 raise MtgKernelError(f"{name}: replay with another worker count differs")
-            if first.summary["errors"]:
-                raise MtgKernelError(f"{name}: engine errors {first.games}")
+            # An engine refusal in natural play is an engine coverage gap (DraftZero drops the pair);
+            # any other error is this driver's own failure.
+            errors = [g.get("error", "") for g in first.games if g["result"] == "error"]
+            own = [e for e in errors if not e.startswith("fail_closed:")]
+            if own:
+                raise MtgKernelError(f"{name}: driver errors {own}")
+            decisions = sum(g.get("decisions", 0) for g in first.games)
             report[name] = {"games": len(first.games), "results": [g["result"] for g in first.games],
-                            "turns": [g["turns"] for g in first.games],
+                            "turns": [g["turns"] for g in first.games], "decisions": decisions,
+                            "engine_refusals": errors, "wall_s": first.summary["wall_s"],
+                            "decisions_per_s": decisions / first.summary["wall_s"] if first.summary["wall_s"] else 0,
                             "games_per_hour": first.summary["games_per_hour"]}
         return report
 

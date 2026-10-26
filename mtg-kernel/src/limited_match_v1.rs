@@ -661,11 +661,45 @@ pub fn play_game_v1(
             }
         };
         if let Err(error) = session.step(decision.episode_id, decision.step, index) {
-            result.outcome = GameOutcomeV1::Error(error.message);
+            let mut message = error.message;
+            let strays = roster_strays_v1(session.game_state());
+            if !strays.is_empty() {
+                message = format!("{message} [zone without roster: {}]", strays.join("; "));
+            }
+            result.outcome = GameOutcomeV1::Error(message);
             return result;
         }
         result.decisions += 1;
     }
+}
+
+/// Diagnostics for an engine refusal: battlefield and graveyard objects that
+/// no player's zone list holds.
+pub fn roster_strays_v1(state: &GameState) -> Vec<String> {
+    state
+        .objects
+        .iter()
+        .filter(|(id, o)| {
+            let players = &state.players;
+            match o.zone {
+                Zone::Battlefield => !players.iter().any(|p| p.battlefield.contains(id)),
+                Zone::Graveyard => !players.iter().any(|p| p.graveyard.contains(id)),
+                _ => false,
+            }
+        })
+        .map(|(id, o)| {
+            format!(
+                "{} {:?} {:?} owner {} controller {} token {} turn {}",
+                o.name,
+                id,
+                o.zone,
+                o.owner.index(),
+                o.controller.index(),
+                o.v4.is_token,
+                state.turn
+            )
+        })
+        .collect()
 }
 
 /// The pair's deal: two distinct deck indices into `count` decks, the shared
