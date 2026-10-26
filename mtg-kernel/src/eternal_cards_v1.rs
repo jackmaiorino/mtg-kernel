@@ -1097,13 +1097,17 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 /// plus 1." A characteristic-defining ability works in every zone.
 pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> Option<i32> {
     if definition_name(state, id)? != NETHERGOYF {
-        return None;
+        return crate::eternal_vintage_v1::characteristic_defining_power(state, id);
     }
     let controller = state.objects.get(id).controller;
     i32::try_from(card_type_count(state, &graveyard_cards(state, controller))).ok()
 }
 
 pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    if definition_name(state, id)? != NETHERGOYF {
+        // Karn's and the Tezzeret emblem's animations set both stats.
+        return crate::eternal_vintage_v1::characteristic_defining_power(state, id);
+    }
     characteristic_defining_power(state, id).map(|power| power + 1)
 }
 
@@ -1259,7 +1263,7 @@ pub(crate) fn delayed_triggers(
     events: &[CommittedEvent],
 ) -> Vec<PendingTrigger> {
     let mut triggers = legacy_delayed_triggers(state, events);
-    triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state));
+    triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -1343,6 +1347,7 @@ pub(crate) fn note_attackers_declared(state: &mut GameState) {
 /// The beginning of `player`'s turn ends their "until your next turn"
 /// effects.
 pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
+    crate::eternal_vintage_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

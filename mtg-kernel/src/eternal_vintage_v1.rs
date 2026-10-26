@@ -43,6 +43,55 @@ pub struct VintageStateV1 {
     /// spell still on the stack (Vexing Bauble, Void Mirror).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cast_mana: Vec<CastManaV1>,
+    /// Noncreature artifacts animated by Karn, the Great Creator's +1, with
+    /// the player whose next turn ends the effect.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub karn_animated: Vec<(ObjectLinkV4, PlayerId)>,
+    /// Artifacts a Tezzeret, Cruel Captain emblem made 0/0 Robot artifact
+    /// creatures.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub robots: Vec<ObjectLinkV4>,
+    /// Tezzeret, Cruel Captain emblems: their owner and the planeswalker
+    /// whose ability created each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tezzeret_emblems: Vec<(PlayerId, AbilitySourceContractV4)>,
+    /// Urza's Sagas and the highest chapter ability each has gained.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub saga_abilities: Vec<(ObjectLinkV4, u8)>,
+    /// Permanents that entered as a copy (Phyrexian Metamorph), with their
+    /// own definition and name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copies: Vec<CopyV1>,
+    /// Anointed Peacekeepers and the definition whose name each chose.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chosen_names: Vec<(ObjectLinkV4, u16)>,
+    /// Chancellors of the Annex revealed from an opening hand, waiting for
+    /// the revealing player's opponent to cast their first spell.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chancellor_reveals: Vec<AbilitySourceContractV4>,
+    /// Whether opening-hand reveals were offered this game.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub opening_hand_offered: bool,
+    /// Whether each player has cast a spell this game, tracked once
+    /// opening-hand reveals were offered.
+    #[serde(default, skip_serializing_if = "no_spells_cast")]
+    pub cast_a_spell: [bool; 2],
+}
+
+fn no_spells_cast(cast: &[bool; 2]) -> bool {
+    !cast[0] && !cast[1]
+}
+
+/// A permanent that is a copy of another definition until it leaves the
+/// battlefield (Phyrexian Metamorph), with the values it had before.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CopyV1 {
+    pub host: ObjectLinkV4,
+    pub card_def: u16,
+    pub name: String,
+    pub color_mask: u8,
+    pub subtype_ids: Vec<u16>,
 }
 
 impl VintageStateV1 {
@@ -95,6 +144,8 @@ pub enum VintageTriggerV1 {
     /// controller's turns, while the source is tapped: the window in which
     /// Time Vault's controller chooses whether to skip that turn.
     EndStepBeforeYourTurnWhileTappedV1,
+    /// "Whenever an artifact you control enters" (Tezzeret, Cruel Captain).
+    ControlledArtifactEntersV1,
 }
 
 /// Effect leaves owned by this module, carried as
@@ -131,6 +182,36 @@ pub enum VintageOpV1 {
     /// hand, then draw a card for each card returned to the controller's
     /// hand.
     ParadoxicalOutcomeV1,
+    /// Karn, the Great Creator's +1: target 0, if any, becomes an artifact
+    /// creature with power and toughness each equal to its mana value until
+    /// the controller's next turn.
+    KarnAnimateTargetV1,
+    /// Tezzeret, Cruel Captain's 0: untap target 0; if it's an artifact
+    /// creature, put a +1/+1 counter on it.
+    TezzeretUntapTargetV1,
+    /// Tezzeret's -7: the controller gets the emblem.
+    TezzeretEmblemV1,
+    /// The emblem's ability: three +1/+1 counters on target 0; if it's not a
+    /// creature, it becomes a 0/0 Robot artifact creature.
+    TezzeretEmblemCountersV1,
+    /// An Urza's Saga chapter: the Saga gains its chapter `level` ability.
+    SagaGainsAbilityV1 { level: u8 },
+    /// The resolving permanent spell enters the battlefield as itself, if
+    /// it is still on the stack (Phyrexian Metamorph copying nothing).
+    EnterIfStillOnStackV1,
+    /// Anointed Peacekeeper: the controller looks at the opponent's hand.
+    LookAtOpponentHandV1,
+    /// Anointed Peacekeeper enters with the name of definition `named`
+    /// chosen.
+    EnterNamingV1 { named: u16 },
+    /// Chancellor of the Annex is revealed from its owner's opening hand.
+    RevealFromOpeningHandV1,
+    /// Trigger template: "counter it unless that player pays {1}" for the
+    /// spell whose cast triggered the ability.
+    BindCounterUnlessPaysOneV1,
+    /// The spell's controller pays {1} if able; otherwise the spell is
+    /// countered.
+    PayOneOrCounterV1 { spell: StackItemId },
 }
 
 fn vintage(op: VintageOpV1) -> EffectOp {
@@ -152,6 +233,12 @@ const KARN: &str = "Karn, the Great Creator";
 const WHITE_PLUME_ADVENTURER: &str = "White Plume Adventurer";
 const SEASONED_DUNGEONEER: &str = "Seasoned Dungeoneer";
 const MISHRAS_WORKSHOP: &str = "Mishra's Workshop";
+const TEZZERET: &str = "Tezzeret, Cruel Captain";
+const URZAS_SAGA: &str = "Urza's Saga";
+const WITCH_ENCHANTER: &str = "Witch Enchanter";
+const PHYREXIAN_METAMORPH: &str = "Phyrexian Metamorph";
+const ANOINTED_PEACEKEEPER: &str = "Anointed Peacekeeper";
+const CHANCELLOR: &str = "Chancellor of the Annex";
 
 /// Cards whose "When this creature enters, you take the initiative" makes
 /// them the Initiative designation's source (Avenging Hunter in Pauper).
@@ -263,6 +350,61 @@ fn dungeoneer_attack() -> EffectOp {
     ])
 }
 
+fn add_loyalty() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::AddLoyaltyToSource { amount: 1 })
+}
+
+fn chancellor_tax() -> EffectOp {
+    vintage(VintageOpV1::BindCounterUnlessPaysOneV1)
+}
+
+/// Chancellor of the Annex's opening-hand reveal, offered as the game's
+/// first upkeep begins.
+fn chancellor_reveal_choice() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            vintage(VintageOpV1::RevealFromOpeningHandV1),
+            EffectOp::Sequence(Vec::new()),
+        ],
+    }
+}
+
+/// "Counter that spell unless that player pays {1}": the spell's
+/// controller chooses whether to pay.
+fn counter_unless_pays_one(spell: StackItemId) -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Opponent,
+        options: vec![
+            vintage(VintageOpV1::PayOneOrCounterV1 { spell }),
+            vintage(VintageOpV1::CounterCastSpellV1 { spell }),
+        ],
+    }
+}
+
+/// Witch Enchanter: "When this creature enters, destroy target artifact or
+/// enchantment an opponent controls."
+fn witch_enchanter_etb() -> EffectOp {
+    EffectOp::DestroyObject {
+        object: crate::effect::ObjectRef::Target(0),
+    }
+}
+
+fn tezzeret_emblem_counters() -> EffectOp {
+    vintage(VintageOpV1::TezzeretEmblemCountersV1)
+}
+
+const TEZZERET_TRIGGERS: [TriggeredAbilityDef; 1] = [vintage_trigger(
+    VintageTriggerV1::ControlledArtifactEntersV1,
+    add_loyalty,
+)];
+const CHANCELLOR_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::OpponentCastsSpellV1,
+    chancellor_tax,
+)];
+const WITCH_ENCHANTER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::Etb, witch_enchanter_etb)];
+
 const MANA_CRYPT_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
     TriggerCondition::BeginningOfUpkeep {
         controller_only: true,
@@ -309,6 +451,9 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         VOID_MIRROR => &VOID_MIRROR_TRIGGERS,
         WHITE_PLUME_ADVENTURER => &WHITE_PLUME_TRIGGERS,
         SEASONED_DUNGEONEER => &SEASONED_DUNGEONEER_TRIGGERS,
+        TEZZERET => &TEZZERET_TRIGGERS,
+        CHANCELLOR => &CHANCELLOR_TRIGGERS,
+        WITCH_ENCHANTER => &WITCH_ENCHANTER_TRIGGERS,
         _ => &[],
     }
 }
@@ -330,6 +475,10 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     Some(
         if name == SEASONED_DUNGEONEER && *effect == dungeoneer_attack() {
             TargetSpec::StandardV1(StandardTargetV1::AttackingClericRogueWarriorOrWizardV1)
+        } else if name == WITCH_ENCHANTER && *effect == witch_enchanter_etb() {
+            TargetSpec::OpponentArtifactOrEnchantmentPermanent
+        } else if name == TEZZERET && *effect == tezzeret_emblem_counters() {
+            TargetSpec::StandardV1(StandardTargetV1::ControlledArtifact)
         } else {
             TargetSpec::None
         },
@@ -342,25 +491,55 @@ pub(crate) fn materialize_event(
     event: &CommittedEvent,
     state: &GameState,
 ) -> Option<EffectOp> {
-    if *effect != counter_cast_spell() {
+    let chancellor = *effect == chancellor_tax();
+    if *effect != counter_cast_spell() && !chancellor {
         return None;
     }
     let CommittedEvent::SpellCast { spell, .. } = event else {
         return None;
     };
+    let spell = cast_stack_item(state, *spell)?;
+    Some(if chancellor {
+        counter_unless_pays_one(spell)
+    } else {
+        vintage(VintageOpV1::CounterCastSpellV1 { spell })
+    })
+}
+
+/// The stack incarnation of the spell `source` just cast.
+fn cast_stack_item(state: &GameState, source: ObjectId) -> Option<StackItemId> {
     state
         .stack
         .iter()
-        .find(|item| item.source == *spell && item.kind == crate::state::StackItemKind::Spell)
-        .map(|item| {
-            vintage(VintageOpV1::CounterCastSpellV1 {
-                spell: item.v4.stack_item_id,
-            })
-        })
+        .find(|item| item.source == source && item.kind == crate::state::StackItemKind::Spell)
+        .map(|item| item.v4.stack_item_id)
+}
+
+/// Whether `effect` is Chancellor of the Annex's counter-unless-pays choice
+/// bound to some spell.
+fn is_counter_unless_pays_one(effect: &EffectOp) -> bool {
+    let EffectOp::Choice {
+        controller: PlayerRef::Opponent,
+        options,
+    } = effect
+    else {
+        return false;
+    };
+    match options.as_slice() {
+        [EffectOp::StandardV1(StandardOpV1::EternalV1(
+            crate::eternal_cards_v1::EternalOpV1::VintageV1(VintageOpV1::PayOneOrCounterV1 {
+                spell,
+            }),
+        )), second] => *second == vintage(VintageOpV1::CounterCastSpellV1 { spell: *spell }),
+        _ => false,
+    }
 }
 
 /// Whether `effect` is a trigger-time materialization of `template`.
 pub(crate) fn template_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if *template == chancellor_tax() {
+        return is_counter_unless_pays_one(effect);
+    }
     *template == counter_cast_spell()
         && matches!(
             effect,
@@ -378,6 +557,8 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         COVETED_JEWEL => *effect == coveted_jewel_changes_hands(),
         MANA_VAULT => *effect == mana_vault_draw_step(),
+        TEZZERET => *effect == tezzeret_emblem_counters(),
+        CHANCELLOR => *effect == chancellor_reveal_choice() || is_counter_unless_pays_one(effect),
         _ => false,
     }
 }
@@ -585,6 +766,550 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        VintageOpV1::KarnAnimateTargetV1 => {
+            let Some(object) = legal_object_target(ctx, state) else {
+                return;
+            };
+            let link = live_link(state, object);
+            let controller = ctx.controller;
+            let animated = &mut vintage_state(state).karn_animated;
+            if !animated.contains(&(link, controller)) {
+                animated.push((link, controller));
+            }
+        }
+        VintageOpV1::TezzeretUntapTargetV1 => {
+            let Some(object) = legal_object_target(ctx, state) else {
+                return;
+            };
+            crate::engine::attempt_untap(state, object);
+            if crate::engine::object_has_type(state, object, CardType::Artifact)
+                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && event::add_plus_one_counters(state, object, ctx.controller, 1).is_err()
+            {
+                halt(state, ctx.source);
+            }
+        }
+        VintageOpV1::TezzeretEmblemV1 => {
+            let Some(source) = ctx.ability_source_contract else {
+                halt(state, ctx.source);
+                return;
+            };
+            let controller = ctx.controller;
+            vintage_state(state)
+                .tezzeret_emblems
+                .push((controller, source));
+        }
+        VintageOpV1::TezzeretEmblemCountersV1 => {
+            let Some(object) = legal_object_target(ctx, state) else {
+                return;
+            };
+            if event::add_plus_one_counters(state, object, ctx.controller, 3).is_err() {
+                halt(state, ctx.source);
+                return;
+            }
+            if !crate::engine::object_has_type(state, object, CardType::Creature) {
+                let link = live_link(state, object);
+                let robot = crate::card_def::Subtype::Robot.stable_id();
+                let ids = &mut state.objects.get_mut(object).v4.effective_subtype_ids;
+                if let Err(position) = ids.binary_search(&robot) {
+                    ids.insert(position, robot);
+                }
+                vintage_state(state).robots.push(link);
+            }
+        }
+        VintageOpV1::SagaGainsAbilityV1 { level } => {
+            let Some(saga) = live_ability_source(ctx, state) else {
+                return;
+            };
+            let link = live_link(state, saga);
+            let abilities = &mut vintage_state(state).saga_abilities;
+            match abilities.iter_mut().find(|(host, _)| *host == link) {
+                Some((_, gained)) => *gained = (*gained).max(*level),
+                None => abilities.push((link, *level)),
+            }
+        }
+        VintageOpV1::EnterIfStillOnStackV1 => enter_battlefield(ctx, state),
+        VintageOpV1::LookAtOpponentHandV1 => {
+            let viewer = ctx.controller;
+            let opponent = viewer.opponent();
+            for card in state.players[opponent.index()].hand.clone() {
+                if state.reveal_hand_card(viewer, opponent, card).is_err() {
+                    halt(state, ctx.source);
+                    return;
+                }
+            }
+        }
+        VintageOpV1::EnterNamingV1 { named } => {
+            enter_battlefield(ctx, state);
+            let Some(live) = state.objects.try_get(ctx.source) else {
+                return;
+            };
+            if live.zone != Zone::Battlefield {
+                return;
+            }
+            let link = live_link(state, ctx.source);
+            vintage_state(state).chosen_names.push((link, *named));
+        }
+        VintageOpV1::RevealFromOpeningHandV1 => {
+            let Some(contract) = ctx.ability_source_contract else {
+                halt(state, ctx.source);
+                return;
+            };
+            let in_hand = state.objects.try_get(contract.source).is_some_and(|live| {
+                live.zone == Zone::Hand && live.zone_change_count == contract.zone_change_count
+            });
+            if !in_hand {
+                return;
+            }
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                if state
+                    .reveal_hand_card(observer, contract.owner, contract.source)
+                    .is_err()
+                {
+                    halt(state, ctx.source);
+                    return;
+                }
+            }
+            vintage_state(state).chancellor_reveals.push(contract);
+        }
+        VintageOpV1::BindCounterUnlessPaysOneV1 => halt(state, ctx.source),
+        VintageOpV1::PayOneOrCounterV1 { spell } => {
+            let Some(player) = state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == *spell)
+                .map(|item| item.controller)
+            else {
+                return;
+            };
+            let one = crate::mana::Cost {
+                pips: &[],
+                generic: 1,
+                x_count: 0,
+            };
+            match crate::mana::can_pay(&one, 0, player, state) {
+                Some(plan) => {
+                    crate::engine::pay_plan(state, player, &plan);
+                }
+                None => {
+                    if crate::engine::counter_stack_item_by_id(state, *spell).is_err() {
+                        halt(state, ctx.source);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Target 0, if it is an object still legal for the resolving ability.
+fn legal_object_target(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
+    let Some(Target::Object(object)) = ctx.targets.first().copied() else {
+        return None;
+    };
+    (ctx.target_incarnation_matches(0, state)
+        && state.objects.get(object).zone == Zone::Battlefield)
+        .then_some(object)
+}
+
+fn live_link(state: &GameState, object: ObjectId) -> ObjectLinkV4 {
+    ObjectLinkV4 {
+        object,
+        zone_change_count: state.objects.get(object).zone_change_count,
+    }
+}
+
+/// The resolving permanent spell enters the battlefield, if it is still on
+/// the stack.
+fn enter_battlefield(ctx: &ExecCtx, state: &mut GameState) {
+    if state
+        .objects
+        .try_get(ctx.source)
+        .is_some_and(|live| live.zone == Zone::Stack)
+    {
+        crate::effect::execute(
+            &EffectOp::MoveObject {
+                object: crate::effect::ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            },
+            ctx,
+            state,
+        );
+    }
+}
+
+/// Phyrexian Metamorph: "You may have this creature enter as a copy of any
+/// artifact or creature on the battlefield, except it's an artifact in
+/// addition to its other types." The resolving spell enters, then takes
+/// the copied definition, name, colors and subtypes until it leaves.
+pub(crate) fn enter_as_copy(
+    state: &mut GameState,
+    ctx: &ExecCtx,
+    copied: crate::effect::EffectObjectBinding,
+) {
+    let Some(original) = state.objects.try_get(copied.object) else {
+        return;
+    };
+    if original.zone != copied.expected_zone
+        || original.zone_change_count != copied.expected_zone_change_count
+    {
+        return;
+    }
+    let copied_def = original.card_def;
+    enter_battlefield(ctx, state);
+    let host = ctx.source;
+    if state.objects.get(host).zone != Zone::Battlefield {
+        return;
+    }
+    let link = live_link(state, host);
+    let live = state.objects.get_mut(host);
+    let record = CopyV1 {
+        host: link,
+        card_def: live.card_def,
+        name: std::mem::take(&mut live.name),
+        color_mask: live.v4.effective_color_mask,
+        subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
+    };
+    let base = crate::state::ObjectStateV4::from_card_def(copied_def);
+    live.card_def = copied_def;
+    live.name = CARD_DEFS[copied_def as usize].object_name.into();
+    live.v4.effective_color_mask = base.effective_color_mask;
+    live.v4.effective_subtype_ids = base.effective_subtype_ids;
+    let own_def = record.card_def;
+    vintage_state(state).copies.push(record);
+    crate::standard_cards_v1::note_copied_definitions(
+        state,
+        host,
+        link.zone_change_count,
+        &[own_def, copied_def],
+    );
+    // A copy of a permanent that enters tapped enters tapped.
+    if CARD_DEFS[copied_def as usize].enters_battlefield_tapped {
+        state.objects.get_mut(host).tapped = true;
+    }
+}
+
+fn active_copy_index(state: &GameState, object: ObjectId) -> Option<usize> {
+    let live = state.objects.try_get(object)?;
+    let link = ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    state
+        .eternal_v1
+        .as_ref()?
+        .vintage
+        .copies
+        .iter()
+        .position(|copy| copy.host == link)
+}
+
+/// Whether `object` is a battlefield permanent that entered as a copy.
+pub(crate) fn active_copy(state: &GameState, object: ObjectId) -> bool {
+    active_copy_index(state, object).is_some()
+}
+
+/// A copy leaving the battlefield stops being a copy first, so it arrives
+/// in its new zone as its own card.
+pub(crate) fn end_copy_before_departure(state: &mut GameState, object: ObjectId) {
+    let Some(index) = active_copy_index(state, object) else {
+        return;
+    };
+    let record = vintage_state(state).copies.remove(index);
+    let live = state.objects.get_mut(object);
+    live.card_def = record.card_def;
+    live.name = record.name;
+    live.v4.effective_color_mask = record.color_mask;
+    live.v4.effective_subtype_ids = record.subtype_ids;
+}
+
+/// Card-type changes from this module: Karn's and the Tezzeret emblem's
+/// animated artifacts are creatures, and copies and Robots are artifacts.
+pub(crate) fn has_type_override(
+    state: &GameState,
+    object: ObjectId,
+    card_type: CardType,
+) -> Option<bool> {
+    let eternal = state.eternal_v1.as_ref()?;
+    let vintage = &eternal.vintage;
+    if vintage.karn_animated.is_empty() && vintage.robots.is_empty() && vintage.copies.is_empty() {
+        return None;
+    }
+    let live = state.objects.try_get(object)?;
+    if live.zone != Zone::Battlefield {
+        return None;
+    }
+    let link = ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    let animated = vintage.karn_animated.iter().any(|(host, _)| *host == link)
+        || vintage.robots.contains(&link);
+    match card_type {
+        CardType::Creature if animated => Some(true),
+        CardType::Artifact if animated || vintage.copies.iter().any(|copy| copy.host == link) => {
+            Some(true)
+        }
+        _ => None,
+    }
+}
+
+/// Base power and toughness from this module: Karn's animated artifacts
+/// have their mana value, the Tezzeret emblem's Robots are 0/0.
+pub(crate) fn characteristic_defining_power(state: &GameState, object: ObjectId) -> Option<i32> {
+    let vintage = &state.eternal_v1.as_ref()?.vintage;
+    let live = state.objects.try_get(object)?;
+    if live.zone != Zone::Battlefield {
+        return None;
+    }
+    let link = ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    if vintage.karn_animated.iter().any(|(host, _)| *host == link) {
+        return Some(i32::from(crate::engine::object_mana_value(state, object)));
+    }
+    vintage.robots.contains(&link).then_some(0)
+}
+
+/// The beginning of `player`'s turn ends Karn's animations they created.
+pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
+    if let Some(eternal) = state.eternal_v1.as_mut() {
+        eternal
+            .vintage
+            .karn_animated
+            .retain(|(_, controller)| *controller != player);
+    }
+}
+
+/// The highest chapter ability an Urza's Saga gained, or 0.
+fn saga_level(state: &GameState, saga: ObjectId) -> u8 {
+    let Some(live) = state.objects.try_get(saga) else {
+        return 0;
+    };
+    let link = ObjectLinkV4 {
+        object: saga,
+        zone_change_count: live.zone_change_count,
+    };
+    state.eternal_v1.as_ref().map_or(0, |eternal| {
+        eternal
+            .vintage
+            .saga_abilities
+            .iter()
+            .find(|(host, _)| *host == link)
+            .map_or(0, |(_, level)| *level)
+    })
+}
+
+/// Mana abilities this module gates: Urza's Saga has "{T}: Add {C}" once
+/// chapter I gave it, Witch Enchanter's {W} belongs to its land face.
+pub(crate) fn mana_abilities_active(
+    state: &GameState,
+    object: ObjectId,
+    name: &str,
+) -> Option<bool> {
+    match name {
+        URZAS_SAGA => Some(saga_level(state, object) >= 1),
+        WITCH_ENCHANTER => Some(state.objects.get(object).v4.face_index == 1),
+        _ => None,
+    }
+}
+
+/// Activated abilities this module gates: Urza's Saga's Construct ability
+/// exists once chapter II gave it.
+pub(crate) fn activation_allowed(
+    state: &GameState,
+    source: ObjectId,
+    name: &str,
+    _ability_index: usize,
+) -> bool {
+    name != URZAS_SAGA || saga_level(state, source) >= 2
+}
+
+/// Whether `name` is a modal double-faced card whose back face is a land
+/// (Witch Enchanter // Witch-Blessed Meadow).
+pub(crate) fn modal_land_face(name: &str) -> bool {
+    cfg!(feature = "eternal-fixtures") && name == WITCH_ENCHANTER
+}
+
+/// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
+/// abilities apply, with that Peacekeeper's controller.
+fn chosen_names(state: &GameState) -> Vec<(u16, PlayerId)> {
+    let Some(eternal) = state.eternal_v1.as_ref() else {
+        return Vec::new();
+    };
+    eternal
+        .vintage
+        .chosen_names
+        .iter()
+        .filter(|(host, _)| {
+            state.objects.try_get(host.object).is_some_and(|live| {
+                live.zone_change_count == host.zone_change_count
+                    && active_named(state, host.object, ANOINTED_PEACEKEEPER)
+            })
+        })
+        .map(|(host, named)| (*named, state.objects.get(host.object).controller))
+        .collect()
+}
+
+/// "Spells your opponents cast with the chosen name cost {2} more to cast."
+/// The generic increase for `player` casting a spell named `name`.
+pub(crate) fn spell_tax(state: &GameState, name: &str, player: PlayerId) -> u32 {
+    chosen_names(state)
+        .into_iter()
+        .filter(|(named, controller)| {
+            *controller != player && CARD_DEFS[usize::from(*named)].object_name == name
+        })
+        .map(|_| 2)
+        .sum()
+}
+
+/// "Activated abilities of sources with the chosen name cost {2} more to
+/// activate unless they're mana abilities."
+pub(crate) fn activation_tax(state: &GameState, source: ObjectId) -> u8 {
+    let names = chosen_names(state);
+    if names.is_empty() {
+        return 0;
+    }
+    let source_name = crate::engine::effective_name(state, source);
+    let count = names
+        .into_iter()
+        .filter(|(named, _)| CARD_DEFS[usize::from(*named)].object_name == source_name)
+        .count();
+    u8::try_from(count.saturating_mul(2)).unwrap_or(u8::MAX)
+}
+
+/// Every name a player may choose: each executable nontoken definition's
+/// name once, grouped by first letter for a two-step choice.
+fn nameable_definitions() -> &'static [Vec<u16>] {
+    static TABLE: std::sync::OnceLock<Vec<Vec<u16>>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut seen: Vec<&str> = Vec::new();
+        let mut groups: Vec<(char, Vec<u16>)> = Vec::new();
+        for (index, def) in CARD_DEFS.iter().enumerate() {
+            if def.is_token || !def.is_executable() || seen.contains(&def.object_name) {
+                continue;
+            }
+            let Ok(id) = u16::try_from(index) else {
+                continue;
+            };
+            seen.push(def.object_name);
+            let letter = def
+                .object_name
+                .chars()
+                .next()
+                .map_or(' ', |letter| letter.to_ascii_uppercase());
+            match groups.iter_mut().find(|(group, _)| *group == letter) {
+                Some((_, ids)) => ids.push(id),
+                None => groups.push((letter, vec![id])),
+            }
+        }
+        groups.sort_by_key(|(letter, _)| *letter);
+        groups.into_iter().map(|(_, ids)| ids).collect()
+    })
+}
+
+/// Anointed Peacekeeper: "As this creature enters, look at an opponent's
+/// hand, then choose any card name." The name is chosen by first letter,
+/// then from the names with that letter.
+pub fn anointed_peacekeeper() -> EffectOp {
+    EffectOp::Sequence(vec![
+        vintage(VintageOpV1::LookAtOpponentHandV1),
+        EffectOp::Choice {
+            controller: PlayerRef::Controller,
+            options: nameable_definitions()
+                .iter()
+                .map(|ids| EffectOp::Choice {
+                    controller: PlayerRef::Controller,
+                    options: ids
+                        .iter()
+                        .map(|&named| vintage(VintageOpV1::EnterNamingV1 { named }))
+                        .collect(),
+                })
+                .collect(),
+        },
+    ])
+}
+
+/// Phyrexian Metamorph's resolution: choose up to one artifact or creature
+/// on the battlefield to copy, then enter.
+pub fn phyrexian_metamorph() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::SelectObjectsV1 {
+            rule: crate::effect::ObjectSelectionRuleV1 {
+                player: PlayerRef::Controller,
+                zone: Zone::Battlefield,
+                any_player: true,
+                filter: crate::effect::ObjectSelectionFilterV1::ArtifactOrCreatureV1,
+                min: 0,
+                max: 1,
+                action: crate::effect::ObjectSelectionActionV1::EnterAsCopyV1,
+            },
+        },
+        vintage(VintageOpV1::EnterIfStillOnStackV1),
+    ])
+}
+
+/// Karn, the Great Creator's +1.
+pub fn karn_plus_one() -> EffectOp {
+    vintage(VintageOpV1::KarnAnimateTargetV1)
+}
+
+/// Karn, the Great Creator's -2: "You may reveal an artifact card you own
+/// from outside the game or choose a face-up artifact card you own in
+/// exile. Put that card into your hand." Best-of-one mainboard games have
+/// nothing outside the game, so only exile is searched.
+pub fn karn_minus_two() -> EffectOp {
+    EffectOp::SelectObjectsV1 {
+        rule: crate::effect::ObjectSelectionRuleV1 {
+            player: PlayerRef::Controller,
+            zone: Zone::Exile,
+            any_player: false,
+            filter: crate::effect::ObjectSelectionFilterV1::OwnedFaceUpArtifactCardV1,
+            min: 0,
+            max: 1,
+            action: crate::effect::ObjectSelectionActionV1::MoveTo(Zone::Hand),
+        },
+    }
+}
+
+/// Tezzeret, Cruel Captain's 0.
+pub fn tezzeret_zero() -> EffectOp {
+    vintage(VintageOpV1::TezzeretUntapTargetV1)
+}
+
+/// Tezzeret, Cruel Captain's -3: "Search your library for an artifact card
+/// with mana value 1 or less, reveal it, put it into your hand, then
+/// shuffle."
+pub fn tezzeret_minus_three() -> EffectOp {
+    EffectOp::SearchLibraryToHand {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::ArtifactManaValueAtMostV1(1),
+    }
+}
+
+/// Tezzeret, Cruel Captain's -7.
+pub fn tezzeret_minus_seven() -> EffectOp {
+    vintage(VintageOpV1::TezzeretEmblemV1)
+}
+
+/// Urza's Saga, chapter I: 'This Saga gains "{T}: Add {C}."'
+pub fn urzas_saga_one() -> EffectOp {
+    vintage(VintageOpV1::SagaGainsAbilityV1 { level: 1 })
+}
+
+/// Urza's Saga, chapter II: the Saga gains its Construct ability.
+pub fn urzas_saga_two() -> EffectOp {
+    vintage(VintageOpV1::SagaGainsAbilityV1 { level: 2 })
+}
+
+/// Urza's Saga, chapter III: "Search your library for an artifact card with
+/// mana cost {0} or {1}, put it onto the battlefield, then shuffle."
+pub fn urzas_saga_three() -> EffectOp {
+    EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::ArtifactManaCostZeroOrOneV1,
+        max_targets: 1,
+        destination: crate::effect::LibrarySearchDestinationV1::Battlefield { tapped: false },
     }
 }
 
@@ -636,6 +1361,22 @@ pub(crate) fn trigger_matches(
             matches!(events[index], CommittedEvent::BeginningEndStep { .. })
                 && state.objects.get(source).tapped
                 && next_turn_player(state) == controller
+        }
+        VintageTriggerV1::ControlledArtifactEntersV1 => {
+            let entered = match events[index] {
+                CommittedEvent::ZoneChange {
+                    object,
+                    to: Zone::Battlefield,
+                    ..
+                }
+                | CommittedEvent::CreateToken { object, .. } => object,
+                _ => return false,
+            };
+            state.objects.try_get(entered).is_some_and(|live| {
+                live.zone == Zone::Battlefield
+                    && live.controller == controller
+                    && crate::engine::object_has_type(state, entered, CardType::Artifact)
+            })
         }
     }
 }
@@ -741,21 +1482,144 @@ pub(crate) fn begin_draw_step(state: &mut GameState, player: PlayerId) -> bool {
     !vaults.is_empty()
 }
 
-/// The queued triggers this collection puts on the stack.
-pub(crate) fn delayed_triggers(state: &mut GameState) -> Vec<PendingTrigger> {
+/// The triggers this collection puts on the stack that no printed trigger
+/// condition matches: queued ones, Chancellor of the Annex's opening-hand
+/// reveal and first-spell tax, and Tezzeret emblems.
+pub(crate) fn delayed_triggers(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Vec<PendingTrigger> {
+    let mut triggers = opening_hand_triggers(state, events);
+    triggers.extend(first_spell_triggers(state, events));
+    triggers.extend(emblem_triggers(state, events));
     let Some(eternal) = state.eternal_v1.as_mut() else {
-        return Vec::new();
+        return triggers;
     };
-    std::mem::take(&mut eternal.vintage.queued_triggers)
+    triggers.extend(
+        std::mem::take(&mut eternal.vintage.queued_triggers)
+            .into_iter()
+            .map(|queued| {
+                crate::eternal_cards_v1::delayed_trigger(
+                    queued.source,
+                    queued.controller,
+                    vintage(queued.op),
+                )
+            }),
+    );
+    triggers
+}
+
+/// "You may reveal this card from your opening hand": offered for each
+/// Chancellor of the Annex in a hand as the game's first upkeep begins,
+/// before anyone could have cast a spell.
+fn opening_hand_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec<PendingTrigger> {
+    let first_upkeep = state.turn == 1
+        && state.active_player == state.starting_player
+        && state.extra_turn_v1.is_none()
+        && events
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }));
+    if !first_upkeep
+        || state
+            .eternal_v1
+            .as_ref()
+            .is_some_and(|eternal| eternal.vintage.opening_hand_offered)
+    {
+        return Vec::new();
+    }
+    let chancellors = [PlayerId::P0, PlayerId::P1]
         .into_iter()
-        .map(|queued| {
+        .flat_map(|player| state.players[player.index()].hand.iter().copied())
+        .filter(|&card| {
+            CARD_DEFS
+                .get(state.objects.get(card).card_def as usize)
+                .is_some_and(|def| def.name == CHANCELLOR && def.is_executable())
+        })
+        .collect::<Vec<_>>();
+    if chancellors.is_empty() {
+        return Vec::new();
+    }
+    vintage_state(state).opening_hand_offered = true;
+    chancellors
+        .into_iter()
+        .map(|card| {
+            let source = AbilitySourceContractV4::capture(state, card);
             crate::eternal_cards_v1::delayed_trigger(
-                queued.source,
-                queued.controller,
-                vintage(queued.op),
+                source,
+                source.owner,
+                chancellor_reveal_choice(),
             )
         })
         .collect()
+}
+
+/// "When each opponent casts their first spell of the game, counter that
+/// spell unless that player pays {1}."
+fn first_spell_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec<PendingTrigger> {
+    if !state
+        .eternal_v1
+        .as_ref()
+        .is_some_and(|eternal| eternal.vintage.opening_hand_offered)
+    {
+        return Vec::new();
+    }
+    let mut triggers = Vec::new();
+    for event in events {
+        let CommittedEvent::SpellCast { spell, controller } = event else {
+            continue;
+        };
+        let caster = *controller;
+        let stack_item = cast_stack_item(state, *spell);
+        let vintage = vintage_state(state);
+        if vintage.cast_a_spell[caster.index()] {
+            continue;
+        }
+        vintage.cast_a_spell[caster.index()] = true;
+        let (fired, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut vintage.chancellor_reveals)
+            .into_iter()
+            .partition(|reveal| reveal.owner == caster.opponent());
+        vintage.chancellor_reveals = kept;
+        let Some(stack_item) = stack_item else {
+            continue;
+        };
+        triggers.extend(fired.into_iter().map(|reveal| {
+            crate::eternal_cards_v1::delayed_trigger(
+                reveal,
+                reveal.owner,
+                counter_unless_pays_one(stack_item),
+            )
+        }));
+    }
+    triggers
+}
+
+/// Tezzeret, Cruel Captain's emblem: "At the beginning of combat on your
+/// turn, put three +1/+1 counters on target artifact you control."
+fn emblem_triggers(state: &GameState, events: &[CommittedEvent]) -> Vec<PendingTrigger> {
+    let Some(eternal) = state.eternal_v1.as_ref() else {
+        return Vec::new();
+    };
+    if eternal.vintage.tezzeret_emblems.is_empty() {
+        return Vec::new();
+    }
+    let mut triggers = Vec::new();
+    for event in events {
+        let CommittedEvent::BeginningOfCombat { active_player } = event else {
+            continue;
+        };
+        for (owner, source) in &eternal.vintage.tezzeret_emblems {
+            if owner == active_player {
+                let mut pending = crate::eternal_cards_v1::delayed_trigger(
+                    *source,
+                    *owner,
+                    tezzeret_emblem_counters(),
+                );
+                pending.target_spec = TargetSpec::StandardV1(StandardTargetV1::ControlledArtifact);
+                triggers.push(pending);
+            }
+        }
+    }
+    triggers
 }
 
 /// Mana Vault and Time Vault: "This artifact doesn't untap during your

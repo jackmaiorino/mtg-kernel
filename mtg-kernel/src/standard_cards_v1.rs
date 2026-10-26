@@ -2058,6 +2058,10 @@ pub(crate) fn activation_allowed(
     if activations_locked(state, source) {
         return false;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if !crate::eternal_vintage_v1::activation_allowed(state, source, def.name, ability_index) {
+        return false;
+    }
     if def.name == ROOM {
         // A door can be unlocked only while it is locked.
         return u8::try_from(ability_index)
@@ -2092,6 +2096,11 @@ pub(crate) fn activation_allowed(
 pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &CardDef) -> bool {
     if activations_locked(state, object) {
         return false;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(active) = crate::eternal_vintage_v1::mana_abilities_active(state, object, def.name)
+    {
+        return active;
     }
     if def.name == THE_IRENCRAG {
         // Everflame loses all other abilities.
@@ -4010,6 +4019,24 @@ pub(crate) fn apply_aegis_copy(
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     standard.aegis_copies.push(record);
     for entry in had {
+        if !standard.copied_card_defs.contains(&entry) {
+            standard.copied_card_defs.push(entry);
+        }
+    }
+}
+
+/// Records definitions a battlefield incarnation has had through a copy
+/// effect other than Assimilation Aegis (Phyrexian Metamorph), so its
+/// abilities already on the stack stay valid.
+pub(crate) fn note_copied_definitions(
+    state: &mut GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+    definitions: &[u16],
+) {
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    for &definition in definitions {
+        let entry = (object, zone_change_count, definition);
         if !standard.copied_card_defs.contains(&entry) {
             standard.copied_card_defs.push(entry);
         }

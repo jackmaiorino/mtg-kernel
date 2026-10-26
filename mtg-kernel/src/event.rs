@@ -3120,7 +3120,8 @@ fn commit_with_entry_batch_and_source_color(
             }
             crate::standard_cards_v1::before_departure(state, z.object);
             if from == Zone::Battlefield
-                && crate::standard_cards_v1::active_aegis_copy(state, z.object)
+                && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
+                    || crate::eternal_vintage_v1::active_copy(state, z.object))
             {
                 let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                     source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -3180,6 +3181,10 @@ fn commit_with_entry_batch_and_source_color(
             #[cfg(feature = "limited-fdn-fixtures")]
             if from == Zone::Battlefield {
                 crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if from == Zone::Battlefield {
+                crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
             }
             commit_zone_change(
                 state,

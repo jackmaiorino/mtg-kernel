@@ -149,6 +149,8 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) component_groups: Vec<&'static [CostComponent]>,
     pub(super) types: &'static [CardType],
     pub(super) own_generic_reduction: u32,
+    /// Generic increase for this spell alone (Anointed Peacekeeper).
+    pub(super) own_generic_increase: u32,
     pub(super) delve: bool,
     pub(super) convoke: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
@@ -329,6 +331,7 @@ impl SelectedSpellManaCostsV1 {
             .chain(replicated.map(|cost| u32::from(cost.generic)))
             .sum::<u32>()
             .saturating_add(increase)
+            .saturating_add(self.own_generic_increase)
             .saturating_sub(reduction.saturating_add(self.own_generic_reduction));
         // Trinisphere raises a total below three mana to three.
         #[cfg(feature = "eternal-fixtures")]
@@ -457,6 +460,7 @@ pub(super) fn selected_spell_mana_costs_v1(
         component_groups: Vec::new(),
         types: definition.types,
         own_generic_reduction: 0,
+        own_generic_increase: 0,
         delve: false,
         convoke: false,
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
@@ -548,6 +552,9 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_cards_v1::outside_hand_cast_reduction(state, source, player),
         );
+        // Anointed Peacekeeper: spells with the chosen name cost {2} more.
+        selected.own_generic_increase =
+            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player);
     }
     if super::resolution_cast_v1::free_cast_for(state, source, player) {
         if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {

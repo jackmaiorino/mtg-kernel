@@ -2224,6 +2224,245 @@
     "explore"
    ],
    "java_file": "Mage.Sets/src/mage/cards/s/SeasonedDungeoneer.java"
+  },
+  {
+   "name": "Karn, the Great Creator",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Karn"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "activation_prohibition",
+    "animate_artifact",
+    "wish"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KarnTheGreatCreator.java",
+   "starting_loyalty": 5
+  },
+  {
+   "name": "Tezzeret, Cruel Captain",
+   "engine_capability": "full",
+   "mana_cost": "{3}",
+   "mana_value": 3,
+   "colors": [],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Tezzeret"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "artifact_enters_trigger",
+    "untap_target",
+    "tutor",
+    "emblem"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TezzeretCruelCaptain.java",
+   "starting_loyalty": 4
+  },
+  {
+   "name": "Urza's Saga",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Enchantment",
+    "Land"
+   ],
+   "subtypes": [
+    "Urza's",
+    "Saga"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "saga",
+    "gains_abilities",
+    "token_creation",
+    "tutor"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UrzasSaga.java"
+  },
+  {
+   "name": "Phyrexian Metamorph",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U/P}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Shapeshifter"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "phyrexian_mana",
+    "clone",
+    "enters_as_copy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianMetamorph.java"
+  },
+  {
+   "name": "Witch Enchanter",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Warlock"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [
+    "W"
+   ],
+   "decks": [
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "destroy_target",
+    "modal_double_faced",
+    "land_face",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WitchEnchanter.java"
+  },
+  {
+   "name": "Anointed Peacekeeper",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "vigilance",
+    "look_at_hand",
+    "name_a_card",
+    "cost_increase"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AnointedPeacekeeper.java"
+  },
+  {
+   "name": "Chancellor of the Annex",
+   "engine_capability": "full",
+   "mana_cost": "{4}{W}{W}{W}",
+   "mana_value": 7,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Angel"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "opening_hand_reveal",
+    "cast_trigger",
+    "counter_unless_pay"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ChancellorOfTheAnnex.java"
   }
  ]
 }

@@ -5240,10 +5240,22 @@ fn activation_mana_payment(
     source: ObjectId,
     state: &GameState,
 ) -> Option<Cost> {
-    activation_mana_cost(components).map(|cost| {
+    let printed = activation_mana_cost(components).map(|cost| {
         let reduced = reduced_activation_mana_cost(cost, components, player, source, state);
         crate::standard_cards_v1::spend_as_any_color(state, player, source, reduced)
-    })
+    });
+    // Anointed Peacekeeper: abilities of sources with the chosen name cost
+    // {2} more to activate.
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        let tax = crate::eternal_vintage_v1::activation_tax(state, source);
+        if tax > 0 {
+            let mut cost = printed.unwrap_or(Cost::zero());
+            cost.generic = cost.generic.saturating_add(tax);
+            return Some(cost);
+        }
+    }
+    printed
 }
 
 pub(crate) fn x_target_is_payable(
@@ -9605,7 +9617,9 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         .iter()
         .copied()
         .filter(|&id| {
-            card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_playable_land()
+            let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+            def.is_playable_land()
+                || (def.is_executable() && crate::eternal_vintage_v1::modal_land_face(def.name))
         })
         .collect();
     // Impulse-drawn lands (Clockwork Percussionist/Experimental
@@ -10173,7 +10187,11 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             return Decision::ChooseEffectOption {
                 player: pending.controller,
                 source: pending.source,
-                option_count: 4,
+                option_count: if pending.excluded_color == ManaColor::C {
+                    2
+                } else {
+                    4
+                },
             };
         }
 
@@ -17774,6 +17792,10 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     if let Some(face) = state.objects.get(id).v4.face_down_v1 {
         return face.disguised && card_type == CardType::Creature;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(answer) = crate::eternal_vintage_v1::has_type_override(state, id, card_type) {
+        return answer;
+    }
     if crate::standard_cards_v1::kaito_is_creature(state, id) {
         return card_type == CardType::Creature;
     }
@@ -20033,7 +20055,13 @@ pub(crate) fn step_without_linked_aura_v1(
                 return Err(format!("{id} is not a legal land drop for {p:?}"));
             }
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-            if let Some(excluded_color) = def.as_enters_choose_color_other_than {
+            // A modal double-faced card's land face asks whether to pay 3
+            // life as it enters; colorless marks that choice.
+            let modal_land = crate::eternal_vintage_v1::modal_land_face(def.name);
+            if let Some(excluded_color) = def
+                .as_enters_choose_color_other_than
+                .or(modal_land.then_some(ManaColor::C))
+            {
                 state.engine.pending_land_play = Some(PendingLandPlay {
                     source: id,
                     source_zone_change_count: state.objects.get(id).zone_change_count,
@@ -22316,9 +22344,12 @@ pub(crate) fn validate_pending_land_play(
     let def = card_def::CARD_DEFS
         .get(object.card_def as usize)
         .ok_or("pending land definition is missing")?;
-    if !def.is_playable_land()
-        || def.as_enters_choose_color_other_than != Some(pending.excluded_color)
-        || pending.excluded_color == ManaColor::C
+    let modal_land = pending.excluded_color == ManaColor::C
+        && crate::eternal_vintage_v1::modal_land_face(def.name);
+    if !modal_land
+        && (!def.is_playable_land()
+            || def.as_enters_choose_color_other_than != Some(pending.excluded_color)
+            || pending.excluded_color == ManaColor::C)
     {
         return Err("pending land color-choice definition changed".to_string());
     }
@@ -22350,6 +22381,9 @@ fn apply_choose_land_color(state: &mut GameState, option_index: u16) -> Result<(
         .clone()
         .ok_or("no land color choice is pending")?;
     validate_pending_land_play(state, &pending)?;
+    if pending.excluded_color == ManaColor::C {
+        return play_modal_land(state, pending, option_index);
+    }
     let legal_colors = [
         ManaColor::W,
         ManaColor::U,
@@ -22483,6 +22517,41 @@ fn play_land(
     if resolution_cast_v1::finish_child(state)? {
         return Ok(());
     }
+    collect_and_queue_triggers(state);
+    state.engine.priority_passes = [false, false];
+    state.priority_player = player;
+    Ok(())
+}
+
+/// Plays a modal double-faced card's land face (Witch-Blessed Meadow): "As
+/// this land enters, you may pay 3 life. If you don't, it enters tapped."
+/// Option 0 pays the life, option 1 doesn't.
+fn play_modal_land(
+    state: &mut GameState,
+    pending: PendingLandPlay,
+    option_index: u16,
+) -> Result<(), String> {
+    let pay = match option_index {
+        0 => true,
+        1 => false,
+        _ => return Err("modal land choice has two options".to_string()),
+    };
+    let player = pending.controller;
+    if pay && state.players[player.index()].life < 3 {
+        return Err("paying 3 life needs 3 life".to_string());
+    }
+    state.engine.pending_land_play = None;
+    if pay {
+        event::propose_and_commit(state, ProposedEvent::life_payment(player, 3));
+    }
+    let mut entry =
+        ProposedEvent::zone_change_to_battlefield_under_controller(pending.source, player);
+    if let ProposedEvent::ZoneChange(change) = &mut entry {
+        change.battlefield_face_index = Some(1);
+        change.force_battlefield_tapped = !pay;
+    }
+    event::propose_and_commit(state, entry);
+    state.players[player.index()].lands_played_this_turn += 1;
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];
     state.priority_player = player;

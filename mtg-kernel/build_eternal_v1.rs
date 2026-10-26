@@ -462,14 +462,14 @@ pub(super) fn escape_for(name: &str) -> String {
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Tamiyo, Inquisitive Student" => "Some(TransformFaceDef { name: \"Tamiyo, Seasoned Scholar\", types: &[CardType::Planeswalker], subtypes: &[Subtype::Tamiyo], colors: &[ManaColor::U, ManaColor::G], power: None, toughness: None, keywords: Keywords::NONE })",
-        _ => "None",
+        _ => super::build_eternal_vintage_v1::transform_face_for(name),
     }
 }
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Tamiyo, Inquisitive Student" => Some("Tamiyo, Seasoned Scholar"),
-        _ => None,
+        _ => super::build_eternal_vintage_v1::transform_face_name_for(name),
     }
 }
 

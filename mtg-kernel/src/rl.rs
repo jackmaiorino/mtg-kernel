@@ -6147,7 +6147,36 @@ fn core_surface_action_candidates_fake_scoped_v50(
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *source)?;
-                if let Some(pending) = state.engine.pending_land_play.as_ref() {
+                if let Some(pending) = state
+                    .engine
+                    .pending_land_play
+                    .as_ref()
+                    .filter(|pending| pending.excluded_color == ManaColor::C)
+                {
+                    // A modal double-faced land: pay 3 life (0) or enter
+                    // tapped (1).
+                    engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
+                    if pending.controller != *player
+                        || pending.source.0 != source.arena_id
+                        || *option_count != 2
+                    {
+                        return Err(RlContractError(
+                            "modal land choice disagrees with its staged source".to_string(),
+                        ));
+                    }
+                    for option_index in 0..*option_count {
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseEffectOption {
+                                actor,
+                                source: source.clone(),
+                                option_index,
+                                option_count: *option_count,
+                            },
+                            SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
+                        )?;
+                    }
+                } else if let Some(pending) = state.engine.pending_land_play.as_ref() {
                     engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
                     if pending.controller != *player
                         || pending.source.0 != source.arena_id
@@ -10228,13 +10257,24 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
             Some(PendingEffectSemanticV4 {
                 source: Some(card_ref(state, pending.source)?),
                 controller: pending.controller.into(),
-                choice: Some(PendingEffectChoiceSemanticV4::Color {
-                    player: pending.controller.into(),
-                    structural_path: Vec::new(),
-                    legal_colors: ManaColor::ALL
-                        .into_iter()
-                        .filter(|color| *color != pending.excluded_color && *color != ManaColor::C)
-                        .collect(),
+                choice: Some(if pending.excluded_color == ManaColor::C {
+                    PendingEffectChoiceSemanticV4::Options {
+                        player: pending.controller.into(),
+                        structural_path: Vec::new(),
+                        option_count: 2,
+                        creature_options: None,
+                    }
+                } else {
+                    PendingEffectChoiceSemanticV4::Color {
+                        player: pending.controller.into(),
+                        structural_path: Vec::new(),
+                        legal_colors: ManaColor::ALL
+                            .into_iter()
+                            .filter(|color| {
+                                *color != pending.excluded_color && *color != ManaColor::C
+                            })
+                            .collect(),
+                    }
                 }),
             })
         } else {

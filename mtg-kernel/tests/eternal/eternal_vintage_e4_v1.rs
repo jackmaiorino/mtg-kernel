@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Subtype, Supertype, CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -13,7 +13,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E4_CARDS: [&str; 14] = [
+const E4_CARDS: [&str; 36] = [
     "Mox Emerald",
     "Mox Jet",
     "Mox Pearl",
@@ -28,6 +28,28 @@ const E4_CARDS: [&str; 14] = [
     "Tolarian Academy",
     "Ancestral Recall",
     "Time Walk",
+    "Mental Misstep",
+    "Tinker",
+    "Paradoxical Outcome",
+    "Coveted Jewel",
+    "Mishra's Workshop",
+    "Manifold Key",
+    "Vexing Bauble",
+    "Void Mirror",
+    "Trinisphere",
+    "Archon of Emeria",
+    "Clarion Conqueror",
+    "Mana Vault",
+    "Time Vault",
+    "White Plume Adventurer",
+    "Seasoned Dungeoneer",
+    "Karn, the Great Creator",
+    "Tezzeret, Cruel Captain",
+    "Urza's Saga",
+    "Phyrexian Metamorph",
+    "Witch Enchanter",
+    "Anointed Peacekeeper",
+    "Chancellor of the Annex",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -84,6 +106,7 @@ fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> Objec
         Zone::Hand => seat.hand.push(id),
         Zone::Battlefield => seat.battlefield.push(id),
         Zone::Graveyard => seat.graveyard.push(id),
+        Zone::Exile => state.exile.push(id),
         _ => panic!("helper zone"),
     }
     id
@@ -252,6 +275,68 @@ fn e4_cards_are_full_with_their_printed_characteristics() {
     assert_eq!(def("Ancestral Recall").types, &[CardType::Instant]);
     assert_eq!(def("Time Walk").types, &[CardType::Sorcery]);
     assert_eq!(def("Time Walk").mana_value, 2);
+    for (name, subtypes) in [
+        ("Archon of Emeria", &[Subtype::Archon][..]),
+        ("Clarion Conqueror", &[Subtype::Dragon][..]),
+        (
+            "White Plume Adventurer",
+            &[Subtype::Orc, Subtype::Cleric][..],
+        ),
+        (
+            "Seasoned Dungeoneer",
+            &[Subtype::Human, Subtype::Warrior][..],
+        ),
+        (
+            "Phyrexian Metamorph",
+            &[Subtype::Phyrexian, Subtype::Shapeshifter][..],
+        ),
+        ("Witch Enchanter", &[Subtype::Human, Subtype::Warlock][..]),
+        (
+            "Anointed Peacekeeper",
+            &[Subtype::Human, Subtype::Cleric][..],
+        ),
+        (
+            "Chancellor of the Annex",
+            &[Subtype::Phyrexian, Subtype::Angel][..],
+        ),
+    ] {
+        assert_eq!(def(name).subtypes, subtypes, "{name}");
+        assert!(def(name).has_type(CardType::Creature), "{name}");
+    }
+    for name in [
+        "Archon of Emeria",
+        "Clarion Conqueror",
+        "Chancellor of the Annex",
+    ] {
+        assert!(def(name).keywords.has(Keywords::FLYING), "{name}");
+    }
+    assert!(def("Anointed Peacekeeper")
+        .keywords
+        .has(Keywords::VIGILANCE));
+    assert!(Subtype::Archon.is_creature_type());
+    assert!(!Subtype::Karn.is_creature_type());
+    assert_eq!(def("Karn, the Great Creator").subtypes, &[Subtype::Karn]);
+    assert_eq!(
+        def("Tezzeret, Cruel Captain").subtypes,
+        &[Subtype::Tezzeret]
+    );
+    assert_eq!(def("Karn, the Great Creator").starting_loyalty, Some(5));
+    assert_eq!(def("Tezzeret, Cruel Captain").starting_loyalty, Some(4));
+    let saga = def("Urza's Saga");
+    assert!(saga.is_land && saga.has_type(CardType::Enchantment));
+    assert_eq!(saga.subtypes, &[Subtype::Urzas, Subtype::Saga]);
+    assert_eq!(
+        saga.saga.as_ref().map(|saga| saga.chapter_effects.len()),
+        Some(3)
+    );
+    let witch = def("Witch Enchanter");
+    assert_eq!(
+        witch.transform_face.as_ref().map(|face| face.name),
+        Some("Witch-Blessed Meadow")
+    );
+    assert_eq!(def("Mental Misstep").mana_value, 1);
+    assert!(def("Time Vault").enters_battlefield_tapped);
+    assert!(def("Tinker").additional_cost.is_some());
 }
 
 // ---- Fast mana ------------------------------------------------------------
@@ -727,7 +812,7 @@ fn manifold_key_untaps_another_artifact_or_makes_a_creature_unblockable() {
     assert!(engine::has_effective_keyword(
         &state,
         elves,
-        mtg_kernel::card_def::Keywords::CANT_BE_BLOCKED
+        Keywords::CANT_BE_BLOCKED
     ));
 }
 
@@ -796,6 +881,7 @@ fn trinisphere_makes_cheap_spells_cost_three_while_untapped() {
     assert_eq!(state.players[0].mana_pool, [0; 6]);
 
     // A colored cost keeps its color and adds generic up to three.
+    state.objects.get_mut(mox).tapped = true;
     let recall = put(&mut state, P0, "Ancestral Recall", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 1);
     assert!(!castable(&mut state, recall));
@@ -1025,6 +1111,550 @@ fn seasoned_dungeoneer_protects_an_attacking_warrior_from_creatures_and_explores
     }
     assert_eq!(blockable, Some(false), "protection from creatures");
     assert_eq!(state.objects.get(top).zone, Zone::Hand, "the land explored");
+}
+
+// ---- Batch three: planeswalkers -------------------------------------------
+
+fn loyalty(state: &GameState, planeswalker: ObjectId) -> Option<u32> {
+    mtg_kernel::planeswalker_v1::loyalty(state, planeswalker)
+}
+
+#[test]
+fn karn_shuts_off_opponents_artifacts_and_animates_or_wishes() {
+    let mut state = islands();
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let own_ring = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    let their_ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+    let their_island = put(&mut state, P1, "Island", Zone::Battlefield);
+    pool(&mut state, P0, &[], 4);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, karn), Some(5));
+    // Static: P1's artifacts' abilities can't be activated; P0's can.
+    opponents_main_phase(&mut state);
+    next(&mut state);
+    assert!(engine::step(&mut state, Action::ActivateManaAbility(their_ring)).is_err());
+    act(&mut state, Action::ActivateManaAbility(their_island));
+    state.active_player = P0;
+    state.priority_player = P0;
+    next(&mut state);
+    act(&mut state, Action::ActivateManaAbility(own_ring));
+    assert_eq!(mana(&state, P0, ManaColor::C), 2);
+
+    // +1: a noncreature artifact becomes a creature with power and
+    // toughness equal to its mana value, until Karn's controller's next turn.
+    let mut state = islands();
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    pool(&mut state, P0, &[], 4);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, karn, 0, &[Target::Object(ring)]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, karn), Some(6));
+    assert!(engine::object_has_type(&state, ring, CardType::Creature));
+    assert!(engine::object_has_type(&state, ring, CardType::Artifact));
+    assert_eq!(
+        (
+            engine::effective_power(&state, ring),
+            engine::effective_toughness(&state, ring)
+        ),
+        (1, 1)
+    );
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1
+    });
+    assert!(engine::object_has_type(&state, ring, CardType::Creature));
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Main1
+    });
+    assert!(!engine::object_has_type(&state, ring, CardType::Creature));
+
+    // -2: a face-up artifact card P0 owns in exile goes to P0's hand.
+    let mut state = islands();
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let exiled = put(&mut state, P0, "Mana Vault", Zone::Exile);
+    let theirs = put(&mut state, P1, "Sol Ring", Zone::Exile);
+    pool(&mut state, P0, &[], 4);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, karn, 1, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(legal_targets, vec![Target::Object(exiled)]);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(exiled)),
+            );
+        }
+        other => panic!("expected the exile choice, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(exiled).zone, Zone::Hand);
+    assert_eq!(state.objects.get(theirs).zone, Zone::Exile);
+    assert_eq!(loyalty(&state, karn), Some(3));
+}
+
+#[test]
+fn tezzeret_grows_with_artifacts_untaps_tutors_and_makes_an_emblem() {
+    let mut state = islands();
+    let tezzeret = put(&mut state, P0, "Tezzeret, Cruel Captain", Zone::Hand);
+    pool(&mut state, P0, &[], 3);
+    cast(&mut state, tezzeret, &[]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, tezzeret), Some(4));
+    let moxen =
+        ["Mox Pearl", "Mox Jet", "Mox Ruby"].map(|name| put(&mut state, P0, name, Zone::Hand));
+    for mox in moxen {
+        cast(&mut state, mox, &[]);
+        settled(&mut state);
+    }
+    assert_eq!(loyalty(&state, tezzeret), Some(7), "one per artifact");
+
+    // 0: untap an artifact creature and grow it.
+    let strix = put(&mut state, P0, "Baleful Strix", Zone::Battlefield);
+    state.objects.get_mut(strix).tapped = true;
+    activate(&mut state, tezzeret, 0, &[Target::Object(strix)]);
+    settled(&mut state);
+    assert!(!state.objects.get(strix).tapped);
+    assert_eq!(state.objects.get(strix).counters.plus1_plus1, 1);
+    assert_eq!(loyalty(&state, tezzeret), Some(7));
+
+    // -3 next turn: an artifact with mana value 1 or less, revealed.
+    let mut state = game(&["Island", "Coveted Jewel", "Sol Ring", "Island"]);
+    let library = state.players[0].library.clone();
+    let tezzeret = put(&mut state, P0, "Tezzeret, Cruel Captain", Zone::Hand);
+    pool(&mut state, P0, &[], 3);
+    cast(&mut state, tezzeret, &[]);
+    settled(&mut state);
+    activate(&mut state, tezzeret, 1, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(legal_targets, vec![Target::Object(library[2])]);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(library[2])),
+            );
+        }
+        other => panic!("expected the search, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(library[2]).zone, Zone::Hand);
+    assert_eq!(loyalty(&state, tezzeret), Some(1));
+
+    // -7: the emblem puts three counters on an artifact at combat.
+    let mut state = islands();
+    let tezzeret = put(&mut state, P0, "Tezzeret, Cruel Captain", Zone::Hand);
+    pool(&mut state, P0, &[], 3);
+    cast(&mut state, tezzeret, &[]);
+    settled(&mut state);
+    let moxen =
+        ["Mox Pearl", "Mox Jet", "Mox Ruby"].map(|name| put(&mut state, P0, name, Zone::Hand));
+    for mox in moxen {
+        cast(&mut state, mox, &[]);
+        settled(&mut state);
+    }
+    activate(&mut state, tezzeret, 2, &[]);
+    settled(&mut state);
+    let target = moxen[0];
+    pass_until_answered(&mut state, |state, decision| {
+        let Decision::ChooseTargets { legal_targets, .. } = decision else {
+            return false;
+        };
+        assert_eq!(state.step, Step::BeginCombat);
+        assert!(legal_targets.contains(&Target::Object(target)));
+        act(state, Action::ChooseTarget(Target::Object(target)));
+        true
+    });
+    settled(&mut state);
+    assert_eq!(state.objects.get(target).counters.plus1_plus1, 3);
+    assert!(engine::object_has_type(&state, target, CardType::Creature));
+    assert!(engine::has_effective_subtype(
+        &state,
+        target,
+        Subtype::Robot
+    ));
+    assert_eq!(
+        (
+            engine::effective_power(&state, target),
+            engine::effective_toughness(&state, target)
+        ),
+        (3, 3)
+    );
+}
+
+// ---- Batch three: Urza's Saga, Metamorph, Witch Enchanter -----------------
+
+#[test]
+fn urzas_saga_gains_its_abilities_by_chapter_and_fetches_a_cheap_artifact() {
+    // P0 draws the first two cards on turns two and three.
+    let mut state = game(&[
+        "Island",
+        "Island",
+        "Island",
+        "Coveted Jewel",
+        "Sol Ring",
+        "Mox Jet",
+        "Island",
+        "Island",
+    ]);
+    let library = state.players[0].library.clone();
+    let saga = put(&mut state, P0, "Urza's Saga", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(saga));
+    settled(&mut state);
+    assert_eq!(state.objects.get(saga).counters.lore, 1);
+    act(&mut state, Action::ActivateManaAbility(saga));
+    assert_eq!(mana(&state, P0, ManaColor::C), 1, "chapter I");
+    assert!(!activatable(&mut state, saga, 0), "chapter II not yet");
+
+    // Chapter II on P0's next turn.
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Main1 && state.turn == 2
+    });
+    settled(&mut state);
+    assert_eq!(state.objects.get(saga).counters.lore, 2);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, saga, 0, &[]);
+    settled(&mut state);
+    let constructs = state.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            CARD_DEFS[state.objects.get(id).card_def as usize].name == "Karn Construct Token"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(constructs.len(), 1);
+    assert_eq!(engine::effective_power(&state, constructs[0]), 1);
+
+    // Chapter III: an artifact with mana cost {0} or {1}, then the Saga is
+    // sacrificed.
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Main1 && state.turn == 3
+    });
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert!(
+                legal_targets.contains(&Target::Object(library[4])),
+                "Sol Ring"
+            );
+            assert!(
+                legal_targets.contains(&Target::Object(library[5])),
+                "Mox Jet"
+            );
+            assert!(
+                !legal_targets.contains(&Target::Object(library[3])),
+                "Jewel"
+            );
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(library[4])),
+            );
+        }
+        other => panic!("expected the search, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(library[4]).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(saga).zone, Zone::Graveyard);
+}
+
+#[test]
+fn phyrexian_metamorph_enters_as_an_artifact_copy_and_leaves_as_itself() {
+    let mut state = islands();
+    let jewel = put(&mut state, P1, "Coveted Jewel", Zone::Battlefield);
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, metamorph, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert!(legal_targets.contains(&Target::Object(jewel)));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(jewel)),
+            );
+        }
+        other => panic!("expected the copy choice, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(metamorph).zone, Zone::Battlefield);
+    assert_eq!(engine::effective_name(&state, metamorph), "Coveted Jewel");
+    assert!(engine::object_has_type(
+        &state,
+        metamorph,
+        CardType::Artifact
+    ));
+    assert_eq!(state.players[0].hand.len(), 3, "the copy's ETB draws three");
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(metamorph, ManaColor::U),
+    );
+    assert_eq!(mana(&state, P0, ManaColor::U), 3);
+    // Leaving the battlefield, it is Phyrexian Metamorph again.
+    event_move(&mut state, metamorph, Zone::Graveyard);
+    assert_eq!(state.objects.get(metamorph).zone, Zone::Graveyard);
+    assert_eq!(
+        CARD_DEFS[state.objects.get(metamorph).card_def as usize].name,
+        "Phyrexian Metamorph"
+    );
+
+    // A creature copy is also an artifact.
+    let mut state = islands();
+    let archon = put(&mut state, P1, "Archon of Emeria", Zone::Battlefield);
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, metamorph, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { .. }) => {
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(archon)),
+            );
+        }
+        other => panic!("expected the copy choice, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert!(engine::object_has_type(
+        &state,
+        metamorph,
+        CardType::Creature
+    ));
+    assert!(engine::object_has_type(
+        &state,
+        metamorph,
+        CardType::Artifact
+    ));
+    assert_eq!(
+        (
+            engine::effective_power(&state, metamorph),
+            engine::effective_toughness(&state, metamorph)
+        ),
+        (2, 3)
+    );
+
+    // Copying nothing, it is a 0/0 and dies.
+    let mut state = islands();
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, metamorph, &[]);
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(metamorph).zone, Zone::Graveyard);
+}
+
+fn event_move(state: &mut GameState, object: ObjectId, zone: Zone) {
+    mtg_kernel::event::propose_and_commit(
+        state,
+        mtg_kernel::event::ProposedEvent::zone_change(object, zone),
+    );
+}
+
+#[test]
+fn witch_enchanter_destroys_an_artifact_or_plays_as_its_land_face() {
+    let mut state = islands();
+    let witch = put(&mut state, P0, "Witch Enchanter", Zone::Hand);
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::W], 3);
+    cast(&mut state, witch, &[]);
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(ring).zone, Zone::Graveyard);
+    assert!(engine::object_has_type(&state, witch, CardType::Creature));
+
+    for pay in [true, false] {
+        let mut state = islands();
+        let witch = put(&mut state, P0, "Witch Enchanter", Zone::Hand);
+        next(&mut state);
+        act(&mut state, Action::PlayLand(witch));
+        match next(&mut state) {
+            Decision::ChooseEffectOption {
+                player,
+                option_count,
+                ..
+            } => {
+                assert_eq!(player, P0);
+                assert_eq!(option_count, 2);
+                act(&mut state, Action::ChooseEffectOption(u16::from(!pay)));
+            }
+            other => panic!("expected the life payment choice, got {other:?}"),
+        }
+        assert_eq!(state.objects.get(witch).zone, Zone::Battlefield);
+        assert!(engine::object_has_type(&state, witch, CardType::Land));
+        assert!(!engine::object_has_type(&state, witch, CardType::Creature));
+        assert_eq!(state.objects.get(witch).tapped, !pay, "pay {pay}");
+        assert_eq!(state.players[0].life, if pay { 17 } else { 20 });
+        if pay {
+            act(&mut state, Action::ActivateManaAbility(witch));
+            assert_eq!(mana(&state, P0, ManaColor::W), 1);
+        }
+    }
+}
+
+// ---- Batch three: Peacekeeper and Chancellor ------------------------------
+
+/// The (letter group, name) option indices of `name` in Anointed
+/// Peacekeeper's two-step name choice.
+fn name_choice(name: &str) -> (u16, u16) {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut groups: Vec<(char, Vec<&str>)> = Vec::new();
+    for def in CARD_DEFS.iter() {
+        if def.is_token || !def.is_executable() || seen.contains(&def.object_name) {
+            continue;
+        }
+        seen.push(def.object_name);
+        let letter = def
+            .object_name
+            .chars()
+            .next()
+            .map_or(' ', |letter| letter.to_ascii_uppercase());
+        match groups.iter_mut().find(|(group, _)| *group == letter) {
+            Some((_, names)) => names.push(def.object_name),
+            None => groups.push((letter, vec![def.object_name])),
+        }
+    }
+    groups.sort_by_key(|(letter, _)| *letter);
+    for (group, (_, names)) in groups.iter().enumerate() {
+        if let Some(index) = names.iter().position(|candidate| *candidate == name) {
+            return (group as u16, index as u16);
+        }
+    }
+    panic!("{name} is not nameable");
+}
+
+/// Casts Anointed Peacekeeper for P0 and names `name`.
+fn peacekeeper_naming(state: &mut GameState, name: &str) -> ObjectId {
+    let keeper = put(state, P0, "Anointed Peacekeeper", Zone::Hand);
+    pool(state, P0, &[ManaColor::W], 2);
+    cast(state, keeper, &[]);
+    let (group, index) = name_choice(name);
+    match settle(state) {
+        Some(Decision::ChooseEffectOption { player, .. }) => {
+            assert_eq!(player, P0);
+            act(state, Action::ChooseEffectOption(group));
+        }
+        other => panic!("expected the letter, got {other:?}"),
+    }
+    if let Some(Decision::ChooseEffectOption { .. }) = settle(state) {
+        act(state, Action::ChooseEffectOption(index));
+    }
+    settled(state);
+    assert_eq!(state.objects.get(keeper).zone, Zone::Battlefield);
+    keeper
+}
+
+#[test]
+fn anointed_peacekeeper_sees_the_hand_and_taxes_the_named_card() {
+    let mut state = islands();
+    let secret = put(&mut state, P1, "Sol Ring", Zone::Hand);
+    peacekeeper_naming(&mut state, "Sol Ring");
+    assert!(state
+        .known_hand_cards(P0, P1)
+        .iter()
+        .any(|entry| entry.object == secret));
+    // P1's Sol Ring now costs {3}.
+    opponents_main_phase(&mut state);
+    pool(&mut state, P1, &[], 2);
+    assert!(!castable(&mut state, secret));
+    pool(&mut state, P1, &[], 1);
+    assert!(castable(&mut state, secret));
+
+    // Naming Strip Mine taxes its activated ability, not its mana ability.
+    let mut state = islands();
+    peacekeeper_naming(&mut state, "Strip Mine");
+    opponents_main_phase(&mut state);
+    let mine = put(&mut state, P1, "Strip Mine", Zone::Battlefield);
+    put(&mut state, P1, "Island", Zone::Battlefield);
+    assert!(!activatable(&mut state, mine, 0));
+    pool(&mut state, P1, &[], 2);
+    assert!(activatable(&mut state, mine, 0));
+    act(&mut state, Action::ActivateManaAbility(mine));
+    assert_eq!(mana(&state, P1, ManaColor::C), 3);
+}
+
+/// A game at its very beginning: turn 1's untap step, P0 active.
+fn fresh_game(library: &[&str]) -> GameState {
+    let ids: Vec<u16> = library
+        .iter()
+        .map(|name| card_id_by_name(name).unwrap_or_else(|| panic!("{name}")))
+        .collect();
+    GameState::new_from_libraries(
+        &ids,
+        &ids,
+        |id| CARD_DEFS[id as usize].object_name.into(),
+        0x4348_414e,
+    )
+}
+
+#[test]
+fn chancellor_of_the_annex_taxes_the_first_spell_from_the_opening_hand() {
+    for pay in [true, false] {
+        let mut state = fresh_game(&["Island"; 20]);
+        let chancellor = put(&mut state, P1, "Chancellor of the Annex", Zone::Hand);
+        pass_until_answered(&mut state, |state, decision| {
+            let Decision::ChooseEffectOption { player, .. } = decision else {
+                return false;
+            };
+            assert_eq!(*player, P1);
+            assert_eq!(state.step, Step::Upkeep);
+            act(state, Action::ChooseEffectOption(0));
+            true
+        });
+        pass_until(&mut state, |state| {
+            state.step == Step::Main1 && state.stack.is_empty()
+        });
+        assert!(state
+            .known_hand_cards(P0, P1)
+            .iter()
+            .any(|entry| entry.object == chancellor));
+        let mox = put(&mut state, P0, "Mox Pearl", Zone::Hand);
+        pool(&mut state, P0, &[], 1);
+        cast(&mut state, mox, &[]);
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectOption { player, .. }) => {
+                assert_eq!(player, P0);
+                act(&mut state, Action::ChooseEffectOption(u16::from(!pay)));
+            }
+            other => panic!("expected the payment choice, got {other:?}"),
+        }
+        settled(&mut state);
+        let zone = if pay {
+            Zone::Battlefield
+        } else {
+            Zone::Graveyard
+        };
+        assert_eq!(state.objects.get(mox).zone, zone, "pay {pay}");
+        // The second spell is not taxed.
+        let jet = put(&mut state, P0, "Mox Jet", Zone::Hand);
+        cast(&mut state, jet, &[]);
+        settled(&mut state);
+        assert_eq!(state.objects.get(jet).zone, Zone::Battlefield);
+    }
+}
+
+#[test]
+fn chancellor_of_the_annex_taxes_every_opponent_spell_while_in_play() {
+    let mut state = islands();
+    put(&mut state, P0, "Chancellor of the Annex", Zone::Battlefield);
+    opponents_main_phase(&mut state);
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Hand);
+    pool(&mut state, P1, &[], 2);
+    cast(&mut state, ring, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption { player, .. }) => {
+            assert_eq!(player, P1);
+            act(&mut state, Action::ChooseEffectOption(0));
+        }
+        other => panic!("expected the payment choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(ring).zone, Zone::Battlefield);
+    assert_eq!(state.players[1].mana_pool, [0; 6]);
+    // Unable to pay, the spell is countered.
+    let mox = put(&mut state, P1, "Mox Jet", Zone::Hand);
+    cast(&mut state, mox, &[]);
+    if let Some(Decision::ChooseEffectOption { .. }) = settle(&mut state) {
+        act(&mut state, Action::ChooseEffectOption(0));
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(mox).zone, Zone::Graveyard);
 }
 
 /// Temporary while wave E4 is in progress: reports the catalog hash.
