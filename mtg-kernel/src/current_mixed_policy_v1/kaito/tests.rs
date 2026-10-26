@@ -9,6 +9,7 @@ mod attack_triggers;
 mod balmor;
 mod bloodwitch;
 mod bulk_up;
+mod burst_lightning;
 mod conditional_player_spell;
 mod cost_reduced_spell;
 mod counter_return_creatures;

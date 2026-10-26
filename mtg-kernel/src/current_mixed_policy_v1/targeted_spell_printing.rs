@@ -25,6 +25,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Zombify"
             | "Bulk Up"
             | "Incinerating Blast"
+            | "Burst Lightning"
     )
 }
 fn pump(power: i32, toughness: i32) -> EffectOp {
@@ -52,6 +53,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     if d.name == "Incinerating Blast" {
         return incinerating_blast(id, d);
+    }
+    if d.name == "Burst Lightning" {
+        return burst_lightning(id, d);
     }
     let (color, generic, pips, kind, target, filter, program, ordered) = match d.name {
         "Stab" => (
@@ -395,6 +399,78 @@ fn incinerating_blast(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "ordered_cast_roots":casts
         }}),
     ))
+}
+
+fn burst_lightning(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 0,
+        pips: &[Pip::Colored(ManaColor::R)],
+        x_count: 0,
+    };
+    let kicker = Cost {
+        generic: 4,
+        pips: &[],
+        x_count: 0,
+    };
+    let damage = |amount| EffectOp::DealDamage {
+        target: TargetRef::Target(0),
+        amount,
+    };
+    let program = EffectOp::Conditional {
+        cond: EffectCond::WasKicked,
+        then: Box::new(damage(4)),
+        else_: Box::new(damage(2)),
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.kicker_cost != Some(kicker)
+        || d.mana_value != 1
+        || d.types != [CardType::Instant]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::R]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::AnyTarget
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)() != Some(program)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let roots = [false, true].into_iter().map(|kicked| {
+        let mut costs = vec![json!({"operation":"PayPrintedMana","cost":cost})];
+        if kicked { costs.push(json!({"operation":"PayKickerAdditionalMana","cost":kicker})); }
+        json!({"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
+            "timing":"InstantWithPriority","kicked":kicked,"kicker_chosen_during_cast_before_payment":true,
+            "ordered_costs":costs,"normal_cost_increases_and_reductions_apply_to_total_cost":true,
+            "target_count":1,"target_slot":0,"target_filter":{"kind":"AnyTarget","players":true,
+                "battlefield_effective_types":["Creature","Planeswalker"],"either_controller":true},
+            "requires_current_target_incarnation":true,"recheck_target_legality_at_resolution":true,
+            "all_targets_illegal_skips_entire_resolution":true,
+            "ordered_resolution":[{"operation":"DealNoncombatDamage","source":"OriginalResolvingSpell",
+                "target_slot":0,"amount":if kicked {4}else{2},"damage_occurrences":1,
+                "normal_source_keywords_replacements_and_prevention_apply":true}],
+            "kicked_damage_replaces_base_damage_not_an_extra_packet":true,
+            "stack_created_copies_preserve_original_kicked_choice_without_paying_again":true,
+            "countering_skips_resolution_without_refunding_cost":true,
+            "other_cast_permissions_require_current_candidate_authority":true})
+    }).collect::<Vec<_>>();
+    Ok(Some(json!({"card_id":id,"kicker_damage_printing":{
+        "schema":"printed-kicker-any-target-damage/v1","cost":cost,"kicker_additional_cost":kicker,
+        "mana_value":1,"types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+        "power":null,"toughness":null,"keywords":0,"token":false,"ordered_cast_roots":roots,
+        "kicker_does_not_change_printed_or_stack_mana_value":true,
+        "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
+        "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","normal_zone_replacements_apply":true
+    }})))
 }
 
 fn bulk_up(id: u16, d: &CardDef) -> Result<Option<Value>> {

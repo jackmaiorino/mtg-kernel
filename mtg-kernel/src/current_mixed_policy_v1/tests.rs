@@ -1251,7 +1251,7 @@ mod paid {
             spell_effect: d.spell_effect,
             mana_ability: d.mana_ability,
             alt_cost: None,
-            kicker_cost: None,
+            kicker_cost: d.kicker_cost,
             additional_cost: d.additional_cost,
             flashback: d
                 .flashback
@@ -1750,6 +1750,74 @@ mod paid {
             assert!(
                 roots::baseline_recipe(id, &d).is_err(),
                 "Bulk changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn burst_changed_base_or_kicker_cost_damage_choice_target_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectCond, EffectOp, TargetRef},
+            mana::Cost,
+        };
+        let id = crate::card_def::card_id_by_name("Burst Lightning").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        let printing = roots::baseline(id).unwrap();
+        let roots = printing["kicker_damage_printing"]["ordered_cast_roots"]
+            .as_array()
+            .unwrap();
+        assert_eq!(roots.len(), 2);
+        for (route, kicked) in roots.iter().zip([false, true]) {
+            assert_eq!(route["kicked"], kicked);
+            assert_eq!(
+                route["ordered_costs"].as_array().unwrap().len(),
+                if kicked { 2 } else { 1 }
+            );
+            assert_eq!(route["ordered_resolution"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                route["ordered_resolution"][0]["amount"],
+                if kicked { 4 } else { 2 }
+            );
+        }
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.kicker_cost = None,
+                1 => d.kicker_cost = Some(Cost::zero()),
+                2 => d.cost = Cost::zero(),
+                3 => d.target_spec = TargetSpec::Creature,
+                4 => d.types = &[CardType::Sorcery],
+                5 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Conditional {
+                            cond: EffectCond::WasKicked,
+                            then: Box::new(EffectOp::DealDamage {
+                                target: TargetRef::Target(0),
+                                amount: 2,
+                            }),
+                            else_: Box::new(EffectOp::DealDamage {
+                                target: TargetRef::Target(0),
+                                amount: 4,
+                            }),
+                        })
+                    }
+                }
+                _ => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DealDamage {
+                            target: TargetRef::Target(0),
+                            amount: 4,
+                        })
+                    }
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Burst changed field {field}"
             );
         }
     }
