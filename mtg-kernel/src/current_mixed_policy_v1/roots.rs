@@ -46,6 +46,8 @@ mod evolving_printing;
 pub(super) mod faebloom_printing;
 #[path = "fiery_printing.rs"]
 pub(super) mod fiery_printing;
+#[path = "gnarlid_printing.rs"]
+mod gnarlid_printing;
 #[path = "graveyard_batch_spell_printing.rs"]
 mod graveyard_batch_spell_printing;
 #[path = "kellan_printing.rs"]
@@ -438,6 +440,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
 pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
     CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
         simple_trigger_printing::handles(d.name)
+            || gnarlid_printing::handles(d.name)
             || utility_activation_printing::handles(d.name)
             || counter_return_creature_printing::handles(d.name)
             || ward_discount_creature_printing::handles(d.name)
@@ -573,6 +576,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let threshold_loot = threshold_loot_printing::printing(id, d)?;
     let bloodwitch = bloodwitch_printing::printing(id, d)?;
     let paladin = paladin_printing::printing(id, d)?;
+    let gnarlid = gnarlid_printing::printing(id, d)?;
     let targeted_entry = targeted_entry_printing::printing(id, d)?;
     let entry_destruction = entry_destruction_printing::printing(id, d)?;
     let entry_exile = entry_exile_printing::printing(id, d)?;
@@ -793,6 +797,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || (targeted_spell.is_some() && matches!(d.name, "Bulk Up" | "Self-Reflection"))
             || (ordinary_batch_spell.is_some() && d.name == "Revenge of the Rats"))
         && (d.kicker_cost.is_none()
+            || gnarlid.is_some()
             || (targeted_spell.is_some() && d.name == "Burst Lightning")
             || (targeted_entry.is_some() && d.name == "Sun-Blessed Healer")
             || (library_search.is_some() && d.name == "Grow from the Ashes"))
@@ -802,9 +807,10 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && (d.attachment.is_none() || ordinary_aura.is_some())
         && d.starting_loyalty.is_none()
         && (d.enters_with_plus_one_counters.is_none()
+            || gnarlid.is_some()
             || (observer_trigger.is_some() && d.name == "Mossborn Hydra"))
         && d.controlled_creature_grant.is_none()
-        && (d.controlled_counter_keyword.is_none() || paladin.is_some())
+        && (d.controlled_counter_keyword.is_none() || paladin.is_some() || gnarlid.is_some())
         && d.game_outcome_protection_v1.is_none()
         && (d.generic_cost_reduction.is_none()
             || ward_discount_creature.is_some()
@@ -978,6 +984,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = bloodwitch {
+        return Ok(printing);
+    }
+    if let Some(printing) = gnarlid {
         return Ok(printing);
     }
     if let Some(printing) = paladin {

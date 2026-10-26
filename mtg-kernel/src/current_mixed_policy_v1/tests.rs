@@ -1528,6 +1528,59 @@ mod paid {
         }
     }
 
+    #[test]
+    fn gnarlid_additional_cost_entry_replacement_and_counter_grant_refuse_changes() {
+        use crate::card_def::{EntersWithPlusOneCountersDef, Keywords};
+        let id = crate::card_def::card_id_by_name("Gnarlid Colony").unwrap();
+        let exact = || {
+            let mut d = ordinary_recipe(id);
+            d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                count: 2,
+                if_kicked: true,
+            });
+            d.controlled_counter_keyword = Some(Keywords::TRAMPLE);
+            d
+        };
+        let value = roots::baseline_recipe(id, &exact()).unwrap();
+        let meaning = &value["gnarlid_printing"];
+        assert_eq!(
+            meaning["ordered_cast_roots"][1]["ordered_costs"][0]
+                ["base_total_before_increases_and_reductions"]["generic"],
+            3
+        );
+        assert_eq!(meaning["battlefield_entry_replacement"]["count"], 2);
+        assert_eq!(
+            meaning["ordered_static_roots"][0]["applies_on_both_players_turns"],
+            true
+        );
+        for field in 0..10 {
+            let mut d = exact();
+            match field {
+                0 => d.kicker_cost = None,
+                1 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                2 => d.enters_with_plus_one_counters = None,
+                3 => {
+                    d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                        count: 1,
+                        if_kicked: true,
+                    })
+                }
+                4 => {
+                    d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                        count: 2,
+                        if_kicked: false,
+                    })
+                }
+                5 => d.controlled_counter_keyword = Some(Keywords::FIRST_STRIKE),
+                6 => d.keywords = Keywords::TRAMPLE,
+                7 => d.mana_value = 5,
+                8 => d.power = Some(4),
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {
