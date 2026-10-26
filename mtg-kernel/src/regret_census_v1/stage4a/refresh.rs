@@ -2706,7 +2706,11 @@ pub(super) mod tests {
         src.search_root = "rollout-opponent".into();
         let mut other = policy.fork_for_collection_v3().unwrap();
         let mut parameters = other.training_parameters_v3();
-        for p in &mut parameters {
+        // The card embedding's padding row must stay zero; perturb the rest.
+        for p in parameters
+            .iter_mut()
+            .filter(|p| p.name != "card_embedding.weight")
+        {
             for (i, v) in p.values.iter_mut().enumerate() {
                 *v += 0.25 * ((i % 7) as f32 - 3.0);
             }
