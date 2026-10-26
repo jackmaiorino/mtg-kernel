@@ -745,28 +745,40 @@ pub(crate) struct Step {
 /// 522 MiB.
 pub(crate) const KEY_MEMO_BYTES: usize = 512 << 20;
 
-/// The memo's size limit: `KEY_MEMO_BYTES` unless `S4A_KEY_MEMO_MIB` names
+/// The limit of the default (unreported) memo E searches use when
+/// `S4A_KEY_MEMO` is unset: a quarter of `KEY_MEMO_BYTES`, so many searches
+/// can run side by side. On the E1 timing games it saved nearly as much as
+/// 512 MiB did.
+pub(crate) const QUIET_KEY_MEMO_BYTES: usize = 128 << 20;
+
+/// The memo's size limit: `default` unless `S4A_KEY_MEMO_MIB` names
 /// another whole number of MiB (1 to 65536, and representable in bytes). The
 /// limit only decides which steps are stored, never a key, tree, selection
 /// or statistic of a transition- or work-limited search. A CPU-second budget
 /// (the allocation experiment) is timing-dependent: like `S4A_KEY_MEMO`
 /// itself or host load, the limit can change how many simulations fit.
-fn key_memo_max_bytes() -> usize {
-    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *BYTES.get_or_init(|| match std::env::var("S4A_KEY_MEMO_MIB") {
-        Err(_) => KEY_MEMO_BYTES,
-        Ok(v) => v
-            .parse::<usize>()
-            .ok()
-            .filter(|mib| (1..=65536).contains(mib))
-            .and_then(|mib| mib.checked_mul(1 << 20))
-            .unwrap_or_else(|| {
-                panic!("S4A_KEY_MEMO_MIB must be 1 to 65536 MiB and fit in memory, got {v:?}")
-            }),
-    })
+fn key_memo_max_bytes(default: usize) -> usize {
+    static BYTES: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    BYTES
+        .get_or_init(|| match std::env::var("S4A_KEY_MEMO_MIB") {
+            Err(_) => None,
+            Ok(v) => Some(
+                v.parse::<usize>()
+                    .ok()
+                    .filter(|mib| (1..=65536).contains(mib))
+                    .and_then(|mib| mib.checked_mul(1 << 20))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "S4A_KEY_MEMO_MIB must be 1 to 65536 MiB and fit in memory, got {v:?}"
+                        )
+                    }),
+            ),
+        })
+        .unwrap_or(default)
 }
 
-/// Exact per-search memo of key steps (`S4A_KEY_MEMO=1`).
+/// Exact per-search memo of key steps (on unless `S4A_KEY_MEMO=0`; see
+/// `arms::KeyMemoUse`).
 ///
 /// A keyer's step is a deterministic function of its mode, its starting
 /// history and the sequence of prepared frames and live actions applied to
@@ -780,13 +792,15 @@ fn key_memo_max_bytes() -> usize {
 #[derive(Default)]
 pub(crate) struct KeyMemo {
     index: HashMap<(u32, [u8; 32]), u32>,
-    /// First-level index by the raw frame's digest (`raw_frame_digest`):
+    /// First-level index by the raw frame's digest (of `raw_frame_text`):
     /// equal raw frames prepare equally, so a raw hit names the entry the
     /// prepared lookup would find, without building or preparing the view.
-    raw_index: HashMap<(u32, [u8; 32]), u32>,
-    /// Estimated bytes of `raw_index`, against its own budget (a sixteenth
-    /// of `max_bytes`), so step storage and every recorded memo counter stay
-    /// exactly as without it.
+    /// Each value keeps the raw frame text (`raw_frame_text`), and a hit
+    /// compares it in full: equal digests alone never select an entry.
+    raw_index: RawIndex,
+    /// Estimated bytes of `raw_index`, its texts included, against its own
+    /// budget (`max_bytes / RAW_INDEX_SHARE`), so step storage and every
+    /// recorded memo counter stay exactly as without it.
     raw_bytes: usize,
     entries: Vec<MemoEntry>,
     nodes: u32,
@@ -806,23 +820,40 @@ struct MemoEntry {
     children: HashMap<u32, u32>,
 }
 
-/// Estimated bytes of one `raw_index` entry.
+/// The raw index: (memo node, raw digest) to (entry, raw frame text).
+type RawIndex = HashMap<(u32, [u8; 32]), (u32, Box<[u8]>)>;
+
+/// Estimated bytes of one `raw_index` entry besides its text.
 const RAW_INDEX_ENTRY_BYTES: usize = 96;
 
+/// The raw index's budget is `max_bytes / RAW_INDEX_SHARE`.
+const RAW_INDEX_SHARE: usize = 4;
+
 impl KeyMemo {
-    /// Records that raw frame `raw` at `node` resolves to entry `e`, within
-    /// the raw index's own budget.
-    fn remember_raw(&mut self, node: u32, raw: Option<[u8; 32]>, e: u32) {
-        let Some(raw) = raw else { return };
-        if self.raw_bytes + RAW_INDEX_ENTRY_BYTES <= self.max_bytes / 16
-            && self.raw_index.insert((node, raw), e).is_none()
-        {
-            self.raw_bytes += RAW_INDEX_ENTRY_BYTES;
+    /// Records that raw frame `raw` (digest and text) at `node` resolves to
+    /// entry `e`, within the raw index's own budget. A digest already taken
+    /// keeps its first frame (a collision never replaces it).
+    fn remember_raw(&mut self, node: u32, raw: Option<([u8; 32], Vec<u8>)>, e: u32) {
+        let Some((raw, text)) = raw else { return };
+        let cost = RAW_INDEX_ENTRY_BYTES + text.len();
+        if self.raw_bytes + cost > self.max_bytes / RAW_INDEX_SHARE {
+            return;
+        }
+        use std::collections::hash_map::Entry;
+        if let Entry::Vacant(slot) = self.raw_index.entry((node, raw)) {
+            slot.insert((e, text.into_boxed_slice()));
+            self.raw_bytes += cost;
         }
     }
 
     pub(crate) fn new() -> Self {
-        Self::with_max_bytes(key_memo_max_bytes())
+        Self::with_max_bytes(key_memo_max_bytes(KEY_MEMO_BYTES))
+    }
+
+    /// The default E-search memo (`S4A_KEY_MEMO` unset): the same memo with
+    /// the smaller default limit.
+    pub(crate) fn quiet() -> Self {
+        Self::with_max_bytes(key_memo_max_bytes(QUIET_KEY_MEMO_BYTES))
     }
 
     fn with_max_bytes(max_bytes: usize) -> Self {
@@ -878,38 +909,59 @@ impl KeyMemo {
     }
 }
 
-/// SHA-256 over the raw actor-visible observation and menu as their JSON
-/// text, written straight from their types. For the fixed engine types
-/// (`ObservationV6` and `ActionSemanticV1`, and `Value` in tests), equal text
-/// gives equal `serde_json::to_value` results: both come from the same
-/// `Serialize` calls, and the text encodes them unambiguously for those
-/// types. (It would not for arbitrary types: an `f32` and an `f64` can print
-/// alike yet widen to different values; never mix types at one memo.) So
-/// frames with equal raw digests prepare to equal views and menus.
-fn raw_frame_digest<O: serde::Serialize, M: serde::Serialize>(
+/// The raw actor-visible observation and menu as their JSON text, written
+/// straight from their types (tagged, with the menu length). For the fixed
+/// engine types (`ObservationV6` and `ActionSemanticV1`, and `Value` in
+/// tests), equal text gives equal `serde_json::to_value` results: both come
+/// from the same `Serialize` calls, and the text encodes them unambiguously
+/// for those types. (It would not for arbitrary types: an `f32` and an `f64`
+/// can print alike yet widen to different values; never mix types at one
+/// memo.) So frames with equal raw text prepare to equal views and menus.
+/// The raw index buckets by this text's SHA-256 and compares the text itself.
+fn raw_frame_text<O: serde::Serialize, M: serde::Serialize>(
     obs: &O,
     menu: &[M],
-) -> Result<[u8; 32], PlayErr> {
-    struct Hashing<'a>(&'a mut Sha256);
-    impl std::io::Write for Hashing<'_> {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.update(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
+) -> Result<Vec<u8>, PlayErr> {
     let fault = |e: serde_json::Error| PlayErr::Fault(e.to_string());
-    let mut h = Sha256::new();
-    h.update(b"key-memo-raw-v1");
-    serde_json::to_writer(Hashing(&mut h), obs).map_err(fault)?;
-    h.update((menu.len() as u64).to_le_bytes());
+    let mut text = b"key-memo-raw-v1".to_vec();
+    serde_json::to_writer(&mut text, obs).map_err(fault)?;
+    text.extend_from_slice(&(menu.len() as u64).to_le_bytes());
     for m in menu {
-        h.update(b"\n");
-        serde_json::to_writer(Hashing(&mut h), m).map_err(fault)?;
+        text.push(b'\n');
+        serde_json::to_writer(&mut text, m).map_err(fault)?;
     }
-    Ok(h.finalize().into())
+    Ok(text)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only: every memo digest is the same value, so every lookup
+    /// lands on one bucket and only the full comparisons tell frames apart.
+    static FORCE_DIGEST_COLLISIONS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A memo digest as used for bucketing (forced to collide in tests).
+fn memo_digest(digest: [u8; 32]) -> [u8; 32] {
+    #[cfg(test)]
+    if FORCE_DIGEST_COLLISIONS.with(std::cell::Cell::get) {
+        return [0; 32];
+    }
+    digest
+}
+
+/// Whether `text` holds exactly the JSON text of the prepared view and menu
+/// (`FrameView::text`'s format). Equal text means equal values.
+fn frame_text_matches(text: &FrameText, obs: &Value, menu: &[Value]) -> bool {
+    fn same(stored: &[u8], value: &Value) -> bool {
+        serde_json::to_vec(value).is_ok_and(|bytes| bytes == stored)
+    }
+    text.menu.len() == menu.len()
+        && text
+            .menu
+            .iter()
+            .zip(menu)
+            .all(|(stored, m)| same(stored, m))
+        && same(&text.obs, obs)
 }
 
 /// SHA-256 over a prepared observation and its menu: a tagged,
@@ -961,7 +1013,7 @@ fn prepared_digest(obs: &Value, menu: &[Value]) -> [u8; 32] {
     for m in menu {
         feed(&mut h, m);
     }
-    h.finalize().into()
+    memo_digest(h.finalize().into())
 }
 
 /// Estimated heap bytes a stored step keeps alive besides its view's text
@@ -1103,16 +1155,27 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
             return self.key_raw(raw_obs, raw_menu.map_err(fault)?);
         };
         let t0 = Instant::now();
-        let raw = raw_frame_digest(obs, sem)?;
-        if let Some(&e) = memo.raw_index.get(&(node, raw)) {
-            return Ok(self.memo_hit(memo, e, t0));
+        let text = raw_frame_text(obs, sem)?;
+        let raw = memo_digest(Sha256::digest(&text).into());
+        if let Some((e, stored)) = memo.raw_index.get(&(node, raw)) {
+            if **stored == *text {
+                let e = *e;
+                return Ok(self.memo_hit(memo, e, t0));
+            }
         }
         let raw_obs = serde_json::to_value(obs).map_err(fault)?;
         let raw_menu = sem
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<_, _>>();
-        self.key_raw_memo_at(raw_obs, raw_menu.map_err(fault)?, memo, node, Some(raw), t0)
+        self.key_raw_memo_at(
+            raw_obs,
+            raw_menu.map_err(fault)?,
+            memo,
+            node,
+            Some((raw, text)),
+            t0,
+        )
     }
 
     /// A memo hit on entry `e`: replays its statistics increments and
@@ -1147,23 +1210,33 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
     }
 
     /// `key_raw_memo` at memo node `node`; `raw`, when given, is the frame's
-    /// `raw_frame_digest`, recorded for the entry this frame resolves to.
+    /// raw digest and text, recorded for the entry this frame resolves to.
+    /// A stored entry answers only when its prepared view and menu equal
+    /// this frame's in full; a frame whose digest is taken by a different
+    /// frame is keyed afresh and not stored.
     fn key_raw_memo_at(
         &mut self,
         raw_obs: Value,
         raw_menu: Vec<Value>,
         memo: &mut KeyMemo,
         node: u32,
-        raw: Option<[u8; 32]>,
+        raw: Option<([u8; 32], Vec<u8>)>,
         t0: Instant,
     ) -> Result<Step, PlayErr> {
         let (obs, menu) = prepare(raw_obs, raw_menu);
         let digest = prepared_digest(&obs, &menu);
+        let mut taken = false;
         if let Some(&e) = memo.index.get(&(node, digest)) {
-            memo.remember_raw(node, raw, e);
-            return Ok(self.memo_hit(memo, e, t0));
+            if frame_text_matches(memo.entries[e as usize].step.view.text(), &obs, &menu) {
+                memo.remember_raw(node, raw, e);
+                return Ok(self.memo_hit(memo, e, t0));
+            }
+            taken = true;
         }
         memo.misses += 1;
+        if taken {
+            return self.key_prepared(obs, menu, t0, &[]);
+        }
         let before = self.stats.borrow().clone();
         let mut st = self.key_prepared(obs, menu, t0, &[])?;
         memo.bind_mode(self.mode);
@@ -2031,6 +2104,91 @@ mod tests {
                 Some(&mut memo),
             )
             .unwrap();
+        }
+    }
+
+    /// The default (quiet) memo has the smaller default limit; both follow
+    /// `S4A_KEY_MEMO_MIB` when it is set.
+    #[test]
+    fn quiet_key_memo_uses_the_smaller_default_limit() {
+        let (quiet, reported) = (KeyMemo::quiet().max_bytes, KeyMemo::new().max_bytes);
+        if std::env::var_os("S4A_KEY_MEMO_MIB").is_none() {
+            assert_eq!(quiet, QUIET_KEY_MEMO_BYTES);
+            assert_eq!(reported, KEY_MEMO_BYTES);
+        } else {
+            assert_eq!(quiet, reported);
+        }
+    }
+
+    /// Equal digests never select an entry: with every memo digest forced to
+    /// one value, distinct frames at one memo node land on one bucket in both
+    /// indexes, yet each keys exactly as without the memo, and only true
+    /// repeats are served from it.
+    #[test]
+    fn key_memo_compares_frames_in_full_on_forced_digest_collisions() {
+        struct Forced;
+        impl Drop for Forced {
+            fn drop(&mut self) {
+                FORCE_DIGEST_COLLISIONS.with(|f| f.set(false));
+            }
+        }
+        FORCE_DIGEST_COLLISIONS.with(|f| f.set(true));
+        let _restore = Forced;
+        let f1 = |t: u64| view(vec![x(), y()], vec![obj(t, 19, 3)], vec![]);
+        let f2 = || view(vec![x(), y()], vec![], vec![]);
+        // Distinct first frames at node 0 (all colliding), then exact repeats.
+        let paths: Vec<Vec<(Value, Vec<Value>, u32)>> = vec![
+            vec![(f1(11), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f1(12), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f2(), menu(&[11, 12]), 1), (f1(11), menu(&[]), 0)],
+            vec![(f2(), menu(&[11]), 0), (f1(12), menu(&[]), 0)],
+            vec![(f1(11), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f1(12), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+        ];
+        for (mode, typed) in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow]
+            .into_iter()
+            .flat_map(|m| [(m, false), (m, true)])
+        {
+            let run = |memo: Option<&mut KeyMemo>| {
+                let mut memo = memo;
+                let mut stats = KeyStats::default();
+                let mut out = Vec::new();
+                for path in &paths {
+                    let mut k = keyer(mode, &mut stats);
+                    if memo.is_some() {
+                        k.start_memo();
+                    }
+                    for (o, m, live) in path {
+                        let st = if typed {
+                            k.key_typed_memo(o, m, memo.as_deref_mut()).unwrap()
+                        } else {
+                            k.key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
+                                .unwrap()
+                        };
+                        let (key, pk, pe, cn) = k.storage(&st);
+                        out.push((
+                            st.legacy_key,
+                            st.repaired_key,
+                            key,
+                            pk,
+                            pe.to_vec(),
+                            cn.obs.clone(),
+                        ));
+                        k.advance_memo(st, *live, memo.as_deref_mut());
+                    }
+                }
+                stats.seconds = 0.0;
+                (out, stats.json())
+            };
+            let plain = run(None);
+            let mut memo = KeyMemo::new();
+            assert_eq!(plain, run(Some(&mut memo)), "{mode:?} typed {typed}");
+            // Only the first frame at node 0 and its successor were stored.
+            // The exact repeat of path 0 is served (two hits); every other
+            // first frame collides, is keyed afresh (a miss) and leaves the
+            // memo for the rest of its path.
+            assert_eq!(memo.entries.len(), 2, "{mode:?} typed {typed}");
+            assert_eq!((memo.hits, memo.misses), (2, 6), "{mode:?} typed {typed}");
         }
     }
 

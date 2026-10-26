@@ -1381,12 +1381,18 @@ fn refs<'a>(rows: &'a [&RecordV1], predicate: impl Fn(&JournalV1) -> bool) -> Ve
 /// Validate originals and one-use custody before a public engine mutation.
 /// Private current-operation tails are permitted only under the actual Runner.
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
+    // Kind-guarded scans: a history with no event of the kind gives no rows
+    // either way, and otherwise the whole history (positions included) is read.
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::DrakeJournalV1])
         .iter()
         .enumerate()
-        .filter_map(|(position, event)| journal(event).map(|row| (position, row)))
+        .filter_map(|(position, event)| match event {
+            CommittedEvent::DrakeJournalV1 { record } => Some((position, &**record)),
+            _ => None,
+        })
         .map(|(position, row)| {
             // An identical appended row must not borrow the earlier record's
             // index and enclosing range. Authenticate its physical position
@@ -1410,6 +1416,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     if state
         .engine
         .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::DrakeHistoryRefV1])
         .iter()
         .any(|e| matches!(e, CommittedEvent::DrakeHistoryRefV1 { .. }))
     {

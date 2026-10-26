@@ -440,7 +440,14 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     // loss roster. Ordinary losses without a post-event observer need no
     // Conqueror records, including losses before entry or after departure.
     // Two different owned operations may never claim the same actual loss.
-    for loss in losses(state, 0, state.engine.event_history.len())? {
+    // That takes two batches: with fewer no loss can be claimed twice, and
+    // the whole-history roster cannot fail, so it is gathered only then.
+    let rivals = batches.len() > 1;
+    for loss in rivals
+        .then(|| losses(state, 0, state.engine.event_history.len()))
+        .transpose()?
+        .unwrap_or_default()
+    {
         if batches
             .iter()
             .filter(|batch| batch.losses.contains(&loss))
@@ -656,8 +663,13 @@ pub(crate) fn require_legacy_visible(
     let Some(actor) = actor else {
         return Ok(());
     };
+    // The definition test first: it is a constant false in builds without
+    // the card, and visibility matters only for objects that pass it.
     let selected = state.objects.iter().any(|(id, object)| {
-        let visible = match object.zone {
+        if !owns_definition(object.card_def) {
+            return false;
+        }
+        match object.zone {
             Zone::Hand => {
                 object.owner == actor
                     || state
@@ -685,8 +697,7 @@ pub(crate) fn require_legacy_visible(
                     .face_down_v1
                     .is_none_or(|face| face.lookers & (1 << actor.index()) != 0)
             }
-        };
-        visible && owns_definition(object.card_def)
+        }
     });
     if selected {
         return Err("visible Bloodthirsty Conqueror requires its V49 consumer".into());
