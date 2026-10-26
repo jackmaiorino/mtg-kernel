@@ -1729,6 +1729,34 @@ mod paid {
     }
 
     #[test]
+    fn buccaneer_raid_entry_draw_and_exact_printing_refuse_changes() {
+        let id = crate::card_def::card_id_by_name("Skyship Buccaneer").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let trigger = &value["observer_trigger_printing"]["ordered_triggers"][0];
+        assert_eq!(
+            trigger["event"]["later_attack_does_not_retroactively_trigger_prior_entry"],
+            true
+        );
+        assert_eq!(
+            trigger["intervening_if"]["check_at_trigger_time_and_resolution"],
+            true
+        );
+        assert_eq!(trigger["ordered_resolution"][0]["count"], 1);
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.keywords = crate::card_def::Keywords::NONE,
+                2 => d.mana_value = 4,
+                3 => d.power = Some(3),
+                4 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
     fn ward_discount_creature_exact_characteristics_payments_and_reductions_refuse_changes() {
         use crate::card_def::{DynamicCountDef, GenericCostReductionDef, WardCostDef};
         for name in [

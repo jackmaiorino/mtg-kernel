@@ -35,6 +35,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Nessian Hornbeetle"
             | "Mossborn Hydra"
             | "Searslicer Goblin"
+            | "Skyship Buccaneer"
             | "Koma, World-Eater"
             | "Mischievous Mystic"
             | "Homunculus Horde"
@@ -78,6 +79,15 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             8,
             12,
             Keywords::TRAMPLE,
+        ),
+        "Skyship Buccaneer" => (
+            3,
+            &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)][..],
+            &[ManaColor::U][..],
+            &[Subtype::Human, Subtype::Pirate][..],
+            4,
+            3,
+            Keywords::FLYING,
         ),
         "Searslicer Goblin" => (
             1,
@@ -424,6 +434,25 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 ],
             )
         }
+        "Skyship Buccaneer" => (
+            TriggerCondition::EtbAfterControllerAttackedThisTurn,
+            json!({"event":"ObserverEntersBattlefield","requires_controller_declared_at_least_one_attacker_this_turn":true,
+                "current_turn_round_and_active_seat_bind_declaration_history":true,
+                "observer_need_not_have_been_present_during_attack":true,
+                "later_attack_does_not_retroactively_trigger_prior_entry":true}),
+            EffectOp::Conditional {
+                cond: EffectCond::ControllerAttackedThisTurn,
+                then: Box::new(EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                }),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            },
+            vec![
+                json!({"operation":"DrawCards","recipient":"CapturedTriggerController","count":1,
+                "normal_draw_replacements_triggers_and_empty_library_loss_apply":true}),
+            ],
+        ),
         "Searslicer Goblin" => {
             let token_def = crate::card_def::card_id_by_name("Goblin Token")
                 .ok_or(Error::UnsupportedPrintedRoot(id))?;
@@ -795,7 +824,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "no_trigger_if_false_at_beginning_even_if_later_becomes_true":true,
             "no_counter_if_false_at_resolution_even_if_true_at_beginning":true});
     }
-    if d.name == "Searslicer Goblin" {
+    if matches!(d.name, "Searslicer Goblin" | "Skyship Buccaneer") {
         meaning["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"] = json!({
             "operation":"CapturedControllerAttackedThisTurn","check_at_trigger_time_and_resolution":true,
             "actual_declaration_history_for_current_turn_and_active_seat":true,
