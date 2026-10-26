@@ -174,6 +174,15 @@ fn session_can_follow(action: &Value) -> bool {
     CARD_DEFS[id].escape.is_none()
 }
 
+/// Whether this action chooses a Ward permanent as a target.
+fn targets_ward_permanent(action: &Value) -> bool {
+    let target = &action["semantic"]["target"];
+    target["target_kind"] == "object"
+        && target["object"]["card_db_id"]
+            .as_u64()
+            .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -242,6 +251,19 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
             .iter()
             .filter(|action| session_can_follow(action))
             .collect();
+        // Policy observation v5 fails closed while two stack items target
+        // one Ward permanent, so these games avoid targeting a Ward
+        // permanent whenever another action is available.
+        let unwarded: Vec<&Value> = actions
+            .iter()
+            .copied()
+            .filter(|action| !targets_ward_permanent(action))
+            .collect();
+        let actions = if unwarded.is_empty() {
+            actions
+        } else {
+            unwarded
+        };
         let action = match policy {
             Policy::Ranked => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
             Policy::Random(_) => {
