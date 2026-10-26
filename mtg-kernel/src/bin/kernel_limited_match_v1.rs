@@ -6,7 +6,7 @@
 //! kernel_limited_match_v1 version
 //! kernel_limited_match_v1 coverage -decks DIR -pool FILE [-out FILE]
 //! kernel_limited_match_v1 play -decks DIR -pool FILE -split S -seed N -pairs K -a SPEC -b SPEC -out FILE
-//!     [-first-pair P] [-workers W] [-single] [-max-turns T] [-max-decisions D]
+//!     [-first-pair P] [-workers W] [-single] [-max-turns T] [-max-decisions D] [-full-validation]
 //!     [-belief-decks DIR] [-belief-pool FILE] [-belief-split S]
 //! ```
 //!
@@ -51,7 +51,7 @@ struct Flags {
 }
 
 impl Flags {
-    const SWITCHES: [&'static str; 1] = ["single"];
+    const SWITCHES: [&'static str; 2] = ["single", "full-validation"];
 
     fn parse(args: &[String]) -> Result<Self, String> {
         let (mut values, mut switches) = (HashMap::new(), BTreeSet::new());
@@ -241,6 +241,7 @@ fn play(flags: &Flags) -> Result<(), String> {
     let limits = GameLimitsV1 {
         max_turns: flags.num("max-turns", Some(100))?,
         max_decisions: flags.num("max-decisions", Some(20_000))?,
+        full_validation: flags.switches.contains("full-validation"),
     };
     let out = PathBuf::from(flags.get("out")?);
     let legs: u64 = if spec_a == spec_b || flags.switches.contains("single") {
@@ -361,6 +362,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         "wall_s": wall_s,
         "games_per_hour": if wall_s > 0.0 { jobs.len() as f64 / wall_s * 3600.0 } else { 0.0 },
         "workers": workers,
+        "full_validation": limits.full_validation,
     });
     let summary_path = format!("{}.summary.json", out.display());
     fs::write(

@@ -277,6 +277,7 @@ fn random_games_finish_and_replay_exactly() {
     let limits = GameLimitsV1 {
         max_turns: 100,
         max_decisions: 20_000,
+        full_validation: false,
     };
     for seed in [1, 2, 3] {
         let run = || {
@@ -317,6 +318,7 @@ fn fair_search_plays_a_bounded_game_without_errors() {
         GameLimitsV1 {
             max_turns: 100,
             max_decisions: 400,
+            full_validation: false,
         },
     );
     assert!(
@@ -326,4 +328,39 @@ fn fair_search_plays_a_bounded_game_without_errors() {
     );
     assert!(result.decisions > 0);
     assert_eq!(result.rollout_errors, 0, "{:?}", result.first_rollout_error);
+}
+
+/// Issue #364: the trusted step skips only a re-check of an unchanged state, so
+/// it must reproduce the full step exactly. Two copies of each game step in
+/// lockstep with the same random choices; every state, response and terminal
+/// must match.
+#[test]
+fn trusted_step_plays_exactly_like_the_full_step() {
+    for seed in [7u64, 8, 9] {
+        let mut full = new_game(seed);
+        let mut trusted = full.clone();
+        let mut rng = SplitMix64::seed(seed ^ 0x7357);
+        let mut steps = 0;
+        while let FastActorResponseV1::Decision(d) = full.current_response() {
+            assert!(steps < 20_000, "seed {seed}: no terminal");
+            let pick = random_index(&mut rng, d.legal_action_count);
+            let a = full.step(d.episode_id, d.step, pick);
+            let b = trusted.limited_trusted_step_v1(d.episode_id, d.step, pick);
+            assert_eq!(a, b, "seed {seed} step {steps}");
+            assert_eq!(
+                full.game_state(),
+                trusted.game_state(),
+                "seed {seed} step {steps}"
+            );
+            if a.is_err() {
+                break;
+            }
+            steps += 1;
+        }
+        assert_eq!(full.current_response(), trusted.current_response());
+        assert!(
+            steps > 100,
+            "seed {seed}: {steps} steps is too short to compare"
+        );
+    }
 }

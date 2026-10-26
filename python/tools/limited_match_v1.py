@@ -92,7 +92,7 @@ class MtgKernel:
 
     def play_argv(self, a: str, b: str, *, pairs: int, seed: int, out: Path, split: str = "train",
                   first_pair: int = 0, workers: int = 2, belief: Belief | None = None,
-                  single: bool = False) -> list[str]:
+                  single: bool = False, extra_flags: Sequence[str] = ()) -> list[str]:
         argv = ["play", "-decks", str(self.decks), "-pool", str(self.pool), "-split", split,
                 "-seed", str(int(seed)), "-first-pair", str(int(first_pair)), "-pairs", str(int(pairs)),
                 "-workers", str(int(workers)), "-a", a, "-b", b, "-out", str(out),
@@ -102,11 +102,11 @@ class MtgKernel:
                      "-belief-split", belief.split]
         if single:
             argv.append("-single")
-        return argv
+        return argv + [str(x) for x in extra_flags]
 
     def play(self, a: str, b: str, *, pairs: int, seed: int, out_dir: Path, split: str = "train",
              first_pair: int = 0, workers: int = 2, belief: Belief | None = None, single: bool = False,
-             timeout_s: float | None = None) -> PlayResult:
+             timeout_s: float | None = None, extra_flags: Sequence[str] = ()) -> PlayResult:
         """Play pairs [first_pair, first_pair + pairs) of (seed, split) into out_dir/games.jsonl."""
         if pairs <= 0:
             raise ValueError(f"pairs={pairs}: nothing to play")
@@ -115,7 +115,8 @@ class MtgKernel:
         games_path = out_dir / "games.jsonl"
         started = time.monotonic()
         self._run(self.play_argv(a, b, pairs=pairs, seed=seed, out=games_path, split=split,
-                                 first_pair=first_pair, workers=workers, belief=belief, single=single),
+                                 first_pair=first_pair, workers=workers, belief=belief, single=single,
+                                 extra_flags=extra_flags),
                   timeout_s=timeout_s)
         wall = time.monotonic() - started
         games = [json.loads(line) for line in games_path.read_text().splitlines() if line.strip()]
@@ -188,6 +189,8 @@ def smoke(binary: Path) -> dict:
             again = kernel.play(a, b, pairs=pairs, seed=11, out_dir=Path(tmp) / f"{name}-again", workers=1)
             check_rows(first.games, 2, pairs)
             strip = lambda rows: [{k: v for k, v in r.items() if k != "ms"} for r in rows]
+            if name == "random":
+                report["random_rows"] = strip(first.games)
             if strip(first.games) != strip(again.games):
                 raise MtgKernelError(f"{name}: replay with another worker count differs")
             # An engine refusal in natural play is an engine coverage gap (DraftZero drops the pair);
@@ -206,6 +209,18 @@ def smoke(binary: Path) -> dict:
                             "belief_overlap": first.summary["belief_overlap"],
                             "decisions_per_s": decisions / first.summary["wall_s"] if first.summary["wall_s"] else 0,
                             "games_per_hour": first.summary["games_per_hour"]}
+        # Issue #364: the trusted step must play exactly like the fully validated one.
+        full = kernel.play("random", "pimc:sims=1:depth=0:peek", pairs=2, seed=11, out_dir=Path(tmp) / "full",
+                           workers=2, extra_flags=["-full-validation"])
+        trusted_rows = json.loads(json.dumps(report["random_rows"]))
+        if strip(full.games) != trusted_rows:
+            raise MtgKernelError("trusted and fully validated steps played differently")
+        decisions = sum(g.get("decisions", 0) for g in full.games)
+        report["random_full_validation"] = {
+            "wall_s": full.summary["wall_s"],
+            "decisions_per_s": decisions / full.summary["wall_s"] if full.summary["wall_s"] else 0,
+            "speedup": full.summary["wall_s"] / report["random"]["wall_s"] if report["random"]["wall_s"] else 0}
+        del report["random_rows"]
         return report
 
 
