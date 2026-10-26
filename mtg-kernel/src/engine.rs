@@ -24075,7 +24075,14 @@ mod tests {
             &[source],
         ];
         let mut some = 0;
-        for state in [&clean, &unindexed, &indexed_token, &stray_token, &duplicate, &foreign] {
+        for state in [
+            &clean,
+            &unindexed,
+            &indexed_token,
+            &stray_token,
+            &duplicate,
+            &foreign,
+        ] {
             for player in [PlayerId::P0, PlayerId::P1] {
                 for chosen in chosen_sets {
                     let expected = reference(player, source, state, chosen);

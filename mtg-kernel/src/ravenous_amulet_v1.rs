@@ -892,7 +892,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         EventKindV1::RavenousCompletedV1,
         EventKindV1::RavenousPaymentV1,
     ];
-    for (index, event) in state.engine.event_history.scan_for_v1(&kinds).iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&kinds)
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::RavenousRemovedV1 { removed } => {
                 if removed.index != index as u64
