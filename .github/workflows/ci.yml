@@ -741,6 +741,9 @@ jobs:
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures midnight_snack_v1:: flamewake_phoenix_v1::v57_genuine_paid_phoenix_and_juggernaut_keep_distinct_combat_facts_and_legacy_refusal_both_seats
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_prepared_env_v5
           MTG_LIMITED_PREPARED_TIMING_V5=1 python python/tools/check_limited_prepared_client_v5.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_prepared_env_v5$binary_suffix"
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_match_v1::
+          cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_match_v1
+          python python/tools/limited_match_v1.py smoke --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_match_v1$binary_suffix"
 
       - name: Validate successor Limited process plumbing
         if: ${{ !cancelled() && (matrix.group == 'limited-v6' || matrix.group == 'limited-v7' || matrix.group == 'limited-v8') }}
