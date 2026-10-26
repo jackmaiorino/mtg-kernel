@@ -85,7 +85,12 @@ Sagas, transform, temporary control, flashback, affinity, ninjutsu, kicker, madn
 New, each built once in the first wave that needs it:
 
 - E1: energy counters; replicate; cast-from-graveyard conditions (Plunder the Trollshaws);
-  karoo lands; two-target spells.
+  karoo lands; two-target spells. Built in `src/eternal_cards_v1.rs` and
+  `build_eternal_v1.rs`: energy is `GameState::eternal_v1` with the
+  `CostComponent::PayEnergyV1` cost; replicate announces its payment count like X and
+  adds one cast trigger that copies the spell per payment; `StandardTargetV1::TwoCreaturesV1`
+  lets two target words name one creature; `ManaAbilityAmountDef::FixedColorsV1` adds a
+  fixed color bundle; the karoo return is a land choice on resolution.
 - E2: two-subtype intrinsic land mana (original duals); pay-life fetch costs; pitch and
   "not your turn" alternative costs; restricted mana; delayed draws; seeded coin flips.
 - E3: storm as a general keyword (today it is keyed to Weather the Storm), Thassa's Oracle

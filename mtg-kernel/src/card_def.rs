@@ -3000,6 +3000,19 @@ mod tests {
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
+    /// The eternal catalog (`kernel_carddb_eternal/v1`): Pauper prefix,
+    /// Standard registry, then `data/eternal_v1/cards_v1.json`. A card wave
+    /// re-pins this value; a Standard append would also move it.
+    #[test]
+    #[cfg(feature = "eternal-fixtures")]
+    fn card_db_hash_eternal_v1_is_frozen() {
+        const EXPECTED_ETERNAL: u64 = 0;
+        assert_eq!(
+            KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
+            "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
+        );
+    }
+
     #[test]
     fn card_names_are_unique() {
         let mut names: Vec<&str> = CARD_DEFS.iter().map(|c| c.name).collect();
