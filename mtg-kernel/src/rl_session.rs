@@ -1150,8 +1150,7 @@ struct FastActorCurrentDecisionV1 {
     flat_action_cache_error_v2: Option<FlatActionDecisionSliceErrorV1>,
     /// Complete immutable projection produced while preparing this exact
     /// Liliana native decision. Replaced on advance, restore and sampling.
-    liliana_projection_v73:
-        Option<std::sync::Arc<crate::liliana_observation_v73::LilianaPublicPartsV73>>,
+    liliana_projection_v73: Option<std::sync::Arc<liliana_v73::PreparedProjectionV73>>,
 }
 
 fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {

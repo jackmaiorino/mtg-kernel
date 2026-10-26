@@ -1721,6 +1721,11 @@ mod paid {
             card_def::{CardType, CostComponent, TargetSpec},
             effect::{EffectOp, TargetRef},
         };
+        const FREE_FLASHBACK: &[CostComponent] = &[CostComponent::Mana(crate::mana::Cost {
+            generic: 0,
+            pips: &[],
+            x_count: 0,
+        })];
         let id = crate::card_def::card_id_by_name("Bulk Up").unwrap();
         assert_eq!(
             roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
@@ -1730,10 +1735,7 @@ mod paid {
             let mut d = ordinary_recipe(id);
             match field {
                 0 => d.flashback = None,
-                1 => {
-                    d.flashback.as_mut().unwrap().cost =
-                        &[CostComponent::Mana(crate::mana::Cost::zero())]
-                }
+                1 => d.flashback.as_mut().unwrap().cost = FREE_FLASHBACK,
                 2 => d.cost = crate::mana::Cost::zero(),
                 3 => d.target_spec = TargetSpec::ControlledCreature,
                 4 => d.types = &[CardType::Sorcery],

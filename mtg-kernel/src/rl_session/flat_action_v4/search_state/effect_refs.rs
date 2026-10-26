@@ -1682,6 +1682,7 @@ fn conflicts_in_scope(
             | crate::event::CommittedEvent::RaidEntryCounteredV1 { .. }
             | crate::event::CommittedEvent::RaidEntryStartedV1 { .. }
             | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
+            | crate::event::CommittedEvent::DrakusethDamageSourceV76 { .. }
             | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
             | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
             | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
@@ -1888,6 +1889,7 @@ fn conflicts_in_scope(
             | TinybonesV72 { .. }
             | LilianaDreadhordeV1 { .. }
             | ChandraFlameshaperV74{..}
+            | DrakusethDamageSourceV76{..}
             | VivienReidV1 { .. }
             | OrdinaryCleanupStageV1 { .. }
             | TimeStopJournalV1 { .. }

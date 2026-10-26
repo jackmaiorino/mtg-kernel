@@ -45,7 +45,10 @@ fn assert_prepared_projection_matches_fresh_native_capture(session: &FastActorSe
         original.public_to_original,
         reconstructed.public_to_original
     );
-    assert_eq!(original.families, reconstructed.families);
+    assert!(
+        original.families == reconstructed.families,
+        "complete native family projections differ"
+    );
 }
 
 #[test]

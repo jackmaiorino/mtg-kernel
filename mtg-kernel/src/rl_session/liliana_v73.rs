@@ -6,6 +6,16 @@ use crate::{
     state::GameState,
 };
 
+#[derive(Clone, PartialEq)]
+pub(super) struct PreparedProjectionV73(observation::LilianaPublicPartsV73);
+impl std::fmt::Debug for PreparedProjectionV73 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedProjectionV73")
+            .field("family_count", &self.0 .1.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A fresh borrow of the genuine private issued origin. No constructor outside
 /// this module, no Clone/serde, no mutable reference or persisted authority.
 pub(crate) struct IssuedOriginV73<'a> {
@@ -14,7 +24,7 @@ pub(crate) struct IssuedOriginV73<'a> {
 }
 impl<'a> IssuedOriginV73<'a> {
     pub(crate) fn prepared_projection(&self) -> Option<&observation::LilianaPublicPartsV73> {
-        self.current.liliana_projection_v73.as_deref()
+        self.current.liliana_projection_v73.as_deref().map(|p| &p.0)
     }
     pub(crate) fn validate(
         &self,
@@ -135,7 +145,7 @@ pub(super) fn prepare_current(
         (current.substep_index, current.substep_count),
     )
     .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
-    current.liliana_projection_v73 = Some(std::sync::Arc::new(projection));
+    current.liliana_projection_v73 = Some(std::sync::Arc::new(PreparedProjectionV73(projection)));
     Ok(())
 }
 impl FastActorSessionV1 {

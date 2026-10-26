@@ -239,7 +239,6 @@ pub struct BatchCaptureV2 {
 }
 impl std::hash::Hash for BatchCaptureV2 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        use std::hash::Hash;
         self.ctx.hash(h);
         self.op.hash(h);
         self.path.hash(h);
