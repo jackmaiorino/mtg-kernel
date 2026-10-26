@@ -243,7 +243,7 @@ fn departure(
     }
     crate::engine::validate_historical_ability_source_contract(state, s)
 }
-fn source_facts(
+pub(crate) fn source_facts(
     state: &GameState,
     source: AbilitySourceContractV4,
 ) -> Result<HistoricalDamageSourceV1, String> {

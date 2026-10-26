@@ -830,6 +830,7 @@ pub mod limited_graveyard_return_session_v7;
 pub mod limited_next_five_session_v6;
 
 pub mod drakuseth_public_v67;
+pub mod fdn_family_source_v76;
 pub mod rules_meaning_drakuseth_v67;
 
 pub mod call_candidates_v62;

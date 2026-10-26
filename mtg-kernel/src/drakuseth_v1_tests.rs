@@ -10,6 +10,128 @@ use crate::{
 
 const NAME: &str = "Drakuseth, Maw of Flames";
 
+#[test]
+fn paid_v76_source_facts_eighteen_counters_real_publication_positional_illegality_lki_and_readonly_restore_both_seats(
+) {
+    use crate::fdn_family_source_v76 as public76;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = paid(actor);
+        // Native storage-width operands, not a paid counter-creation claim.
+        state.objects.get_mut(source).counters.stash = i32::MAX;
+        state.objects.get_mut(source).counters.charge = i32::MAX;
+        let victim = put(
+            &mut state,
+            actor.opponent(),
+            "Aegis Turtle",
+            Zone::Battlefield,
+        );
+        let initial = public76::capture(&state, actor).unwrap();
+        let [public76::LaterFamilyV76::Drakuseth(family)] = initial.families.as_slice() else {
+            panic!("closed family inventory")
+        };
+        let current = family.battlefield[actor.index()]
+            .iter()
+            .find(|r| r.card.object == source.0)
+            .unwrap();
+        assert_eq!(current.counters.stash, i32::MAX);
+        assert_eq!(current.counters.charge, i32::MAX);
+        assert_eq!(
+            serde_json::to_value(&current.counters)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .len(),
+            18
+        );
+        assert!(!initial.complete_ordinary_observation && !initial.owning_consumer_admitted);
+        assert!(crate::drakuseth_public_v67::capture(&state, actor).is_err());
+        attack(&mut state, source, actor);
+        let choosing = public76::capture(&state, actor).unwrap();
+        let [public76::LaterFamilyV76::Drakuseth(family)] = choosing.families.as_slice() else {
+            panic!()
+        };
+        assert!(family
+            .triggers
+            .iter()
+            .any(|r| r.stage == public76::StageV76::ChoosingTargets
+                && r.original_target_slots.is_empty()
+                && r.publication.is_none()));
+        choose(
+            &mut state,
+            source,
+            &[Target::Object(victim), Target::Player(actor.opponent())],
+        );
+        // Actual native departure primitives test the factual projection's
+        // incarnation/LKI boundary; the preceding cast and attack were paid.
+        for object in [victim, source] {
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(object, Zone::Hand),
+            );
+        }
+        let saved = restored(&state);
+        let before = serde_json::to_vec(&state).unwrap();
+        let facts = public76::capture(&state, actor).unwrap();
+        assert_eq!(facts, public76::capture(&saved, actor).unwrap());
+        let [public76::LaterFamilyV76::Drakuseth(family)] = facts.families.as_slice() else {
+            panic!()
+        };
+        assert_eq!(family.publications.len(), 1);
+        let row = family
+            .triggers
+            .iter()
+            .find(|r| r.stage == public76::StageV76::Published)
+            .unwrap();
+        assert_eq!(row.publication, Some(0));
+        assert_eq!(row.original_target_slots.len(), 2);
+        assert_eq!(
+            row.original_target_slots
+                .iter()
+                .map(|s| s.original.printed_damage)
+                .collect::<Vec<_>>(),
+            [4, 3]
+        );
+        assert!(!row.original_target_slots[0].currently_legal);
+        assert!(row.original_target_slots[1].currently_legal);
+        assert!(
+            row.current_or_original_departure_characteristics
+                .uses_original_departure_values
+        );
+        let mut forged = facts.clone();
+        forged.owning_consumer_admitted = true;
+        assert!(public76::validate(&state, actor, &forged).is_err());
+        let mut forged = facts.clone();
+        let public76::LaterFamilyV76::Drakuseth(f) = &mut forged.families[0];
+        f.triggers[0].original_target_slots[1]
+            .original
+            .printed_damage = 4;
+        assert!(public76::validate(&state, actor, &forged).is_err());
+        let mut json = serde_json::to_value(&facts).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .insert("native_owner".into(), serde_json::json!(true));
+        assert!(serde_json::from_value::<public76::FactsV76>(json).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+}
+
+#[test]
+fn independently_initialized_hidden_worlds_after_actual_paid_attack_have_equal_v76_source_facts_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut packets = Vec::new();
+        for hidden in ["Island", "Imprisoned in the Moon"] {
+            let (mut state, source) = paid_with_hidden(actor, Some(hidden));
+            attack(&mut state, source, actor);
+            choose(&mut state, source, &[Target::Player(actor.opponent())]);
+            let facts = crate::fdn_family_source_v76::capture(&state, actor).unwrap();
+            crate::fdn_family_source_v76::validate(&state, actor, &facts).unwrap();
+            packets.push(facts);
+        }
+        assert_eq!(packets[0], packets[1]);
+    }
+}
+
 fn next(state: &mut GameState) -> Decision {
     let decision = engine::advance_until_decision(state);
     assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
@@ -50,7 +172,14 @@ fn restored(state: &GameState) -> GameState {
     restored
 }
 fn paid(actor: PlayerId) -> (GameState, ObjectId) {
+    paid_with_hidden(actor, None)
+}
+fn paid_with_hidden(actor: PlayerId, hidden: Option<&str>) -> (GameState, ObjectId) {
     let mut state = crate::extra_turn_v1::tests::ready(actor);
+    if let Some(name) = hidden {
+        // Independently initialized private operand, before every paid action.
+        put(&mut state, actor.opponent(), name, Zone::Hand);
+    }
     let source = put(&mut state, actor, NAME, Zone::Hand);
     let lands = (0..7)
         .map(|_| put(&mut state, actor, "Mountain", Zone::Battlefield))
@@ -443,6 +572,16 @@ fn finish_mixed_prevention(
             assert_eq!(actual, source);
             crate::effect::validate_pending_effect_choice(state).unwrap();
             crate::drakuseth_damage_source_v76::validate_state(state).unwrap();
+            let source_facts =
+                crate::fdn_family_source_v76::capture(state, state.active_player).unwrap();
+            let [crate::fdn_family_source_v76::LaterFamilyV76::Drakuseth(family)] =
+                source_facts.families.as_slice()
+            else {
+                panic!("source family absent")
+            };
+            assert!(family.triggers.iter().any(|r| r.stage
+                == crate::fdn_family_source_v76::StageV76::Resolving
+                && r.original_target_slots.len() == 3));
             let choice = pending_prevention(state).clone();
             assert!(choice.batch.is_some());
             assert_eq!(choice.chooser, player);

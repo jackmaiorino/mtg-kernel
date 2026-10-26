@@ -112,11 +112,19 @@ pub(crate) fn selected_id() -> Result<u16, String> {
     Ok(id)
 }
 fn exact_definition(id: u16, d: &CardDef) -> Result<(), String> {
+    if d.capability != CardCapability::Partial {
+        return Err("V67 requires its original Partial catalog boundary".into());
+    }
+    exact_native_definition_v76(id, d)
+}
+/// Read-only source qualification may precede catalog promotion. This exact
+/// shape check grants neither a policy owner nor a full-deck admission.
+pub(crate) fn exact_native_definition_v76(id: u16, d: &CardDef) -> Result<(), String> {
     // The predecessor helper exhaustively destructures every CardDef field.
     if id != 464
         || !ordinary_foreign_fields_absent(d)
         || d.name != NAME
-        || d.capability != CardCapability::Partial
+        || !matches!(d.capability, CardCapability::Partial | CardCapability::Full)
         || d.cost.generic != 4
         || d.cost.x_count != 0
         || d.cost.pips != [Pip::Colored(ManaColor::R); 3]
