@@ -218,6 +218,8 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
     let mut transcript = Sha256::new();
     let mut action_counts = BTreeMap::new();
     let mut casts_by_seat = [0; 2];
+    // The last chosen actions, reported if a game fails closed.
+    let mut recent: Vec<String> = Vec::new();
     let mut random_state = match policy {
         Policy::Random(state) => state,
         Policy::Ranked => 0,
@@ -235,8 +237,15 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
         );
         if reply["response_type"] == "terminal" {
             assert_eq!(
-                reply["terminal"]["terminal_code"], "natural_game_over",
-                "seed={seed}: {reply}"
+                reply["terminal"]["terminal_code"],
+                "natural_game_over",
+                "seed={seed}: {reply}
+last actions:
+{}",
+                recent.join(
+                    "
+"
+                )
             );
             return Game {
                 transcript_sha256: format!("{:x}", transcript.finalize()),
@@ -270,6 +279,10 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
                 actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }
         };
+        recent.push(action["semantic"].to_string());
+        if recent.len() > 8 {
+            recent.remove(0);
+        }
         if action["semantic"]["action_kind"] == "cast_spell" {
             let actor: mtg_kernel::rl::PlayerSeatV1 =
                 serde_json::from_value(action["semantic"]["actor"].clone()).unwrap();
