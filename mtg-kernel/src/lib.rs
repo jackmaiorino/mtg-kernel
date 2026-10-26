@@ -490,6 +490,10 @@ pub(crate) mod native_policy_train_step_v1;
 // publication remain separate, later layers.
 #[allow(dead_code)]
 pub(crate) mod native_train_state_payload_v1;
+// Test-only timing harness (ignored tests): w128 vs w64 forward and
+// train-state cost. No production code reaches it.
+#[cfg(test)]
+mod w128_cost_harness_v1;
 #[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v1;
 // Ladder opponent seed schedule additions layered on the V1 schedule above
