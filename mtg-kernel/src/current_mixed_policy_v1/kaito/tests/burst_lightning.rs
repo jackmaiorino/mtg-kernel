@@ -241,6 +241,7 @@ fn paid_route(kicked: bool) {
                             assert_eq!(state.objects.get(o).damage, 2);
                         }
                     }
+                    Target::StackItem(_) => panic!("AnyTarget cannot select a stack item"),
                 }
                 if let Some(ref old) = expected {
                     assert_eq!(state, old);
