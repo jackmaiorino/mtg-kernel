@@ -949,7 +949,9 @@ pub(crate) fn apply_entry_counters(
                 }
             }
         }
-        MOONSHADOW => match crate::doubling_season_v48::entry_amount(state, input, controller, 6) {
+        MOONSHADOW => match crate::doubling_season_v48::entry_amount(state, input, controller, 6)
+            .and_then(|count| i16::try_from(count).map_err(|error| error.to_string()))
+        {
             Ok(count) => state.objects.get_mut(object).counters.minus1_minus1 = count,
             Err(_) => {
                 state.engine.halted = Some((
