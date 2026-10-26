@@ -18,6 +18,7 @@ mod counter_return_creatures;
 mod creature_power_spell;
 mod discard_cost_spell;
 mod dragon_observers;
+mod draw_second;
 mod entry_branch;
 mod entry_destruction;
 mod entry_exile;

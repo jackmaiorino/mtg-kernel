@@ -1464,6 +1464,40 @@ mod paid {
         }
     }
 
+    #[test]
+    fn second_draw_mystic_horde_and_token_printings_refuse_changes() {
+        for name in [
+            "Mischievous Mystic",
+            "Homunculus Horde",
+            "Homunculus Horde Token",
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+            let p = &value["observer_trigger_printing"];
+            assert_eq!(
+                p["ordered_triggers"][0]["event"]["requires_this_turn_draw_ordinal"],
+                2
+            );
+            if name == "Homunculus Horde Token" {
+                assert!(p.get("ordinary_cast").is_none());
+                assert_eq!(p["object_name"], "Homunculus Horde");
+                assert_eq!(p["mana_value"], 4);
+            }
+            for field in 0..6 {
+                let mut d = ordinary_recipe(id);
+                match field {
+                    0 => d.cost = crate::mana::Cost::zero(),
+                    1 => d.power = Some(3),
+                    2 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                    3 => d.is_token = !d.is_token,
+                    4 => d.object_name = "Other",
+                    _ => d.mana_value = 0,
+                }
+                assert!(roots::baseline_recipe(id, &d).is_err());
+            }
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {

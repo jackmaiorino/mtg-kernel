@@ -759,7 +759,12 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
     if !(d.capability == CardCapability::Full
-        && (d.object_name == d.name || dragon_token || anonymous_token)
+        && (d.object_name == d.name
+            || dragon_token
+            || anonymous_token
+            || (observer_trigger.is_some()
+                && d.name == "Homunculus Horde Token"
+                && d.object_name == "Homunculus Horde"))
         && (d.activated_abilities.is_empty()
             || goldvein.is_some()
             || hart.is_some()

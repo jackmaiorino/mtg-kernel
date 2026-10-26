@@ -36,13 +36,35 @@ pub(super) fn handles(name: &str) -> bool {
             | "Mossborn Hydra"
             | "Searslicer Goblin"
             | "Koma, World-Eater"
+            | "Mischievous Mystic"
+            | "Homunculus Horde"
+            | "Homunculus Horde Token"
     )
 }
 
 /// The caller also checks every additional CardDef field through the shared
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let horde_token = d.name == "Homunculus Horde Token";
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Mischievous Mystic" => (
+            1,
+            &[Pip::Colored(ManaColor::U)][..],
+            &[ManaColor::U][..],
+            &[Subtype::Human, Subtype::Wizard][..],
+            2,
+            1,
+            Keywords::FLYING,
+        ),
+        "Homunculus Horde" | "Homunculus Horde Token" => (
+            3,
+            &[Pip::Colored(ManaColor::U)][..],
+            &[ManaColor::U][..],
+            &[Subtype::Homunculus][..],
+            2,
+            2,
+            Keywords::NONE,
+        ),
         "Koma, World-Eater" => (
             3,
             &[
@@ -302,7 +324,8 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 None
             }
         || d.is_land
-        || d.is_token
+        || d.is_token != horde_token
+        || (horde_token && d.object_name != "Homunculus Horde")
         || d.enters_battlefield_tapped
         || match d.enters_with_plus_one_counters {
             Some(entry) => d.name != "Mossborn Hydra" || entry.count != 1 || entry.if_kicked,
@@ -313,10 +336,14 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || !d.mana_ability_choices.is_empty()
         || (d.mana_ability)().is_some()
         || (d.spell_effect)()
-            != Some(EffectOp::MoveObject {
-                object: ObjectRef::ThisSource,
-                to_zone: Zone::Battlefield,
-            })
+            != if horde_token {
+                None
+            } else {
+                Some(EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                })
+            }
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -340,6 +367,46 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Mischievous Mystic" | "Homunculus Horde" | "Homunculus Horde Token" => {
+            let mystic = d.name == "Mischievous Mystic";
+            let token_def = crate::card_def::card_id_by_name("Faerie Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            let anonymous =
+                crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)
+                    .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            (
+                TriggerCondition::DrawNth(2),
+                json!({"event":"ObserverControllerActuallyDrawsCard","requires_this_turn_draw_ordinal":2,"uses_native_per_player_turn_draw_count":true,"normal_turn_draw_and_each_successful_draw_in_multi_card_instructions_count":true,"drawing_during_either_players_turn_may_trigger":true,"putting_cards_into_hand_without_drawing_and_replaced_or_failed_draws_do_not_count":true,"no_retroactive_trigger_if_source_enters_after_second_draw":true,"third_and_later_draws_do_not_trigger":true,"trigger_count_per_matching_draw":1}),
+                if mystic {
+                    EffectOp::CreateToken {
+                        token_def,
+                        controller: PlayerRef::Controller,
+                    }
+                } else {
+                    EffectOp::CreateTokenCopyOfSourceV1
+                },
+                if mystic {
+                    vec![
+                        json!({"operation":"CreateToken","controller":"CapturedTriggerController","count":1,"token_definition":super::baseline(token_def)?,"normal_token_replacements_and_entry_triggers_apply":true}),
+                    ]
+                } else {
+                    vec![
+                        json!({"operation":"CreateTokenCopyOfOriginalTriggerSource","count":1,"owner_and_controller":"CapturedTriggerController","targets":[],
+                 "bind_original_source_object_and_battlefield_incarnation":true,
+                 "values_if_same_incarnation_still_live":"CurrentCopiableValuesAtResolutionIncludingCurrentCopiedDefinitionFaceAndCopiableGrantedAbilities",
+                 "values_if_original_incarnation_departed":"UniqueAuthenticOriginalBattlefieldDepartureLastKnownCopiableValues",
+                 "reentered_incarnation_never_substitutes_for_original_values":true,
+                 "current_source_control_change_does_not_change_captured_token_recipient":true,
+                 "noncopiable_counters_damage_tap_attachments_and_temporary_grants_not_copied":true,
+                 "copiable_end_step_sacrifice_grants_and_nightmare_copy_layer_are_preserved":true,
+                 "face_down_values_use_neutral_face_up_anonymous_printing":super::baseline(anonymous)?,
+                 "anonymous_copy_carries_no_hidden_identity_or_face_up_permission":true,
+                 "copied_horde_retains_its_second_card_draw_trigger_and_copiable_mana_cost":true,
+                 "adds_no_haste_or_delayed_sacrifice":true,"normal_token_replacements_and_battlefield_entry_triggers_apply":true}),
+                    ]
+                },
+            )
+        }
         "Koma, World-Eater" => {
             let token_def = crate::card_def::card_id_by_name("Koma's Coil Token")
                 .ok_or(Error::UnsupportedPrintedRoot(id))?;
@@ -672,7 +739,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let mut meaning = json!({"card_id":id,"observer_trigger_printing":{
         "schema":"printed-battlefield-observer/v1","cost":cost,"types":d.types,"subtypes":d.subtypes,
         "supertypes":if supertypes.is_empty() { json!([]) } else { json!(["Legendary"]) },"colors":d.colors,"power":power,"toughness":toughness,
-        "keywords":keywords.0,"mana_value":d.mana_value,"token":false,
+        "keywords":keywords.0,"mana_value":d.mana_value,"token":horde_token,
         "ordinary_cast":{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
             "timing":if keywords.has(Keywords::FLASH) {"InstantWithPriority"} else {"OwnMainPhaseEmptyStackWithPriority"},"ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
             "targets":[],"ordered_resolution":[{"operation":"MoveOriginalSpellToBattlefield","controller":"Caster"}],
@@ -683,6 +750,17 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "captures_source_incarnation_and_controller_at_event":true,"survives_source_departure_and_later_control_change":true,
             "ordered_resolution":ordered}]
     }});
+    if horde_token {
+        let printing = meaning["observer_trigger_printing"]
+            .as_object_mut()
+            .expect("observer printing object");
+        printing.remove("ordinary_cast");
+        printing.insert("object_name".into(), json!("Homunculus Horde"));
+        printing.insert(
+            "no_ordinary_cast_or_deck_permission_from_token_blueprint".into(),
+            json!(true),
+        );
+    }
     if d.name == "Archmage of Runes" {
         meaning["observer_trigger_printing"]["ordered_static_roots"] = json!([{"operation":"ReduceControllerInstantOrSorcerySpellGenericCost","source_zone":"Battlefield","requires_active_printed_source_abilities":true,"controller":"CurrentSourceController","current_effective_copied_printing_selects_rule":true,"spell_types_match_any":["Instant","Sorcery"],"reduction_per_live_source":1,"independent_sources_add":true,"minimum_generic_component":0,"does_not_reduce_colored_pips":true,"apply_to_total_cost_after_additional_costs_and_chosen_x":true,"normal_final_cost_floor_rules_apply_afterward":true,"does_not_reduce_activated_abilities_or_spell_mana_value":true,"recompute_at_cost_determination":true,"does_not_reprice_already_paid_spell":true,"ends_when_source_leaves_or_loses_printed_abilities":true}]);
     }
