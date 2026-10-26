@@ -183,6 +183,27 @@ fn targets_ward_permanent(action: &Value) -> bool {
             .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
 }
 
+/// Whether any public stack item's targets include a Ward permanent.
+fn public_targets_ward_permanent(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.get("targets")
+                .and_then(Value::as_array)
+                .is_some_and(|targets| {
+                    targets.iter().any(|target| {
+                        target["target_kind"] == "object"
+                            && target["object"]["card_db_id"]
+                                .as_u64()
+                                .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
+                    })
+                })
+                || map.values().any(public_targets_ward_permanent)
+        }
+        Value::Array(items) => items.iter().any(public_targets_ward_permanent),
+        _ => false,
+    }
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -262,11 +283,20 @@ last actions:
             .collect();
         // Policy observation v5 fails closed while two stack items target
         // one Ward permanent, so these games avoid targeting a Ward
-        // permanent whenever another action is available.
+        // permanent whenever another action is available, and start no new
+        // spell or ability while something on the stack targets one.
+        let ward_targeted = public_targets_ward_permanent(decision);
         let unwarded: Vec<&Value> = actions
             .iter()
             .copied()
-            .filter(|action| !targets_ward_permanent(action))
+            .filter(|action| {
+                !targets_ward_permanent(action)
+                    && !(ward_targeted
+                        && matches!(
+                            action["semantic"]["action_kind"].as_str(),
+                            Some("cast_spell" | "activate_ability")
+                        ))
+            })
             .collect();
         let actions = if unwarded.is_empty() {
             actions
