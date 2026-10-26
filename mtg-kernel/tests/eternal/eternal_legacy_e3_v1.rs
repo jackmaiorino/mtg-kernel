@@ -12,13 +12,22 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E3_CARDS: [&str; 6] = [
+const E3_CARDS: [&str; 15] = [
     "Ancient Tomb",
     "The One Ring",
     "Chrome Mox",
     "Misdirection",
     "Sink into Stupor",
     "Cavern of Souls",
+    "Tropical Island",
+    "Hedge Maze",
+    "Dark Ritual",
+    "City of Traitors",
+    "Street Wraith",
+    "Edge of Autumn",
+    "Personal Tutor",
+    "Veil of Summer",
+    "Flusterstorm",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -534,4 +543,339 @@ fn cavern_of_souls_colored_mana_pays_only_for_its_chosen_type() {
     next(&mut state);
     act(&mut state, Action::ActivateManaAbility(cavern));
     assert_eq!(mana(&state, P0, ManaColor::C), 1, "{{T}}: Add {{C}}");
+}
+
+/// Settles, answering every library or surveil selection by finishing with
+/// whatever is already selected and every option with the first.
+fn settle_declining_selections(state: &mut GameState) {
+    while let Some(decision) = settle(state) {
+        match decision {
+            Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            } => act(state, Action::FinishEffectSelection),
+            Decision::ChooseEffectTargets { legal_targets, .. } => {
+                act(state, Action::ChooseEffectTarget(legal_targets[0]))
+            }
+            Decision::ChooseEffectOption { .. } => act(state, Action::ChooseEffectOption(0)),
+            Decision::ChooseEffectBoolean { .. } => act(state, Action::ChooseEffectBoolean(false)),
+            other => panic!("unexpected choice: {other:?}"),
+        }
+    }
+}
+
+// ---- Tropical Island, Hedge Maze ------------------------------------------------------
+
+#[test]
+fn tropical_island_and_hedge_maze_are_forest_islands() {
+    use mtg_kernel::card_def::Subtype;
+    for name in ["Tropical Island", "Hedge Maze"] {
+        assert_eq!(def(name).subtypes, &[Subtype::Forest, Subtype::Island]);
+    }
+    assert!(!def("Tropical Island").enters_battlefield_tapped);
+    assert!(def("Hedge Maze").enters_battlefield_tapped);
+    let mut state = islands();
+    let tropical = put(&mut state, P0, "Tropical Island", Zone::Battlefield);
+    next(&mut state);
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(tropical, ManaColor::G),
+    );
+    assert_eq!(mana(&state, P0, ManaColor::G), 1);
+}
+
+#[test]
+fn hedge_maze_enters_tapped_and_surveils_one() {
+    let mut state = game(&["Lightning Bolt", "Island", "Island", "Island"]);
+    let top = state.players[0].library[0];
+    let maze = put(&mut state, P0, "Hedge Maze", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(maze));
+    assert!(state.objects.get(maze).tapped);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption { option_count, .. }) => {
+            assert_eq!(option_count, 2);
+            act(&mut state, Action::ChooseEffectOption(1));
+        }
+        other => panic!("expected the surveil, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(top).zone, Zone::Graveyard);
+}
+
+// ---- Dark Ritual -----------------------------------------------------------------------
+
+#[test]
+fn dark_ritual_adds_three_black_mana() {
+    let mut state = islands();
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, ritual, &[]);
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::B), 3);
+}
+
+// ---- City of Traitors ------------------------------------------------------------------
+
+#[test]
+fn city_of_traitors_adds_two_colorless_and_is_sacrificed_when_another_land_is_played() {
+    let mut state = islands();
+    let city = put(&mut state, P0, "City of Traitors", Zone::Battlefield);
+    next(&mut state);
+    act(&mut state, Action::ActivateManaAbility(city));
+    assert_eq!(mana(&state, P0, ManaColor::C), 2);
+    let island = put(&mut state, P0, "Island", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(island));
+    settled(&mut state);
+    assert_eq!(state.objects.get(city).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(island).zone, Zone::Battlefield);
+}
+
+#[test]
+fn city_of_traitors_survives_lands_put_onto_the_battlefield_and_its_own_play() {
+    let mut state = islands();
+    let city = put(&mut state, P0, "City of Traitors", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(city));
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(city).zone,
+        Zone::Battlefield,
+        "not another land"
+    );
+    let island = put(&mut state, P0, "Island", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(island, Zone::Battlefield),
+    );
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(city).zone,
+        Zone::Battlefield,
+        "not played"
+    );
+}
+
+// ---- Street Wraith ------------------------------------------------------------------------
+
+#[test]
+fn street_wraith_cycles_for_two_life() {
+    let mut state = islands();
+    let wraith = put(&mut state, P0, "Street Wraith", Zone::Hand);
+    activate(&mut state, wraith, 0, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(wraith).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].life, 18);
+    assert_eq!(state.players[0].hand.len(), 1);
+}
+
+#[test]
+fn street_wraith_has_swampwalk() {
+    for defender_has_swamp in [true, false] {
+        let mut state = islands();
+        let wraith = put(&mut state, P0, "Street Wraith", Zone::Battlefield);
+        let blocker = put(&mut state, P1, "Baleful Strix", Zone::Battlefield);
+        if defender_has_swamp {
+            put(&mut state, P1, "Swamp", Zone::Battlefield);
+        }
+        pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+        match next(&mut state) {
+            Decision::DeclareAttackers { .. } => {
+                act(&mut state, Action::DeclareAttackers(vec![wraith]))
+            }
+            other => panic!("expected attacks, got {other:?}"),
+        }
+        let mut blockable = false;
+        for _ in 0..20 {
+            match next(&mut state) {
+                Decision::DeclareBlockers { legal_blockers, .. } => {
+                    blockable = legal_blockers.iter().any(|(attacker, blockers)| {
+                        *attacker == wraith && blockers.contains(&blocker)
+                    });
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::OrderTriggers { pending, .. } => act(
+                    &mut state,
+                    Action::OrderTriggers((0..pending.len()).collect()),
+                ),
+                _ => break,
+            }
+        }
+        assert_eq!(blockable, !defender_has_swamp);
+    }
+}
+
+// ---- Edge of Autumn ------------------------------------------------------------------------
+
+#[test]
+fn edge_of_autumn_fetches_a_tapped_basic_with_four_or_fewer_lands() {
+    let mut state = game(&["Island", "Forest", "Island", "Island", "Island"]);
+    let forest = state.players[0].library[1];
+    for _ in 0..4 {
+        put(&mut state, P0, "Island", Zone::Battlefield);
+    }
+    let edge = put(&mut state, P0, "Edge of Autumn", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, edge, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert!(legal_targets.contains(&Target::Object(forest)));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(forest)),
+            );
+        }
+        other => panic!("expected the search, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(forest).zone, Zone::Battlefield);
+    assert!(state.objects.get(forest).tapped);
+
+    // Five lands: nothing happens.
+    let mut state = game(&["Forest", "Island", "Island"]);
+    for _ in 0..5 {
+        put(&mut state, P0, "Island", Zone::Battlefield);
+    }
+    let edge = put(&mut state, P0, "Edge of Autumn", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, edge, &[]);
+    settled(&mut state);
+    assert_eq!(state.players[0].library.len(), 3);
+}
+
+#[test]
+fn edge_of_autumn_cycles_by_sacrificing_a_land() {
+    let mut state = islands();
+    let land = put(&mut state, P0, "Forest", Zone::Battlefield);
+    let edge = put(&mut state, P0, "Edge of Autumn", Zone::Hand);
+    activate(&mut state, edge, 0, &[]);
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(edge).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].hand.len(), 1);
+}
+
+// ---- Personal Tutor ---------------------------------------------------------------------------
+
+#[test]
+fn personal_tutor_puts_a_revealed_sorcery_on_top() {
+    let mut state = game(&["Island", "Island", "Ponder", "Island", "Lightning Bolt"]);
+    let ponder = state.players[0].library[2];
+    let tutor = put(&mut state, P0, "Personal Tutor", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, tutor, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(
+                legal_targets,
+                vec![Target::Object(ponder)],
+                "sorceries only"
+            );
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(ponder)),
+            );
+        }
+        other => panic!("expected the search, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert_eq!(state.players[0].library[0], ponder);
+    assert!(state
+        .known_library_cards(P1, P0)
+        .iter()
+        .any(|entry| entry.position == 0 && entry.object == ponder));
+}
+
+// ---- Veil of Summer ------------------------------------------------------------------------------
+
+#[test]
+fn veil_of_summer_draws_after_a_blue_spell_and_protects_its_controllers_spells() {
+    let mut state = islands();
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let veil = put(&mut state, P0, "Veil of Summer", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    act(&mut state, Action::Pass);
+    // P1 answers with a blue Counterspell; P0 responds with Veil.
+    let counterspell = put(&mut state, P1, "Counterspell", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, counterspell, &[Target::Object(bolt)]);
+    act(&mut state, Action::Pass);
+    let hand = state.players[0].hand.len();
+    cast(&mut state, veil, &[]);
+    settled(&mut state);
+    assert_eq!(
+        state.players[0].hand.len(),
+        hand,
+        "Veil left the hand and a card was drawn for the blue spell"
+    );
+    assert_eq!(state.players[1].life, 17, "the Bolt can't be countered");
+    assert_eq!(state.objects.get(counterspell).zone, Zone::Graveyard);
+}
+
+#[test]
+fn veil_of_summer_gives_hexproof_from_blue_and_black_this_turn() {
+    let mut state = islands();
+    let veil = put(&mut state, P0, "Veil of Summer", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast(&mut state, veil, &[]);
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), 0, "no blue or black spell yet");
+    // A black Thoughtseize from P1 can't target P0; a red Bolt can.
+    state.priority_player = P1;
+    let thoughtseize = put(&mut state, P1, "Thoughtseize", Zone::Hand);
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::B, ManaColor::R], 0);
+    act(&mut state, Action::CastSpell(thoughtseize));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Player(P1)]);
+            act(&mut state, Action::ChooseTarget(Target::Player(P1)));
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    state.priority_player = P1;
+    act(&mut state, Action::CastSpell(bolt));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Player(P0)));
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+}
+
+// ---- Flusterstorm ---------------------------------------------------------------------------------
+
+#[test]
+fn flusterstorm_copies_itself_for_each_earlier_spell() {
+    let mut state = islands();
+    let flusterstorm = put(&mut state, P0, "Flusterstorm", Zone::Hand);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, flusterstorm, &[Target::Object(bolt)]);
+    let mut retargets = 0;
+    loop {
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish,
+                ..
+            }) => {
+                assert!(can_finish, "a copy may keep its target");
+                assert!(legal_targets.contains(&Target::Object(bolt)));
+                retargets += 1;
+                act(&mut state, Action::FinishEffectSelection);
+            }
+            Some(Decision::ChooseEffectBoolean { .. }) => {
+                act(&mut state, Action::ChooseEffectBoolean(false))
+            }
+            None => break,
+            Some(other) => panic!("unexpected choice: {other:?}"),
+        }
+    }
+    assert_eq!(retargets, 1, "one spell was cast before it");
+    assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].life, 20, "the copy countered the Bolt");
 }

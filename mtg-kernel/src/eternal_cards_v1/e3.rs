@@ -17,7 +17,10 @@ use crate::effect::{
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
-use crate::state::{GameState, ObjectLinkV4, StackItemKind, Target, Zone};
+use crate::state::{
+    AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, StackTargetContractV4, Target,
+    Zone,
+};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +28,9 @@ pub(crate) const THE_ONE_RING: &str = "The One Ring";
 pub(crate) const CHROME_MOX: &str = "Chrome Mox";
 pub(crate) const SINK_INTO_STUPOR: &str = "Sink into Stupor";
 pub(crate) const CAVERN_OF_SOULS: &str = "Cavern of Souls";
+pub(crate) const CITY_OF_TRAITORS: &str = "City of Traitors";
+pub(crate) const STREET_WRAITH: &str = "Street Wraith";
+pub(crate) const FLUSTERSTORM: &str = "Flusterstorm";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -51,6 +57,37 @@ pub struct E3StateV1 {
     /// Spell incarnations that can't be countered (Cavern of Souls).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uncounterable_spells: Vec<ObjectLinkV4>,
+    /// Lands just played, for "when you play another land" (City of
+    /// Traitors), until the next trigger collection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lands_played: Vec<(PlayerId, ObjectLinkV4)>,
+    /// Veil of Summer effects, each for the turn it resolved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub veils: Vec<VeilV1>,
+    /// Targets of Storm spells as they were cast, for their copies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub storm_casts: Vec<StormCastV1>,
+}
+
+/// One resolved Veil of Summer: its controller's spells can't be countered
+/// and they and `permanents` have hexproof from blue and from black, for
+/// the turn with key `turn`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VeilV1 {
+    pub player: PlayerId,
+    pub turn: u32,
+    pub permanents: Vec<ObjectLinkV4>,
+}
+
+/// A Storm spell's targets as cast (Flusterstorm), keyed by its stack id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StormCastV1 {
+    pub item: StackItemId,
+    pub target_spec: TargetSpec,
+    pub targets: Vec<Target>,
+    pub contracts: Vec<StackTargetContractV4>,
 }
 
 fn no_players(players: &[bool; 2]) -> bool {
@@ -139,6 +176,12 @@ pub enum E3ChoiceKindV1 {
     ImprintV1 { mox: ObjectLinkV4 },
     /// Misdirection: the new target of the targeted spell.
     RetargetSpellV1 { spell: StackItemId },
+    /// A Storm copy may choose a new target (or keep its own); `rest` are
+    /// the later copies still to choose.
+    RetargetCopyV1 {
+        copy: StackItemId,
+        rest: Vec<StackItemId>,
+    },
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -172,7 +215,7 @@ impl E3ChoiceV1 {
     pub(crate) fn public_purpose(&self) -> crate::rl::TargetSelectionPurposeV4 {
         match self.kind {
             E3ChoiceKindV1::ImprintV1 { .. } => crate::rl::TargetSelectionPurposeV4::CardSelection,
-            E3ChoiceKindV1::RetargetSpellV1 { .. } => {
+            E3ChoiceKindV1::RetargetSpellV1 { .. } | E3ChoiceKindV1::RetargetCopyV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::EffectTargets
             }
         }
@@ -323,6 +366,15 @@ pub(crate) fn finish_selection(
             }
             Ok(false)
         }
+        E3ChoiceKindV1::RetargetCopyV1 { copy, rest } => {
+            let current = crate::engine::spell_copy_targets(state, *copy);
+            let target = selected
+                .first()
+                .copied()
+                .filter(|target| current.first() != Some(target));
+            crate::engine::finish_spell_copy_targets(state, *copy, target)?;
+            stage_copy_retargets(state, continuation, rest.clone(), choice.path.clone())
+        }
     }
 }
 
@@ -413,6 +465,25 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        EternalOpV1::SearchBasicLandIfAtMostLandsV1 { lands } => {
+            // "If you control four or fewer lands, search your library for a
+            // basic land card, put it onto the battlefield tapped, then
+            // shuffle." Checked as it resolves.
+            if controlled_land_count(state, continuation.ctx.controller) <= usize::from(*lands) {
+                continuation.frames.push(EffectFrame::Program {
+                    op: EffectOp::SearchLibraryCardsToDestination {
+                        player: PlayerRef::Controller,
+                        filter: crate::effect::LibraryCardFilter::BasicLand,
+                        max_targets: 1,
+                        destination: crate::effect::LibrarySearchDestinationV1::Battlefield {
+                            tapped: true,
+                        },
+                    },
+                    path,
+                });
+            }
+            Ok(false)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -424,7 +495,9 @@ pub(crate) fn drive(
 pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
     matches!(
         op,
-        EternalOpV1::MayImprintFromHandV1 | EternalOpV1::ChangeTargetOfTargetSpellV1
+        EternalOpV1::MayImprintFromHandV1
+            | EternalOpV1::ChangeTargetOfTargetSpellV1
+            | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. }
     )
 }
 
@@ -776,6 +849,7 @@ pub(crate) fn spell_cannot_be_countered(state: &GameState, object: ObjectId) -> 
         zone_change_count: live.zone_change_count,
     };
     e3(state).is_some_and(|e3| e3.uncounterable_spells.contains(&entry))
+        || active_veils(state, live.controller).next().is_some()
 }
 
 // ---- Triggers and op execution ---------------------------------------------------
@@ -814,18 +888,24 @@ const THE_ONE_RING_TRIGGERS: [TriggeredAbilityDef; 2] = [
 ];
 const CHROME_MOX_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::Etb, chrome_mox_imprint)];
+/// Storm: "When you cast this spell, copy it ..." functions from the stack.
+const FLUSTERSTORM_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    home_zone: Zone::Stack,
+    ..trigger(TriggerCondition::CastSelf, storm_trigger)
+}];
 
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
+        FLUSTERSTORM => &FLUSTERSTORM_TRIGGERS,
         _ => &[],
     }
 }
 
 pub(crate) fn trigger_target_spec(name: &str, _effect: &EffectOp) -> Option<TargetSpec> {
     match name {
-        THE_ONE_RING | CHROME_MOX => Some(TargetSpec::None),
+        THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -913,7 +993,53 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 state,
             );
         }
-        EternalOpV1::MayImprintFromHandV1 | EternalOpV1::ChangeTargetOfTargetSpellV1 => {
+        EternalOpV1::SacrificeSourceV1 => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let source = ObjectLinkV4 {
+                object: contract.source,
+                zone_change_count: contract.zone_change_count,
+            };
+            if link_live(state, source, Zone::Battlefield)
+                && state.objects.get(source.object).controller == ctx.controller
+            {
+                event::log_sacrifice(state, source.object);
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(source.object, Zone::Graveyard),
+                );
+            }
+        }
+        EternalOpV1::VeilOfSummerV1 => {
+            let player = ctx.controller;
+            if opponent_cast_blue_or_black_spell_this_turn(state, player) {
+                crate::effect::execute(
+                    &EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    },
+                    ctx,
+                    state,
+                );
+            }
+            let permanents = state.players[player.index()]
+                .battlefield
+                .iter()
+                .map(|&object| link(state, object))
+                .collect();
+            let turn = state.turn_key_v1();
+            let e3 = e3_mut(state);
+            e3.veils.retain(|veil| veil.turn == turn);
+            e3.veils.push(VeilV1 {
+                player,
+                turn,
+                permanents,
+            });
+        }
+        EternalOpV1::MayImprintFromHandV1
+        | EternalOpV1::ChangeTargetOfTargetSpellV1
+        | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. } => {
             // Choice leaves run only inside the resumable interpreter.
             halt(state, ctx.source);
         }
@@ -930,13 +1056,340 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
 }
 
 /// Whether `player` may be targeted by `controller`'s spell or ability from
-/// `source` under E3 protections (The One Ring's protection from
-/// everything).
+/// `source` under E3 protections: The One Ring's protection from
+/// everything, Veil of Summer's hexproof from blue and from black.
 pub(crate) fn player_targetable(
     state: &GameState,
     player: PlayerId,
-    _controller: PlayerId,
-    _source: Option<ObjectId>,
+    controller: PlayerId,
+    source: Option<ObjectId>,
 ) -> bool {
     !player_protected(state, player)
+        && (controller == player
+            || active_veils(state, player).next().is_none()
+            || !source_blue_or_black(state, source))
+}
+
+/// Whether `object` may be targeted by `controller`'s spell or ability from
+/// `source` under E3 protections (Veil of Summer's hexproof from blue and
+/// from black).
+pub(crate) fn object_targetable(
+    state: &GameState,
+    object: ObjectId,
+    controller: PlayerId,
+    source: Option<ObjectId>,
+) -> bool {
+    let Some(live) = state.objects.try_get(object) else {
+        return true;
+    };
+    if live.controller == controller || live.zone != Zone::Battlefield {
+        return true;
+    }
+    let entry = ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    !(active_veils(state, live.controller).any(|veil| veil.permanents.contains(&entry))
+        && source_blue_or_black(state, source))
+}
+
+// ---- Veil of Summer ---------------------------------------------------------------
+
+/// Veil of Summer: "Draw a card if an opponent has cast a blue or black
+/// spell this turn. Spells you control can't be countered this turn. You
+/// and permanents you control gain hexproof from blue and from black until
+/// end of turn."
+pub fn veil_of_summer() -> EffectOp {
+    eternal(EternalOpV1::VeilOfSummerV1)
+}
+
+fn blue_or_black_mask() -> u8 {
+    crate::card_def::mana_color_mask(ManaColor::U) | crate::card_def::mana_color_mask(ManaColor::B)
+}
+
+/// Whether an opponent of `player` cast a blue or black spell this turn.
+/// The turn begins at its `UpkeepBegan` marker; no spell is cast earlier.
+fn opponent_cast_blue_or_black_spell_this_turn(state: &GameState, player: PlayerId) -> bool {
+    for event in state.engine.event_history.iter().rev() {
+        match event {
+            CommittedEvent::UpkeepBegan { .. } => return false,
+            CommittedEvent::SpellCast { spell, controller } if *controller != player => {
+                let colors = state
+                    .objects
+                    .try_get(*spell)
+                    .and_then(|object| CARD_DEFS.get(object.card_def as usize))
+                    .map_or(0, |def| crate::card_def::mana_colors_mask(def.colors));
+                if colors & blue_or_black_mask() != 0 {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn active_veils(state: &GameState, player: PlayerId) -> impl Iterator<Item = &VeilV1> {
+    let turn = state.turn_key_v1();
+    e3(state)
+        .into_iter()
+        .flat_map(|e3| e3.veils.iter())
+        .filter(move |veil| veil.player == player && veil.turn == turn)
+}
+
+/// Whether a targeting source is blue or black.
+fn source_blue_or_black(state: &GameState, source: Option<ObjectId>) -> bool {
+    source.is_some_and(|source| {
+        state.objects.try_get(source).is_some()
+            && crate::engine::object_color_mask(state, source) & blue_or_black_mask() != 0
+    })
+}
+
+// ---- Edge of Autumn --------------------------------------------------------------
+
+fn controlled_land_count(state: &GameState, player: PlayerId) -> usize {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&object| crate::engine::object_has_type(state, object, CardType::Land))
+        .count()
+}
+
+/// Edge of Autumn's spell ability. Its cycling is an activated ability.
+pub fn edge_of_autumn() -> EffectOp {
+    eternal(EternalOpV1::SearchBasicLandIfAtMostLandsV1 { lands: 4 })
+}
+
+// ---- Dark Ritual, Personal Tutor ---------------------------------------------------
+
+/// Dark Ritual: "Add {B}{B}{B}."
+pub fn dark_ritual() -> EffectOp {
+    EffectOp::AddMana {
+        player: PlayerRef::Controller,
+        colors: vec![ManaColor::B, ManaColor::B, ManaColor::B],
+    }
+}
+
+/// Personal Tutor: "Search your library for a sorcery card, reveal it, then
+/// shuffle and put that card on top."
+pub fn personal_tutor() -> EffectOp {
+    EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::CardWithTypeV1(CardType::Sorcery),
+        max_targets: 1,
+        destination: crate::effect::LibrarySearchDestinationV1::LibraryTopAfterShuffle,
+    }
+}
+
+// ---- Flusterstorm and Storm copies -------------------------------------------------
+
+/// Cards with Storm in this module.
+pub(crate) fn has_storm(name: &str) -> bool {
+    name == FLUSTERSTORM
+}
+
+/// Whether a Storm trigger copies a targeted spell, whose copies may choose
+/// new targets.
+pub(crate) fn targeted_storm(binding: &crate::effect::StormCopyBindingV1) -> bool {
+    CARD_DEFS
+        .get(usize::from(binding.source_contract.card_def))
+        .is_some_and(|def| has_storm(def.name) && def.target_spec != TargetSpec::None)
+}
+
+/// Records a Storm spell's targets as it is cast, for copies made after it
+/// has left the stack.
+pub(crate) fn note_cast(state: &mut GameState, stack_item: StackItemId) {
+    let Some(item) = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == stack_item && item.kind == StackItemKind::Spell)
+    else {
+        return;
+    };
+    if !CARD_DEFS
+        .get(state.objects.get(item.source).card_def as usize)
+        .is_some_and(|def| has_storm(def.name))
+    {
+        return;
+    }
+    let record = StormCastV1 {
+        item: stack_item,
+        target_spec: item.v4.target_spec.unwrap_or_default(),
+        targets: item.targets.clone(),
+        contracts: item.v4.target_contracts.clone(),
+    };
+    e3_mut(state).storm_casts.push(record);
+}
+
+/// "Storm (When you cast this spell, copy it for each spell cast before it
+/// this turn. You may choose new targets for the copies.)" for a targeted
+/// spell: create the copies with the original's targets, then offer each
+/// copy a new target in turn. `Ok(true)` when a choice is staged.
+pub(crate) fn storm_copies(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    binding: crate::effect::StormCopyBindingV1,
+    path: Vec<u16>,
+) -> Result<bool, String> {
+    let ctx = &continuation.ctx;
+    if ctx.source != binding.source_contract.source
+        || ctx.controller != binding.source_contract.controller
+        || !ctx.targets.is_empty()
+    {
+        return Err("Storm resolution context changed from its bound trigger".to_string());
+    }
+    let record = e3(state)
+        .and_then(|e3| {
+            e3.storm_casts
+                .iter()
+                .find(|record| record.item == binding.producing_stack_item)
+                .cloned()
+        })
+        .ok_or("Storm copies lost the targets of their cast")?;
+    let copies = crate::engine::create_targeted_storm_copies_v1(
+        state,
+        binding,
+        &record.targets,
+        &record.contracts,
+        record.target_spec,
+    )?;
+    stage_copy_retargets(state, continuation, copies, path)
+}
+
+/// Offers the next Storm copy a new target. Copies without another legal
+/// target keep theirs.
+fn stage_copy_retargets(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    mut copies: Vec<StackItemId>,
+    path: Vec<u16>,
+) -> Result<bool, String> {
+    while !copies.is_empty() {
+        let copy = copies.remove(0);
+        let candidates = crate::engine::spell_copy_retarget_candidates(state, copy);
+        if candidates.is_empty() {
+            crate::engine::finish_spell_copy_targets(state, copy, None)?;
+            continue;
+        }
+        let bindings = candidates
+            .iter()
+            .filter_map(|target| match *target {
+                Target::Object(object) => Some(bind(state, object)),
+                _ => None,
+            })
+            .collect();
+        offer(
+            continuation,
+            E3ChoiceV1 {
+                kind: E3ChoiceKindV1::RetargetCopyV1 { copy, rest: copies },
+                player: continuation.ctx.controller,
+                candidates,
+                bindings,
+                min: 0,
+                max: 1,
+                ordered: false,
+                path,
+                remaining: continuation.frames.clone(),
+            },
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Flusterstorm: "Counter target instant or sorcery spell unless its
+/// controller pays {1}."
+pub fn flusterstorm() -> EffectOp {
+    EffectOp::CounterTargetUnlessPaysGeneric {
+        target: crate::effect::TargetRef::Target(0),
+        generic: 1,
+    }
+}
+
+fn storm_trigger() -> EffectOp {
+    EffectOp::MaterializeStormCopies
+}
+
+// ---- City of Traitors ----------------------------------------------------------------
+
+/// Records a land played by `player` (a special action), for "When you play
+/// another land, sacrifice this land."
+pub(crate) fn note_land_played(state: &mut GameState, player: PlayerId, land: ObjectId) {
+    let Some(city) = card_id_by_name(CITY_OF_TRAITORS) else {
+        return;
+    };
+    let watched = state.players[player.index()]
+        .battlefield
+        .iter()
+        .any(|&object| object != land && state.objects.get(object).card_def == city);
+    if watched {
+        let played = link(state, land);
+        e3_mut(state).lands_played.push((player, played));
+    }
+}
+
+fn sacrifice_source() -> EffectOp {
+    eternal(EternalOpV1::SacrificeSourceV1)
+}
+
+/// The E3 triggers this collection sets off that have no printed trigger
+/// condition of their own (City of Traitors' "when you play another land").
+pub(crate) fn delayed_triggers(
+    state: &mut GameState,
+    _events: &[CommittedEvent],
+) -> Vec<crate::trigger::PendingTrigger> {
+    let Some(played) = state
+        .eternal_v1
+        .as_mut()
+        .and_then(|eternal| eternal.e3.as_deref_mut())
+        .map(|e3| std::mem::take(&mut e3.lands_played))
+    else {
+        return Vec::new();
+    };
+    let Some(city) = card_id_by_name(CITY_OF_TRAITORS) else {
+        return Vec::new();
+    };
+    let mut triggers = Vec::new();
+    for (player, land) in played {
+        for &object in &state.players[player.index()].battlefield {
+            if object != land.object
+                && state.objects.get(object).card_def == city
+                && printed_battlefield_source(state, object, CITY_OF_TRAITORS)
+            {
+                triggers.push(super::delayed_trigger(
+                    AbilitySourceContractV4::capture(state, object),
+                    player,
+                    sacrifice_source(),
+                ));
+            }
+        }
+    }
+    triggers
+}
+
+/// Triggers this module creates outside the printed trigger tables.
+pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    match name {
+        CITY_OF_TRAITORS => *effect == sacrifice_source(),
+        FLUSTERSTORM => matches!(effect, EffectOp::CreateStormCopies { .. }),
+        _ => false,
+    }
+}
+
+// ---- Street Wraith --------------------------------------------------------------------
+
+/// Street Wraith's swampwalk: it can't be blocked while the defending player
+/// controls a Swamp.
+pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
+    if !printed_battlefield_source(state, attacker, STREET_WRAITH) {
+        return true;
+    }
+    let defender = state.objects.get(blocker).controller;
+    !state.players[defender.index()]
+        .battlefield
+        .iter()
+        .any(|&permanent| {
+            crate::engine::object_has_type(state, permanent, CardType::Land)
+                && crate::engine::has_effective_subtype(state, permanent, Subtype::Swamp)
+        })
 }

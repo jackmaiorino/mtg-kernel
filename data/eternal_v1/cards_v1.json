@@ -1549,6 +1549,282 @@
     "cant_be_countered_grant"
    ],
    "java_file": "Mage.Sets/src/mage/cards/c/CavernOfSouls.java"
+  },
+  {
+   "name": "Tropical Island",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Forest",
+    "Island"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "G",
+    "U"
+   ],
+   "decks": [
+    "legacy-aluren",
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TropicalIsland.java"
+  },
+  {
+   "name": "Hedge Maze",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Forest",
+    "Island"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "G",
+    "U"
+   ],
+   "decks": [
+    "legacy-aluren",
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "surveil",
+    "etb_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HedgeMaze.java"
+  },
+  {
+   "name": "Dark Ritual",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "ritual",
+    "add_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DarkRitual.java"
+  },
+  {
+   "name": "City of Traitors",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-sneak-and-show",
+    "legacy-aluren",
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "land_play_trigger",
+    "sacrifice_self"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CityOfTraitors.java"
+  },
+  {
+   "name": "Street Wraith",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}",
+   "mana_value": 5,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Wraith"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "swampwalk",
+    "cycling",
+    "pay_life_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StreetWraith.java"
+  },
+  {
+   "name": "Edge of Autumn",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "land_search",
+    "intervening_condition",
+    "cycling",
+    "sacrifice_land_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EdgeOfAutumn.java"
+  },
+  {
+   "name": "Personal Tutor",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "tutor",
+    "library_top"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PersonalTutor.java"
+  },
+  {
+   "name": "Veil of Summer",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-aluren",
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "conditional_draw",
+    "cant_be_countered_grant",
+    "hexproof_from_colors"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VeilOfSummer.java"
+  },
+  {
+   "name": "Flusterstorm",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show",
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "counter_unless_pay",
+    "storm",
+    "copy_spell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/Flusterstorm.java"
   }
  ]
 }

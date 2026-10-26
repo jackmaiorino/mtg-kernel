@@ -216,6 +216,9 @@ pub enum LibraryCardFilter {
     /// fetchlands). Only lands carry land subtypes, so any match is a land,
     /// basic or not. Appended for the eternal catalog.
     CardWithAnySubtypeV1([Subtype; 2]),
+    /// A card with this card type ("a sorcery card", Personal Tutor).
+    /// Appended for the eternal catalog.
+    CardWithTypeV1(CardType),
 }
 
 impl LibraryCardFilter {
@@ -3134,6 +3137,11 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
     if crate::high_society_hunter_custody_v45::binding(op).is_some() {
         return true;
     }
+    // Storm copies of a targeted spell may choose new targets (Flusterstorm).
+    if let EffectOp::CreateStormCopies { binding } = op {
+        return cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::e3::targeted_storm(binding);
+    }
     if matches!(op, EffectOp::ExileTopChooseOneUntilNextTurn { .. }) {
         return true;
     }
@@ -6020,6 +6028,9 @@ fn validate_counter_target_unless_pays_program(
             | crate::card_def::TargetSpec::NoncreatureSpellOnStack
             | crate::card_def::TargetSpec::CreatureSpellOnStack
             | crate::card_def::TargetSpec::ArtifactSpellOnStack
+            | crate::card_def::TargetSpec::StandardV1(
+                crate::standard_cards_v1::StandardTargetV1::InstantOrSorcerySpellV1
+            )
     ) {
         return Err("counter-unless-pay resolving spell has a nonspell target filter".to_string());
     }
@@ -14187,6 +14198,20 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::CreateStormCopies { binding }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cards_v1::e3::targeted_storm(&binding) =>
+            {
+                if crate::eternal_cards_v1::e3::storm_copies(
+                    state,
+                    &mut continuation,
+                    binding,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(op))
                 if op.contains_player_choice() =>
             {
@@ -15977,6 +16002,7 @@ fn library_filter_matches(
         LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
             .iter()
             .any(|subtype| subtype.is_in_subtype_ids(subtype_ids)),
+        LibraryCardFilter::CardWithTypeV1(card_type) => def.has_type(card_type),
     })
 }
 
@@ -16017,6 +16043,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             .fold(fnv1a_u64(0xcbf2_9ce4_8422_2325, 11), |hash, subtype| {
                 fnv1a_u64(hash, u64::from(subtype.stable_id()))
             }),
+        LibraryCardFilter::CardWithTypeV1(card_type) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 12), card_type as u64)
+        }
     }
 }
 

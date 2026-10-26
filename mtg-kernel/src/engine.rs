@@ -2665,6 +2665,8 @@ fn validate_creature_upgrade_trigger_contract(
 /// keyed here; `rules_vector_v1` reads this instead of the card's name.
 pub(crate) fn has_storm(definition: &card_def::CardDef) -> bool {
     definition.name == "Weather the Storm"
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::e3::has_storm(definition.name))
 }
 
 /// Authenticates Weather the Storm's historical producing cast contract.
@@ -4138,6 +4140,15 @@ fn legal_targets_for_controller_from_source_unframed(
         let Target::Object(object) = *target else {
             return true;
         };
+        #[cfg(feature = "eternal-fixtures")]
+        if !crate::eternal_cards_v1::e3::object_targetable(
+            state,
+            object,
+            controller,
+            source.map(|source| source.object),
+        ) {
+            return false;
+        }
         let live = state.objects.get(object);
         live.zone != Zone::Battlefield
             || (!has_effective_keyword(state, object, Keywords::SHROUD)
@@ -20127,6 +20138,7 @@ pub(crate) fn step_without_linked_aura_v1(
             if crate::eternal_cards_v1::e3::playable_land_back_face(state, id) {
                 crate::eternal_cards_v1::e3::play_land_back_face(state, p, id);
                 state.players[p.index()].lands_played_this_turn += 1;
+                crate::eternal_cards_v1::e3::note_land_played(state, p, id);
                 collect_and_queue_triggers(state);
                 state.engine.priority_passes = [false, false];
                 state.priority_player = p;
@@ -21720,6 +21732,93 @@ pub(crate) fn create_storm_spell_copies(
     Ok(())
 }
 
+/// The frozen copy count of a Storm trigger's cast binding.
+pub(crate) fn storm_copy_count_v1(
+    state: &GameState,
+    binding: StormCopyBindingV1,
+) -> Result<u16, String> {
+    storm_copy_count_from_binding(state, binding)
+}
+
+/// Storm copies of a targeted spell (Flusterstorm): each copy keeps the
+/// original's targets and target contracts as it was cast. Returns the
+/// copies' stack ids in creation order. Copies are not cast.
+pub(crate) fn create_targeted_storm_copies_v1(
+    state: &mut GameState,
+    binding: StormCopyBindingV1,
+    targets: &[Target],
+    target_contracts: &[StackTargetContractV4],
+    target_spec: TargetSpec,
+) -> Result<Vec<StackItemId>, String> {
+    let copy_count = storm_copy_count_from_binding(state, binding)?;
+    let parent_name = state
+        .objects
+        .get(binding.source_contract.source)
+        .name
+        .clone();
+    let mut staged = state.clone();
+    let mut created = Vec::new();
+    for _ in 0..copy_count {
+        let copy_source = staged.objects.push(crate::state::GameObject {
+            card_def: binding.source_contract.card_def,
+            name: parent_name.clone(),
+            owner: binding.source_contract.owner,
+            controller: binding.source_contract.controller,
+            zone: Zone::Stack,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(binding.source_contract.card_def),
+            spell_copy_origin: Some(SpellCopyOriginV4 {
+                parent: binding.source_contract.source,
+                parent_card_def: binding.source_contract.card_def,
+                parent_owner: binding.source_contract.owner,
+                parent_controller: binding.source_contract.controller,
+                parent_stack_zone_change_count: binding.source_contract.zone_change_count,
+                parent_was_copy: false,
+                source_types_v1: crate::source_type_hexproof_v1::copy_projection(
+                    binding.source_contract.card_def,
+                    binding.source_contract.cast_method,
+                ),
+            }),
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        let stack_item_id = next_stack_item_id(&mut staged);
+        let source_contract =
+            StackSourceContractV4::capture(&staged, copy_source, CastMethodV4::Normal);
+        let copy = StackItem {
+            kind: StackItemKind::Spell,
+            source: copy_source,
+            controller: binding.source_contract.controller,
+            targets: targets.to_vec(),
+            is_copy: true,
+            inline_effect: None,
+            discarded: Vec::new(),
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: StackStateV4 {
+                stack_item_id,
+                cast_method: Some(CastMethodV4::Normal),
+                source_contract: Some(source_contract),
+                target_spec: Some(target_spec),
+                target_contracts: target_contracts.to_vec(),
+                ..StackStateV4::default()
+            },
+        };
+        staged.stack.push(copy.clone());
+        validate_spell_stack_source(&staged, &copy)?;
+        validated_stack_item_target_spec(&copy, &staged)?;
+        created.push(stack_item_id);
+    }
+    *state = staged;
+    Ok(created)
+}
+
 fn pending_spell_copy_parent(
     state: &GameState,
     pending: &PendingSpellCopy,
@@ -22639,6 +22738,8 @@ fn play_land(
     }
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn += 1;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::note_land_played(state, player, id);
     if resolution_cast_v1::finish_child(state)? {
         return Ok(());
     }
@@ -23196,6 +23297,8 @@ fn finalize_owned_cast(
     log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::extra_turn_v1::record_publication(state, stack_item_id);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     crate::fake_your_own_death_v50::spell_custody::publish_spell(state, stack_item_id)?;
     if matches!(

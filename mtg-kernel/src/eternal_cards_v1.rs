@@ -30,7 +30,10 @@ use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
 pub mod e3;
-pub use e3::{misdirection, sink_into_stupor, the_one_ring_draw};
+pub use e3::{
+    dark_ritual, edge_of_autumn, flusterstorm, misdirection, personal_tutor, sink_into_stupor,
+    the_one_ring_draw, veil_of_summer,
+};
 
 /// Per-game state for this module's cards. Absent until one of them needs
 /// it, so every other catalog keeps its snapshots and hashes.
@@ -184,6 +187,15 @@ pub enum EternalOpV1 {
     /// "Change the target of target spell with a single target"
     /// (Misdirection). A choice.
     ChangeTargetOfTargetSpellV1,
+    /// "If you control `lands` or fewer lands, search your library for a
+    /// basic land card, put it onto the battlefield tapped, then shuffle"
+    /// (Edge of Autumn). A choice.
+    SearchBasicLandIfAtMostLandsV1 { lands: u8 },
+    /// Sacrifice this ability's source incarnation if its controller still
+    /// controls it (City of Traitors).
+    SacrificeSourceV1,
+    /// Veil of Summer's effect.
+    VeilOfSummerV1,
 }
 
 impl EternalOpV1 {
@@ -976,7 +988,10 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::LoseLifePerBurdenCounterV1
         | EternalOpV1::BurdenCounterThenDrawV1
         | EternalOpV1::MayImprintFromHandV1
-        | EternalOpV1::ChangeTargetOfTargetSpellV1 => e3::execute(op, ctx, state),
+        | EternalOpV1::ChangeTargetOfTargetSpellV1
+        | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. }
+        | EternalOpV1::SacrificeSourceV1
+        | EternalOpV1::VeilOfSummerV1 => e3::execute(op, ctx, state),
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
@@ -1113,8 +1128,9 @@ pub(crate) fn combat_static_rules(
 
 /// Brazen Borrower: "This creature can block only creatures with flying."
 pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
-    !printed_battlefield_source(state, blocker, BRAZEN_BORROWER)
-        || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING)
+    (!printed_battlefield_source(state, blocker, BRAZEN_BORROWER)
+        || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING))
+        && e3::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1287,10 +1303,10 @@ pub(crate) fn delayed_triggers(
         .iter()
         .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }));
     let active = state.active_player;
+    let mut triggers = e3::delayed_triggers(state, events);
     let Some(eternal_state) = state.eternal_v1.as_mut() else {
-        return Vec::new();
+        return triggers;
     };
-    let mut triggers = Vec::new();
     if upkeep {
         triggers.extend(
             std::mem::take(&mut eternal_state.upkeep_draws)
@@ -1317,6 +1333,9 @@ pub(crate) fn delayed_triggers(
 
 /// Delayed triggers this module creates, owned by their source's card.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    if e3::delayed_effect_matches(name, effect) {
+        return true;
+    }
     match name {
         MISHRAS_BAUBLE | URZAS_BAUBLE => *effect == delayed_upkeep_draw(),
         TAMIYO => matches!(

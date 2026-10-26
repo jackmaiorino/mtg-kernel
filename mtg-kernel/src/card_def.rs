@@ -359,6 +359,11 @@ pub enum Subtype {
     Lhurgoyf,
     Halfling,
     Tamiyo,
+    /// Appended for the eternal catalog's wave-E3 cards (Street Wraith, Raph
+    /// & Mikey, Jace). Jace is a planeswalker type.
+    Wraith,
+    Mutant,
+    Jace,
 }
 
 impl Subtype {
@@ -671,6 +676,10 @@ impl Subtype {
         Subtype::Lhurgoyf,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Halfling,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Wraith,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Mutant,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -766,6 +775,8 @@ impl Subtype {
                     | Subtype::Army
                     | Subtype::Lhurgoyf
                     | Subtype::Halfling
+                    | Subtype::Wraith
+                    | Subtype::Mutant
             )
         {
             return true;

@@ -3713,6 +3713,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         | "Lush Portico"
         | "Underground Mortuary"
         | "Undercity Sewers"
+        | "Hedge Maze"
         | "Thundering Falls" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,

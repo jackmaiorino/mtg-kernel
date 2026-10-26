@@ -233,9 +233,37 @@ const THE_ONE_RING: [ActivatedAbilityRecipe; 1] = [instant(
     AbilityEffectRecipe::StandardProgram("crate::eternal_cards_v1::the_one_ring_draw"),
 )];
 
+/// A cycling ability (702.29): activated from hand, discarding the card as
+/// part of its cost, to draw a card.
+const fn cycling(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: AbilityEffectRecipe::DrawCards(1),
+        activation_zone: "Hand",
+        sorcery_speed_only: false,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+/// Street Wraith: "Cycling--Pay 2 life."
+const STREET_WRAITH: [ActivatedAbilityRecipe; 1] = [cycling(&[PayLife(2), DiscardSelf])];
+
+/// Edge of Autumn: "Cycling--Sacrifice a land."
+const EDGE_OF_AUTUMN: [ActivatedAbilityRecipe; 1] = [cycling(&[
+    AbilityCostRecipe::SacrificeControlled {
+        count: 1,
+        filter: super::PermanentFilterRecipe::Land,
+    },
+    DiscardSelf,
+])];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "The One Ring" => &THE_ONE_RING,
+        "Street Wraith" => &STREET_WRAITH,
+        "Edge of Autumn" => &EDGE_OF_AUTUMN,
         "Tamiyo, Inquisitive Student" => &TAMIYO,
         "Melded Moxite" => &MELDED_MOXITE,
         "Inventor's Axe" => &INVENTORS_AXE,
@@ -302,6 +330,28 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec:
                 "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::SpellWithSingleTargetV1)",
             program: "crate::eternal_cards_v1::misdirection",
+        },
+        "Dark Ritual" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::dark_ritual",
+        },
+        "Personal Tutor" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::personal_tutor",
+        },
+        // Its cycling is an activated ability below.
+        "Edge of Autumn" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::edge_of_autumn",
+        },
+        "Veil of Summer" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::veil_of_summer",
+        },
+        // Storm is its cast trigger (`eternal_cards_v1::e3`).
+        "Flusterstorm" => Special::StandardProgram {
+            target_spec: "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::InstantOrSorcerySpellV1)",
+            program: "crate::eternal_cards_v1::flusterstorm",
         },
         // The land face is `transform_face_for` below.
         "Sink into Stupor" => Special::StandardProgram {
@@ -373,6 +423,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "etb:may_exile_nonartifact_nonland_hand_card_linked_imprint;mana:tap_add_one_of_imprinted_card_colors"
         }
         "Sink into Stupor" => "land_face_play_from_hand:as_enters_may_pay_3_life_else_tapped",
+        "City of Traitors" => "controller_plays_another_land:sacrifice_source",
+        "Flusterstorm" => "cast:storm:copies_may_choose_new_targets",
+        "Street Wraith" => "static:swampwalk",
         "Cavern of Souls" => {
             "as_enters:choose_creature_type_of_owned_creature_cards;restricted_mana_spell_cant_be_countered"
         }
@@ -409,6 +462,8 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         "Dimir Aqueduct" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::B]), controller_damage: 0, max_activations_per_turn: None })",
         // "{T}: Add {C}{C}. This land deals 2 damage to you."
         "Ancient Tomb" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 2, max_activations_per_turn: None })",
+        // "{T}: Add {C}{C}."
+        "City of Traitors" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         _ => "None",
     }
 }
