@@ -1229,6 +1229,14 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             first_amount,
             other_amount,
         } => {
+            // The registered Drakuseth producer executes through its private
+            // pre-removal loan. A serialized context cannot mint that loan.
+            if ctx
+                .ability_source_contract
+                .is_some_and(|s| crate::drakuseth_damage_source_v76::owns_definition(s.card_def))
+            {
+                return;
+            }
             let Some(source) = ctx.ability_source_contract.filter(|source| {
                 source.source == ctx.source && source.controller == ctx.controller
             }) else {

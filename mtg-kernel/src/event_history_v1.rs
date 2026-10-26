@@ -337,11 +337,12 @@ pub enum EventKindV1 {
     LilianaDreadhordeV1,
     ChandraFlameshaperV74,
     KaitoCunningV75,
+    DrakusethDamageSourceV76,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 313;
-const _: () = assert!(EventKindV1::KaitoCunningV75 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 314;
+const _: () = assert!(EventKindV1::DrakusethDamageSourceV76 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -754,6 +755,7 @@ impl CommittedEvent {
             Self::LilianaDreadhordeV1 { .. } => EventKindV1::LilianaDreadhordeV1,
             Self::ChandraFlameshaperV74 { .. } => EventKindV1::ChandraFlameshaperV74,
             Self::KaitoCunningV75 { .. } => EventKindV1::KaitoCunningV75,
+            Self::DrakusethDamageSourceV76 { .. } => EventKindV1::DrakusethDamageSourceV76,
         }
     }
 }

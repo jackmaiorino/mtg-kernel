@@ -59,15 +59,24 @@ identical authorized evidence. Human/transport views preserve the complete
 candidate set and reject forged or stale packets. Reuse compatible native
 mechanic tests; add checks only for the missing composition risks.
 
-An actual engine prerequisite remains: the existing Drakuseth regression
-deliberately refuses Crystal Barricade combined with finite prevention. Its
-positional damage is one simultaneous batch, so sequential DealDamage lowering
-would change the rules. Extend the existing owned batch continuation to mixed
-player/permanent recipients and authenticate Drakuseth's original source facts
-through departure/reentry before claiming that composition. Current batch
-choices assume object recipients, and historical-source resolution does not
-yet recognize a Drakuseth producer. Preserve the prior refusal test until its
-replacement proves the actual mixed batch, source LKI, ordering and restoration.
+The native source prerequisite is now authored in
+`drakuseth_damage_source_v76.rs`, pending runtime qualification. Native placement
+publishes the original complete row; a private pre-removal loan executes its
+positional batch. Current colors and damage keywords, or the exact departure
+capture after a zone change, feed targeting, protection, lifelink and deathtouch.
+Simultaneous departures freeze all sources before any member moves. Empty
+markers preserve predecessor serialization and Hash input; the journal event
+is appended after existing event discriminants. Paid native tests cover live,
+departed, reentered and stolen sources, multicolor/protection interaction,
+damage/trigger ordering, lifecycle refusal and restoration. This is source
+preparation, with no new consumer, Full promotion or passing-runtime claim.
+
+The existing Drakuseth regression still deliberately refuses Crystal Barricade
+combined with finite prevention. Extend the existing owned batch continuation
+to mixed player/permanent recipients before admitting that composition. Current
+batch choices assume object recipients; sequential DealDamage lowering would
+change the rules. Preserve the prior refusal test until its replacement proves
+the actual mixed batch, source LKI, ordering and restoration.
 
 After native qualification, coordinate Full promotion, append-only catalog and
 live store profile integration serially with the parent FDN branch. Recheck the

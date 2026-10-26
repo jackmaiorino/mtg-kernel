@@ -2072,6 +2072,9 @@ pub enum CommittedEvent {
     KaitoCunningV75 {
         journal: Box<crate::effect::kaito_cunning_v75::JournalV75>,
     },
+    DrakusethDamageSourceV76 {
+        journal: Box<crate::drakuseth_damage_source_v76::JournalV76>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -5286,6 +5289,7 @@ fn materialize_event_v1(
                         crate::source_power_activation_v1::before_departure(state, z.object);
                     }
                     crate::gorehorn_damage_v1::before_departure(state, z.object);
+                    crate::drakuseth_damage_source_v76::before_departure(state, z.object);
                     crate::equipment_damage_source_v4::before_departure(state, z.object);
                 }
                 #[cfg(feature = "standard-magezero-fixtures")]
@@ -6204,6 +6208,7 @@ fn commit_batch_survivors(
         }
     }
     crate::gorehorn_damage_v1::before_batch_departures(state, &survivors);
+    crate::drakuseth_damage_source_v76::before_batch_departures(state, &survivors);
     crate::equipment_damage_source_v4::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
@@ -6459,6 +6464,13 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
             .collect::<Vec<_>>(),
     );
+    crate::drakuseth_damage_source_v76::before_batch_departures(
+        state,
+        &chosen
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
 
     crate::equipment_damage_source_v4::before_batch_departures(
         state,
@@ -6554,6 +6566,13 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &dying
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
+    crate::drakuseth_damage_source_v76::before_batch_departures(
         state,
         &dying
             .iter()

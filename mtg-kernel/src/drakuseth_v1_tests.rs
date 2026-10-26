@@ -469,3 +469,246 @@ fn paid_attack_serialized_context_source_and_controller_forgery_refuse_without_e
         assert_eq!(state, replay);
     }
 }
+
+fn native_keyword_operand(
+    state: &mut GameState,
+    source: ObjectId,
+    target: ObjectId,
+    keyword: Keywords,
+) {
+    // A labelled native support effect, not a claim that a granting spell was cast.
+    let mut ctx = ExecCtx::no_targets(source, state.objects.get(source).controller);
+    ctx.targets = vec![Target::Object(target)];
+    ctx.target_contracts = vec![crate::state::StackTargetContractV4::capture(
+        state,
+        Target::Object(target),
+    )];
+    crate::effect::execute(
+        &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: crate::effect::ObjectRef::Target(0),
+            keyword,
+        },
+        &ctx,
+        state,
+    );
+}
+
+#[test]
+fn paid_attack_live_departed_reentered_multicolor_lifelink_deathtouch_original_damage_batch_and_restore_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for stolen in [false, true] {
+            for form in 0..3 {
+                let (mut state, source) = paid(actor);
+                let recipients = [0, 1].map(|_| {
+                    put(
+                        &mut state,
+                        actor.opponent(),
+                        "Serra Angel",
+                        Zone::Battlefield,
+                    )
+                });
+                attack(&mut state, source, actor);
+                let targets = [
+                    Target::Player(actor.opponent()),
+                    Target::Object(recipients[0]),
+                    Target::Object(recipients[1]),
+                ];
+                choose(&mut state, source, &targets);
+                let row = state.stack.last().unwrap().clone();
+                let id = row.v4.stack_item_id;
+                let original = row.v4.ability_source_contract.unwrap();
+                // Materialized native color is a support operand. There is no
+                // paid color-changing-spell claim in this source-LKI test.
+                let colors = crate::card_def::mana_colors_mask(&[ManaColor::R, ManaColor::U]);
+                state.objects.get_mut(source).v4.effective_color_mask = colors;
+                native_keyword_operand(
+                    &mut state,
+                    source,
+                    source,
+                    Keywords(Keywords::LIFELINK.0 | Keywords::DEATHTOUCH.0),
+                );
+                native_keyword_operand(
+                    &mut state,
+                    source,
+                    recipients[0],
+                    Keywords::PROTECTION_FROM_MONOCOLORED,
+                );
+                if stolen {
+                    gain_control(&mut state, source, actor.opponent());
+                }
+                let controller = if stolen { actor.opponent() } else { actor };
+                let captured =
+                    crate::source_power_activation_v1::capture_damage_source(&state, source);
+                assert_eq!(captured.color_mask, colors);
+                assert!(captured.lifelink && captured.deathtouch);
+                assert_eq!(captured.source.controller, controller);
+                if form != 0 {
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(source, Zone::Hand),
+                    );
+                    if form == 2 {
+                        event::propose_and_commit(
+                            &mut state,
+                            ProposedEvent::zone_change(source, Zone::Battlefield),
+                        );
+                        assert!(
+                            state.objects.get(source).zone_change_count
+                                > original.zone_change_count
+                        );
+                        assert_eq!(
+                            engine::object_color_mask(&state, source),
+                            crate::card_def::mana_colors_mask(&[ManaColor::R])
+                        );
+                        assert!(!engine::has_effective_keyword(
+                            &state,
+                            source,
+                            Keywords::LIFELINK
+                        ));
+                    }
+                }
+                assert_eq!(
+                    crate::drakuseth_damage_source_v76::damage_source(&state, source, id).unwrap(),
+                    captured
+                );
+                crate::drakuseth_damage_source_v76::validate_state(&state).unwrap();
+                let mut replay = restored(&state);
+                let start = state.engine.event_history.len();
+                for branch in [&mut state, &mut replay] {
+                    settle(branch);
+                    assert_eq!(
+                        damage_since(branch, start, source),
+                        vec![(targets[0], 4), (targets[1], 3), (targets[2], 3)]
+                    );
+                    assert!(recipients
+                        .iter()
+                        .all(|&o| branch.objects.get(o).zone == Zone::Graveyard));
+                    assert_eq!(
+                        branch.players[actor.index()].life,
+                        if stolen { 20 } else { 30 }
+                    );
+                    assert_eq!(
+                        branch.players[actor.opponent().index()].life,
+                        if stolen { 26 } else { 16 }
+                    );
+                    let interval = &branch.engine.event_history[start..];
+                    assert_eq!(interval.iter().filter(|e|matches!(e,CommittedEvent::LifeGain{player,amount}if *player==controller&&*amount==10)).count(),1);
+                    let last_damage = interval
+                        .iter()
+                        .rposition(|e| matches!(e,CommittedEvent::Damage{source:s,..}if *s==source))
+                        .unwrap();
+                    let first_death=interval.iter().position(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Battlefield,to:Zone::Graveyard,..}if recipients.contains(object))).unwrap();
+                    assert!(last_damage < first_death);
+                    crate::drakuseth_damage_source_v76::validate_state(branch).unwrap();
+                }
+                assert_eq!(state, replay);
+            }
+        }
+    }
+}
+
+#[test]
+fn paid_attack_publication_departure_marker_forgeries_and_serialized_unowned_context_refuse_both_seats(
+) {
+    use crate::drakuseth_damage_source_v76 as owned;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = paid(actor);
+        attack(&mut state, source, actor);
+        choose(&mut state, source, &[Target::Player(actor.opponent())]);
+        let row = state.stack.last().unwrap().clone();
+        let mut ctx = ExecCtx::no_targets(source, actor);
+        ctx.stack_item_id = Some(row.v4.stack_item_id);
+        ctx.ability_source_contract = row.v4.ability_source_contract;
+        ctx.targets = row.targets.clone();
+        ctx.target_contracts = row.v4.target_contracts.clone();
+        let ctx: ExecCtx = serde_json::from_slice(&serde_json::to_vec(&ctx).unwrap()).unwrap();
+        let before = state.clone();
+        crate::effect::execute(&drakuseth_attack_v1(), &ctx, &mut state);
+        assert_eq!(
+            state, before,
+            "matching serialized fields are not a native removal loan"
+        );
+        for field in 0..4 {
+            let mut forged = restored(&state);
+            match field {
+                0=>forged.engine.event_history.retain(|e|!matches!(e,CommittedEvent::DrakusethDamageSourceV76{journal}if matches!(journal.as_ref(),owned::JournalV76::Published{..}))),
+                1=>forged.stack.last_mut().unwrap().v4.drakuseth_published_v76.0=None,
+                2=>forged.stack.last_mut().unwrap().targets[0]=Target::Player(actor),
+                _=>{
+                    let duplicate=forged.engine.event_history.iter().find(|e|matches!(e,CommittedEvent::DrakusethDamageSourceV76{journal}if matches!(journal.as_ref(),owned::JournalV76::Published{..}))).unwrap().clone();
+                    forged.engine.event_history.push(duplicate);
+                }
+            }
+            assert!(owned::validate_state(&forged).is_err());
+            let count = forged.engine.event_history.len();
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted {
+                    mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ..
+                }
+            ));
+            assert_eq!(forged.engine.event_history.len(), count);
+        }
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        owned::validate_state(&state).unwrap();
+        let mut forged = restored(&state);
+        forged.engine.event_history.retain(|e|!matches!(e,CommittedEvent::DrakusethDamageSourceV76{journal}if matches!(journal.as_ref(),owned::JournalV76::Departure{..})));
+        assert!(owned::validate_state(&forged).is_err());
+        let count = forged.engine.event_history.len();
+        assert!(matches!(
+            engine::advance_until_decision(&mut forged),
+            Decision::Halted { .. }
+        ));
+        assert_eq!(forged.engine.event_history.len(), count);
+    }
+}
+
+#[test]
+fn paid_attack_native_counter_and_all_illegal_target_close_original_publication_once_and_restore_both_seats(
+) {
+    use crate::drakuseth_damage_source_v76 as owned;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = paid(actor);
+        let recipient = put(
+            &mut state,
+            actor.opponent(),
+            "Serra Angel",
+            Zone::Battlefield,
+        );
+        attack(&mut state, source, actor);
+        choose(&mut state, source, &[Target::Object(recipient)]);
+        let saved = restored(&state);
+        let start = state.engine.event_history.len();
+        for countered in [false, true] {
+            let mut expected = None;
+            for _ in 0..2 {
+                let mut branch = restored(&saved);
+                if countered {
+                    // Labelled native stack-counter primitive, not Counterspell
+                    // targeting an ability or a paid countering-spell claim.
+                    let id = branch.stack.last().unwrap().v4.stack_item_id;
+                    engine::counter_stack_item_by_id(&mut branch, id).unwrap();
+                } else {
+                    event::propose_and_commit(
+                        &mut branch,
+                        ProposedEvent::zone_change(recipient, Zone::Hand),
+                    );
+                    settle(&mut branch);
+                }
+                assert!(branch.stack.is_empty());
+                assert!(damage_since(&branch, start, source).is_empty());
+                owned::validate_state(&branch).unwrap();
+                assert_eq!(branch.engine.event_history[start..].iter().filter(|e|matches!(e,
+                    CommittedEvent::DrakusethDamageSourceV76{journal}if matches!(journal.as_ref(),owned::JournalV76::Removed{outcome,..}
+                    if *outcome==if countered{owned::OutcomeV76::Countered}else{owned::OutcomeV76::NoLegalTarget}))).count(),1);
+                if let Some(ref old) = expected {
+                    assert_eq!(&branch, old);
+                } else {
+                    expected = Some(branch);
+                }
+            }
+        }
+    }
+}
