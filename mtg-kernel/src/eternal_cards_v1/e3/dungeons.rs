@@ -696,7 +696,7 @@ fn mad_wizards_lair(
 }
 
 /// The card a Mad Wizard's Lair answer casts, if any.
-pub(super) fn resolution_cast_card(
+pub(crate) fn resolution_cast_card(
     choice: &E3ChoiceV1,
     selected: &[Target],
 ) -> Option<EffectObjectBinding> {
@@ -709,7 +709,7 @@ pub(super) fn resolution_cast_card(
 }
 
 /// Authenticates the cast a Mad Wizard's Lair answer authorized.
-pub(super) fn validate_resolution_cast(
+pub(crate) fn validate_resolution_cast(
     suspended: &EffectContinuation,
     choice: &E3ChoiceV1,
     selected: &[Target],
