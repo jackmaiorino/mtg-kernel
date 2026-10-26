@@ -394,6 +394,32 @@ pub fn gix_pair_5() -> EffectOp {
     gix_command_pair(5)
 }
 
+/// Authenticates a graveyard cast child (Bilbo) against its typed selection
+/// answer: the definition-owned selection, its one selected card and the
+/// child's permission.
+pub(crate) fn validate_graveyard_cast_authorization(
+    state: &GameState,
+    pending: &EffectContinuation,
+    rule: ObjectSelectionRuleV1,
+    original: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+    path: &[u16],
+    permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
+) -> Result<(), String> {
+    validate_origin(state, pending, rule, path)?;
+    if rule.action != ObjectSelectionActionV1::CastFromGraveyardV1
+        || selected != [permission.card]
+        || !original.contains(&permission.card)
+        || permission.card.expected_zone != Zone::Graveyard
+        || permission.land
+        || permission.maximum_mana_value.is_some()
+        || permission.controller != pending.ctx.resolve_player(rule.player, state)
+    {
+        return Err("graveyard cast answer does not authorize this child".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod instant_or_sorcery_boundary_tests {
     use super::*;
@@ -468,30 +494,4 @@ mod instant_or_sorcery_boundary_tests {
             assert!(candidates(&state, actor, invalid, None).is_err());
         }
     }
-}
-
-/// Authenticates a graveyard cast child (Bilbo) against its typed selection
-/// answer: the definition-owned selection, its one selected card and the
-/// child's permission.
-pub(crate) fn validate_graveyard_cast_authorization(
-    state: &GameState,
-    pending: &EffectContinuation,
-    rule: ObjectSelectionRuleV1,
-    original: &[EffectObjectBinding],
-    selected: &[EffectObjectBinding],
-    path: &[u16],
-    permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
-) -> Result<(), String> {
-    validate_origin(state, pending, rule, path)?;
-    if rule.action != ObjectSelectionActionV1::CastFromGraveyardV1
-        || selected != [permission.card]
-        || !original.contains(&permission.card)
-        || permission.card.expected_zone != Zone::Graveyard
-        || permission.land
-        || permission.maximum_mana_value.is_some()
-        || permission.controller != pending.ctx.resolve_player(rule.player, state)
-    {
-        return Err("graveyard cast answer does not authorize this child".into());
-    }
-    Ok(())
 }
