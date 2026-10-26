@@ -1,7 +1,7 @@
 //! Closed untargeted printed spells. Only checked declarative meanings leave this module.
 use super::{Error, Result};
 use crate::{
-    card_def::{CardDef, CardType, DynamicValueDef, Keywords, TargetSpec},
+    card_def::{CardDef, CardType, CostComponent, DynamicValueDef, Keywords, TargetSpec},
     effect::{CreatureFilter, EffectOp, PlayerRef},
     mana::{Cost, ManaColor, Pip},
 };
@@ -15,6 +15,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Brass's Bounty"
             | "Lunar Insight"
             | "Goblin Surprise"
+            | "Revenge of the Rats"
     )
 }
 
@@ -25,6 +26,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     if d.name == "Goblin Surprise" {
         return goblin_surprise(id, d);
+    }
+    if d.name == "Revenge of the Rats" {
+        return revenge_of_rats(id, d);
     }
     let heroic = d.name == "Heroic Reinforcements";
     let bounty = d.name == "Brass's Bounty";
@@ -175,6 +179,85 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "power":null,"toughness":null,"keywords":0,"token":false,
         "ordered_cast_roots":cast_roots
     }})))
+}
+
+fn revenge_of_rats(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 2,
+        pips: &[Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::B)],
+        x_count: 0,
+    };
+    let token =
+        crate::card_def::card_id_by_name("Rat Token").ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != 4
+        || d.types != [CardType::Sorcery]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::B]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::None
+        || d.mode2.is_some()
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || !d
+            .flashback
+            .as_ref()
+            .is_some_and(|f| f.cost == [CostComponent::Mana(cost)])
+        || (d.spell_effect)()
+            != Some(EffectOp::CreateTokensDynamic {
+                token_def: token,
+                controller: PlayerRef::Controller,
+                count: DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature),
+                tapped: true,
+            })
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let token_printing = super::baseline(token)?;
+    let resolution = json!([{"operation":"CreateTokens","controller":"CapturedSpellController",
+        "count":{"operation":"CountCreatureCardsInOwnGraveyard","owner":"CapturedSpellController",
+            "zone":"Graveyard","card_types":"CurrentGraveyardCardDefinitionTypes",
+            "excludes_tokens_and_opponents_cards":true,
+            "artifact_creature_cards_are_included":true,"noncreature_cards_are_excluded":true},
+        "sample_count_once_at_resolution_before_any_creation":true,
+        "responses_that_change_graveyard_membership_change_the_count":true,
+        "zero_count_creates_no_objects_or_entry_events":true,"full_native_integer_count":true,
+        "token_definition":token_printing,"entry_tapped":true,
+        "entire_set_initialized_and_committed_as_one_simultaneous_creation_batch":true,
+        "tapped_entry_is_set_before_any_entry_observation":true,
+        "normal_token_replacements_and_entry_triggers_apply":true}]);
+    let roots = [false, true].into_iter().map(|flashback| json!({
+        "method":if flashback {"Flashback"} else {"Normal"},
+        "route":if flashback {"GraveyardFlashback"} else {"Hand"},
+        "origin":if flashback {"OwnGraveyard"} else {"OwnHand"},"origin_owner_must_be_caster":true,
+        "timing":"OwnMainPhaseEmptyStackWithPriority","targets":[],
+        "ordered_costs":[{"operation":if flashback {"PayFlashbackAlternativeMana"} else {"PayPrintedMana"},
+            "cost":cost,"normal_cast_cost_adjustments_and_mana_restrictions_apply":true}],
+        "ordered_resolution":resolution,
+        "physical_stack_departure":if flashback {"ExileInsteadOfAnyOtherDeparture"} else {"GraveyardAfterResolutionOrCounter"},
+        "countering_skips_token_creation_without_refunding_mana":true,
+        "normal_queued_triggers_and_state_based_actions_follow_complete_resolution":true,
+        "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+        "other_cast_permissions_require_current_candidate_authority":true,
+        "normal_zone_replacements_apply":true})).collect::<Vec<_>>();
+    Ok(Some(
+        json!({"card_id":id,"graveyard_rat_flashback_printing":{
+            "schema":"printed-creature-graveyard-count-rats-flashback/v1","cost":cost,"flashback_cost":cost,
+            "mana_value":4,"flashback_is_alternative_cost_and_does_not_change_mana_value":true,
+            "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+            "power":null,"toughness":null,"keywords":0,"token":false,"ordered_cast_roots":roots
+        }}),
+    ))
 }
 
 fn goblin_surprise(id: u16, d: &CardDef) -> Result<Option<Value>> {

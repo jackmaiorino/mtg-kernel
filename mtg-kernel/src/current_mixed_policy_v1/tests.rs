@@ -1716,6 +1716,90 @@ mod paid {
     }
 
     #[test]
+    fn revenge_changed_flashback_token_count_controller_tapped_entry_or_cost_refuses() {
+        use crate::{
+            card_def::{CardType, CostComponent, DynamicValueDef},
+            effect::{EffectOp, PlayerRef},
+            mana::Cost,
+        };
+        const FREE: &[CostComponent] = &[CostComponent::Mana(Cost {
+            generic: 0,
+            pips: &[],
+            x_count: 0,
+        })];
+        fn effect(
+            token: &str,
+            count: DynamicValueDef,
+            tapped: bool,
+            controller: PlayerRef,
+        ) -> EffectOp {
+            EffectOp::CreateTokensDynamic {
+                token_def: crate::card_def::card_id_by_name(token).unwrap(),
+                controller,
+                count,
+                tapped,
+            }
+        }
+        let id = crate::card_def::card_id_by_name("Revenge of the Rats").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.flashback = None,
+                1 => d.flashback.as_mut().unwrap().cost = FREE,
+                2 => d.cost = Cost::zero(),
+                3 => {
+                    d.spell_effect = || {
+                        Some(effect(
+                            "Goblin Token",
+                            DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature),
+                            true,
+                            PlayerRef::Controller,
+                        ))
+                    }
+                }
+                4 => {
+                    d.spell_effect = || {
+                        Some(effect(
+                            "Rat Token",
+                            DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature),
+                            false,
+                            PlayerRef::Controller,
+                        ))
+                    }
+                }
+                5 => {
+                    d.spell_effect = || {
+                        Some(effect(
+                            "Rat Token",
+                            DynamicValueDef::ControlledPermanentsWithType(CardType::Creature),
+                            true,
+                            PlayerRef::Controller,
+                        ))
+                    }
+                }
+                _ => {
+                    d.spell_effect = || {
+                        Some(effect(
+                            "Rat Token",
+                            DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature),
+                            true,
+                            PlayerRef::Opponent,
+                        ))
+                    }
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Revenge changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn grow_changed_kicker_cost_search_branch_filter_target_or_timing_refuses() {
         use crate::{
             card_def::{CardType, TargetSpec},

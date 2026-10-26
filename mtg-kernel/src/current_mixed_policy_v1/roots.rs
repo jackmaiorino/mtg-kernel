@@ -757,7 +757,8 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.additional_modes.is_empty()
         && (d.flashback.is_none()
             || think_twice
-            || (targeted_spell.is_some() && d.name == "Bulk Up"))
+            || (targeted_spell.is_some() && d.name == "Bulk Up")
+            || (ordinary_batch_spell.is_some() && d.name == "Revenge of the Rats"))
         && (d.kicker_cost.is_none()
             || (targeted_spell.is_some() && d.name == "Burst Lightning")
             || (library_search.is_some() && d.name == "Grow from the Ashes"))

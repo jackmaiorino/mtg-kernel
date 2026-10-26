@@ -44,6 +44,7 @@ mod ordinary_equipment;
 mod paired_return;
 mod paladin;
 mod pilfer;
+mod revenge_rats;
 mod sacrifice;
 mod sailor;
 mod seekers_folly;
