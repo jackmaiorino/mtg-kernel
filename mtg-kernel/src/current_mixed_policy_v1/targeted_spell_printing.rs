@@ -2,7 +2,7 @@
 //! never serialized into model inputs or used as executable authority.
 use super::{Error, Result};
 use crate::{
-    card_def::{CardDef, CardType, DynamicValueDef, Keywords, TargetSpec},
+    card_def::{CardDef, CardType, CostComponent, DynamicValueDef, Keywords, TargetSpec},
     effect::{EffectCond, EffectOp, ObjectRef, PlayerRef, TargetRef},
     mana::{Cost, ManaColor, Pip},
     state::Zone,
@@ -23,6 +23,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Broken Wings"
             | "Make Your Move"
             | "Zombify"
+            | "Bulk Up"
     )
 }
 fn pump(power: i32, toughness: i32) -> EffectOp {
@@ -45,6 +46,9 @@ fn grant_meaning(keyword: Keywords) -> Value {
 /// All other CardDef fields and trigger absence are checked by the caller's
 /// shared exclusion guard before this printing can be published.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    if d.name == "Bulk Up" {
+        return bulk_up(id, d);
+    }
     let (color, generic, pips, kind, target, filter, program, ordered) = match d.name {
         "Stab" => (
             ManaColor::B,
@@ -310,5 +314,71 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "all_targets_illegal_skips_entire_resolution":true,"ordered_resolution":ordered,
             "physical_stack_departure":"GraveyardAfterResolutionOrCounter","virtual_spell_copy_ceases":true,
             "other_cast_permissions_require_current_candidate_authority":true}]
+    }})))
+}
+
+fn bulk_up(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let normal = Cost {
+        generic: 1,
+        pips: &[Pip::Colored(ManaColor::R)],
+        x_count: 0,
+    };
+    let flashback = Cost {
+        generic: 4,
+        pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::R)],
+        x_count: 0,
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != normal
+        || d.mana_value != 2
+        || d.types != [CardType::Instant]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::R]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::Creature
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)() != Some(EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index: 0 })
+        || !d
+            .flashback
+            .as_ref()
+            .is_some_and(|f| f.cost == [CostComponent::Mana(flashback)])
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let resolution = json!([{"operation":"DoubleCurrentEffectiveCreaturePower","target_slot":0,
+        "sample_time":"Resolution","sample_once":true,"sample_is_full_native_signed_power":true,
+        "implementation":"AddSampledPowerAsSeparateAdditivePowerModifier","negative_power_remains_negative":true,
+        "zero_power_adds_no_modifier":true,"toughness_delta":0,"places_no_counters":true,
+        "binding":"OriginalTargetBattlefieldIncarnation","layer":"AdditivePowerToughness",
+        "later_characteristic_changes_do_not_resample_modifier":true,
+        "multiple_resolutions_sample_then_current_power_independently":true,
+        "duration":"UntilCleanupExpirationAfterDiscard"}]);
+    let roots=[false,true].into_iter().map(|fb| json!({
+        "method":if fb{"Flashback"}else{"Normal"},"route":if fb{"GraveyardFlashback"}else{"Hand"},
+        "origin":if fb{"OwnGraveyard"}else{"OwnHand"},"origin_owner_must_be_caster":true,
+        "timing":"InstantWithPriority","ordered_costs":[{"operation":if fb{"PayFlashbackAlternativeMana"}else{"PayPrintedMana"},
+            "cost":if fb{flashback}else{normal},"normal_cost_increases_and_reductions_apply":true}],
+        "target_count":1,"target_slot":0,"target_filter":{"zone":"Battlefield","effective_type":"Creature","either_controller":true},
+        "requires_current_target_incarnation":true,"recheck_target_legality_at_resolution":true,
+        "all_targets_illegal_skips_entire_resolution":true,"ordered_resolution":resolution,
+        "physical_stack_departure":if fb{"ExileInsteadOfAnyOtherDeparture"}else{"GraveyardAfterResolutionOrCounter"},
+        "countering_skips_resolution_without_refunding_cost":true,"other_cast_permissions_require_current_candidate_authority":true
+    })).collect::<Vec<_>>();
+    Ok(Some(json!({"card_id":id,"bulk_up_printing":{
+        "schema":"printed-double-power-flashback/v1","cost":normal,"mana_value":2,"types":d.types,
+        "subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":roots,"flashback_cost_is_alternative_not_additional":true,
+        "flashback_does_not_change_printed_or_stack_mana_value":true,"virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+        "normal_zone_replacements_apply":true
     }})))
 }

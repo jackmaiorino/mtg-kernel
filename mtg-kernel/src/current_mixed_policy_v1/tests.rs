@@ -1253,7 +1253,10 @@ mod paid {
             alt_cost: None,
             kicker_cost: None,
             additional_cost: d.additional_cost,
-            flashback: None,
+            flashback: d
+                .flashback
+                .as_ref()
+                .map(|f| crate::card_def::FlashbackDef { cost: f.cost }),
             activated_abilities: d.activated_abilities,
             plot_cost: None,
             madness_cost: None,
@@ -1708,6 +1711,45 @@ mod paid {
             assert!(
                 roots::baseline_recipe(id, &d).is_err(),
                 "Folly changed field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn bulk_changed_signed_program_target_normal_or_flashback_cost_and_timing_refuse() {
+        use crate::{
+            card_def::{CardType, CostComponent, TargetSpec},
+            effect::{EffectOp, TargetRef},
+        };
+        let id = crate::card_def::card_id_by_name("Bulk Up").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.flashback = None,
+                1 => {
+                    d.flashback.as_mut().unwrap().cost =
+                        &[CostComponent::Mana(crate::mana::Cost::zero())]
+                }
+                2 => d.cost = crate::mana::Cost::zero(),
+                3 => d.target_spec = TargetSpec::ControlledCreature,
+                4 => d.types = &[CardType::Sorcery],
+                _ => {
+                    d.spell_effect = || {
+                        Some(EffectOp::PumpTargetUntilEndOfTurnDynamic {
+                            target: TargetRef::Target(0),
+                            power: crate::card_def::DynamicValueDef::Fixed(2),
+                            toughness: crate::card_def::DynamicValueDef::Fixed(0),
+                        })
+                    }
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Bulk changed field {field}"
             );
         }
     }

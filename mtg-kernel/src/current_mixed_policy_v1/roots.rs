@@ -754,7 +754,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || (conditional_player_spell.is_some() && d.name == "Seeker's Folly"))
         && d.mode3.is_none()
         && d.additional_modes.is_empty()
-        && (d.flashback.is_none() || think_twice)
+        && (d.flashback.is_none()
+            || think_twice
+            || (targeted_spell.is_some() && d.name == "Bulk Up"))
         && d.kicker_cost.is_none()
         && (d.additional_cost.is_none() || discard_cost_spell.is_some())
         && d.optional_additional_cost.is_none()
