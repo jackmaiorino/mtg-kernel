@@ -11259,46 +11259,85 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
 /// replacement and ordinary owner-controlled trigger queue. Choice-bearing
 /// discard callers retain their own authentication and completion stages.
 pub(crate) fn commit_discarded_card(state: &mut GameState, id: ObjectId) {
-    let tinybones_discard = tinybones_v72::before_discard(state, id);
-    let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-    if def.is_castable() && def.madness_cost.is_some() {
-        // 702.83b: a discarded Madness card is exiled instead of
-        // graveyarded, and "as that card is exiled this way" a real
-        // triggered ability fires offering its owner the chance to
-        // cast it for its madness cost -- queued into
-        // `pending_triggers` exactly like any other triggered ability
-        // (`trigger::collect_and_process`'s Guttersnipe/Voldaren
-        // Epicure triggers), not a special-cased side channel: it
-        // goes through the same APNAP grouping/`Decision::
-        // OrderTriggers` machinery if it happens to coincide with
-        // another simultaneous trigger, and (`push_trigger_onto_stack`)
-        // becomes a real `StackItem` that sits through normal priority
-        // like anything else on the stack -- see that function's
-        // `is_madness_offer` doc, and `advance_until_decision`'s
-        // `top.madness_offer` check for where the actual `Decision::
-        // ChooseMadnessCast` gets asked (at *resolution* time, not
-        // discard time).
-        event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Exile));
-        let owner = state.objects.get(id).owner;
-        state.engine.pending_triggers.push(PendingTrigger {
-            controller: owner,
-            source: id,
-            source_contract: Some(AbilitySourceContractV4::capture(state, id)),
-            granted_by: None,
-            effect: EffectOp::Sequence(vec![]),
-            is_madness_offer: true,
-            kicked: false,
-            target_spec: TargetSpec::None,
-            targets: Vec::new(),
-            target_contracts: Vec::new(),
-            placement_ordered: false,
-            optional_additional_cost_paid: None,
-            paid_cost_refs: Vec::new(),
-        });
-    } else {
-        event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+    commit_discarded_cards(state, &[id]);
+}
+
+fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId]) {
+    if chosen.is_empty() {
+        return;
     }
-    tinybones_v72::after_discard(state, tinybones_discard);
+    // All cards belong to one discard instruction. Capture original hand
+    // incarnations and replacement destinations before moving any member.
+    let inputs = chosen
+        .iter()
+        .map(|&id| {
+            let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+            (
+                id,
+                tinybones_v72::before_discard(state, id),
+                def.is_castable() && def.madness_cost.is_some(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut events = inputs
+        .iter()
+        .map(|(id, _, madness)| {
+            ProposedEvent::zone_change(
+                *id,
+                if *madness {
+                    Zone::Exile
+                } else {
+                    Zone::Graveyard
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    if events.len() == 1 {
+        // Keep the existing single-card event path and serialized histories.
+        event::propose_and_commit(state, events.pop().unwrap());
+    } else {
+        event::propose_and_commit_batch(state, events);
+    }
+    if state.engine.halted.is_some() {
+        return;
+    }
+    for (id, tinybones_discard, madness) in inputs {
+        if madness {
+            // 702.83b: a discarded Madness card is exiled instead of
+            // graveyarded, and "as that card is exiled this way" a real
+            // triggered ability fires offering its owner the chance to
+            // cast it for its madness cost -- queued into
+            // `pending_triggers` exactly like any other triggered ability
+            // (`trigger::collect_and_process`'s Guttersnipe/Voldaren
+            // Epicure triggers), not a special-cased side channel: it
+            // goes through the same APNAP grouping/`Decision::
+            // OrderTriggers` machinery if it happens to coincide with
+            // another simultaneous trigger, and (`push_trigger_onto_stack`)
+            // becomes a real `StackItem` that sits through normal priority
+            // like anything else on the stack -- see that function's
+            // `is_madness_offer` doc, and `advance_until_decision`'s
+            // `top.madness_offer` check for where the actual `Decision::
+            // ChooseMadnessCast` gets asked (at *resolution* time, not
+            // discard time).
+            let owner = state.objects.get(id).owner;
+            state.engine.pending_triggers.push(PendingTrigger {
+                controller: owner,
+                source: id,
+                source_contract: Some(AbilitySourceContractV4::capture(state, id)),
+                granted_by: None,
+                effect: EffectOp::Sequence(vec![]),
+                is_madness_offer: true,
+                kicked: false,
+                target_spec: TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
+        }
+        tinybones_v72::after_discard(state, tinybones_discard);
+    }
 }
 
 fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: PendingDiscard) {
@@ -11390,9 +11429,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
         None
     };
     state.engine.pending_discard = None;
-    for &id in &chosen {
-        commit_discarded_card(state, id);
-    }
+    commit_discarded_cards(state, &chosen);
     if let Some(input) = kaito_discard {
         if effect::kaito_cunning_v75::record_discard_finished(state, input).is_err() {
             state.engine.halted =
@@ -26047,6 +26084,113 @@ mod tests {
 
     fn empty_game() -> GameState {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn multiple_discard_commits_whole_set_before_tinybones_receipts_and_preserves_madness_both_seats(
+    ) {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for madness in [false, true] {
+                let mut initial = empty_game();
+                put_on_battlefield(&mut initial, player.opponent(), "Tinybones, Bauble Burglar");
+                let chosen = [
+                    put_in_hand(&mut initial, player, "Forest"),
+                    put_in_hand(
+                        &mut initial,
+                        player,
+                        if madness {
+                            "Fiery Temper"
+                        } else {
+                            "Savannah Lions"
+                        },
+                    ),
+                ];
+                let saved = serde_json::to_vec(&initial).unwrap();
+                let mut expected = None;
+                for _ in 0..2 {
+                    let mut state: GameState = serde_json::from_slice(&saved).unwrap();
+                    let start = state.engine.event_history.len();
+                    commit_discarded_cards(&mut state, &chosen);
+                    assert!(state.engine.halted.is_none());
+                    assert!(state.players[player.index()].hand.is_empty());
+                    assert_eq!(state.objects.get(chosen[0]).zone, Zone::Graveyard);
+                    assert_eq!(
+                        state.objects.get(chosen[1]).zone,
+                        if madness {
+                            Zone::Exile
+                        } else {
+                            Zone::Graveyard
+                        }
+                    );
+                    let moves = state
+                        .engine
+                        .event_history
+                        .iter()
+                        .enumerate()
+                        .skip(start)
+                        .filter_map(|(i, e)| match e {
+                            CommittedEvent::ZoneChange {
+                                object,
+                                from: Zone::Hand,
+                                ..
+                            } if chosen.contains(object) => Some(i),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(moves.len(), 2);
+                    let receipts = state
+                        .engine
+                        .event_history
+                        .iter()
+                        .enumerate()
+                        .skip(start)
+                        .filter_map(|(i, e)| match e {
+                            CommittedEvent::TinybonesV72 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    tinybones_v72::JournalV72::Discarded(_)
+                                ) =>
+                            {
+                                Some(i)
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(receipts.len(), 2);
+                    for i in receipts {
+                        assert!(moves.iter().all(|&at| at < i));
+                        tinybones_v72::discard(&state, i as u64).unwrap();
+                    }
+                    assert_eq!(
+                        state
+                            .engine
+                            .pending_triggers
+                            .iter()
+                            .filter(|t| t.is_madness_offer)
+                            .count(),
+                        usize::from(madness)
+                    );
+                    assert_eq!(
+                        state
+                            .engine
+                            .pending_triggers
+                            .iter()
+                            .filter(|t| matches!(t.effect, EffectOp::TinybonesStashV72 { .. }))
+                            .count(),
+                        2
+                    );
+                    if let Some(ref old) = expected {
+                        assert_eq!(&state, old);
+                    } else {
+                        expected = Some(state);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
