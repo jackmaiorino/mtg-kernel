@@ -28,6 +28,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Burst Lightning"
             | "Stroke of Midnight"
             | "Condemn"
+            | "Run Away Together"
     )
 }
 fn pump(power: i32, toughness: i32) -> EffectOp {
@@ -58,6 +59,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     if d.name == "Burst Lightning" {
         return burst_lightning(id, d);
+    }
+    if d.name == "Run Away Together" {
+        return run_away_together(id, d);
     }
     let (color, generic, pips, kind, target, filter, program, ordered) = match d.name {
         "Stab" => (
@@ -379,6 +383,69 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "physical_stack_departure":"GraveyardAfterResolutionOrCounter","virtual_spell_copy_ceases":true,
             "other_cast_permissions_require_current_candidate_authority":true}]
     }})))
+}
+
+fn run_away_together(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 1,
+        pips: &[Pip::Colored(ManaColor::U)],
+        x_count: 0,
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != 2
+        || d.types != [CardType::Instant]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::U]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::TwoCreaturesWithDifferentControllers
+        || d.mode2.is_some()
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)() != Some(EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let targets = json!({"count":2,"choose_exactly":2,"distinct_objects":true,
+        "zone":"Battlefield","effective_type":"Creature","different_current_controllers":true,
+        "first_pick_requires_at_least_one_legal_completion":true,
+        "second_pick_rechecks_current_controller_against_first_pick":true,
+        "either_controller_may_be_first":true,"bind_each_original_incarnation":true,
+        "normal_hexproof_protection_and_targeting_restrictions_apply":true});
+    let resolution = json!([{"operation":"ReturnLegalDifferentControllerCreatureTargetsToOwnersHands",
+        "target_slots":[0,1],"freeze_both_legalities_in_one_pre_move_state":true,
+        "compare_current_controllers_of_present_original_incarnations_even_if_otherwise_illegal":true,
+        "departed_original_incarnation_uses_its_unique_native_departure_controller":true,
+        "reentered_incarnation_never_substitutes_for_original_controller_or_target":true,
+        "same_controllers_or_missing_or_ambiguous_departure_facts_make_both_illegal":true,
+        "independently_recheck_current_creature_type_hexproof_protection_and_incarnation":true,
+        "partial_legal_target_set_still_returns_its_survivors":true,
+        "destination":"EachTargetsOwnersHand","retain_ownership":true,
+        "surviving_moves_form_one_simultaneous_zone_change_batch":true,
+        "normal_zone_replacements_and_departure_observers_apply":true}]);
+    let casts = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
+        "timing":"InstantWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+        "targets":targets,"all_targets_illegal_skips_entire_resolution":true,
+        "ordered_resolution":resolution,"normal_triggers_and_state_based_actions_follow_complete_resolution":true,
+        "physical_stack_departure":"GraveyardAfterResolutionOrCounter","virtual_spell_copy_ceases":true,
+        "countering_skips_both_returns_without_refunding_mana":true,
+        "other_cast_permissions_require_current_candidate_authority":true}]);
+    Ok(Some(
+        json!({"card_id":id,"different_controller_return_printing":{
+            "schema":"printed-two-different-controller-creature-return/v1","cost":cost,"mana_value":2,
+            "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+            "power":null,"toughness":null,"keywords":0,"token":false,"ordered_cast_roots":casts
+        }}),
+    ))
 }
 
 fn incinerating_blast(id: u16, d: &CardDef) -> Result<Option<Value>> {

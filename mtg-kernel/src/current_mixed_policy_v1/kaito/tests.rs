@@ -36,6 +36,7 @@ mod observer_triggers;
 mod ordinary_auras;
 mod ordinary_batch_spells;
 mod ordinary_equipment;
+mod paired_return;
 mod paladin;
 mod pilfer;
 mod sacrifice;

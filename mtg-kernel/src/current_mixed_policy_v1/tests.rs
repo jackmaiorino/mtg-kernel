@@ -1716,6 +1716,40 @@ mod paid {
     }
 
     #[test]
+    fn paired_return_changed_controller_relation_program_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, ObjectRef},
+        };
+        let id = crate::card_def::card_id_by_name("Run Away Together").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.target_spec = TargetSpec::Creature,
+                1 => d.target_spec = TargetSpec::ControlledCreatureThenOpponentCreature,
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::MoveObject {
+                            object: ObjectRef::Target(0),
+                            to_zone: crate::state::Zone::Hand,
+                        })
+                    }
+                }
+                3 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Sorcery],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Paired return changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn condemn_changed_attack_filter_capture_program_slot_cost_or_timing_refuses() {
         use crate::{
             card_def::{CardType, TargetSpec},
