@@ -130,12 +130,25 @@ fn paid_ghoul_other_controlled_creature_cost_counter_source_departure_repeat_and
                     if removed { 0 } else { 1 }
                 );
                 if !removed {
+                    let paid_before = tapped(&own, p);
                     activate(&mut own, &mut native, source);
                     let choices = actions(&own);
                     assert!(!choices.iter().any(|a| cost_candidate(a, source, source)));
-                    act(&mut own, &mut native, |a| {
-                        cost_candidate(a, source, donors[1])
-                    });
+                    // With one remaining eligible creature the native cost
+                    // planner pays that forced sacrifice without a selection.
+                    assert_eq!(
+                        own.fixture_state().objects.get(donors[1]).zone,
+                        Zone::Graveyard
+                    );
+                    assert!(!choices
+                        .iter()
+                        .any(|a| matches!(a, A::ChooseCostTarget { .. })));
+                    assert_eq!(tapped(&own, p), paid_before + 1);
+                    assert_eq!(
+                        own.fixture_state().objects.get(source).counters.plus1_plus1,
+                        1
+                    );
+                    checkpoint(&mut own, &mut native);
                     settle(&mut own, &mut native);
                     assert_eq!(
                         own.fixture_state().objects.get(source).counters.plus1_plus1,
