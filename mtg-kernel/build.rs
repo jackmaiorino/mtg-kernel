@@ -21,6 +21,7 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+mod build_eternal_v1;
 mod build_standard_v1;
 #[allow(dead_code)]
 #[path = "../build_support/native_store_build_capture_v1.rs"]
@@ -3125,6 +3126,8 @@ enum AbilityCostRecipe {
     RemoveNetCounterFromSelf,
     RemoveChargeCounterFromSelf,
     RemoveSourceIncubationCounters(u16),
+    /// "Pay {E}..." (`CostComponent::PayEnergyV1`).
+    PayEnergy(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3497,6 +3500,7 @@ fn special_for(name: &str) -> Special {
         _ => fdn_program_for(name)
             .or_else(|| standard_program_for(name))
             .or_else(|| build_standard_v1::special_for(name))
+            .or_else(|| build_eternal_v1::special_for(name))
             .unwrap_or(Special::None),
     }
 }
@@ -4415,6 +4419,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::TOXIC_1");
     }
     keywords.extend(build_standard_v1::keywords_for(&card.name));
+    keywords.extend(build_eternal_v1::keywords_for(&card.name));
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -4495,6 +4500,11 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         // mana ability the automatic payment planner must never assume is
         // always available.
         "Barrels of Blasting Jelly" => vec![],
+        // Giant's Boulder's only mana ability is its paid any-color one
+        // below, never an automatic payment source.
+        "Giant's Boulder" => vec![],
+        // Dimir Aqueduct's one action identifies the whole {U}{B} bundle.
+        "Dimir Aqueduct" => vec!["U"],
         _ if standard_lands::overrides_primary_mana(&card.name) => {
             standard_lands::primary_mana_ability_colors(&card.name)
         }
@@ -4580,6 +4590,8 @@ fn additional_mana_abilities_for(name: &str) -> String {
         // Conduit Pylons' "{1}, {T}: Add one mana of any color" is Heap
         // Gate's paid any-color ability verbatim.
         "Conduit Pylons" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
+        // Giant's Boulder's "{1}, {T}: Add one mana of any color."
+        "Giant's Boulder" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
         // Barrels of Blasting Jelly's "{1}: Add one mana of any color.
         // Activate only once each turn." has no tap symbol at all
         // (`ManaAbilityCostDef::None`); the per-turn cap reuses Wall of
@@ -4688,7 +4700,7 @@ fn mana_ability_def_for(name: &str) -> &'static str {
         "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
         "Treasure Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapAndSacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Eldrazi Spawn Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => build_eternal_v1::mana_ability_def_for(name),
     }
 }
 
@@ -4885,6 +4897,7 @@ fn flashback_for(name: &str) -> String {
             )
         }
         "Dread Return" => "Some(FlashbackDef { cost: &[CostComponent::SacrificeControlled { count: 3, filter: PermanentFilter::Creature }] })".to_string(),
+        "Plunder the Trollshaws" => build_eternal_v1::flashback_for(name),
         "Flaring Pain" => {
             let (pips, generic, x_count) = parse_cost("{R}");
             format!(
@@ -6166,7 +6179,10 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
-        _ => build_standard_v1::activated_ability_recipes_for(name),
+        _ => match build_standard_v1::activated_ability_recipes_for(name) {
+            [] => build_eternal_v1::activated_ability_recipes_for(name),
+            recipes => recipes,
+        },
     }
 }
 
@@ -6233,6 +6249,7 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::RemoveNetCounterFromSelf => {
             "CostComponent::RemoveNetCounterFromSelf".to_string()
         }
+        AbilityCostRecipe::PayEnergy(amount) => format!("CostComponent::PayEnergyV1({amount})"),
     }
 }
 
@@ -6286,6 +6303,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
             "exile_craft_artifact_material".to_string()
         }
         AbilityCostRecipe::RemoveNetCounterFromSelf => "remove_net_counter_from_self".to_string(),
+        AbilityCostRecipe::PayEnergy(amount) => format!("pay_energy:{amount}"),
     }
 }
 
@@ -6991,7 +7009,7 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         "Luminous Rebuke" => {
             "Some(GenericCostReductionDef { generic_per_count: 3, count: DynamicCountDef::SpellTargetsTappedCreature })"
         }
-        "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" => {
+        "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" | "Utrom Monitor" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
         "Cryptic Serpent" | "Tolarian Terror" => {
@@ -7061,7 +7079,10 @@ fn equipment_for(name: &str) -> &'static str {
         "Cori-Steel Cutter" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
         "Fishing Pole" => "Some(crate::fishing_pole_v39::profile())",
-        _ => build_standard_v1::equipment_for(name),
+        _ => match build_standard_v1::equipment_for(name) {
+            "None" => build_eternal_v1::equipment_for(name),
+            profile => profile,
+        },
     }
 }
 
@@ -7352,7 +7373,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Hullbreaker Horror" => {
             "cast_spell:mode_before_targets:spell_you_dont_control_to_owners_hand|nonland_permanent_to_owners_hand|no_mode"
         }
-        _ => build_standard_v1::trigger_recipe_for(name),
+        _ => match build_standard_v1::trigger_recipe_for(name) {
+            "none" => build_eternal_v1::trigger_recipe_for(name),
+            recipe => recipe,
+        },
     }
 }
 
@@ -11100,6 +11124,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Chandra" => "Subtype::Chandra",
         "Vehicle" => "Subtype::Vehicle",
         "Pilot" => "Subtype::Pilot",
+        "Utrom" => "Subtype::Utrom",
+        "Scientist" => "Subtype::Scientist",
+        "Robot" => "Subtype::Robot",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

@@ -16,15 +16,31 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails.
 /// Companion decks stay out until the engine supports companions.
-const PLAYABLE: [(&str, &str); 5] = [
+const PLAYABLE: [(&str, &str); 12] = [
+    ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
         "pauper-blue-terror-2b4f6710-ccb2-4660-b5f9-ea85c8875ec5",
     ),
     ("pauper", "elves-67156d3a-d400-4269-8400-3a0258a274b3"),
+    (
+        "pauper",
+        "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    ),
+    ("pauper", "pauper-grixis-affinity"),
     ("pauper", "pauper-spy-combo"),
+    ("pauper", "pauper-mono-red-rally"),
+    (
+        "pauper",
+        "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    ),
     ("pauper", "pauper-jund-wildfire"),
+    (
+        "pauper",
+        "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424",
+    ),
     ("pauper", "pauper-dimir-terror"),
+    ("pauper", "pauper-grixis-faeries"),
 ];
 
 fn read_json(relative: &str) -> Value {

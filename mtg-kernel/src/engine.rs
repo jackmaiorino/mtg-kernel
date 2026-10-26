@@ -2894,8 +2894,8 @@ fn validate_spell_sourced_trigger(
     )? {
         if contract != expected
             || item.inline_effect.as_ref().is_some_and(|effect| {
-                matches!(effect, EffectOp::CopySpellSnapshot { spell }
-                    if item.v4.stack_item_id == spell.v4.stack_item_id)
+                own_spell_copy_snapshot(effect)
+                    .is_some_and(|(spell, _)| item.v4.stack_item_id == spell.v4.stack_item_id)
             })
         {
             return Err("casualty trigger changed its producing spell contract".into());
@@ -5446,10 +5446,17 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut loyalty_count = 0;
     let mut craft_material_count = 0;
     let mut net_counter_count = 0;
+    let mut energy_count = 0;
 
     for component in components {
         match component {
             CostComponent::SacrificeCreatureOrPayMana(_) => return false,
+            CostComponent::PayEnergyV1(amount) => {
+                if *amount == 0 {
+                    return false;
+                }
+                energy_count += 1;
+            }
             CostComponent::Mana(cost) => {
                 if mana.is_some() || saw_source_changing_component {
                     return false;
@@ -5579,6 +5586,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         || remove_counters_count > 1
         || loyalty_count > 1
         || net_counter_count > 1
+        || energy_count > 1
     {
         return false;
     }
@@ -5873,6 +5881,9 @@ fn can_pay_components(
             CostComponent::RemoveSourceCountersV1 { kind, count } => {
                 crate::drake_hatcher_v1::can_pay(state, source, *kind, *count)
             }
+            CostComponent::PayEnergyV1(amount) => {
+                crate::eternal_cards_v1::energy(state, player) >= u32::from(*amount)
+            }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
                     player,
@@ -5966,6 +5977,12 @@ fn validate_cost_component_choices_v1(
     if components.iter().any(|component| {
         matches!(component, CostComponent::RemoveNetCounterFromSelf)
             && crate::standard_cards_v1::net_counters(state, source) == 0
+    }) {
+        return None;
+    }
+    if components.iter().any(|component| {
+        matches!(component, CostComponent::PayEnergyV1(amount)
+            if crate::eternal_cards_v1::energy(state, player) < u32::from(*amount))
     }) {
         return None;
     }
@@ -6436,6 +6453,9 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::RemoveSourceCountersV1 { kind, count } => {
                 crate::drake_hatcher_v1::pay(state, source, *kind, *count)?;
+            }
+            CostComponent::PayEnergyV1(amount) => {
+                crate::eternal_cards_v1::pay_energy(state, player, *amount)?;
             }
         }
     }
@@ -8575,7 +8595,8 @@ fn rich_mana_ability_amount(
         ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value, player)
             .try_into()
             .map_err(|_| "mana ability amount exceeds u8".to_string()),
-        ManaAbilityAmountDef::EachControlledPermanentColor => {
+        ManaAbilityAmountDef::EachControlledPermanentColor
+        | ManaAbilityAmountDef::FixedColorsV1(_) => {
             Err("multi-color mana must use its bundle path".into())
         }
     }
@@ -8726,6 +8747,16 @@ pub(crate) fn available_mana_ability_choices_into(
                         || rich.controller_damage != 0
                         || rich.max_activations_per_turn.is_some()
                         || !crate::bloom_tender_mana_v1::fits(state, player)
+                    {
+                        continue;
+                    }
+                } else if let ManaAbilityAmountDef::FixedColorsV1(colors) = rich.amount {
+                    if rich.cost != ManaAbilityCostDef::TapSelf
+                        || rich.controller_damage != 0
+                        || rich.max_activations_per_turn.is_some()
+                        || !colors.iter().all(|color| {
+                            state.players[player.index()].mana_pool[color.pool_index()] < u8::MAX
+                        })
                     {
                         continue;
                     }
@@ -9063,6 +9094,21 @@ fn activate_mana_ability_for_with_checkpoint(
                 return Err("mana bundle exceeds the pool capacity".into());
             }
             Some(colors)
+        } else if let ManaAbilityAmountDef::FixedColorsV1(colors) = rich.amount {
+            if additional.is_some()
+                || rich.cost != ManaAbilityCostDef::TapSelf
+                || rich.controller_damage != 0
+                || rich.max_activations_per_turn.is_some()
+            {
+                return Err("fixed multi-color mana requires its pure primary tap recipe".into());
+            }
+            if !colors
+                .iter()
+                .all(|color| state.players[player.index()].mana_pool[color.pool_index()] < u8::MAX)
+            {
+                return Err("mana bundle exceeds the pool capacity".into());
+            }
+            Some(colors.to_vec())
         } else {
             None
         };
@@ -11598,20 +11644,24 @@ pub(crate) fn validate_pending_cast(
 
     let selected_cost =
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
+    // Replicate's payment count is announced and validated like X.
+    let replicate = !resolution_cast_v1::free_cast(state, pending.spell)
+        && crate::eternal_cards_v1::replicate_cost(def.name).is_some();
     let expected_seed_x = if resolution_cast_v1::free_cast(state, pending.spell)
         || (def.cost.x_count == 0
-            && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0))
+            && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
+            && !replicate)
     {
         Some(0)
     } else {
         None
     };
     if let Some(cost) = selected_cost {
-        if cost.x_count == 0 {
+        if cost.x_count == 0 && !replicate {
             if pending.x_value != Some(0) {
                 return Err("non-X cast carries a noncanonical X stage".to_string());
             }
-        } else if cost.x_count != 1 {
+        } else if cost.x_count > 1 || (replicate && cost.x_count != 0) {
             return Err("pending cast has an unsupported number of X symbols".to_string());
         } else if let Some(x_value) = pending.x_value {
             let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
@@ -13730,27 +13780,52 @@ fn pending_trigger_spell_source_contract(
         .ok_or_else(|| "pending spell-sourced trigger producer lost its contract".to_string())
 }
 
-/// Casualty is a cast trigger of the paid spell. Its frozen snapshot keeps
-/// the exact producing cast available even after that spell leaves the stack.
+/// The frozen spell a copy trigger copies and how many copies it makes:
+/// one `CopySpellSnapshot`, or Replicate's sequence of identical ones.
+pub(crate) fn own_spell_copy_snapshot(effect: &EffectOp) -> Option<(&StackItem, usize)> {
+    match effect {
+        EffectOp::CopySpellSnapshot { spell } => Some((spell.as_ref(), 1)),
+        EffectOp::Sequence(ops) if ops.len() > 1 => {
+            let EffectOp::CopySpellSnapshot { spell } = &ops[0] else {
+                return None;
+            };
+            ops.iter()
+                .all(|op| *op == ops[0])
+                .then_some((spell.as_ref(), ops.len()))
+        }
+        _ => None,
+    }
+}
+
+/// Casualty and Replicate are cast triggers of the paid spell. Their frozen
+/// snapshot keeps the exact producing cast available even after that spell
+/// leaves the stack. Replicate copies once per payment, recorded as X.
 fn casualty_trigger_source_contract(
     state: &GameState,
     source: ObjectId,
     controller: PlayerId,
     effect: &EffectOp,
 ) -> Result<Option<StackSourceContractV4>, String> {
-    let EffectOp::CopySpellSnapshot { spell } = effect else {
+    let Some((spell, copies)) = own_spell_copy_snapshot(effect) else {
         return Ok(None);
     };
     if source != spell.source {
         return Ok(None);
     }
     validate_copy_snapshot(state, spell)?;
-    if controller != spell.controller
-        || !matches!(
+    let casualty = copies == 1
+        && matches!(
             spell.v4.optional_additional_cost_paid,
             Some(OptionalAdditionalCostDef::Casualty(_))
-        )
-    {
+        );
+    let replicate = !spell.is_copy
+        && usize::from(spell.v4.x_value) == copies
+        && spell.v4.source_contract.is_some_and(|contract| {
+            card_def::CARD_DEFS
+                .get(contract.card_def as usize)
+                .is_some_and(|def| crate::eternal_cards_v1::replicate_cost(def.name).is_some())
+        });
+    if controller != spell.controller || !(casualty || replicate) {
         return Err("casualty trigger lost its paid source spell".into());
     }
     Ok(spell.v4.source_contract)
@@ -14255,7 +14330,7 @@ fn triggered_stack_item_expected_target_spec(
             }
         }
     }
-    if let EffectOp::CopySpellSnapshot { spell } = inline_effect {
+    if let Some((spell, _)) = own_spell_copy_snapshot(inline_effect) {
         validate_copy_snapshot(state, spell)?;
         if item.source == spell.source {
             if item.v4.source_contract
@@ -22326,9 +22401,11 @@ fn begin_cast_ex(
         optional_additional_cost_paid,
         optional_additional_cost_chosen: vec![],
         optional_additional_cost_selection_finished: false,
+        // Replicate's payment count is announced like X (601.2b).
         x_value: if without_mana_cost
             || (def.cost.x_count == 0
-                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0))
+                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
+                && crate::eternal_cards_v1::replicate_cost(def.name).is_none())
         {
             Some(0)
         } else {
@@ -22603,6 +22680,39 @@ fn finalize_owned_cast(
             effect: EffectOp::CopySpellSnapshot {
                 spell: Box::new(spell.clone()),
             },
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    }
+    // Replicate (702.56b): one cast trigger copies the spell once for each
+    // time its replicate cost was paid; each copy may get new targets.
+    if x_value > 0 && crate::eternal_cards_v1::replicate_cost(def.name).is_some() {
+        let spell = state
+            .stack
+            .iter()
+            .find(|item| item.v4.stack_item_id == stack_item_id)
+            .cloned()
+            .ok_or("replicated spell missing after cast")?;
+        let copy = EffectOp::CopySpellSnapshot {
+            spell: Box::new(spell.clone()),
+        };
+        let effect = if x_value == 1 {
+            copy
+        } else {
+            EffectOp::Sequence(vec![copy; usize::from(x_value)])
+        };
+        state.engine.pending_triggers.push(PendingTrigger {
+            controller: spell.controller,
+            source: spell.source,
+            granted_by: None,
+            effect,
             is_madness_offer: false,
             kicked: false,
             target_spec: TargetSpec::None,

@@ -1779,6 +1779,8 @@ pub enum LibraryPickFilterV1 {
     LegendaryCreature,
     /// Library cards use their front-face power, including accepted CDAs.
     CreaturePowerAtMost(i32),
+    /// An instant or sorcery card (Augur of Bolas). Appended.
+    InstantOrSorcery,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -6162,7 +6164,7 @@ fn validated_definition_owned_root_effect(
     } else {
         return Err("answered effect frame lost its definition-owned root program".to_string());
     };
-    if let EffectOp::CopySpellSnapshot { spell } = &*root {
+    if let Some((spell, _)) = crate::engine::own_spell_copy_snapshot(&root) {
         crate::engine::validate_copy_snapshot(state, spell)?;
         return Ok(root);
     }
@@ -16115,6 +16117,10 @@ fn library_partition_matching_prefix(
                     LibraryPickFilterV1::AnySubtype(subtypes) => subtypes
                         .iter()
                         .any(|subtype| subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)),
+                    LibraryPickFilterV1::InstantOrSorcery => {
+                        definition.has_type(CardType::Instant)
+                            || definition.has_type(CardType::Sorcery)
+                    }
                 },
             },
         };

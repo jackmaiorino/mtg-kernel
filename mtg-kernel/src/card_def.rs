@@ -348,6 +348,11 @@ pub enum Subtype {
     Phoenix,
     /// Appended for the genuine Drake Hatcher dependency; stable ids persist.
     Drake,
+    /// Appended for the eternal catalog (Utrom Monitor, the Robot token).
+    /// Creature types only in `eternal-fixtures` builds.
+    Utrom,
+    Scientist,
+    Robot,
 }
 
 impl Subtype {
@@ -648,6 +653,12 @@ impl Subtype {
             not(feature = "standard-magezero-fixtures")
         ))]
         Subtype::Phoenix,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Utrom,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Scientist,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Robot,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -730,6 +741,12 @@ impl Subtype {
                     | Subtype::Artificer
                     | Subtype::Orc
             )
+        {
+            return true;
+        }
+        // The eternal catalog's creature types, absent from every other build.
+        if cfg!(feature = "eternal-fixtures")
+            && matches!(self, Subtype::Utrom | Subtype::Scientist | Subtype::Robot)
         {
             return true;
         }
@@ -1432,6 +1449,9 @@ pub enum CostComponent {
         kind: crate::drake_hatcher_v1::SourceCounterKindV1,
         count: u16,
     },
+    /// "Pay {E}{E}..." (107.14): remove this many energy counters from the
+    /// payer. Appended for the eternal catalog (Inventor's Axe's equip).
+    PayEnergyV1(u8),
 }
 
 impl CostComponent {
@@ -1670,6 +1690,9 @@ pub enum ManaAbilityAmountDef {
     /// One unit of every W/U/B/R/G color among controlled permanents.
     /// The primary action color identifies the ability, not one chosen output.
     EachControlledPermanentColor,
+    /// Exactly these colors at once ("{T}: Add {U}{B}", Dimir Aqueduct).
+    /// The primary action color identifies the ability, not one chosen output.
+    FixedColorsV1(&'static [ManaColor]),
 }
 
 /// A reusable integer derived from current game state. All consumers sample

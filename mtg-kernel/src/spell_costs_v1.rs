@@ -151,6 +151,8 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) own_generic_reduction: u32,
     pub(super) delve: bool,
     pub(super) convoke: bool,
+    /// Replicate's cost, paid once for each unit of the announced X.
+    pub(super) replicate: Option<Cost>,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -305,15 +307,22 @@ impl SelectedSpellManaCostsV1 {
         if self.convoke && self.delve {
             return None;
         }
+        let replicated = self
+            .replicate
+            .iter()
+            .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)));
         let pips = self
             .costs
             .iter()
+            .copied()
+            .chain(replicated.clone())
             .flat_map(|cost| cost.pips.iter().copied())
             .collect::<Vec<_>>();
         let generic = self
             .costs
             .iter()
             .map(|cost| u32::from(cost.generic) + u32::from(cost.x_count) * u32::from(x))
+            .chain(replicated.map(|cost| u32::from(cost.generic)))
             .sum::<u32>()
             .saturating_add(increase)
             .saturating_sub(reduction.saturating_add(self.own_generic_reduction));
@@ -438,6 +447,7 @@ pub(super) fn selected_spell_mana_costs_v1(
         own_generic_reduction: 0,
         delve: false,
         convoke: false,
+        replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
     };
     match method {
         CastMethodV4::Normal => {

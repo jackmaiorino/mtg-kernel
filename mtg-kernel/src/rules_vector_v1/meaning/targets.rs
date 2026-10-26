@@ -688,7 +688,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::AnotherNonlegendaryControlledCreature
         | S::UpToOneCreature
         | S::TappedOpponentCreature
-        | S::CrewedSourceThisTurn => creature(),
+        | S::CrewedSourceThisTurn
+        | S::TwoCreaturesV1 => creature(),
         S::UpToTwoAnyTargets => ObjF::PlayerOrPermanent,
     }
 }
@@ -710,6 +711,7 @@ pub(super) fn standard_target_origin(
         S::AnotherNonlandPermanent
         | S::UpToTwoAnyTargets
         | S::UpToOneCreature
+        | S::TwoCreaturesV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -763,6 +765,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Planeswalker), None, zone);
             out.target(TargetAtom::MultipleTargets);
             out.target(TargetAtom::UpTo);
+        }
+        S::TwoCreaturesV1 => {
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            // Both target words may name the same creature.
+            out.atoms.push(Atom::Opaque);
         }
     }
 }

@@ -246,6 +246,8 @@ pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
 mod equipment_damage_source_v4;
+/// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
+pub mod eternal_cards_v1;
 pub mod event;
 pub mod event_history_v1;
 pub mod expanded_deck_training_v1;
