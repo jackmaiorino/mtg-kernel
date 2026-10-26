@@ -212,6 +212,20 @@ fn public_targets_ward_permanent(value: &Value) -> bool {
     }
 }
 
+/// Whether any public stack item is controlled by `seat`.
+fn controls_stack_item(value: &Value, seat: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.get("stack")
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.iter().any(|item| &item["controller"] == seat))
+                || map.values().any(|child| controls_stack_item(child, seat))
+        }
+        Value::Array(items) => items.iter().any(|child| controls_stack_item(child, seat)),
+        _ => false,
+    }
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -253,7 +267,16 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
         Policy::Random(state) => state,
         Policy::Ranked => 0,
     };
+    // A game that loops without ending fails here with its last actions
+    // instead of running until the CI job times out.
+    let started = std::time::Instant::now();
     for index in 0..MAX_STEPS {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(600),
+            "seed={seed} random={} step={index}: game still running after 600 s\nlast actions:\n{}",
+            matches!(policy, Policy::Random(_)),
+            recent.join("\n")
+        );
         let raw = server.handle_line(&request);
         transcript.update(request.as_bytes());
         transcript.update(b"\n");
@@ -314,7 +337,16 @@ last actions:
             unwarded
         };
         let action = match policy {
-            Policy::Ranked => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
+            // A ranked seat passes while its own spell or ability is on the
+            // stack, so free recasts (Acererak under Aluren) cannot pile up
+            // above a trigger forever.
+            Policy::Ranked => match actions
+                .iter()
+                .find(|a| a["semantic"]["action_kind"] == "pass")
+            {
+                Some(pass) if controls_stack_item(decision, &pass["semantic"]["actor"]) => *pass,
+                _ => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
+            },
             Policy::Random(_) => {
                 actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }

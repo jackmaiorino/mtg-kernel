@@ -488,6 +488,28 @@ fn soporific_springs_is_played_paying_three_life_or_enters_tapped() {
     }
 }
 
+#[test]
+fn soporific_springs_offers_only_entering_tapped_below_three_life() {
+    let mut state = islands();
+    state.players[0].life = 2;
+    let sink = put(&mut state, P0, "Sink into Stupor", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(sink));
+    match next(&mut state) {
+        Decision::ChooseEffectOption {
+            source,
+            option_count,
+            ..
+        } => {
+            assert_eq!((source, option_count), (sink, 1));
+            act(&mut state, Action::ChooseEffectOption(0));
+        }
+        other => panic!("expected the life payment, got {other:?}"),
+    }
+    assert!(state.objects.get(sink).tapped);
+    assert_eq!(state.players[0].life, 2);
+}
+
 // ---- Cavern of Souls --------------------------------------------------------------------
 
 #[test]

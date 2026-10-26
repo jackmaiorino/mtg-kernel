@@ -1281,10 +1281,16 @@ pub(crate) fn cavern_permits(state: &GameState, cavern: ObjectId, spell_subtypes
 pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::Decision> {
     if let Some(entering) = live_springs_entry(state) {
         let player = state.objects.get(entering.object).controller;
+        // Option 1 pays 3 life, which a player with less cannot pay (119.4).
+        let option_count = if state.players[player.index()].life >= 3 {
+            2
+        } else {
+            1
+        };
         return Some(crate::engine::Decision::ChooseEffectOption {
             player,
             source: entering.object,
-            option_count: 2,
+            option_count,
         });
     }
     let cavern = cavern_needing_type(state)?;
