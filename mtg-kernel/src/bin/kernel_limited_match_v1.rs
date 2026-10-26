@@ -22,6 +22,7 @@ use mtg_kernel::limited_match_v1::{
 };
 use mtg_kernel::KERNEL_VERSION;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
@@ -249,6 +250,7 @@ fn play(flags: &Flags) -> Result<(), String> {
     };
 
     let decks = playable(&dir, &pool, Some(&split))?;
+    let mut belief_overlap = 0usize;
     let belief = if policies.iter().any(PolicySpecV1::needs_belief) {
         let belief_split = flags.opt("belief-split").unwrap_or("train");
         if belief_split == split && split != "train" {
@@ -261,6 +263,18 @@ fn play(flags: &Flags) -> Result<(), String> {
         let corpus = playable(&belief_dir, &belief_pool, Some(belief_split))?;
         if corpus.is_empty() {
             return Err("the belief corpus has no playable deck".into());
+        }
+        // Belief decks that are also game decks (by name). Gorge allows this for
+        // the train split only; anywhere else the belief would hold real decks.
+        let names: BTreeSet<&str> = decks.iter().map(|(name, _)| name.as_str()).collect();
+        belief_overlap = corpus
+            .iter()
+            .filter(|(name, _)| names.contains(name.as_str()))
+            .count();
+        if belief_overlap > 0 && split != "train" {
+            return Err(format!(
+                "{belief_overlap} belief decks are games' {split:?} decks: the belief would hold the opponents' real decks"
+            ));
         }
         Some(LimitedBeliefV1::new(
             corpus.into_iter().map(|(_, cards)| cards),
@@ -324,6 +338,12 @@ fn play(flags: &Flags) -> Result<(), String> {
     let wall_s = started.elapsed().as_secs_f64();
     let tallies = tallies.into_inner().unwrap();
     let count = |k: &str| tallies.get(k).copied().unwrap_or(0);
+    let mut hash = Sha256::new();
+    for (name, _) in &decks {
+        hash.update(name.as_bytes());
+        hash.update(b"\n");
+    }
+    let playable_sha256 = format!("{:x}", hash.finalize());
     let summary = json!({
         "schema": LIMITED_MATCH_SCHEMA_V1,
         "engine": "mtg-kernel",
@@ -331,6 +351,9 @@ fn play(flags: &Flags) -> Result<(), String> {
         "a": spec_a, "b": spec_b, "split": split, "seed": seed,
         "first_pair": first_pair, "pairs": pairs, "legs": legs,
         "playable_decks": decks.len(),
+        // Pair p deals from this list, which follows the engine's coverage.
+        "playable_decks_sha256": playable_sha256,
+        "belief_overlap": belief_overlap,
         "belief_decks": belief.as_ref().map(LimitedBeliefV1::len),
         "games": jobs.len(),
         "a_wins": count("a_wins"), "b_wins": count("b_wins"), "draws": count("draws"),
@@ -418,10 +441,14 @@ fn play_one(
         "turns": result.turns,
         "decisions": result.decisions,
         "rejected_worlds": result.rejected_worlds,
+        "rollout_errors": result.rollout_errors,
         "ms": started.elapsed().as_millis() as u64,
     }));
     if let Some(error) = error {
         row["error"] = json!(error);
+    }
+    if let Some(error) = &result.first_rollout_error {
+        row["first_rollout_error"] = json!(error);
     }
     row
 }
