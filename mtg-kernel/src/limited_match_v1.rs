@@ -50,6 +50,46 @@ pub struct DeckFileV1 {
     pub cards: Vec<CustomCardCountV1>,
 }
 
+/// Which session plays the games.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionKindV1 {
+    /// Prepared V57: Full cards only, every consumer contract checked.
+    PreparedV57,
+    /// Rules-only self-play (`rl_session::rules_only_v1`): Full cards plus
+    /// admitted executable Partial cards, no consumer contract.
+    RulesOnly(RulesAdmissionV1),
+}
+
+/// Which executable Partial cards a rules-only game admits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RulesAdmissionV1 {
+    /// `crate::limited_rules_only_v1::RULES_ONLY_ADMITTED_V1`.
+    Admitted,
+    /// Every executable card (diagnostics that build the admitted list).
+    AllExecutable,
+}
+
+impl SessionKindV1 {
+    /// `None` when `id` may play in this session, else why not.
+    pub fn refusal(self, id: u16) -> Option<&'static str> {
+        let card = &CARD_DEFS[id as usize];
+        if card.is_token {
+            return Some("token");
+        }
+        if card.has_full_support() {
+            return None;
+        }
+        match self {
+            Self::PreparedV57 => Some("not full"),
+            Self::RulesOnly(_) if !card.is_executable() => Some("not executable"),
+            Self::RulesOnly(RulesAdmissionV1::AllExecutable) => None,
+            Self::RulesOnly(RulesAdmissionV1::Admitted) => {
+                (!crate::limited_rules_only_v1::admitted_v1(id)).then_some("not admitted")
+            }
+        }
+    }
+}
+
 impl DeckFileV1 {
     /// Full-only mainboard in row and copy order (the Limited reset rule).
     pub fn resolve(&self) -> Result<Vec<u16>, String> {
@@ -59,17 +99,38 @@ impl DeckFileV1 {
         .resolve()
     }
 
+    /// The mainboard in row and copy order for `kind`.
+    pub fn resolve_for(&self, kind: SessionKindV1) -> Result<Vec<u16>, String> {
+        if kind == SessionKindV1::PreparedV57 {
+            return self.resolve();
+        }
+        let mut ids = Vec::new();
+        for row in &self.cards {
+            let id =
+                card_id_by_name(&row.name).ok_or_else(|| format!("unknown card {:?}", row.name))?;
+            if let Some(reason) = kind.refusal(id) {
+                return Err(format!("card {:?}: {reason}", row.name));
+            }
+            ids.extend(std::iter::repeat_n(id, row.count as usize));
+        }
+        if ids.len() < 40 {
+            return Err("Limited mainboard must contain at least 40 cards".into());
+        }
+        Ok(ids)
+    }
+
     /// Names this engine cannot play: `(name, reason)`, in row order.
     pub fn unsupported(&self) -> Vec<(String, &'static str)> {
+        self.unsupported_for(SessionKindV1::PreparedV57)
+    }
+
+    /// Names `kind` cannot play: `(name, reason)`, in row order.
+    pub fn unsupported_for(&self, kind: SessionKindV1) -> Vec<(String, &'static str)> {
         self.cards
             .iter()
             .filter_map(|row| match card_id_by_name(&row.name) {
                 None => Some((row.name.clone(), "unknown")),
-                Some(id) => {
-                    let card = &CARD_DEFS[id as usize];
-                    (card.is_token || !card.has_full_support())
-                        .then(|| (row.name.clone(), "not full"))
-                }
+                Some(id) => kind.refusal(id).map(|reason| (row.name.clone(), reason)),
             })
             .collect()
     }
@@ -575,6 +636,7 @@ pub struct GameLimitsV1 {
     /// Re-check the session contract before every game step (slower; the
     /// trusted step plays identically, see the equivalence test).
     pub full_validation: bool,
+    pub session: SessionKindV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -631,14 +693,27 @@ pub fn play_game_v1(
         limits.max_decisions.saturating_mul(4).max(1),
         limits.max_decisions.saturating_mul(512).max(1),
     );
-    let mut session = match FastActorSessionV1::reset_prepared_v57(
-        env_seed,
-        env_seed,
-        session_limits,
-        identities,
-        [decks[0].to_vec(), decks[1].to_vec()],
-        starting_player,
-    ) {
+    let mainboards = [decks[0].to_vec(), decks[1].to_vec()];
+    let reset = match limits.session {
+        SessionKindV1::PreparedV57 => FastActorSessionV1::reset_prepared_v57(
+            env_seed,
+            env_seed,
+            session_limits,
+            identities,
+            mainboards,
+            starting_player,
+        ),
+        kind @ SessionKindV1::RulesOnly(_) => FastActorSessionV1::reset_rules_only_v1(
+            env_seed,
+            env_seed,
+            session_limits,
+            identities,
+            mainboards,
+            starting_player,
+            |id| kind.refusal(id).is_none(),
+        ),
+    };
+    let mut session = match reset {
         Ok(session) => session,
         Err(error) => {
             result.outcome = GameOutcomeV1::Error(error.message);

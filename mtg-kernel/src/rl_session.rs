@@ -5300,6 +5300,8 @@ enum FlatActionContractModeV1 {
     LilianaV73,
     ChandraV74,
     KaitoV75,
+    /// Rules-only Limited self-play (`rules_only_v1`): no consumer contract.
+    RulesOnlyV1,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -8229,6 +8231,15 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
+        // Rules-only sessions have no consumer contract to re-check.
+        if self.flat_action_contract_mode == FlatActionContractModeV1::RulesOnlyV1 {
+            return self.apply_prechecked_step_v1(
+                episode_id,
+                expected_step,
+                selected_index,
+                apply_path,
+            );
+        }
         if !matches!(
             self.flat_action_contract_mode,
             FlatActionContractModeV1::CallV62
@@ -8740,6 +8751,10 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        #[cfg(feature = "limited-fdn-fixtures")]
+        if self.flat_action_contract_mode == FlatActionContractModeV1::RulesOnlyV1 {
+            return self.advance_rules_only_v1();
+        }
         if !matches!(
             self.flat_action_contract_mode,
             FlatActionContractModeV1::CallV62
@@ -10634,6 +10649,8 @@ impl FastActorSessionV1 {
                     return;
                 }
             }
+            // Advanced by `advance_rules_only_v1`; never reaches this match.
+            FlatActionContractModeV1::RulesOnlyV1 => {}
         }
         self.current = Some(current);
     }
@@ -20488,4 +20505,6 @@ pub(crate) mod chandra_v74;
 pub use chandra_v74::{ChandraDecisionV74, ChandraSessionV74, ChandraSnapshotV74};
 
 pub(crate) mod kaito_v75;
+#[cfg(feature = "limited-fdn-fixtures")]
+mod rules_only_v1;
 pub use kaito_v75::{KaitoDecisionV75, KaitoSessionV75, KaitoSnapshotV75};

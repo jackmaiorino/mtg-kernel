@@ -6497,7 +6497,7 @@ pub(crate) fn core_policy_action_candidates_fake_scoped_v50(
         CommonProjectionScopeV42::ExistingV40,
     )
 }
-fn core_policy_action_candidates_next_five_scoped_v59(
+pub(crate) fn core_policy_action_candidates_next_five_scoped_v59(
     decision: &PolicyDecisionV5,
     state: &GameState,
     accept_hunter: bool,
