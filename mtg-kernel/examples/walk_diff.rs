@@ -1736,7 +1736,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::RemoveNetCounterFromSelf
             | card_def::CostComponent::TapFishingPoleAttachedToSource
             | card_def::CostComponent::SacrificeCreatureOrPayMana(_)
-            | card_def::CostComponent::RemoveSourceCountersV1 { .. }) => {
+            | card_def::CostComponent::RemoveSourceCountersV1 { .. }
+            | card_def::CostComponent::PayEnergyV1(_)) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }

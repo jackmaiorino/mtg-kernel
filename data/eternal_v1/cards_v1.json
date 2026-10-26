@@ -1,0 +1,486 @@
+{
+ "version": 2,
+ "cards": [
+  {
+   "name": "Melded Moxite",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-red-madness"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "discard",
+    "draw_card",
+    "activated_ability",
+    "sacrifice_cost",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MeldedMoxite.java"
+  },
+  {
+   "name": "Robot Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Robot"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/RobotToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Inventor's Axe",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Equipment"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-red-rally"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "etb_trigger",
+    "energy",
+    "etb_attach_controlled_creature",
+    "equipment",
+    "equip"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/InventorsAxe.java"
+  },
+  {
+   "name": "Baleful Strix",
+   "engine_capability": "full",
+   "mana_cost": "{U}{B}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-affinity",
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "flying",
+    "deathtouch",
+    "etb_trigger",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BalefulStrix.java"
+  },
+  {
+   "name": "Giant's Boulder",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "pauper-grixis-affinity"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "scry",
+    "mana_ability",
+    "any_color_mana",
+    "activated_ability",
+    "tap_ability",
+    "sacrifice_cost",
+    "destroy"
+   ]
+  },
+  {
+   "name": "Utrom Monitor",
+   "engine_capability": "full",
+   "mana_cost": "{4}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Utrom",
+    "Scientist"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-affinity"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "affinity",
+    "flying"
+   ]
+  },
+  {
+   "name": "Agony Warp",
+   "engine_capability": "full",
+   "mana_cost": "{U}{B}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "two_targets",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AgonyWarp.java"
+  },
+  {
+   "name": "Augur of Bolas",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Merfolk",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "library_look",
+    "reveal"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AugurOfBolas.java"
+  },
+  {
+   "name": "Mukotai Ambusher",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Rat",
+    "Ninja"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "ninjutsu",
+    "lifelink"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MukotaiAmbusher.java"
+  },
+  {
+   "name": "Seething Landscape",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "tap_ability",
+    "fetch_effect",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SeethingLandscape.java"
+  },
+  {
+   "name": "Thorn of the Black Rose",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Assassin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "deathtouch",
+    "monarch",
+    "etb_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThornOfTheBlackRose.java"
+  },
+  {
+   "name": "Campfire",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "lifegain",
+    "exile_cost",
+    "shuffle_graveyard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Campfire.java"
+  },
+  {
+   "name": "Lose Focus",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "replicate",
+    "counterspell",
+    "copy_spell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LoseFocus.java"
+  },
+  {
+   "name": "Plunder the Trollshaws",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "draw_card",
+    "flashback",
+    "cast_from_graveyard"
+   ]
+  },
+  {
+   "name": "Dimir Aqueduct",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U",
+    "B"
+   ],
+   "decks": [
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "bounce_land"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DimirAqueduct.java"
+  }
+ ]
+}

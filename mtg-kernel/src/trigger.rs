@@ -4197,6 +4197,11 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    if crate::eternal_cards_v1::replicate_cost(card.name).is_some()
+        && crate::engine::own_spell_copy_snapshot(effect).is_some()
+    {
+        return true;
+    }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }

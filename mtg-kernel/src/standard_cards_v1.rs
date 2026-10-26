@@ -169,6 +169,9 @@ pub enum StandardTargetV1 {
     CardInAGraveyard,
     TappedOpponentCreature,
     CrewedSourceThisTurn,
+    /// Two "target creature" words (Agony Warp): exactly two targets, each
+    /// any creature, and both may name the same creature (115.3).
+    TwoCreaturesV1,
 }
 
 impl StandardTargetV1 {
@@ -177,6 +180,7 @@ impl StandardTargetV1 {
         match self {
             Self::UpToTwoAnyTargets => (2, 0),
             Self::UpToOneCreature => (1, 0),
+            Self::TwoCreaturesV1 => (2, 2),
             _ => (1, 1),
         }
     }
@@ -311,9 +315,9 @@ pub(crate) fn target_matches(
         StandardTargetV1::UpToTwoAnyTargets => {
             has(CardType::Creature) || has(CardType::Planeswalker)
         }
-        StandardTargetV1::UpToOneCreature | StandardTargetV1::CrewedSourceThisTurn => {
-            has(CardType::Creature)
-        }
+        StandardTargetV1::UpToOneCreature
+        | StandardTargetV1::CrewedSourceThisTurn
+        | StandardTargetV1::TwoCreaturesV1 => has(CardType::Creature),
         StandardTargetV1::TappedOpponentCreature => {
             live.controller != controller && live.tapped && has(CardType::Creature)
         }
@@ -540,6 +544,8 @@ pub enum StandardOpV1 {
     /// Untap only the captured ability-source incarnation, through stun replacement.
     UntapCapturedSourceV1,
     ZulAshurPermissionV1,
+    /// A leaf owned by the eternal catalog's card module.
+    EternalV1(crate::eternal_cards_v1::EternalOpV1),
 }
 
 impl StandardOpV1 {
@@ -593,6 +599,8 @@ impl StandardOpV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StandardPermanentFilterV1 {
     Any,
+    /// A land (Dimir Aqueduct's "return a land you control").
+    Land,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -617,6 +625,9 @@ pub(crate) fn controlled_permanent_candidates(
                 && live.controller == player
                 && match filter {
                     StandardPermanentFilterV1::Any => true,
+                    StandardPermanentFilterV1::Land => {
+                        crate::engine::object_has_type(state, object, CardType::Land)
+                    }
                 }
         })
         .map(|object| EffectObjectBinding {
@@ -692,6 +703,7 @@ pub(crate) fn register_reflection_delayed_sacrifice(
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::EternalV1(op) => crate::eternal_cards_v1::execute(op, ctx, state),
         StandardOpV1::ZulAshurPermissionV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -2024,7 +2036,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
             &EXILE_UNTIL_LEAVES_TRIGGERS
         }
-        _ => &[],
+        _ => crate::eternal_cards_v1::triggers_for(name),
     }
 }
 
@@ -2331,6 +2343,9 @@ pub(crate) fn trigger_target_spec(
     effect: &EffectOp,
 ) -> Option<crate::card_def::TargetSpec> {
     use crate::card_def::TargetSpec;
+    if let Some(spec) = crate::eternal_cards_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if name == "Subterranean Schooner" {
         return Some(TargetSpec::StandardV1(
             StandardTargetV1::CrewedSourceThisTurn,

@@ -2210,6 +2210,11 @@ pub struct GameState {
     pub wildwood_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raid_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
+    /// Card state for the eternal catalog's own cards (energy counters).
+    /// Absent until one of them needs it, so every earlier state keeps its
+    /// bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eternal_v1: Option<crate::eternal_cards_v1::EternalStateV1>,
 }
 
 /// The round counter and active seat together identify the declaring turn.
@@ -2445,6 +2450,10 @@ impl Hash for GameState {
             "raid-entry-waiting/v1".hash(state);
             waiting.hash(state);
         }
+        if let Some(eternal) = &self.eternal_v1 {
+            "eternal-v1".hash(state);
+            eternal.hash(state);
+        }
     }
 }
 
@@ -2654,6 +2663,7 @@ impl GameState {
             attack_declaration_turn_v1: None,
             wildwood_waiting_v1: None,
             raid_waiting_v1: None,
+            eternal_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);

@@ -640,6 +640,12 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
         CostComponent::RemoveSourceCountersV1 { kind: _, count: _ } => {
             out.atoms.push(Atom::Opaque);
         }
+        CostComponent::PayEnergyV1(_) => {
+            // Energy counters leave the payer; the player counter kind and
+            // quantity are outside the frozen cost vocabulary.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::RemoveChargeCounterFromSelf => {
             // Exactly one charge counter leaves the source as payment.
             out.cost(CostAtom::RemoveCounters);
