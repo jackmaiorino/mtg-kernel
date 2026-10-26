@@ -66,7 +66,9 @@ pub(crate) fn has_history(state: &GameState) -> bool {
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     crate::ravenous_amulet_v1::validate_state(state)?;
     let history = &state.engine.event_history;
-    for (index, event) in history.iter().enumerate() {
+    // The loop acts on these two kinds only (kind-guarded scan).
+    let kinds = [EventKindV1::SoulCounterInputV1, EventKindV1::SoulCounterAddedV1];
+    for (index, event) in history.scan_for_v1(&kinds).iter().enumerate() {
         match event {
             CommittedEvent::SoulCounterInputV1 { input } => {
                 if input.index != index as u64

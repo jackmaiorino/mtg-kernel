@@ -886,7 +886,13 @@ fn validate_paid(state: &GameState, paid: &PaidV1) -> Result<(), String> {
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     let mut ids = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    // The loop acts on these three kinds only (kind-guarded scan).
+    let kinds = [
+        EventKindV1::RavenousRemovedV1,
+        EventKindV1::RavenousCompletedV1,
+        EventKindV1::RavenousPaymentV1,
+    ];
+    for (index, event) in state.engine.event_history.scan_for_v1(&kinds).iter().enumerate() {
         match event {
             CommittedEvent::RavenousRemovedV1 { removed } => {
                 if removed.index != index as u64
