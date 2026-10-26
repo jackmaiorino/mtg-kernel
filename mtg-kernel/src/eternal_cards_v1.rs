@@ -49,6 +49,22 @@ pub struct EternalStateV1 {
     /// "except the first one they draw in each of their draw steps").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draw_step_draw: Option<DrawStepDrawV1>,
+    /// Tamiyo, Seasoned Scholar's +2, until its controller's next turn:
+    /// "whenever a creature attacks you or a planeswalker you control, it
+    /// gets -1/-0 until end of turn".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attack_shrinks: Vec<DelayedUpkeepDrawV1>,
+    /// Attackers just declared against an `attack_shrinks` controller,
+    /// waiting for the next trigger collection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shrinking_attackers: Vec<ObjectLinkV4>,
+    /// Emblems with "You have no maximum hand size", per player.
+    #[serde(default, skip_serializing_if = "is_no_emblem")]
+    pub no_maximum_hand_size: [bool; 2],
+}
+
+fn is_no_emblem(emblems: &[bool; 2]) -> bool {
+    !emblems[0] && !emblems[1]
 }
 
 /// One delayed upkeep draw: the activated ability's source incarnation and
@@ -131,6 +147,19 @@ pub enum EternalOpV1 {
     /// Remove a -1/-1 counter from this ability's source incarnation, if it
     /// has one (Moonshadow).
     RemoveMinusOneCounterFromSourceV1,
+    /// Exile this ability's source incarnation, then return it to the
+    /// battlefield transformed under its owner's control (Tamiyo).
+    ExileThenReturnTransformedV1,
+    /// Tamiyo's +2: until the controller's next turn, each creature that
+    /// attacks them or a planeswalker they control gets -1/-0 until end of
+    /// turn.
+    ShrinkAttackersUntilYourNextTurnV1,
+    /// The delayed trigger itself: `attacker` gets -1/-0 until end of turn.
+    ShrinkAttackerV1 { attacker: ObjectLinkV4 },
+    /// Tamiyo's -7: "Draw cards equal to half the number of cards in your
+    /// library, rounded up. You get an emblem with 'You have no maximum hand
+    /// size.'"
+    DrawHalfLibraryThenNoMaximumHandSizeV1,
 }
 
 /// The number of energy counters `player` has.
@@ -193,6 +222,7 @@ const BRAZEN_BORROWER: &str = "Brazen Borrower";
 const MISHRAS_BAUBLE: &str = "Mishra's Bauble";
 const URZAS_BAUBLE: &str = "Urza's Bauble";
 const ORC_ARMY_TOKEN: &str = "Orc Army Token";
+const TAMIYO: &str = "Tamiyo, Inquisitive Student";
 
 const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> TriggeredAbilityDef {
     TriggeredAbilityDef {
@@ -253,6 +283,20 @@ fn bowmasters_ping_then_amass() -> EffectOp {
 
 fn delayed_upkeep_draw() -> EffectOp {
     eternal(EternalOpV1::DelayedUpkeepDrawV1)
+}
+
+/// "Whenever Tamiyo attacks, investigate."
+fn tamiyo_investigate() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: card_id_by_name("Clue Token").expect("Clue Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+/// "When you draw your third card in a turn, exile Tamiyo, then return her
+/// to the battlefield transformed under her owner's control."
+fn tamiyo_transform() -> EffectOp {
+    eternal(EternalOpV1::ExileThenReturnTransformedV1)
 }
 
 /// "When this artifact enters, you may discard a card. If you do, draw two
@@ -353,6 +397,10 @@ const MOONSHADOW_TRIGGERS: [TriggeredAbilityDef; 1] = [eternal_trigger(
     EternalTriggerV1::PermanentCardsToYourGraveyardWhileMinusCounter,
     remove_minus_one_counter_from_source,
 )];
+const TAMIYO_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(TriggerCondition::Attacks, tamiyo_investigate),
+    trigger(TriggerCondition::DrawNth(3), tamiyo_transform),
+];
 const ORCISH_BOWMASTERS_TRIGGERS: [TriggeredAbilityDef; 2] = [
     etb(bowmasters_ping_then_amass),
     eternal_trigger(
@@ -375,6 +423,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         MURKTIDE_REGENT => &MURKTIDE_REGENT_TRIGGERS,
         MOONSHADOW => &MOONSHADOW_TRIGGERS,
         ORCISH_BOWMASTERS => &ORCISH_BOWMASTERS_TRIGGERS,
+        TAMIYO => &TAMIYO_TRIGGERS,
         _ => &[],
     }
 }
@@ -392,9 +441,12 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         } else {
             TargetSpec::None
         }),
-        DRAGONS_RAGE_CHANNELER | MURKTIDE_REGENT | MOONSHADOW | MISHRAS_BAUBLE | URZAS_BAUBLE => {
-            Some(TargetSpec::None)
-        }
+        DRAGONS_RAGE_CHANNELER
+        | MURKTIDE_REGENT
+        | MOONSHADOW
+        | MISHRAS_BAUBLE
+        | URZAS_BAUBLE
+        | TAMIYO => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -505,6 +557,48 @@ pub fn urzas_bauble() -> EffectOp {
         eternal(EternalOpV1::LookAtRandomCardInTargetHandV1),
         eternal(EternalOpV1::DrawAtNextUpkeepV1),
     ])
+}
+
+/// Tamiyo, Seasoned Scholar's +2: "Until your next turn, whenever a creature
+/// attacks you or a planeswalker you control, it gets -1/-0 until end of
+/// turn."
+pub fn tamiyo_plus_two() -> EffectOp {
+    eternal(EternalOpV1::ShrinkAttackersUntilYourNextTurnV1)
+}
+
+/// Tamiyo, Seasoned Scholar's -3: "Return target instant or sorcery card
+/// from your graveyard to your hand. If it's a green card, add one mana of
+/// any color."
+pub fn tamiyo_minus_three() -> EffectOp {
+    let return_it = EffectOp::MoveAllTargets {
+        to_zone: Zone::Hand,
+    };
+    let any_color = EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: [
+            ManaColor::W,
+            ManaColor::U,
+            ManaColor::B,
+            ManaColor::R,
+            ManaColor::G,
+        ]
+        .into_iter()
+        .map(|color| EffectOp::AddMana {
+            player: PlayerRef::Controller,
+            colors: vec![color],
+        })
+        .collect(),
+    };
+    EffectOp::Conditional {
+        cond: crate::effect::EffectCond::TargetIsColor(0, ManaColor::G),
+        then: Box::new(EffectOp::Sequence(vec![return_it.clone(), any_color])),
+        else_: Box::new(return_it),
+    }
+}
+
+/// Tamiyo, Seasoned Scholar's -7.
+pub fn tamiyo_minus_seven() -> EffectOp {
+    eternal(EternalOpV1::DrawHalfLibraryThenNoMaximumHandSizeV1)
 }
 
 /// Campfire's second ability: commanders do not exist in these games, so
@@ -737,6 +831,90 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 ctx,
                 state,
             );
+        }
+        EternalOpV1::ExileThenReturnTransformedV1 => {
+            let Some(contract) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(live) = state.objects.try_get(contract.source) else {
+                return;
+            };
+            if live.zone != Zone::Battlefield
+                || live.zone_change_count != contract.zone_change_count
+                || live.v4.face_index != 0
+                || CARD_DEFS[live.card_def as usize].transform_face.is_none()
+            {
+                return;
+            }
+            let owner = live.owner;
+            event::propose_and_commit(
+                state,
+                ProposedEvent::zone_change(contract.source, Zone::Exile),
+            );
+            if state.objects.get(contract.source).zone == Zone::Exile {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::transformed_battlefield_return(contract.source, 1, owner),
+                );
+            }
+        }
+        EternalOpV1::ShrinkAttackersUntilYourNextTurnV1 => {
+            let Some(source) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            state
+                .eternal_v1
+                .get_or_insert_with(Default::default)
+                .attack_shrinks
+                .push(DelayedUpkeepDrawV1 {
+                    controller: ctx.controller,
+                    source,
+                });
+        }
+        EternalOpV1::ShrinkAttackerV1 { attacker } => {
+            let Some(live) = state.objects.try_get(attacker.object) else {
+                return;
+            };
+            if live.zone == Zone::Battlefield
+                && live.zone_change_count == attacker.zone_change_count
+                && crate::engine::object_has_type(state, attacker.object, CardType::Creature)
+            {
+                crate::effect::install_temporary_boost(
+                    state,
+                    crate::effect::EffectObjectBinding {
+                        object: attacker.object,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: attacker.zone_change_count,
+                    },
+                    -1,
+                    0,
+                    Keywords::NONE,
+                );
+            }
+        }
+        EternalOpV1::DrawHalfLibraryThenNoMaximumHandSizeV1 => {
+            let library = state.players[ctx.controller.index()].library.len();
+            let count = u32::try_from(library.div_ceil(2)).unwrap_or(u32::MAX);
+            crate::effect::execute(
+                &EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count,
+                },
+                ctx,
+                state,
+            );
+            state
+                .eternal_v1
+                .get_or_insert_with(Default::default)
+                .no_maximum_hand_size[ctx.controller.index()] = true;
         }
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {
@@ -1016,43 +1194,123 @@ pub(crate) fn note_draw_step_draw(state: &mut GameState, player: PlayerId) {
         .draw_step_draw = Some(marker);
 }
 
-/// The delayed upkeep draws the beginning of an upkeep sets off (603.7).
+fn delayed_trigger(
+    source: AbilitySourceContractV4,
+    controller: PlayerId,
+    effect: EffectOp,
+) -> PendingTrigger {
+    PendingTrigger {
+        controller,
+        source: source.source,
+        effect,
+        is_madness_offer: false,
+        kicked: false,
+        target_spec: TargetSpec::None,
+        targets: Vec::new(),
+        target_contracts: Vec::new(),
+        placement_ordered: false,
+        source_contract: Some(source),
+        granted_by: None,
+        optional_additional_cost_paid: None,
+        paid_cost_refs: Vec::new(),
+    }
+}
+
+/// The delayed triggers this collection sets off (603.7): the Baubles'
+/// draws at the beginning of an upkeep and Tamiyo's attack shrinks.
 pub(crate) fn delayed_triggers(
     state: &mut GameState,
     events: &[CommittedEvent],
 ) -> Vec<PendingTrigger> {
-    if !events
+    let upkeep = events
         .iter()
-        .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }))
-    {
-        return Vec::new();
-    }
-    let Some(eternal) = state.eternal_v1.as_mut() else {
+        .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }));
+    let active = state.active_player;
+    let Some(eternal_state) = state.eternal_v1.as_mut() else {
         return Vec::new();
     };
-    std::mem::take(&mut eternal.upkeep_draws)
-        .into_iter()
-        .map(|draw| PendingTrigger {
-            controller: draw.controller,
-            source: draw.source.source,
-            effect: delayed_upkeep_draw(),
-            is_madness_offer: false,
-            kicked: false,
-            target_spec: TargetSpec::None,
-            targets: Vec::new(),
-            target_contracts: Vec::new(),
-            placement_ordered: false,
-            source_contract: Some(draw.source),
-            granted_by: None,
-            optional_additional_cost_paid: None,
-            paid_cost_refs: Vec::new(),
-        })
-        .collect()
+    let mut triggers = Vec::new();
+    if upkeep {
+        triggers.extend(
+            std::mem::take(&mut eternal_state.upkeep_draws)
+                .into_iter()
+                .map(|draw| delayed_trigger(draw.source, draw.controller, delayed_upkeep_draw())),
+        );
+    }
+    let attackers = std::mem::take(&mut eternal_state.shrinking_attackers);
+    for shrink in eternal_state
+        .attack_shrinks
+        .iter()
+        .filter(|shrink| shrink.controller != active)
+    {
+        for &attacker in &attackers {
+            triggers.push(delayed_trigger(
+                shrink.source,
+                shrink.controller,
+                eternal(EternalOpV1::ShrinkAttackerV1 { attacker }),
+            ));
+        }
+    }
+    triggers
 }
 
 /// Delayed triggers this module creates, owned by their source's card.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
-    matches!(name, MISHRAS_BAUBLE | URZAS_BAUBLE) && *effect == delayed_upkeep_draw()
+    match name {
+        MISHRAS_BAUBLE | URZAS_BAUBLE => *effect == delayed_upkeep_draw(),
+        TAMIYO => matches!(
+            effect,
+            EffectOp::StandardV1(StandardOpV1::EternalV1(
+                EternalOpV1::ShrinkAttackerV1 { .. }
+            ))
+        ),
+        _ => false,
+    }
+}
+
+/// Records the attackers just declared against a player with an active
+/// Tamiyo +2, for the next trigger collection. Every attacker of the
+/// defending player attacks them or a planeswalker they control.
+pub(crate) fn note_attackers_declared(state: &mut GameState) {
+    let active = state.active_player;
+    let attackers = state
+        .engine
+        .combat
+        .attackers
+        .iter()
+        .map(|&object| ObjectLinkV4 {
+            object,
+            zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect::<Vec<_>>();
+    let Some(eternal) = state.eternal_v1.as_mut() else {
+        return;
+    };
+    if eternal
+        .attack_shrinks
+        .iter()
+        .any(|shrink| shrink.controller != active)
+    {
+        eternal.shrinking_attackers = attackers;
+    }
+}
+
+/// The beginning of `player`'s turn ends their "until your next turn"
+/// effects.
+pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
+    if let Some(eternal) = state.eternal_v1.as_mut() {
+        eternal
+            .attack_shrinks
+            .retain(|shrink| shrink.controller != player);
+    }
+}
+
+/// Whether `player` has an emblem with "You have no maximum hand size".
+pub(crate) fn no_maximum_hand_size(state: &GameState, player: PlayerId) -> bool {
+    state
+        .eternal_v1
+        .as_ref()
+        .is_some_and(|eternal| eternal.no_maximum_hand_size[player.index()])
 }
 
 /// `player`'s draws this turn up to and including `events[index]`.
@@ -1063,10 +1321,10 @@ fn draw_ordinal_at(
     state: &GameState,
 ) -> u32 {
     let is_draw = |event: &CommittedEvent| matches!(event, CommittedEvent::Draw { player: drawer, object: Some(_) } if *drawer == player);
-    let in_batch = events.iter().filter(|event| is_draw(*event)).count() as u32;
+    let in_batch = events.iter().filter(|event| is_draw(event)).count() as u32;
     let through = events[..=index]
         .iter()
-        .filter(|event| is_draw(*event))
+        .filter(|event| is_draw(event))
         .count() as u32;
     state.players[player.index()]
         .draws_this_turn

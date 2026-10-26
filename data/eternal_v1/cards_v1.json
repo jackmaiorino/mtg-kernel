@@ -1294,6 +1294,46 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/OrcArmyToken.java",
    "is_token": true
+  },
+  {
+   "name": "Tamiyo, Inquisitive Student",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "MOONFOLK",
+    "Wizard"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 0,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "attack_trigger",
+    "investigate",
+    "draw_trigger",
+    "transform",
+    "planeswalker",
+    "loyalty_abilities",
+    "emblem"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TamiyoInquisitiveStudent.java",
+   "starting_loyalty": 2
   }
  ]
 }

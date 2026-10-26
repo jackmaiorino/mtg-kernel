@@ -4627,7 +4627,10 @@ fn transform_face_for(name: &str) -> &'static str {
         "Graveyard Trespasser" => "Some(TransformFaceDef { name: \"Graveyard Glutton\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::B], power: Some(4), toughness: Some(4), keywords: Keywords::NONE })",
         "Brutal Cathar" => "Some(TransformFaceDef { name: \"Moonrage Brute\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::R], power: Some(3), toughness: Some(3), keywords: Keywords::FIRST_STRIKE })",
         "Incubator Token" => "Some(TransformFaceDef { name: \"Phyrexian Token\", types: &[CardType::Artifact, CardType::Creature], subtypes: &[Subtype::Phyrexian], colors: &[], power: Some(0), toughness: Some(0), keywords: Keywords::NONE })",
-        _ => build_standard_v1::transform_face_for(name),
+        _ => match build_standard_v1::transform_face_for(name) {
+            "None" => build_eternal_v1::transform_face_for(name),
+            face => face,
+        },
     }
 }
 
@@ -4643,7 +4646,8 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Incubator Token" => Some("Phyrexian Token"),
         "Brutal Cathar" => Some("Moonrage Brute"),
         "Graveyard Trespasser" => Some("Graveyard Glutton"),
-        _ => build_standard_v1::transform_face_name_for(name),
+        _ => build_standard_v1::transform_face_name_for(name)
+            .or_else(|| build_eternal_v1::transform_face_name_for(name)),
     }
 }
 
@@ -6713,6 +6717,7 @@ fn signed_fn_token(value: i8) -> String {
 
 fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
     build_standard_v1::activated_ability_face_for(name, index)
+        .or_else(|| build_eternal_v1::activated_ability_face_for(name, index))
 }
 
 /// Rust source for a card's activated abilities. `canonical` omits the

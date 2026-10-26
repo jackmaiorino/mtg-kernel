@@ -17048,6 +17048,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             crate::standard_keywords_v1::advance_day_night(state, previous_active);
             crate::life_gain_turn_v1::reset_at_untap(state);
             crate::life_loss_turn_v1::reset_at_untap(state);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cards_v1::begin_turn(state, p);
             crate::ajani_full_v42::lifecycle::begin_turn(state);
             crate::standard_creatures_v1::begin_turn(state);
             state.players[0].spells_cast_this_turn = 0;
@@ -17339,6 +17341,12 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 return;
             }
             let hand_size = state.players[p.index()].hand.len();
+            #[cfg(feature = "eternal-fixtures")]
+            let hand_size = if crate::eternal_cards_v1::no_maximum_hand_size(state, p) {
+                0
+            } else {
+                hand_size
+            };
             if hand_size > 7 {
                 state.engine.pending_discard = Some(PendingDiscard {
                     player: p,
@@ -21964,6 +21972,8 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
     crate::standard_cards_v1::record_attackers(state, attackers.len());
     state.engine.combat.attackers = attackers;
     state.engine.combat.attackers_declared = true;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::note_attackers_declared(state);
     let another_observes_attacks = state.players[state.active_player.index()]
         .battlefield
         .iter()

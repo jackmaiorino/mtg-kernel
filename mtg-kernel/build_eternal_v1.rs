@@ -189,8 +189,46 @@ const URZAS_BAUBLE: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
     max_activations_per_turn: None,
 }];
 
+/// A planeswalker loyalty ability: sorcery speed, once per turn through its
+/// loyalty cost.
+const fn loyalty(
+    cost: &'static [AbilityCostRecipe],
+    program: &'static str,
+    target_spec: &'static str,
+) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: AbilityEffectRecipe::StandardProgram(program),
+        activation_zone: "Battlefield",
+        sorcery_speed_only: true,
+        target_spec,
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+/// Tamiyo, Seasoned Scholar (Tamiyo, Inquisitive Student's back face).
+const TAMIYO: [ActivatedAbilityRecipe; 3] = [
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(2)],
+        "crate::eternal_cards_v1::tamiyo_plus_two",
+        "None",
+    ),
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(-3)],
+        "crate::eternal_cards_v1::tamiyo_minus_three",
+        "StandardV1(crate::standard_cards_v1::StandardTargetV1::InstantOrSorceryCardInOwnGraveyard)",
+    ),
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(-7)],
+        "crate::eternal_cards_v1::tamiyo_minus_seven",
+        "None",
+    ),
+];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Tamiyo, Inquisitive Student" => &TAMIYO,
         "Melded Moxite" => &MELDED_MOXITE,
         "Inventor's Axe" => &INVENTORS_AXE,
         "Giant's Boulder" => &GIANTS_BOULDER,
@@ -267,6 +305,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Murktide Regent" => &["Keywords::FLYING"],
         "Moonshadow" => &["Keywords::MENACE"],
         "Orcish Bowmasters" => &["Keywords::FLASH"],
+        "Tamiyo, Inquisitive Student" => &["Keywords::FLYING"],
         _ => &[],
     }
 }
@@ -301,6 +340,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Mishra's Bauble" | "Urza's Bauble" => {
             "delayed:next_upkeep_began:activator_draws_1:source_incarnation_contract"
+        }
+        "Tamiyo, Inquisitive Student" => {
+            "attacks:investigate;draw_nth:3:exile_then_return_transformed_under_owner;face1_plus2:until_controllers_next_turn:each_creature_attacking_controller_gets_minus1_0_eot;face1_minus7:emblem_no_maximum_hand_size"
         }
         _ => "none",
     }
@@ -409,5 +451,29 @@ pub(super) fn escape_for(name: &str) -> String {
             )
         }
         _ => "None".to_string(),
+    }
+}
+
+/// Tamiyo's back face, a planeswalker with the card's supertypes and a
+/// green-and-blue color indicator.
+pub(super) fn transform_face_for(name: &str) -> &'static str {
+    match name {
+        "Tamiyo, Inquisitive Student" => "Some(TransformFaceDef { name: \"Tamiyo, Seasoned Scholar\", types: &[CardType::Planeswalker], subtypes: &[Subtype::Tamiyo], colors: &[ManaColor::U, ManaColor::G], power: None, toughness: None, keywords: Keywords::NONE })",
+        _ => "None",
+    }
+}
+
+pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
+    match name {
+        "Tamiyo, Inquisitive Student" => Some("Tamiyo, Seasoned Scholar"),
+        _ => None,
+    }
+}
+
+/// Activated abilities printed on one face only.
+pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
+    match name {
+        "Tamiyo, Inquisitive Student" => Some(1),
+        _ => None,
     }
 }

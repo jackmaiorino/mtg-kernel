@@ -14,7 +14,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E2_CARDS: [&str; 26] = [
+const E2_CARDS: [&str; 27] = [
     "Underground Sea",
     "Volcanic Island",
     "Undercity Sewers",
@@ -41,6 +41,7 @@ const E2_CARDS: [&str; 26] = [
     "Nethergoyf",
     "Orcish Bowmasters",
     "Orc Army Token",
+    "Tamiyo, Inquisitive Student",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1304,4 +1305,192 @@ fn orcish_bowmasters_ignores_the_draw_step_draw_and_its_own_controller() {
     event::propose_and_commit(&mut state, ProposedEvent::draw(P1));
     answer_bowmasters_target(&mut state, Target::Player(P1));
     assert_eq!(state.players[1].life, 19);
+}
+
+// ---- Tamiyo, Inquisitive Student // Tamiyo, Seasoned Scholar --------------------
+
+/// Tamiyo on P0's battlefield, transformed by P0's third draw this turn.
+fn transformed_tamiyo() -> (GameState, ObjectId) {
+    let mut state = islands();
+    let tamiyo = put(
+        &mut state,
+        P0,
+        "Tamiyo, Inquisitive Student",
+        Zone::Battlefield,
+    );
+    for _ in 0..3 {
+        event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
+    }
+    settled(&mut state);
+    (state, tamiyo)
+}
+
+#[test]
+fn tamiyo_is_a_flying_moonfolk_with_a_planeswalker_back_face() {
+    let tamiyo = def("Tamiyo, Inquisitive Student");
+    assert_eq!(tamiyo.capability, CardCapability::Full);
+    assert_eq!(tamiyo.subtypes, &[Subtype::Moonfolk, Subtype::Wizard]);
+    assert_eq!((tamiyo.power, tamiyo.toughness), (Some(0), Some(3)));
+    assert!(tamiyo.keywords.has(Keywords::FLYING));
+    let back = tamiyo.transform_face.as_ref().expect("back face");
+    assert_eq!(back.name, "Tamiyo, Seasoned Scholar");
+    assert_eq!(back.types, &[CardType::Planeswalker]);
+    assert_eq!(back.subtypes, &[Subtype::Tamiyo]);
+    assert_eq!(tamiyo.starting_loyalty, Some(2));
+}
+
+#[test]
+fn tamiyo_investigates_when_she_attacks() {
+    let mut state = islands();
+    let tamiyo = put(
+        &mut state,
+        P0,
+        "Tamiyo, Inquisitive Student",
+        Zone::Battlefield,
+    );
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![tamiyo]));
+    settled(&mut state);
+    assert_eq!(named_on_battlefield(&state, P0, "Clue Token").len(), 1);
+}
+
+#[test]
+fn tamiyo_transforms_on_the_third_draw_of_a_turn() {
+    let mut state = islands();
+    let tamiyo = put(
+        &mut state,
+        P0,
+        "Tamiyo, Inquisitive Student",
+        Zone::Battlefield,
+    );
+    for _ in 0..2 {
+        event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(tamiyo).v4.face_index, 0, "two draws");
+    // The opponent's draws are not hers.
+    event::propose_and_commit(&mut state, ProposedEvent::draw(P1));
+    settled(&mut state);
+    assert_eq!(state.objects.get(tamiyo).v4.face_index, 0);
+
+    let (state, tamiyo) = transformed_tamiyo();
+    let live = state.objects.get(tamiyo);
+    assert_eq!(live.zone, Zone::Battlefield);
+    assert_eq!(live.v4.face_index, 1);
+    assert_eq!(live.controller, P0);
+    assert!(engine::object_has_type(
+        &state,
+        tamiyo,
+        CardType::Planeswalker
+    ));
+    assert!(!engine::object_has_type(&state, tamiyo, CardType::Creature));
+    assert_eq!(
+        mtg_kernel::planeswalker_v1::loyalty(&state, tamiyo),
+        Some(2)
+    );
+}
+
+#[test]
+fn tamiyo_plus_two_shrinks_each_creature_attacking_her_controller() {
+    let (mut state, tamiyo) = transformed_tamiyo();
+    let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+    activate(&mut state, tamiyo, 0, &[]);
+    settled(&mut state);
+    assert_eq!(
+        mtg_kernel::planeswalker_v1::loyalty(&state, tamiyo),
+        Some(4)
+    );
+
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::DeclareAttackers
+    });
+    act(&mut state, Action::DeclareAttackers(vec![angler]));
+    loop {
+        match next(&mut state) {
+            Decision::ChooseAttackTarget { candidates, .. } => {
+                assert!(candidates.contains(&Target::Player(P0)));
+                act(&mut state, Action::ChooseAttackTarget(Target::Player(P0)));
+            }
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            Decision::CastSpellOrPass { .. } if !state.stack.is_empty() => {
+                act(&mut state, Action::Pass)
+            }
+            Decision::CastSpellOrPass { .. } => break,
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(
+        power_toughness(&state, angler),
+        (4, 5),
+        "-1/-0 until end of turn"
+    );
+}
+
+#[test]
+fn tamiyo_minus_three_returns_an_instant_and_adds_mana_for_a_green_one() {
+    let (mut state, tamiyo) = transformed_tamiyo();
+    mtg_kernel::planeswalker_v1::change_loyalty(&mut state, tamiyo, 4);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    let land = put(&mut state, P0, "Island", Zone::Graveyard);
+    act(&mut state, Action::ActivateAbility(tamiyo, 1));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(bolt)));
+            assert!(!legal_targets.contains(&Target::Object(land)));
+            act(&mut state, Action::ChooseTarget(Target::Object(bolt)));
+        }
+        other => panic!("expected the target, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Hand);
+    assert_eq!(
+        mtg_kernel::planeswalker_v1::loyalty(&state, tamiyo),
+        Some(3)
+    );
+    let pool_before = state.players[0].mana_pool;
+    assert_eq!(pool_before, [0; 6], "a red card adds no mana");
+
+    let (mut state, tamiyo) = transformed_tamiyo();
+    mtg_kernel::planeswalker_v1::change_loyalty(&mut state, tamiyo, 4);
+    let storm = put(&mut state, P0, "Weather the Storm", Zone::Graveyard);
+    act(&mut state, Action::ActivateAbility(tamiyo, 1));
+    choose_target(&mut state, Target::Object(storm));
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption { option_count, .. }) => {
+            assert_eq!(option_count, 5);
+            act(&mut state, Action::ChooseEffectOption(4));
+        }
+        other => panic!("expected the color choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(storm).zone, Zone::Hand);
+    assert_eq!(state.players[0].mana_pool[ManaColor::G.pool_index()], 1);
+}
+
+#[test]
+fn tamiyo_minus_seven_draws_half_the_library_and_lifts_the_hand_size() {
+    let (mut state, tamiyo) = transformed_tamiyo();
+    mtg_kernel::planeswalker_v1::change_loyalty(&mut state, tamiyo, 5);
+    let library = state.players[0].library.len();
+    let hand = state.players[0].hand.len();
+    act(&mut state, Action::ActivateAbility(tamiyo, 2));
+    settled(&mut state);
+    assert_eq!(
+        state.players[0].hand.len(),
+        hand + library.div_ceil(2),
+        "half the library, rounded up"
+    );
+    assert_eq!(
+        state.objects.get(tamiyo).zone,
+        Zone::Graveyard,
+        "zero loyalty"
+    );
+    assert!(state.eternal_v1.as_ref().unwrap().no_maximum_hand_size[0]);
+    let kept = state.players[0].hand.len();
+    assert!(kept > 7);
+    pass_until(&mut state, |state| state.active_player == P1);
+    assert_eq!(state.players[0].hand.len(), kept, "no discard to seven");
 }
