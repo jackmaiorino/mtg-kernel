@@ -272,6 +272,17 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
             'prepared template volume id differs from --volume-id')
     require_pinned_image(body.get('imageName'), allow_mutable_image)
     output = Path(output)
+    # One POST per prepared lease, ever: a concurrent or repeated create (for
+    # example a retry after a timed-out POST) refuses instead of allocating a
+    # second Pod. The lock is never removed; a retry needs a fresh preparation.
+    for receipt in ('created-pod.json', 'create-pod-failure.json'):
+        require(not (output / receipt).exists(), 'an earlier create receipt exists: ' + receipt)
+    try:
+        lock = os.open(output / 'create.lock', os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise ValueError('create already attempted or in progress for this lease '
+                         '(one POST per prepared lease)') from None
+    os.close(lock)
     api = api or Provider(key)
     try:
         raw = api.create(body)

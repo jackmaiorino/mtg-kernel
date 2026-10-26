@@ -7,33 +7,33 @@ stay with the resident guard once the worker has started. No provider call on
 import; the key is read from the environment (or, on Windows, the user's
 registry environment), kept in memory and never written.
 
-Each pass (rules ported from the reviewed ordinary-training lease adapter,
-2026-10-25):
-(A) reasons that need no provider data: deadline (deadline - recovery),
-    release-authorized.json, and the startup allowance without
-    worker-started.json;
+Each pass:
+(A) reasons that need no provider data: deadline (deadline - recovery) and
+    release-authorized.json;
 (B) after the deadline the recorded Pod ID is DELETEd first, before anything
     that can fail;
-(C) census, duplicate DELETEs, exact-ID GET and price parsing, each isolated;
-    a failed census or GET is a guard failure that DELETEs the recorded ID; a
-    recorded ID whose Pod carries another name is an error and is never deleted
-    on that evidence alone (before the deadline);
-(D) DELETE of every target while a reason exists.
-Ownership: a Pod with this lease's exact name is always this guard's own
-(duplicates and the late Pod of an ambiguous create), even when no ledger can
-be read. With lease['study_tag'] set, Pods whose names carry the tag are also
-targets unless foreign_ids() names them (Pods recorded by other leases of the
-study); when foreign_ids() fails, only exact-name Pods are touched in that pass.
+(C) census, duplicate DELETEs, exact-ID GET, identity and price parsing, each
+    isolated; any failure is a guard failure that DELETEs the recorded ID;
+(D) DELETE of every target while a reason exists. Preservation (optional) runs
+    at most once, only for controller_release or startup_idle, and only inside
+    the lease time left; it never gates a DELETE.
+Ownership: the recorded Pod (lease/created-pod.json, or a single exact-name Pod
+adopted when no receipt exists and no create is ambiguous) and every other Pod
+with this lease's exact name (duplicates, the late Pod of an ambiguous create).
+With lease['study_tag'] set, Pods whose names carry the tag are also targets
+unless foreign_ids() names them (Pods recorded by other leases of the study);
+when foreign_ids() fails, only exact-name Pods are touched in that pass.
 A missing or malformed price, or max(costPerHr, adjustedCostPerHr) above the
-ceiling, releases at once. Completion needs two absent observations at least 30
-s apart (exact ID absent and no owned Pod in a successful census); a failed
-census is never absence. An ambiguous create (lease/create-ambiguous.json and
-no recorded Pod) never resolves automatically: it is a release reason and blocks
-completion until an operator writes lease/ambiguous-resolved-by-operator.json.
-released() true (the lease was verified released or voided) ends the guard
-without deleting anything. marker_probe(pod) may read a Pod-side worker-started
-marker; a probe that cannot reach the Pod means "not ready". once=True runs a
-single pass (a watchdog).
+ceiling, releases at once. The startup allowance ends the lease without
+worker-started.json; marker_probe(pod) may read a Pod-side marker instead, and a
+probe that cannot reach the Pod means "not ready". Completion needs two absent
+observations at least 30 s apart (exact ID absent and no owned Pod in a
+successful census); a failed census or GET is never absence. An ambiguous
+create (lease/create-ambiguous.json and no recorded Pod) never resolves
+automatically: it is a release reason and blocks completion until an operator
+writes lease/ambiguous-resolved-by-operator.json. released() true (the lease
+was verified released or voided) ends the guard without deleting anything.
+once=True runs a single pass (a watchdog).
 
 usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json required)
 """
@@ -53,7 +53,9 @@ from lease_guard import (AbsenceConfirmer, Provider, decision, pod_rate, validat
 POLL_SECONDS = 15
 PRESERVE_MIN_REMAINING = 900      # no preservation with less than 15 min to the deadline
 PRESERVE_MARGIN = 600             # preservation ends at least 10 min before the deadline
+PRESERVE_MAX_SECONDS = 300
 MARKER_PROBE_SECONDS = 60
+CONTROLLER_DONE_SECONDS = 600     # completion.json with nothing created ends an unused lease
 OPERATOR_RESOLUTION = 'lease/ambiguous-resolved-by-operator.json'
 
 
@@ -132,7 +134,7 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         # (B) after the deadline the recorded ID is deleted first, before anything can fail
         if reason == 'deadline' and recorded:
             delete(recorded, 'deadline_first')
-        # (C) census, ownership, duplicates, GET, price: each isolated
+        # (C) census, ownership, duplicates, GET, identity, price: each isolated
         matches = None
         try:
             matches = [p for p in pods(key) if carries_tag(p)]
@@ -158,7 +160,7 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         for extra in [p for p in unowned if recorded is not None]:
             if delete(extra['id'], 'duplicate_or_unowned_pod'):
                 note('external-duplicate-delete.json', {'pod_id': extra['id'], 'epoch': clock()})
-        pod = None; get_ok = False; identity_ok = True
+        pod = None; get_ok = False
         if recorded:
             try:
                 pod = provider(key, recorded).call('GET'); get_ok = True
@@ -167,21 +169,22 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         status = {}
         if pod is not None:
             try:
+                # The recorded ID comes from this lease's own create receipt or exact-name adoption,
+                # so a mismatch is a guard failure (released), never a reason to stop guarding.
                 verify_pod_identity(pod, lease, recorded)
-            except Exception as e:  # noqa: BLE001 - another name at the recorded ID: never deleted on this evidence
-                identity_ok = False
+            except Exception as e:  # noqa: BLE001
+                failures.append('identity:' + type(e).__name__)
                 note('external-guard-error.json', {'epoch': clock(), 'error_type': type(e).__name__})
-            if identity_ok:
-                try:
-                    rate = pod_rate(pod)
-                    highest = max(highest, rate)
-                    if rate > lease['rate_ceiling_usd_hour']:
-                        reason = reason or 'rate_above_ceiling'
-                except ValueError:
-                    reason = reason or 'price_malformed'
-                status = decision(lease, now, highest)
-                if status['reason'] in ('deadline', 'cost_cap'):
-                    reason = reason or status['reason']
+            try:
+                rate = pod_rate(pod)
+                highest = max(highest, rate)
+                if rate > lease['rate_ceiling_usd_hour']:
+                    reason = reason or 'rate_above_ceiling'
+            except ValueError:
+                reason = reason or 'price_malformed'
+            status = decision(lease, now, highest)
+            if status['reason'] in ('deadline', 'cost_cap'):
+                reason = reason or status['reason']
         # startup timeout, unless the Pod-side or local marker shows productive work
         if reason is None and not (root / 'worker-started.json').exists() and pod is not None and marker_probe \
                 and (last_probe is None or now - last_probe >= MARKER_PROBE_SECONDS):
@@ -202,7 +205,9 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         # absence: exact ID absent (successful GET or nothing recorded) AND a successful census with no owned Pod
         absent_now = matches is not None and foreign_ok and not unowned and \
             (recorded is None or (get_ok and pod is None))
-        if absence.observe(absent_now) and (recorded or reason) and not ambiguous:
+        controller_done = recorded is None and (root / 'completion.json').exists() and \
+            now - lease['created_epoch'] > CONTROLLER_DONE_SECONDS
+        if absence.observe(absent_now) and (recorded or reason or controller_done) and not ambiguous:
             note('external-guard-completion.json', {
                 'exact_name': lease['name'], 'study_tag': tag, 'pod_id': recorded, 'provider_absent': True,
                 'absent_confirmations': 2, 'reason': reason, 'deletes': deletes, 'epoch': clock()})
@@ -210,17 +215,17 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         note('external-guard.json', dict(pod_id=recorded, epoch=now, reason=reason, failures=failures,
              absent_now=absent_now, ambiguous=ambiguous, foreign=sorted(foreign), pid=os.getpid(), once=once,
              **{k: v for k, v in status.items() if k != 'reason'}))
-        # (D) act; a recorded ID whose Pod carries another name is deleted only by step (B) after the deadline
+        # (D) act
         if reason and not absent_now:
             remaining = lease['deadline_epoch'] - clock()
             if (preserve and not preserved and reason in ('controller_release', 'startup_idle')
-                    and recorded and identity_ok and remaining > PRESERVE_MIN_REMAINING):
+                    and recorded and remaining > PRESERVE_MIN_REMAINING):
                 preserved = True
                 try:
-                    preserve(recorded, min(300, remaining - PRESERVE_MARGIN))
+                    preserve(recorded, min(PRESERVE_MAX_SECONDS, remaining - PRESERVE_MARGIN))
                 except Exception:  # noqa: BLE001 - preservation never blocks release
                     pass
-            targets = ([recorded] if recorded and identity_ok else []) + [p['id'] for p in unowned]
+            targets = ([recorded] if recorded else []) + [p['id'] for p in unowned]
             for target in targets:
                 delete(target, reason)
             if clock() >= lease['deadline_epoch']:

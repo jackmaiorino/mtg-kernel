@@ -122,17 +122,18 @@ class GuardTests(unittest.TestCase):
             self.assertFalse(result['guard_armed'])
 
     def test_guard_deadline_requests_delete_then_verifies_absence(self):
+        import lease_guard
+        from lease_test_support import FakeClock, World, guard_time, no_network
         with tempfile.TemporaryDirectory() as temporary:
-            api = unittest.mock.Mock()
             pod = {'id':'pod123', 'name':lease()['name'], 'cpuFlavorId':'cpu3c',
                    'vcpuCount':32, 'networkVolumeId':'testvolume', 'costPerHr':'.96'}
-            api.call.side_effect = [pod, {}, None]
-            api.funds.return_value={'balance_usd':31.,'account_spend_usd_hour':1.15,'under_balance':False}
-            with patch('lease_guard.time.time', side_effect=[15400,15405]), patch('lease_guard.time.sleep'):
-                run_guard(lease(), temporary, 'pod123', api)
-            self.assertEqual([call.args for call in api.call.call_args_list],
-                             [('GET',), ('DELETE',), ('GET',)])
-            self.assertTrue(read(Path(temporary)/'released.json')['provider_absent'])
+            world = World([pod]); clock = FakeClock(15400)
+            with no_network(), guard_time(lease_guard, clock):
+                run_guard(lease(), temporary, 'pod123', world.provider('k', 'pod123'))
+            self.assertEqual(world.methods()[:2], ['DELETE', 'GET'])
+            released = read(Path(temporary)/'released.json')
+            self.assertTrue(released['provider_absent'])
+            self.assertEqual(released['absent_confirmations'], 2)
 
     def test_idle_over_five_minutes_is_not_configurable(self):
         with self.assertRaises(ValueError):validate(lease()|{'work_idle_seconds':301})
@@ -158,16 +159,18 @@ class GuardTests(unittest.TestCase):
             self.assertNotIn('fake-test-key',json.dumps(result))
 
     def test_periodic_account_failure_is_not_reported_as_fresh_funds(self):
+        import lease_guard
+        from lease_test_support import FakeClock, World, guard_time, no_network
         with tempfile.TemporaryDirectory() as temporary:
-            api=unittest.mock.Mock()
             pod={'id':'pod123','name':lease()['name'],'cpuFlavorId':'cpu3c',
                  'vcpuCount':32,'networkVolumeId':'testvolume','costPerHr':'.96'}
-            api.call.side_effect=[pod,pod,pod,None]
-            api.funds.side_effect=[{'balance_usd':31.,'account_spend_usd_hour':1.15,
-                                    'under_balance':False},RuntimeError('unavailable')]
-            with patch('lease_guard.time.time',side_effect=[1000,1030,1060,1065]),patch('lease_guard.time.sleep'):
-                run_guard(lease(),temporary,'pod123',api)
-            self.assertEqual(api.funds.call_count,2)
+            world=World([pod]);clock=FakeClock(1000)
+            world.funds_script=iter([{'balance_usd':31.,'account_spend_usd_hour':1.15,'under_balance':False}])
+            world.funds_value=RuntimeError('unavailable')
+            with no_network(),guard_time(lease_guard,clock):
+                run_guard(lease(),temporary,'pod123',world.provider('k','pod123'))
+            self.assertGreaterEqual(world.funds_calls,2)
+            self.assertIn('DELETE',world.methods())
             status=read(Path(temporary)/'guard.json')
             self.assertFalse(status['funds_verified']);self.assertFalse(status['allow_new_dispatch'])
             self.assertEqual(status['latched'],'funds_unverified')

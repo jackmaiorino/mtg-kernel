@@ -4,7 +4,7 @@ No provider action on import. DELETE is confined to the exact runtime Pod ID.
 This is not a provider-enforced TTL: failed container boot, host failure and
 unreachable provider control plane require an independent external guard.
 
-Release rules (ported from the reviewed ordinary-training lease adapter, 2026-10-25):
+Release rules:
 - a missing or malformed costPerHr/adjustedCostPerHr, or max(costPerHr,
   adjustedCostPerHr) above the lease ceiling, is an invalid allocation and is
   released at once (pod_rate, verify_pod);
