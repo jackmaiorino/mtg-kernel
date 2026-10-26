@@ -53,6 +53,7 @@ mod syphoner;
 mod targeted_entry;
 mod team_statics;
 mod threshold_loot;
+mod tragic_banshee;
 mod triggered_enchantments;
 mod trufflesnout;
 mod uncharted_voyage;

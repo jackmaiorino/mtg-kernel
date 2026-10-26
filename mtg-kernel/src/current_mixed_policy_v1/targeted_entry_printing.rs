@@ -1,8 +1,8 @@
-//! Closed targeted entry observers with owner-directed returns to hand.
+//! Closed targeted entry observers with returns and resolution-time weakening.
 use super::{Error, Result};
 use crate::{
-    card_def::{CardDef, CardType, Keywords, Subtype, TargetSpec},
-    effect::{EffectOp, ObjectRef},
+    card_def::{CardDef, CardType, DynamicValueDef, Keywords, Subtype, TargetSpec},
+    effect::{EffectCond, EffectOp, ObjectRef, TargetRef},
     mana::{Cost, ManaColor, Pip},
     state::Zone,
     trigger::{TriggerCondition, TriggeredAbilityDef},
@@ -12,13 +12,31 @@ use serde_json::{json, Value};
 pub(super) fn handles(name: &str) -> bool {
     matches!(
         name,
-        "Mischievous Pup" | "Bigfin Bouncer" | "Elvish Regrower" | "Vampire Soulcaller"
+        "Mischievous Pup"
+            | "Bigfin Bouncer"
+            | "Elvish Regrower"
+            | "Vampire Soulcaller"
+            | "Tragic Banshee"
     )
 }
 
 /// The caller still checks all unrelated CardDef fields in the common guard.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (cost, color, subtypes, power, toughness, keywords, target_spec, filter) = match d.name {
+        "Tragic Banshee" => (
+            Cost {
+                generic: 4,
+                pips: &[Pip::Colored(ManaColor::B)],
+                x_count: 0,
+            },
+            ManaColor::B,
+            &[Subtype::Spirit][..],
+            5,
+            3,
+            Keywords::NONE,
+            TargetSpec::OpponentControlledCreature,
+            json!({"zone":"Battlefield","type":"Creature","relation":"ControlledByOpponentOfCapturedTriggerController","uses_current_effective_type":true}),
+        ),
         "Mischievous Pup" => (
             Cost {
                 generic: 2,
@@ -78,7 +96,19 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         _ => return Ok(None),
     };
     let pup = d.name == "Mischievous Pup";
-    let program = if d.name == "Bigfin Bouncer" {
+    let banshee = d.name == "Tragic Banshee";
+    let program = if banshee {
+        let weaken = |amount| EffectOp::PumpTargetUntilEndOfTurnDynamic {
+            target: TargetRef::Target(0),
+            power: DynamicValueDef::Fixed(amount),
+            toughness: DynamicValueDef::Fixed(amount),
+        };
+        EffectOp::Conditional {
+            cond: EffectCond::CreatureDiedThisTurn,
+            then: Box::new(weaken(-13)),
+            else_: Box::new(weaken(-1)),
+        }
+    } else if d.name == "Bigfin Bouncer" {
         EffectOp::MoveObject {
             object: ObjectRef::Target(0),
             to_zone: Zone::Hand,
@@ -145,15 +175,32 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "chooser":"CapturedTriggerController","selected_at":"TriggerStackPlacement",
         "normal_target_legality_and_protection_apply":true,"rechecked_at_resolution":true,
         "binding":"OriginalSelectedObjectIncarnation"});
+    let resolution = if banshee {
+        json!([{"operation":"ModifyTargetPowerToughnessUntilEndOfTurn","target_slot":0,
+            "binding":"OriginalSelectedCreatureIncarnation",
+            "condition":{"operation":"AnyCreatureDiedThisTurn","sample_at_resolution":true,
+                "both_controllers_included":true,"requires_battlefield_creature_to_graveyard_move":true,
+                "not_an_intervening_if_or_trigger_time_snapshot":true},
+            "if_true":{"power_delta":-13,"toughness_delta":-13},
+            "if_false":{"power_delta":-1,"toughness_delta":-1},
+            "layer":"AdditivePowerToughness","places_no_counters":true,
+            "duration":"UntilCleanupExpirationAfterDiscard",
+            "source_departure_does_not_cancel_resolved_modification":true,
+            "later_target_control_change_retains_same_incarnation_modification":true,
+            "target_departure_and_reentry_does_not_retain_modification":true,
+            "normal_continuous_layers_and_state_based_actions_apply":true}])
+    } else {
+        json!([{"operation":"ReturnEachLegalTargetToHand","recipient":"EachTargetsOwner",
+            "requires_original_target_incarnation":true,"does_not_return_to_trigger_controllers_hand_unless_owner":true,
+            "normal_zone_replacements_apply":true,"tokens_that_leave_the_battlefield_cease_normally":true}])
+    };
     let trigger = json!({"event":"ThisPermanentEntersBattlefield","home_zone":"Battlefield","source_face":0,
         "requires_active_printed_abilities_at_capture":true,"intervening_if":null,"mandatory":true,"uses_stack":true,
         "controller":"CapturedSourceControllerAtEntry","captures_original_source_incarnation":true,
         "survives_source_departure_and_later_control_change":true,"targets":[target],
         "zero_targets_allowed":pup,"zero_targets_perform_no_moves":pup,
         "required_target_absence_prevents_stack_placement":!pup,"all_chosen_targets_illegal_skips_resolution":true,
-        "ordered_resolution":[{"operation":"ReturnEachLegalTargetToHand","recipient":"EachTargetsOwner",
-            "requires_original_target_incarnation":true,"does_not_return_to_trigger_controllers_hand_unless_owner":true,
-            "normal_zone_replacements_apply":true,"tokens_that_leave_the_battlefield_cease_normally":true}]});
+        "ordered_resolution":resolution});
     Ok(Some(json!({"card_id":id,"targeted_entry_printing":{
         "schema":"printed-targeted-entry/v1","cost":cost,"mana_value":d.mana_value,
         "types":d.types,"subtypes":d.subtypes,"supertypes":[],"colors":d.colors,

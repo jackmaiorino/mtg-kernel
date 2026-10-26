@@ -1716,6 +1716,39 @@ mod paid {
     }
 
     #[test]
+    fn banshee_changed_printed_cost_size_type_keyword_cast_effect_or_foreign_mode_refuses() {
+        use crate::{
+            card_def::{CardType, Keywords},
+            effect::EffectOp,
+        };
+        let id = crate::card_def::card_id_by_name("Tragic Banshee").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.toughness = Some(4),
+                2 => d.types = &[CardType::Enchantment],
+                3 => d.keywords = Keywords::FLYING,
+                4 => d.spell_effect = || Some(EffectOp::Sequence(vec![])),
+                _ => {
+                    d.mode2 = crate::card_def::CARD_DEFS
+                        [usize::from(crate::card_def::card_id_by_name("Abrade").unwrap())]
+                    .mode2
+                    .clone()
+                }
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Banshee changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn bushwhack_changed_basic_search_fight_source_target_modes_cost_or_timing_refuses() {
         use crate::{
             card_def::{CardType, TargetSpec},
