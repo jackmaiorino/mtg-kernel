@@ -275,8 +275,17 @@ const JACE: [ActivatedAbilityRecipe; 2] = [
     ),
 ];
 
+/// Sneak Attack: "{R}: You may put a creature card from your hand onto the
+/// battlefield. That creature gains haste. Sacrifice the creature at the
+/// beginning of the next end step."
+const SNEAK_ATTACK: [ActivatedAbilityRecipe; 1] = [instant(
+    &[AbilityCostRecipe::ManaCost("{R}")],
+    AbilityEffectRecipe::StandardProgram("crate::eternal_cards_v1::sneak_attack"),
+)];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Sneak Attack" => &SNEAK_ATTACK,
         "Jace, Wielder of Mysteries" => &JACE,
         "The One Ring" => &THE_ONE_RING,
         "Street Wraith" => &STREET_WRAITH,
@@ -347,6 +356,10 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec:
                 "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::SpellWithSingleTargetV1)",
             program: "crate::eternal_cards_v1::misdirection",
+        },
+        "Show and Tell" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::show_and_tell",
         },
         "Doomsday" => Special::StandardProgram {
             target_spec: "TargetSpec::None",
@@ -454,6 +467,10 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "static:controller_draw_from_empty_library_wins_instead;minus8:win_if_library_empty_after_draw_seven"
         }
         "Lion's Eye Diamond" => "mana:discard_hand_sacrifice_self:instant_timing_only",
+        "Show and Tell" => "spell:each_player_apnap_may_put_artifact_creature_enchantment_or_land_from_hand:no_aura",
+        "Sneak Attack" => "activated_put_creature_from_hand:gains_haste:sacrifice_next_end_step",
+        "Omniscience" => "static:controller_may_cast_hand_spells_without_paying_mana_cost",
+        "Aluren" => "static:any_player_may_cast_mv3_or_less_creatures_free_with_flash",
         "Cavern of Souls" => {
             "as_enters:choose_creature_type_of_owned_creature_cards;restricted_mana_spell_cant_be_countered"
         }

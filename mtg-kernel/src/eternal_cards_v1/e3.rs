@@ -68,6 +68,10 @@ pub struct E3StateV1 {
     /// Targets of Storm spells as they were cast, for their copies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub storm_casts: Vec<StormCastV1>,
+    /// Set only on a projected state: cost quotes of this hand card ask
+    /// about its cast without paying its mana cost (Omniscience, Aluren).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_quote: Option<ObjectId>,
 }
 
 /// One resolved Veil of Summer: its controller's spells can't be countered
@@ -192,6 +196,14 @@ pub enum E3ChoiceKindV1 {
         devotion: u32,
         prefix: Vec<EffectObjectBinding>,
     },
+    /// Show and Tell: up to one card from the chooser's hand. `chosen` are
+    /// the earlier players' cards, `later` the players still to choose.
+    ShowAndTellV1 {
+        chosen: Vec<EffectObjectBinding>,
+        later: Vec<PlayerId>,
+    },
+    /// Sneak Attack: up to one creature card from the controller's hand.
+    SneakAttackV1 { source: AbilitySourceContractV4 },
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -218,6 +230,8 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::ImprintV1 { .. }
                 | E3ChoiceKindV1::DoomsdayV1
                 | E3ChoiceKindV1::OracleV1 { .. }
+                | E3ChoiceKindV1::ShowAndTellV1 { .. }
+                | E3ChoiceKindV1::SneakAttackV1 { .. }
         )
     }
 
@@ -231,7 +245,11 @@ impl E3ChoiceV1 {
         match self.kind {
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
-            | E3ChoiceKindV1::OracleV1 { .. } => crate::rl::TargetSelectionPurposeV4::CardSelection,
+            | E3ChoiceKindV1::OracleV1 { .. }
+            | E3ChoiceKindV1::ShowAndTellV1 { .. }
+            | E3ChoiceKindV1::SneakAttackV1 { .. } => {
+                crate::rl::TargetSelectionPurposeV4::CardSelection
+            }
             E3ChoiceKindV1::RetargetSpellV1 { .. } | E3ChoiceKindV1::RetargetCopyV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::EffectTargets
             }
@@ -241,6 +259,9 @@ impl E3ChoiceV1 {
     /// Every object incarnation this choice refers to.
     pub(crate) fn referenced_bindings(&self) -> Vec<EffectObjectBinding> {
         let mut out = self.bindings.clone();
+        if let E3ChoiceKindV1::ShowAndTellV1 { chosen, .. } = &self.kind {
+            out.extend(chosen.iter().copied());
+        }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
             out.push(EffectObjectBinding {
                 object: mox.object,
@@ -403,6 +424,21 @@ pub(crate) fn finish_selection(
         E3ChoiceKindV1::OracleV1 { devotion, prefix } => {
             let kept = bindings.first().map(|binding| binding.object);
             apply_oracle(state, choice.player, *devotion, prefix, kept)?;
+            Ok(false)
+        }
+        E3ChoiceKindV1::ShowAndTellV1 { chosen, later } => {
+            let mut chosen = chosen.clone();
+            if let Some(card) = bindings.first() {
+                // The next player sees the choice before making theirs.
+                state.reveal_hand_card(choice.player.opponent(), choice.player, card.object)?;
+                chosen.push(*card);
+            }
+            stage_show_and_tell(state, continuation, later, chosen, choice.path.clone())
+        }
+        E3ChoiceKindV1::SneakAttackV1 { source } => {
+            if let Some(card) = bindings.first() {
+                sneak_in(state, *source, card.object)?;
+            }
             Ok(false)
         }
     }
@@ -588,6 +624,44 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        EternalOpV1::ShowAndTellV1 => {
+            let first = state.active_player;
+            stage_show_and_tell(
+                state,
+                continuation,
+                &[first, first.opponent()],
+                Vec::new(),
+                path,
+            )
+        }
+        EternalOpV1::SneakAttackV1 => {
+            let Some(source) = continuation.ctx.ability_source_contract else {
+                return Err("Sneak Attack lost its source".to_string());
+            };
+            let player = continuation.ctx.controller;
+            let cards = hand_bindings(state, player, |def| def.has_type(CardType::Creature));
+            if cards.is_empty() {
+                return Ok(false);
+            }
+            offer(
+                continuation,
+                E3ChoiceV1 {
+                    kind: E3ChoiceKindV1::SneakAttackV1 { source },
+                    player,
+                    candidates: cards
+                        .iter()
+                        .map(|card| Target::Object(card.object))
+                        .collect(),
+                    bindings: cards,
+                    min: 0,
+                    max: 1,
+                    ordered: false,
+                    path,
+                    remaining: continuation.frames.clone(),
+                },
+            );
+            Ok(true)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -604,6 +678,8 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. }
             | EternalOpV1::DoomsdayPileV1
             | EternalOpV1::ThassasOracleV1
+            | EternalOpV1::ShowAndTellV1
+            | EternalOpV1::SneakAttackV1
     )
 }
 
@@ -1353,7 +1429,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::ChangeTargetOfTargetSpellV1
         | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. }
         | EternalOpV1::DoomsdayPileV1
-        | EternalOpV1::ThassasOracleV1 => {
+        | EternalOpV1::ThassasOracleV1
+        | EternalOpV1::ShowAndTellV1
+        | EternalOpV1::SneakAttackV1 => {
             // Choice leaves run only inside the resumable interpreter.
             halt(state, ctx.source);
         }
@@ -1706,4 +1784,189 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
             crate::engine::object_has_type(state, permanent, CardType::Land)
                 && crate::engine::has_effective_subtype(state, permanent, Subtype::Swamp)
         })
+}
+
+// ---- Omniscience and Aluren ---------------------------------------------------------
+
+pub(crate) const OMNISCIENCE: &str = "Omniscience";
+pub(crate) const ALUREN: &str = "Aluren";
+
+/// Whether `player` controls a permanent named `name` whose printed
+/// abilities apply.
+fn controls_named(state: &GameState, player: PlayerId, name: &str) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .any(|&object| {
+            state.objects.get(object).controller == player
+                && printed_battlefield_source(state, object, name)
+        })
+}
+
+/// Aluren: "Any player may cast creature spells with mana value 3 or less
+/// without paying their mana costs and as though they had flash." Whether
+/// `card` is such a creature card while an Aluren is on the battlefield.
+pub(crate) fn aluren_flash(state: &GameState, card: ObjectId) -> bool {
+    printed(state, card).has_type(CardType::Creature)
+        && crate::engine::object_mana_value(state, card) <= 3
+        && [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .any(|player| controls_named(state, player, ALUREN))
+}
+
+/// Whether `player` may cast the hand card `card` without paying its mana
+/// cost in some printed form (Omniscience: "You may cast spells from your
+/// hand without paying their mana costs"; Aluren).
+pub(crate) fn hand_free_permission_any_form(
+    state: &GameState,
+    card: ObjectId,
+    player: PlayerId,
+) -> bool {
+    state
+        .objects
+        .try_get(card)
+        .is_some_and(|live| live.zone == Zone::Hand && live.owner == player)
+        && (controls_named(state, player, OMNISCIENCE) || aluren_flash(state, card))
+}
+
+/// Whether the cost quote of `source` in printed form `mode` is for a cast
+/// without paying its mana cost: the pending hand cast has not chosen to pay
+/// it, or a castability quote asks about the free cast (`free_quote`).
+pub(crate) fn free_hand_cast_selected(
+    state: &GameState,
+    source: ObjectId,
+    player: PlayerId,
+    mode: u8,
+) -> bool {
+    let Some(live) = state.objects.try_get(source) else {
+        return false;
+    };
+    let selected = match live.zone {
+        Zone::Hand => e3(state).is_some_and(|e3| e3.free_quote == Some(source)),
+        Zone::Stack => state.engine.pending_cast.as_ref().is_some_and(|pending| {
+            pending.spell == source
+                && pending.controller == player
+                && matches!(
+                    pending.hand_free_cast_v1,
+                    Some(
+                        crate::engine::HandFreeCastV1::Undecided
+                            | crate::engine::HandFreeCastV1::WithoutManaCost
+                    )
+                )
+        }),
+        _ => false,
+    };
+    selected
+        && (controls_named(state, player, OMNISCIENCE)
+            || (mode == 0 && aluren_flash(state, source)))
+}
+
+/// Marks a projected state so cost quotes of `card` ask about its cast
+/// without paying its mana cost.
+pub(crate) fn set_free_quote(state: &mut GameState, card: Option<ObjectId>) {
+    e3_mut(state).free_quote = card;
+}
+
+// ---- Show and Tell ------------------------------------------------------------------
+
+/// The cards Show and Tell lets `player` put onto the battlefield: an
+/// artifact, creature, enchantment or land card in their hand. An Aura
+/// would need a host chosen as it enters (303.4f), which the engine models
+/// only for Aura spells, so Auras are not offered.
+fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    hand_bindings(state, player, |def| {
+        [
+            CardType::Artifact,
+            CardType::Creature,
+            CardType::Enchantment,
+            CardType::Land,
+        ]
+        .into_iter()
+        .any(|card_type| def.has_type(card_type))
+            && !def.subtypes.contains(&Subtype::Aura)
+    })
+}
+
+/// Show and Tell: "Each player may put an artifact, creature, enchantment,
+/// or land card from their hand onto the battlefield."
+pub fn show_and_tell() -> EffectOp {
+    eternal(EternalOpV1::ShowAndTellV1)
+}
+
+/// Stages the Show and Tell choice of the first player from `players` with
+/// a card to offer, or puts the `chosen` cards onto the battlefield. 101.4:
+/// the active player chooses first, then the other player, then the cards
+/// enter at once.
+fn stage_show_and_tell(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    players: &[PlayerId],
+    chosen: Vec<EffectObjectBinding>,
+    path: Vec<u16>,
+) -> Result<bool, String> {
+    for (index, &player) in players.iter().enumerate() {
+        let cards = show_and_tell_cards(state, player);
+        if cards.is_empty() {
+            continue;
+        }
+        offer(
+            continuation,
+            E3ChoiceV1 {
+                kind: E3ChoiceKindV1::ShowAndTellV1 {
+                    chosen,
+                    later: players[index + 1..].to_vec(),
+                },
+                player,
+                candidates: cards
+                    .iter()
+                    .map(|card| Target::Object(card.object))
+                    .collect(),
+                bindings: cards,
+                min: 0,
+                max: 1,
+                ordered: false,
+                path,
+                remaining: continuation.frames.clone(),
+            },
+        );
+        return Ok(true);
+    }
+    if chosen.iter().any(|binding| !binding_live(state, *binding)) {
+        return Err("a Show and Tell card left its owner's hand".to_string());
+    }
+    for binding in chosen {
+        event::propose_and_commit(
+            state,
+            ProposedEvent::zone_change(binding.object, Zone::Battlefield),
+        );
+    }
+    Ok(false)
+}
+
+// ---- Sneak Attack -------------------------------------------------------------------
+
+pub(crate) const SNEAK_ATTACK: &str = "Sneak Attack";
+
+/// Sneak Attack: "{R}: You may put a creature card from your hand onto the
+/// battlefield. That creature gains haste. Sacrifice the creature at the
+/// beginning of the next end step."
+pub fn sneak_attack() -> EffectOp {
+    eternal(EternalOpV1::SneakAttackV1)
+}
+
+/// Puts the chosen creature card onto the battlefield with haste and its
+/// end-step sacrifice, controlled by the ability's controller.
+fn sneak_in(
+    state: &mut GameState,
+    source: AbilitySourceContractV4,
+    card: ObjectId,
+) -> Result<(), String> {
+    event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Battlefield));
+    let live = state.objects.get(card);
+    if live.zone != Zone::Battlefield {
+        return Ok(());
+    }
+    let binding = bind(state, card);
+    crate::standard_cards_v1::register_reflection_delayed_sacrifice(state, binding, source);
+    Ok(())
 }

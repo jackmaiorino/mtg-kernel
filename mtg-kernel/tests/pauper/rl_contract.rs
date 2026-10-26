@@ -1863,6 +1863,7 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
         convoke_chosen: Vec::new(),
         convoke_finished: false,
         escape_exile_finished_v1: false,
+        hand_free_cast_v1: None,
         mandatory_additional_cost: None,
     });
     let mut b = a.clone();

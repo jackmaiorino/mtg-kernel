@@ -32,7 +32,8 @@ use serde::{Deserialize, Serialize};
 pub mod e3;
 pub use e3::{
     dark_ritual, doomsday, edge_of_autumn, flusterstorm, jace_minus_eight, jace_plus_one,
-    misdirection, personal_tutor, sink_into_stupor, the_one_ring_draw, veil_of_summer,
+    misdirection, personal_tutor, show_and_tell, sink_into_stupor, sneak_attack, the_one_ring_draw,
+    veil_of_summer,
 };
 
 /// Per-game state for this module's cards. Absent until one of them needs
@@ -204,6 +205,10 @@ pub enum EternalOpV1 {
     ThassasOracleV1,
     /// "If your library has no cards in it, you win the game" (Jace's -8).
     WinIfLibraryEmptyV1,
+    /// Show and Tell's effect. A choice.
+    ShowAndTellV1,
+    /// Sneak Attack's ability. A choice.
+    SneakAttackV1,
 }
 
 impl EternalOpV1 {
@@ -1002,7 +1007,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::VeilOfSummerV1
         | EternalOpV1::DoomsdayPileV1
         | EternalOpV1::ThassasOracleV1
-        | EternalOpV1::WinIfLibraryEmptyV1 => e3::execute(op, ctx, state),
+        | EternalOpV1::WinIfLibraryEmptyV1
+        | EternalOpV1::ShowAndTellV1
+        | EternalOpV1::SneakAttackV1 => e3::execute(op, ctx, state),
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {
                 return;

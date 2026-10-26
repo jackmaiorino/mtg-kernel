@@ -1958,6 +1958,126 @@
     "instant_timing"
    ],
    "java_file": "Mage.Sets/src/mage/cards/l/LionsEyeDiamond.java"
+  },
+  {
+   "name": "Show and Tell",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show",
+    "legacy-aluren",
+    "legacy-rakdos-reanimator",
+    "legacy-omni-tell",
+    "legacy-reanimator",
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "put_onto_battlefield",
+    "each_player_choice",
+    "hidden_choice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/ShowAndTell.java"
+  },
+  {
+   "name": "Sneak Attack",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "put_onto_battlefield",
+    "haste_grant",
+    "delayed_sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SneakAttack.java"
+  },
+  {
+   "name": "Omniscience",
+   "engine_capability": "full",
+   "mana_cost": "{7}{U}{U}{U}",
+   "mana_value": 10,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-aluren",
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "cast_without_paying_mana_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/Omniscience.java"
+  },
+  {
+   "name": "Aluren",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-aluren"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "cast_without_paying_mana_cost",
+    "flash_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/Aluren.java"
   }
  ]
 }

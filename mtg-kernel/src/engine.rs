@@ -941,7 +941,24 @@ pub struct PendingCast {
     /// Only the eternal catalog sets it.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub escape_exile_finished_v1: bool,
+    /// Whether this hand cast is made without paying its mana cost under a
+    /// free-cast permission (Omniscience, Aluren). `None` when no such
+    /// permission applied as the cast began. Only the eternal catalog sets
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hand_free_cast_v1: Option<HandFreeCastV1>,
 }
+
+/// The pay-or-skip choice of a hand cast under a free-cast permission
+/// (Omniscience, Aluren).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HandFreeCastV1 {
+    /// Not chosen yet; quotes assume the cost can be skipped.
+    Undecided,
+    WithoutManaCost,
+    PayManaCost,
+}
+
 impl std::hash::Hash for PendingCast {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::hash::Hash::hash(&self.spell, state);
@@ -975,6 +992,10 @@ impl std::hash::Hash for PendingCast {
         }
         if self.escape_exile_finished_v1 {
             std::hash::Hash::hash(&"escape-exile-finished/v1", state);
+        }
+        if let Some(choice) = self.hand_free_cast_v1 {
+            std::hash::Hash::hash(&"hand-free-cast/v1", state);
+            std::hash::Hash::hash(&choice, state);
         }
     }
 }
@@ -8042,6 +8063,10 @@ fn pending_cast_form_timing_ok(
     state: &GameState,
 ) -> bool {
     resolution_cast_v1::timing_override(state, pending.spell)
+        || (cfg!(feature = "eternal-fixtures")
+            && pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
+            && types.contains(&CardType::Creature)
+            && crate::eternal_cards_v1::e3::aluren_flash(state, pending.spell))
         || spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
         || (!types.contains(&CardType::Land)
@@ -8293,6 +8318,76 @@ fn pending_cast_quote_v1(
         state,
         &reserved_graveyard,
     )
+}
+
+/// Records the pay-or-skip answer of a hand cast under a free-cast
+/// permission. Skipping the mana cost makes X zero.
+fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
+    let pending = state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("a pending cast is choosing its free cast");
+    pending.hand_free_cast_v1 = Some(choice);
+    if choice == HandFreeCastV1::WithoutManaCost && pending.x_value.is_none() {
+        pending.x_value = Some(0);
+    }
+}
+
+/// Quotes `pending` as it would stand with its free-cast answer replaced.
+fn free_cast_projection_quote(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    kicked: bool,
+    state: &GameState,
+) -> bool {
+    let mut projected = state.clone();
+    projected.engine.pending_cast = Some(pending.clone());
+    pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, 0, &projected).is_some()
+}
+
+/// Whether the hand card `id` can be cast without paying its mana cost
+/// under Omniscience or Aluren in any of its printed forms.
+fn hand_free_cast_quote_ok(
+    def: &card_def::CardDef,
+    id: ObjectId,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    if !crate::eternal_cards_v1::e3::hand_free_permission_any_form(state, id, player) {
+        return false;
+    }
+    let mut projected = state.clone();
+    crate::eternal_cards_v1::e3::set_free_quote(&mut projected, Some(id));
+    if normal_cast_cost_depends_on_targets(def) {
+        return normal_cast_target_prefix_is_payable(
+            def,
+            id,
+            def.target_spec,
+            player,
+            &[],
+            &projected,
+        );
+    }
+    viable_printed_spell_modes(def, id, player, &projected)
+        .into_iter()
+        .any(|mode| {
+            spell_costs_v1::selected_spell_quote_v1(
+                def,
+                id,
+                Zone::Hand,
+                CastMethodV4::Normal,
+                false,
+                mode,
+                0,
+                &[],
+                &[],
+                player,
+                &projected,
+                &[],
+            )
+            .is_some()
+        })
 }
 
 /// Scoped quote adapter for the exact printed Divine successor. It returns
@@ -8568,12 +8663,30 @@ fn is_castable_now(
                     .is_some()
                 })
             };
+            // Omniscience and Aluren may waive the mana cost of a hand cast;
+            // Aluren's flash timing needs that waiver.
+            let free_ok = || {
+                cfg!(feature = "eternal-fixtures")
+                    && state.objects.get(id).zone == Zone::Hand
+                    && hand_free_cast_quote_ok(def, id, player, state)
+            };
+            let aluren_timing = cfg!(feature = "eternal-fixtures")
+                && !main_timing_ok
+                && state.objects.get(id).zone == Zone::Hand
+                && crate::eternal_cards_v1::e3::aluren_flash(state, id);
+            let paid_or_free = || {
+                if main_timing_ok {
+                    normal_ok() || alt_ok() || free_ok()
+                } else {
+                    free_ok()
+                }
+            };
             let main_ok = (state.objects.get(id).zone != Zone::Graveyard
                 || graveyard_permission_zone_change_count(player, id, state).is_some())
-                && main_timing_ok
-                && (((normal_ok() || alt_ok())
+                && (main_timing_ok || aluren_timing)
+                && ((paid_or_free()
                     && !viable_printed_spell_modes(def, id, player, state).is_empty())
-                    || kicked_ok());
+                    || (main_timing_ok && kicked_ok()));
             let omen_ok = || {
                 supported_omen(def).is_some_and(|omen| {
                     matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
@@ -12543,6 +12656,35 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             return None;
         };
         state.engine.pending_cast.as_mut().unwrap().cast_mode = Some(mode);
+        return drain_pending_cast_or_decide(state);
+    }
+    if pending.cast_mode == Some(CastMode::Normal)
+        && pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)
+    {
+        let kicked = pending.kicked == Some(true);
+        let mut paying = pending.clone();
+        paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
+        let pay = free_cast_projection_quote(def, &paying, kicked, state);
+        let free =
+            pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state).is_some();
+        let choice = match (pay, free) {
+            (true, true) => {
+                return Some(Decision::ChooseEffectOption {
+                    player: pending.controller,
+                    source: pending.spell,
+                    option_count: 2,
+                });
+            }
+            (true, false) => HandFreeCastV1::PayManaCost,
+            (false, true) => HandFreeCastV1::WithoutManaCost,
+            (false, false) => {
+                let cast_method = finalized_cast_method(&pending, staged_method, def);
+                let pending = state.engine.pending_cast.take().unwrap();
+                abort_cast(state, pending, cast_method);
+                return None;
+            }
+        };
+        set_hand_free_cast(state, choice);
         return drain_pending_cast_or_decide(state);
     }
 
@@ -19708,6 +19850,8 @@ enum PendingCastActionStage {
     /// Nethergoyf's escape: more graveyard cards after its card types are
     /// covered, or finish.
     ChooseEscapeExileV1,
+    /// Omniscience or Aluren: pay the mana cost (option 0) or not (1).
+    ChooseFreeCastV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19763,6 +19907,11 @@ fn pending_cast_action_stage(
     }
     if pending.cast_mode.is_none() {
         return Ok(PendingCastActionStage::ChooseCastMode);
+    }
+    if pending.cast_mode == Some(CastMode::Normal)
+        && pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)
+    {
+        return Ok(PendingCastActionStage::ChooseFreeCastV1);
     }
     if pending
         .mandatory_additional_cost
@@ -19869,7 +20018,7 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
                 | PendingCastActionStage::ChooseMandatoryAdditionalCost,
             Action::ChooseEffectOption(_)
         ) | (
-            PendingCastActionStage::ChooseXValue,
+            PendingCastActionStage::ChooseXValue | PendingCastActionStage::ChooseFreeCastV1,
             Action::ChooseEffectOption(_)
         ) | (PendingCastActionStage::Discard, Action::Discard(_))
     )
@@ -22657,6 +22806,15 @@ fn apply_pending_cast_effect_option(
         PendingCastActionStage::ChooseOptionalAdditionalCost => {
             apply_choose_optional_additional_cost(state, option_index)
         }
+        PendingCastActionStage::ChooseFreeCastV1 => {
+            let choice = match option_index {
+                0 => HandFreeCastV1::PayManaCost,
+                1 => HandFreeCastV1::WithoutManaCost,
+                _ => return Err("the free-cast choice has two options".to_string()),
+            };
+            set_hand_free_cast(state, choice);
+            Ok(())
+        }
         PendingCastActionStage::ChooseMandatoryAdditionalCost => {
             mandatory_cast_cost_v1::answer(state, &pending, option_index)
         }
@@ -22921,9 +23079,25 @@ fn begin_cast_ex(
     };
     let without_mana_cost = resolution_permission.is_some()
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
+    // Omniscience and Aluren: a hand cast may skip its mana cost. Aluren's
+    // "as though they had flash" applies only to such a cast, so outside
+    // sorcery timing the choice is already made.
+    let hand_free_cast_v1 = (cfg!(feature = "eternal-fixtures")
+        && origin_zone == Zone::Hand
+        && cast_method == CastMethodV4::Normal
+        && resolution_permission.is_none()
+        && crate::eternal_cards_v1::e3::hand_free_permission_any_form(state, spell_id, player))
+    .then(|| {
+        if cast_form_timing_ok(def.types, def.keywords, player, state) {
+            HandFreeCastV1::Undecided
+        } else {
+            HandFreeCastV1::WithoutManaCost
+        }
+    });
     let free_room_door_choice = without_mana_cost
         && crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative).is_some();
     let cast_mode = if (without_mana_cost && !free_room_door_choice)
+        || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
         || cast_method != CastMethodV4::Normal
         || def.alt_cost.is_none()
     {
@@ -23053,6 +23227,7 @@ fn begin_cast_ex(
         convoke_chosen: Vec::new(),
         convoke_finished: false,
         escape_exile_finished_v1: false,
+        hand_free_cast_v1,
         mandatory_additional_cost: mandatory_cast_cost_v1::seed(def),
     });
 }

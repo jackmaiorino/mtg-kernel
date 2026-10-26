@@ -12,7 +12,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E3_CARDS: [&str; 19] = [
+const E3_CARDS: [&str; 23] = [
     "Ancient Tomb",
     "The One Ring",
     "Chrome Mox",
@@ -32,6 +32,10 @@ const E3_CARDS: [&str; 19] = [
     "Thassa's Oracle",
     "Jace, Wielder of Mysteries",
     "Lion's Eye Diamond",
+    "Show and Tell",
+    "Sneak Attack",
+    "Omniscience",
+    "Aluren",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1090,4 +1094,178 @@ fn lions_eye_diamond_is_not_an_automatic_mana_source() {
         !castable(&mut state, ritual),
         "it is activated only as an instant"
     );
+}
+
+// ---- Show and Tell ------------------------------------------------------------------------------
+
+#[test]
+fn show_and_tell_puts_each_players_chosen_card_onto_the_battlefield() {
+    let mut state = islands();
+    let show = put(&mut state, P0, "Show and Tell", Zone::Hand);
+    let wraith = put(&mut state, P0, "Street Wraith", Zone::Hand);
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Hand);
+    let diamond = put(&mut state, P1, "Lion's Eye Diamond", Zone::Hand);
+    put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    cast(&mut state, show, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            min_targets,
+            max_targets,
+            ..
+        }) => {
+            assert_eq!(player, P0, "the active player chooses first");
+            assert_eq!((min_targets, max_targets), (0, 1));
+            assert_eq!(legal_targets, vec![Target::Object(wraith)]);
+            assert!(!legal_targets.contains(&Target::Object(ritual)));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(wraith)),
+            );
+        }
+        other => panic!("expected the first choice, got {other:?}"),
+    }
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            ..
+        }) => {
+            assert_eq!(player, P1);
+            assert_eq!(legal_targets, vec![Target::Object(diamond)]);
+            assert!(
+                state
+                    .known_hand_cards(P1, P0)
+                    .iter()
+                    .any(|entry| entry.object == wraith),
+                "the second player sees the first choice"
+            );
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(diamond)),
+            );
+        }
+        other => panic!("expected the second choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(wraith).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(diamond).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(diamond).controller, P1);
+    assert_eq!(state.objects.get(ritual).zone, Zone::Hand);
+}
+
+#[test]
+fn show_and_tell_lets_a_player_decline() {
+    let mut state = islands();
+    let show = put(&mut state, P0, "Show and Tell", Zone::Hand);
+    let wraith = put(&mut state, P0, "Street Wraith", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    cast(&mut state, show, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { can_finish, .. }) => {
+            assert!(can_finish);
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        other => panic!("expected the choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(wraith).zone, Zone::Hand);
+}
+
+// ---- Sneak Attack -------------------------------------------------------------------------------
+
+#[test]
+fn sneak_attack_puts_a_hasty_creature_in_and_sacrifices_it_at_end_step() {
+    let mut state = islands();
+    let sneak = put(&mut state, P0, "Sneak Attack", Zone::Battlefield);
+    let wraith = put(&mut state, P0, "Street Wraith", Zone::Hand);
+    put(&mut state, P0, "Dark Ritual", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    activate(&mut state, sneak, 0, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(legal_targets, vec![Target::Object(wraith)]);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(wraith)),
+            );
+        }
+        other => panic!("expected the creature choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(wraith).zone, Zone::Battlefield);
+    assert!(engine::has_effective_keyword(
+        &state,
+        wraith,
+        mtg_kernel::card_def::Keywords::HASTE
+    ));
+    pass_until(&mut state, |state| {
+        state.objects.get(wraith).zone == Zone::Graveyard
+    });
+    assert_eq!(state.step, Step::End);
+}
+
+// ---- Omniscience --------------------------------------------------------------------------------
+
+#[test]
+fn omniscience_casts_hand_spells_without_paying_their_mana_costs() {
+    let mut state = islands();
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Hand);
+    assert!(!castable(&mut state, ritual), "no mana for it");
+    put(&mut state, P0, "Omniscience", Zone::Battlefield);
+    cast(&mut state, ritual, &[]);
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::B), 3);
+}
+
+#[test]
+fn omniscience_offers_paying_the_mana_cost() {
+    let mut state = islands();
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Hand);
+    put(&mut state, P0, "Omniscience", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, ritual, &[]);
+    match next(&mut state) {
+        Decision::ChooseEffectOption { option_count, .. } => {
+            assert_eq!(option_count, 2);
+            act(&mut state, Action::ChooseEffectOption(0));
+        }
+        other => panic!("expected the free-cast choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::B), 3, "paid one, added three");
+}
+
+// ---- Aluren -------------------------------------------------------------------------------------
+
+#[test]
+fn aluren_lets_any_player_cast_small_creatures_free_at_instant_speed() {
+    let mut state = islands();
+    put(&mut state, P0, "Aluren", Zone::Battlefield);
+    let oracle = put(&mut state, P1, "Thassa's Oracle", Zone::Hand);
+    let wraith = put(&mut state, P1, "Street Wraith", Zone::Hand);
+    state.priority_player = P1;
+    let (castable_spells, _) = priority(&mut state);
+    assert!(castable_spells.contains(&oracle));
+    assert!(!castable_spells.contains(&wraith), "mana value five");
+    act(&mut state, Action::CastSpell(oracle));
+    for _ in 0..20 {
+        match next(&mut state) {
+            Decision::ChooseEffectTargets { player, .. } => {
+                assert_eq!(player, P1);
+                act(&mut state, Action::FinishEffectSelection);
+            }
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.objects.get(oracle).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(oracle).controller, P1);
 }

@@ -572,6 +572,12 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
             return None;
         }
         selected.costs.remove(0);
+    } else if cfg!(feature = "eternal-fixtures")
+        && method == CastMethodV4::Normal
+        && crate::eternal_cards_v1::e3::free_hand_cast_selected(state, source, player, mode)
+    {
+        // Omniscience, Aluren: "without paying its mana cost".
+        selected.costs.remove(0);
     }
     Some(selected)
 }
@@ -657,7 +663,14 @@ pub(super) fn selected_spell_quote_branch_v1(
     reserved_graveyard: &[ObjectId],
     forced_branch: Option<bool>,
 ) -> Option<SpellManaPaymentV1> {
-    if x != 0 && super::resolution_cast_v1::free_cast_for(state, source, player) {
+    if x != 0
+        && (super::resolution_cast_v1::free_cast_for(state, source, player)
+            || (cfg!(feature = "eternal-fixtures")
+                && method == CastMethodV4::Normal
+                && crate::eternal_cards_v1::e3::free_hand_cast_selected(
+                    state, source, player, mode,
+                )))
+    {
         return None;
     }
     if method == CastMethodV4::Alternative
