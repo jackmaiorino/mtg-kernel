@@ -417,6 +417,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
             "Keywords::LIFELINK",
         ],
         "Raph & Mikey, Troublemakers" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
+        "The Atropal" => &["Keywords::DEATHTOUCH"],
         _ => &[],
     }
 }
@@ -483,6 +484,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Raph & Mikey, Troublemakers" => {
             "attacks:reveal_until_creature:put_tapped_attacking:rest_bottom_random"
+        }
+        "Acererak the Archlich" => {
+            "etb_if_tomb_of_annihilation_not_completed:return_source_to_hand_then_venture;attacks:each_opponent_sacrifices_creature_or_controller_creates_zombie_2_2;dungeons:lost_mine_of_phandelver,dungeon_of_the_mad_mage,tomb_of_annihilation:rooms_sourced_by_venturing_card:complete_on_entering_bottommost_room"
         }
         "Show and Tell" => "spell:each_player_apnap_may_put_artifact_creature_enchantment_or_land_from_hand:no_aura",
         "Sneak Attack" => "activated_put_creature_from_hand:gains_haste:sacrifice_next_end_step",

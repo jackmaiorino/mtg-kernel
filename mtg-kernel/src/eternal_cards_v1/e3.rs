@@ -24,6 +24,8 @@ use crate::state::{
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod dungeons;
+
 pub(crate) const THE_ONE_RING: &str = "The One Ring";
 pub(crate) const CHROME_MOX: &str = "Chrome Mox";
 pub(crate) const SINK_INTO_STUPOR: &str = "Sink into Stupor";
@@ -72,6 +74,25 @@ pub struct E3StateV1 {
     /// about its cast without paying its mana cost (Omniscience, Aluren).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub free_quote: Option<ObjectId>,
+    /// Dungeon room abilities set off since the last trigger collection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub room_triggers: Vec<dungeons::RoomTriggerV1>,
+    /// Creatures that get -4/-0 until their `holder`'s next turn (Fungi
+    /// Cavern).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weakened: Vec<UntilNextTurnV1>,
+    /// Creatures that can't attack until their `holder`'s next turn (Twisted
+    /// Caverns).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pacified: Vec<UntilNextTurnV1>,
+}
+
+/// An effect on one permanent incarnation until `holder`'s next turn.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UntilNextTurnV1 {
+    pub object: ObjectLinkV4,
+    pub holder: PlayerId,
 }
 
 /// One resolved Veil of Summer: its controller's spells can't be countered
@@ -212,6 +233,33 @@ pub enum E3ChoiceKindV1 {
         revealed: Vec<EffectObjectBinding>,
         picked: Vec<EffectObjectBinding>,
     },
+    /// Scry: the looked-at `prefix`; first the cards kept on top in order,
+    /// then (`top` chosen) the order of the rest on the bottom.
+    ScryV1 {
+        prefix: Vec<EffectObjectBinding>,
+        top: Option<Vec<EffectObjectBinding>>,
+    },
+    /// Veils of Fear (room 2: discard) or Sandfall Cell (room 4:
+    /// sacrifice): up to one card, or lose 2 life. `chosen` are the earlier
+    /// players' answers, `later` the players still to choose.
+    PunisherV1 {
+        room: u16,
+        chosen: Vec<(PlayerId, Option<EffectObjectBinding>)>,
+        later: Vec<PlayerId>,
+    },
+    /// Oubliette: the discard (stage 0), then a creature, an artifact and a
+    /// land to sacrifice (stages 1 to 3).
+    OublietteV1 {
+        discard: Option<EffectObjectBinding>,
+        chosen: Vec<EffectObjectBinding>,
+        stage: u8,
+    },
+    /// Acererak's attack: the opponent may sacrifice a creature, or
+    /// `controller` creates a Zombie.
+    ZombieUnlessSacrificeV1 { controller: PlayerId },
+    /// Mad Wizard's Lair: up to one of the `drawn` cards to cast without
+    /// paying its mana cost.
+    MadWizardV1 { drawn: Vec<EffectObjectBinding> },
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -240,6 +288,9 @@ impl E3ChoiceV1 {
                 | E3ChoiceKindV1::OracleV1 { .. }
                 | E3ChoiceKindV1::ShowAndTellV1 { .. }
                 | E3ChoiceKindV1::SneakAttackV1 { .. }
+                | E3ChoiceKindV1::ScryV1 { .. }
+                | E3ChoiceKindV1::PunisherV1 { room: 2, .. }
+                | E3ChoiceKindV1::OublietteV1 { stage: 0, .. }
         )
     }
 
@@ -256,10 +307,19 @@ impl E3ChoiceV1 {
             | E3ChoiceKindV1::OracleV1 { .. }
             | E3ChoiceKindV1::ShowAndTellV1 { .. }
             | E3ChoiceKindV1::SneakAttackV1 { .. }
-            | E3ChoiceKindV1::AtraxaV1 { .. } => crate::rl::TargetSelectionPurposeV4::CardSelection,
-            E3ChoiceKindV1::AnnihilatorV1 => {
+            | E3ChoiceKindV1::AtraxaV1 { .. }
+            | E3ChoiceKindV1::PunisherV1 { room: 2, .. }
+            | E3ChoiceKindV1::OublietteV1 { stage: 0, .. }
+            | E3ChoiceKindV1::MadWizardV1 { .. } => {
+                crate::rl::TargetSelectionPurposeV4::CardSelection
+            }
+            E3ChoiceKindV1::AnnihilatorV1
+            | E3ChoiceKindV1::PunisherV1 { .. }
+            | E3ChoiceKindV1::OublietteV1 { .. }
+            | E3ChoiceKindV1::ZombieUnlessSacrificeV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::PermanentSelection
             }
+            E3ChoiceKindV1::ScryV1 { .. } => crate::rl::TargetSelectionPurposeV4::LibraryOrder,
             E3ChoiceKindV1::RetargetSpellV1 { .. } | E3ChoiceKindV1::RetargetCopyV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::EffectTargets
             }
@@ -272,8 +332,20 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::ShowAndTellV1 { chosen, .. } = &self.kind {
             out.extend(chosen.iter().copied());
         }
-        if let E3ChoiceKindV1::AtraxaV1 { revealed, .. } = &self.kind {
-            out.extend(revealed.iter().copied());
+        match &self.kind {
+            E3ChoiceKindV1::AtraxaV1 { revealed, .. } => out.extend(revealed.iter().copied()),
+            E3ChoiceKindV1::ScryV1 { prefix, .. } => out.extend(prefix.iter().copied()),
+            E3ChoiceKindV1::PunisherV1 { chosen, .. } => {
+                out.extend(chosen.iter().filter_map(|(_, card)| *card));
+            }
+            E3ChoiceKindV1::OublietteV1 {
+                discard, chosen, ..
+            } => {
+                out.extend(*discard);
+                out.extend(chosen.iter().copied());
+            }
+            E3ChoiceKindV1::MadWizardV1 { drawn } => out.extend(drawn.iter().copied()),
+            _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
             out.push(EffectObjectBinding {
@@ -457,6 +529,13 @@ pub(crate) fn finish_selection(
         E3ChoiceKindV1::AnnihilatorV1 => {
             sacrifice_all(state, choice.player, &bindings);
             Ok(false)
+        }
+        E3ChoiceKindV1::ScryV1 { .. }
+        | E3ChoiceKindV1::PunisherV1 { .. }
+        | E3ChoiceKindV1::OublietteV1 { .. }
+        | E3ChoiceKindV1::ZombieUnlessSacrificeV1 { .. }
+        | E3ChoiceKindV1::MadWizardV1 { .. } => {
+            dungeons::finish(state, continuation, choice, bindings)
         }
         E3ChoiceKindV1::AtraxaV1 { revealed, picked } => {
             let mut picked = picked.clone();
@@ -655,6 +734,16 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        EternalOpV1::RoomAbilityV1 { dungeon, room } => {
+            dungeons::resolve_room(state, continuation, *dungeon, *room, path)
+        }
+        EternalOpV1::AcererakEntersV1 => {
+            dungeons::resolve_acererak_enters(state, continuation, path)?;
+            Ok(false)
+        }
+        EternalOpV1::AcererakAttacksV1 => {
+            dungeons::resolve_acererak_attacks(state, continuation, path)
+        }
         EternalOpV1::AnnihilatorV1 { count } => {
             let defender = continuation.ctx.controller.opponent();
             let permanents = controlled_permanents(state, defender);
@@ -758,6 +847,9 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::SneakAttackV1
             | EternalOpV1::AnnihilatorV1 { .. }
             | EternalOpV1::AtraxaRevealV1
+            | EternalOpV1::RoomAbilityV1 { .. }
+            | EternalOpV1::AcererakEntersV1
+            | EternalOpV1::AcererakAttacksV1
     )
 }
 
@@ -1372,6 +1464,16 @@ const EMRAKUL_TRIGGERS: [TriggeredAbilityDef; 3] = [
 const ATRAXA_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, atraxa_reveal)];
 const RAPH_AND_MIKEY_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::Attacks, raph_and_mikey_attack)];
+/// Acererak: "When Acererak enters, if you haven't completed Tomb of
+/// Annihilation, return Acererak to its owner's hand and venture into the
+/// dungeon." and its attack trigger.
+const ACERERAK_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    eternal_trigger(
+        EternalTriggerV1::EntersIfTombNotCompletedV1,
+        dungeons::acererak_enters,
+    ),
+    trigger(TriggerCondition::Attacks, dungeons::acererak_attacks),
+];
 
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
@@ -1382,12 +1484,14 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
         RAPH_AND_MIKEY => &RAPH_AND_MIKEY_TRIGGERS,
+        dungeons::ACERERAK => &ACERERAK_TRIGGERS,
         _ => &[],
     }
 }
 
-pub(crate) fn trigger_target_spec(name: &str, _effect: &EffectOp) -> Option<TargetSpec> {
+pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
     match name {
+        dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | THASSAS_ORACLE | EMRAKUL
         | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
@@ -1415,6 +1519,16 @@ pub(crate) fn trigger_matches(
                     ..
                 } if object == source
             ) && state.objects.get(source).spell_copy_origin.is_none()
+        }
+        EternalTriggerV1::EntersIfTombNotCompletedV1 => {
+            matches!(
+                events[index],
+                CommittedEvent::ZoneChange {
+                    object,
+                    to: Zone::Battlefield,
+                    ..
+                } if object == source
+            ) && dungeons::acererak_entered(state, source)
         }
         EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 => {
             // Emrakul: functions from the graveyard it was just put into.
@@ -1539,6 +1653,11 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 permanents,
             });
         }
+        EternalOpV1::EnterRoomV1 { dungeon, room } => {
+            if dungeons::enter_room(state, ctx, *dungeon, *room).is_err() {
+                halt(state, ctx.source);
+            }
+        }
         EternalOpV1::RevealUntilCreatureAttackingV1 => {
             if reveal_until_creature_attacking(state, ctx.controller).is_err() {
                 halt(state, ctx.source);
@@ -1557,7 +1676,10 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::ShowAndTellV1
         | EternalOpV1::SneakAttackV1
         | EternalOpV1::AnnihilatorV1 { .. }
-        | EternalOpV1::AtraxaRevealV1 => {
+        | EternalOpV1::AtraxaRevealV1
+        | EternalOpV1::RoomAbilityV1 { .. }
+        | EternalOpV1::AcererakEntersV1
+        | EternalOpV1::AcererakAttacksV1 => {
             // Choice leaves run only inside the resumable interpreter.
             halt(state, ctx.source);
         }
@@ -1570,6 +1692,8 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
 pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     if let Some(e3) = state.eternal_v1.as_mut().and_then(|e| e.e3.as_deref_mut()) {
         e3.protected_players[player.index()] = false;
+        e3.weakened.retain(|effect| effect.holder != player);
+        e3.pacified.retain(|effect| effect.holder != player);
     }
 }
 
@@ -1856,18 +1980,18 @@ pub(crate) fn delayed_triggers(
     state: &mut GameState,
     _events: &[CommittedEvent],
 ) -> Vec<crate::trigger::PendingTrigger> {
+    let mut triggers = dungeons::room_triggers(state);
     let Some(played) = state
         .eternal_v1
         .as_mut()
         .and_then(|eternal| eternal.e3.as_deref_mut())
         .map(|e3| std::mem::take(&mut e3.lands_played))
     else {
-        return Vec::new();
+        return triggers;
     };
     let Some(city) = card_id_by_name(CITY_OF_TRAITORS) else {
-        return Vec::new();
+        return triggers;
     };
-    let mut triggers = Vec::new();
     for (player, land) in played {
         for &object in &state.players[player.index()].battlefield {
             if object != land.object
@@ -1890,8 +2014,43 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
         FLUSTERSTORM => matches!(effect, EffectOp::CreateStormCopies { .. }),
+        dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),
         _ => false,
     }
+}
+
+/// Fungi Cavern's -4/-0 on `object`, until its holder's next turn.
+pub(crate) fn power_modifier(state: &GameState, object: ObjectId) -> i32 {
+    let Some(e3) = e3(state) else {
+        return 0;
+    };
+    if !state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| live.zone == Zone::Battlefield)
+    {
+        return 0;
+    }
+    let entry = link(state, object);
+    let count = e3
+        .weakened
+        .iter()
+        .filter(|effect| effect.object == entry)
+        .count();
+    -4 * i32::try_from(count).unwrap_or(i32::MAX / 4)
+}
+
+/// Twisted Caverns: `object` can't attack until its holder's next turn.
+pub(crate) fn cant_attack(state: &GameState, object: ObjectId) -> bool {
+    e3(state).is_some_and(|e3| {
+        state.objects.try_get(object).is_some_and(|live| {
+            let entry = ObjectLinkV4 {
+                object,
+                zone_change_count: live.zone_change_count,
+            };
+            e3.pacified.iter().any(|effect| effect.object == entry)
+        })
+    })
 }
 
 // ---- Street Wraith --------------------------------------------------------------------

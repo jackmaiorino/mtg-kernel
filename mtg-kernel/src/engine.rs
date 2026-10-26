@@ -9861,6 +9861,10 @@ pub(crate) fn can_attack(state: &GameState, id: ObjectId) -> bool {
     if crate::standard_statics_v1::cant_attack_or_block(state, id) {
         return false;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cards_v1::e3::cant_attack(state, id) {
+        return false;
+    }
     def.is_executable()
         && object_has_type(state, id, CardType::Creature)
         && !obj.tapped
@@ -18347,6 +18351,12 @@ fn checked_effective_stat(
     };
     add(bestow_host_counter_bonus(state, id))?;
     add(select(controlled_subtype_boost(state, id)))?;
+    #[cfg(feature = "eternal-fixtures")]
+    if !toughness {
+        add(i128::from(crate::eternal_cards_v1::e3::power_modifier(
+            state, id,
+        )))?;
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     {
         add(crate::standard_keywords_v1::controlled_forest_boost(

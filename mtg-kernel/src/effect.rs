@@ -10531,6 +10531,11 @@ pub(crate) fn validate_resolution_play_authorization(
     answer: &EffectFrame,
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
+    if let EffectFrame::EternalSelectionV1 { choice, selected } = answer {
+        return crate::eternal_cards_v1::e3::dungeons::validate_resolution_cast(
+            suspended, choice, selected, permission,
+        );
+    }
     if let EffectFrame::ApplySelectedObjectsV1 {
         rule,
         original_candidates,
@@ -10625,6 +10630,22 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         let EffectFrame::Program { op, path } = frame else {
             match frame {
                 EffectFrame::EternalSelectionV1 { choice, selected } => {
+                    // Mad Wizard's Lair: a chosen card is cast during this
+                    // resolution (608.2g).
+                    if let Some(card) = crate::eternal_cards_v1::e3::dungeons::resolution_cast_card(
+                        &choice, &selected,
+                    ) {
+                        let answer = EffectFrame::EternalSelectionV1 { choice, selected };
+                        crate::engine::resolution_cast_v1::stage(
+                            state,
+                            continuation,
+                            card,
+                            None,
+                            false,
+                            answer,
+                        )?;
+                        return Ok(ResumableProgress::Suspended);
+                    }
                     if crate::eternal_cards_v1::e3::finish_selection(
                         state,
                         &mut continuation,

@@ -117,6 +117,9 @@ pub enum EternalTriggerV1 {
     /// "When this is put into a graveyard from anywhere" (Emrakul, the
     /// Aeons Torn). Functions from the graveyard.
     PutIntoGraveyardFromAnywhereV1,
+    /// "When this enters, if you haven't completed Tomb of Annihilation"
+    /// (Acererak the Archlich).
+    EntersIfTombNotCompletedV1,
 }
 
 /// Effect leaves owned by this module, carried as
@@ -219,6 +222,15 @@ pub enum EternalOpV1 {
     AtraxaRevealV1,
     /// Raph & Mikey, Troublemakers' attack trigger.
     RevealUntilCreatureAttackingV1,
+    /// Move the controller's venture marker into a dungeon room
+    /// (`e3::dungeons`).
+    EnterRoomV1 { dungeon: u16, room: u16 },
+    /// A dungeon room's ability. May be a choice.
+    RoomAbilityV1 { dungeon: u16, room: u16 },
+    /// Acererak the Archlich's entry trigger. A choice.
+    AcererakEntersV1,
+    /// Acererak the Archlich's attack trigger. A choice.
+    AcererakAttacksV1,
 }
 
 impl EternalOpV1 {
@@ -1022,7 +1034,11 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::SneakAttackV1
         | EternalOpV1::AnnihilatorV1 { .. }
         | EternalOpV1::AtraxaRevealV1
-        | EternalOpV1::RevealUntilCreatureAttackingV1 => e3::execute(op, ctx, state),
+        | EternalOpV1::RevealUntilCreatureAttackingV1
+        | EternalOpV1::EnterRoomV1 { .. }
+        | EternalOpV1::RoomAbilityV1 { .. }
+        | EternalOpV1::AcererakEntersV1
+        | EternalOpV1::AcererakAttacksV1 => e3::execute(op, ctx, state),
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
@@ -1518,7 +1534,9 @@ pub(crate) fn trigger_matches(
                     .iter()
                     .any(|event| permanent_card_to_graveyard(state, event, controller))
         }
-        EternalTriggerV1::EntersAfterCastV1 | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 => {
+        EternalTriggerV1::EntersAfterCastV1
+        | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1
+        | EternalTriggerV1::EntersIfTombNotCompletedV1 => {
             e3::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::OpponentDrawsExceptFirstInDrawStep => {

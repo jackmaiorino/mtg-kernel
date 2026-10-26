@@ -12,7 +12,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E3_CARDS: [&str; 26] = [
+const E3_CARDS: [&str; 27] = [
     "Ancient Tomb",
     "The One Ring",
     "Chrome Mox",
@@ -39,6 +39,7 @@ const E3_CARDS: [&str; 26] = [
     "Emrakul, the Aeons Torn",
     "Atraxa, Grand Unifier",
     "Raph & Mikey, Troublemakers",
+    "Acererak the Archlich",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1461,4 +1462,258 @@ fn raph_and_mikey_put_the_first_revealed_creature_in_attacking() {
     let mut expected = vec![library[0], library[1]];
     expected.sort();
     assert_eq!(bottom, expected);
+}
+
+// ---- Acererak the Archlich and the dungeons -----------------------------------------------------
+
+const ACERERAK: &str = "Acererak the Archlich";
+const LOST_MINE: u16 = 2;
+const MAD_MAGE: u16 = 3;
+const TOMB: u16 = 4;
+
+/// P0 casts Acererak from hand; its entry trigger is next.
+fn cast_acererak(state: &mut GameState) -> ObjectId {
+    let acererak = put(state, P0, ACERERAK, Zone::Hand);
+    pool(state, P0, &[ManaColor::B], 2);
+    cast(state, acererak, &[]);
+    acererak
+}
+
+fn in_room(state: &mut GameState, player: PlayerId, dungeon: u16, room: u16) {
+    let marker = &mut state.players[player.index()].dungeon;
+    marker.dungeon_id = Some(dungeon);
+    marker.room_id = Some(room);
+}
+
+#[test]
+fn acererak_returns_to_hand_and_ventures_into_a_chosen_dungeon() {
+    let mut state = islands();
+    let acererak = cast_acererak(&mut state);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption { option_count, .. }) => {
+            assert_eq!(option_count, 3, "the three dungeons");
+            act(&mut state, Action::ChooseEffectOption(2));
+        }
+        other => panic!("expected the dungeon choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(acererak).zone, Zone::Hand);
+    let marker = &state.players[0].dungeon;
+    assert_eq!((marker.dungeon_id, marker.room_id), (Some(TOMB), Some(1)));
+    // Trapped Entry: each player loses 1 life.
+    assert_eq!((state.players[0].life, state.players[1].life), (19, 19));
+}
+
+#[test]
+fn completing_tomb_of_annihilation_makes_the_atropal_and_stops_acererak() {
+    let mut state = islands();
+    in_room(&mut state, P0, TOMB, 4);
+    let acererak = cast_acererak(&mut state);
+    settled(&mut state);
+    let marker = &state.players[0].dungeon;
+    assert_eq!((marker.dungeon_id, marker.room_id), (None, None));
+    assert_eq!(marker.completed_dungeons, vec![TOMB]);
+    assert!(state.players[0]
+        .battlefield
+        .iter()
+        .any(|&object| state.objects.get(object).name == "The Atropal"));
+    assert_eq!(state.objects.get(acererak).zone, Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    cast(&mut state, acererak, &[]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(acererak).zone,
+        Zone::Battlefield,
+        "after Tomb of Annihilation it stays"
+    );
+}
+
+#[test]
+fn veils_of_fear_costs_two_life_unless_a_card_is_discarded() {
+    let mut state = islands();
+    in_room(&mut state, P0, TOMB, 1);
+    let ponder = put(&mut state, P0, "Ponder", Zone::Hand);
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    cast_acererak(&mut state);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption { option_count, .. }) => {
+            assert_eq!(option_count, 2, "Veils of Fear or Oubliette");
+            act(&mut state, Action::ChooseEffectOption(0));
+        }
+        other => panic!("expected the room choice, got {other:?}"),
+    }
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert!(legal_targets.contains(&Target::Object(ponder)));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(ponder)),
+            );
+        }
+        other => panic!("expected P0's choice, got {other:?}"),
+    }
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            ..
+        }) => {
+            assert_eq!(player, P1);
+            assert_eq!(legal_targets, vec![Target::Object(bolt)]);
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        other => panic!("expected P1's choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(ponder).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Hand);
+    assert_eq!((state.players[0].life, state.players[1].life), (20, 18));
+}
+
+#[test]
+fn deep_mines_scries_three() {
+    let mut state = game(&["Island", "Ponder", "Lightning Bolt", "Island", "Island"]);
+    let library = state.players[0].library.clone();
+    in_room(&mut state, P0, MAD_MAGE, 7);
+    cast_acererak(&mut state);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            legal_targets,
+            min_targets,
+            max_targets,
+            ..
+        }) => {
+            assert_eq!((min_targets, max_targets), (0, 3));
+            assert_eq!(legal_targets.len(), 3);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(library[2])),
+            );
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        other => panic!("expected the scry, got {other:?}"),
+    }
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            min_targets,
+            max_targets,
+            ..
+        }) => {
+            assert_eq!((min_targets, max_targets), (2, 2));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(library[1])),
+            );
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(library[0])),
+            );
+        }
+        other => panic!("expected the bottom order, got {other:?}"),
+    }
+    settled(&mut state);
+    let after = &state.players[0].library;
+    assert_eq!(after[0], library[2]);
+    assert_eq!(&after[after.len() - 2..], &[library[1], library[0]]);
+    let marker = &state.players[0].dungeon;
+    assert_eq!(
+        (marker.dungeon_id, marker.room_id),
+        (Some(MAD_MAGE), Some(8))
+    );
+}
+
+#[test]
+fn mad_wizards_lair_casts_a_drawn_card_for_free_and_completes_the_dungeon() {
+    let mut state = game(&["Dark Ritual", "Island", "Island", "Island", "Island"]);
+    let ritual = state.players[0].library[0];
+    in_room(&mut state, P0, MAD_MAGE, 8);
+    cast_acererak(&mut state);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(legal_targets, vec![Target::Object(ritual)]);
+            assert!(state
+                .known_hand_cards(P1, P0)
+                .iter()
+                .any(|entry| entry.object == ritual));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(ritual)),
+            );
+        }
+        other => panic!("expected the free cast, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(ritual).zone, Zone::Graveyard);
+    assert_eq!(mana(&state, P0, ManaColor::B), 3, "cast without paying");
+    assert_eq!(state.players[0].dungeon.completed_dungeons, vec![MAD_MAGE]);
+}
+
+#[test]
+fn fungi_cavern_shrinks_a_creature_until_its_controllers_next_turn() {
+    let mut state = islands();
+    in_room(&mut state, P0, LOST_MINE, 3);
+    let wraith = put(&mut state, P1, "Street Wraith", Zone::Battlefield);
+    cast_acererak(&mut state);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption { option_count, .. }) => {
+            assert_eq!(option_count, 2, "Dark Pool or Fungi Cavern");
+            act(&mut state, Action::ChooseEffectOption(1));
+        }
+        other => panic!("expected the room choice, got {other:?}"),
+    }
+    for _ in 0..20 {
+        match settle(&mut state) {
+            Some(Decision::ChooseTargets { legal_targets, .. }) => {
+                assert!(legal_targets.contains(&Target::Object(wraith)));
+                act(&mut state, Action::ChooseTarget(Target::Object(wraith)));
+            }
+            None => break,
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(engine::effective_power(&state, wraith), -1);
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Upkeep
+    });
+    assert_eq!(
+        engine::effective_power(&state, wraith),
+        -1,
+        "P0's turn has not come"
+    );
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Upkeep
+    });
+    assert_eq!(engine::effective_power(&state, wraith), 3);
+}
+
+#[test]
+fn acererak_attack_makes_a_zombie_unless_the_opponent_sacrifices_a_creature() {
+    let mut state = islands();
+    let acererak = put(&mut state, P0, ACERERAK, Zone::Battlefield);
+    let wraith = put(&mut state, P1, "Street Wraith", Zone::Battlefield);
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![acererak]));
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            ..
+        }) => {
+            assert_eq!(player, P1);
+            assert_eq!(legal_targets, vec![Target::Object(wraith)]);
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        other => panic!("expected the sacrifice choice, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(wraith).zone, Zone::Battlefield);
+    assert!(state.players[0]
+        .battlefield
+        .iter()
+        .any(|&object| state.objects.get(object).name == "Zombie Token"));
 }
