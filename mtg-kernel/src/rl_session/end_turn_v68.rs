@@ -471,14 +471,10 @@ impl EndTurnSessionV68 {
         if native.original != current.candidates {
             return Err(RlContractError("V68 original pair binding changed".into()));
         }
-        let (_, mut families) = observation::observe_parts_v68(
-            &self.inner.state,
-            &self.inner.surface,
-            (current.actor, &current.origin_decision),
-            self.inner.policy_step_count,
-            current.physical_decision_id,
-            (current.substep_index, current.substep_count),
-        )?;
+        // Candidate projection already captured these complete family facts
+        // beside the complete observation from this exact immutable native
+        // state. Retain that result instead of projecting the world twice.
+        let mut families = native.families;
         let classified = projection
             .candidates
             .iter()
