@@ -230,9 +230,9 @@ def smoke(binary: Path) -> dict:
 DRAFTZERO_SAMPLE = REPO_ROOT / "data/limited/draftzero_sample_v1"
 
 
-def draftzero(binary: Path, pairs: int = 20, seed: int = 1, workers: int = 4) -> dict:
-    """DraftZero's 80 sample decks: playable decks per session, then random rules-only games on the eval
-    split with every executable card admitted. A halted game counts against every non-Full card in its two
+def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4) -> dict:
+    """DraftZero's 80 sample decks: playable decks per session, then `pairs` random rules-only games on each of
+    the train and eval splits with every executable card admitted. A halted game counts against every non-Full card in its two
     decks, so a card that appears only in natural games is a candidate for the admission list."""
     decks, pool = DRAFTZERO_SAMPLE / "decks", DRAFTZERO_SAMPLE / "pool.tsv"
     report: dict = {"coverage": {}}
@@ -244,22 +244,29 @@ def draftzero(binary: Path, pairs: int = 20, seed: int = 1, workers: int = 4) ->
         if session == "prepared":
             non_full = set(cov["unsupported"])
     kernel = MtgKernel(binary, decks, pool, session="rules-only-all", max_decisions=6000)
+    games: list[dict] = []
+    wall = 0.0
     with tempfile.TemporaryDirectory(prefix="mkdz-") as tmp:
-        result = kernel.play("random", "random", pairs=pairs, seed=seed,
-                             out_dir=Path(tmp), split="eval", workers=workers, single=True)
+        for split in ("train", "eval"):
+            result = kernel.play("random", "random", pairs=pairs, seed=seed, out_dir=Path(tmp) / split,
+                                 split=split, workers=workers, single=True)
+            games += result.games
+            wall += result.summary["wall_s"]
     contents = {f.stem: {c["name"] for c in json.loads(f.read_text())["cards"]} for f in decks.glob("*.json")}
     seen: dict[str, list[int]] = {}
-    for g in result.games:
+    for g in games:
         halted = g["result"] == "error"
         for name in set().union(*(contents[d] for d in g["decks"])) & non_full:
             tally = seen.setdefault(name, [0, 0])
             tally[0] += 1
             tally[1] += halted
-    report["play"] = {"games": len(result.games), "results": {r: sum(g["result"] == r for g in result.games)
-                                                              for r in sorted(RESULTS)},
-                      "decisions": sum(g.get("decisions", 0) for g in result.games),
-                      "wall_s": result.summary["wall_s"],
-                      "errors": sorted({g.get("error", "")[:200] for g in result.games if g["result"] == "error"})}
+    decisions = sum(g.get("decisions", 0) for g in games)
+    report["play"] = {"games": len(games), "results": {r: sum(g["result"] == r for g in games) for r in sorted(RESULTS)},
+                      "decisions": decisions, "wall_s": wall,
+                      "decisions_per_s": decisions / wall if wall else 0,
+                      "games_per_hour": len(games) / wall * 3600 if wall else 0,
+                      "errors": sorted({g.get("error", "")[:200] for g in games if g["result"] == "error"})}
+    report["unplayed_non_full"] = sorted(non_full - set(seen))
     report["partial_cards"] = {name: {"games": n, "halted_games": h} for name, (n, h) in sorted(seen.items())}
     report["admission_candidates"] = sorted(name for name, (n, h) in seen.items() if n and not h)
     return report
@@ -274,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--binary", type=Path, required=True)
     dz = sub.add_parser("draftzero")
     dz.add_argument("--binary", type=Path, required=True)
-    dz.add_argument("--pairs", type=int, default=20)
+    dz.add_argument("--pairs", type=int, default=200)
     dz.add_argument("--seed", type=int, default=1)
     dz.add_argument("--workers", type=int, default=4)
     args = parser.parse_args(argv)
