@@ -666,6 +666,19 @@ pub fn play_game_v1(
             if !strays.is_empty() {
                 message = format!("{message} [zone without roster: {}]", strays.join("; "));
             }
+            // A refused step leaves the session unchanged, so the menu is the one acted on.
+            if let Some(action) = session
+                .diagnostic_current_action_semantics()
+                .and_then(|menu| menu.get(index as usize).cloned())
+            {
+                let action = format!("{action:?}");
+                message = format!(
+                    "{message} [turn {} decision {} action {index}: {}]",
+                    result.turns,
+                    result.decisions,
+                    action.chars().take(400).collect::<String>()
+                );
+            }
             result.outcome = GameOutcomeV1::Error(message);
             return result;
         }
