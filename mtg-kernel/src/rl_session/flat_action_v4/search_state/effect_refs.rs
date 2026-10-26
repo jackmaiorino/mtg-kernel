@@ -1629,6 +1629,7 @@ fn conflicts_in_scope(
             EventKindV1::BaitTransferInputV48,
             EventKindV1::BaitTransferAppliedV48,
             EventKindV1::PlusCounterInputV48,
+            EventKindV1::DrakusethDamageSourceV76,
         ])
         .iter()
         .any(|event| match event {
