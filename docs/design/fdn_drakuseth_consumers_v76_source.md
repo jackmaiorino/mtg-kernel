@@ -71,12 +71,27 @@ departed, reentered and stolen sources, multicolor/protection interaction,
 damage/trigger ordering, lifecycle refusal and restoration. This is source
 preparation, with no new consumer, Full promotion or passing-runtime claim.
 
-The existing Drakuseth regression still deliberately refuses Crystal Barricade
-combined with finite prevention. Extend the existing owned batch continuation
-to mixed player/permanent recipients before admitting that composition. Current
-batch choices assume object recipients; sequential DealDamage lowering would
-change the rules. Preserve the prior refusal test until its replacement proves
-the actual mixed batch, source LKI, ordering and restoration.
+The shared Crystal batch continuation now has an authored mixed-recipient path,
+also pending runtime qualification. A Drakuseth batch captures the complete
+precommit battlefield and both players' public life, terminal and poison inputs.
+It never freezes hidden hand/library identities. Player recipients choose for
+themselves; permanent recipients use the captured controller. Stable APNAP
+choice order is independent of the original damage-slot order. Every survivor
+still commits together after all replacement choices, with grouped lifelink and
+SBA afterward. Missing or changed player/recipient facts refuse before damage.
+Predecessor batches omit the added roster and retain their exact Hash input.
+
+Crystal acquires the original Drakuseth publication through the same genuine
+pre-removal loan. Its marked continuation must retain the actual initial
+boundary; completion joins the original publication to the actual final
+boundary. Finite player prevention is widened only for this exact producer;
+other predecessor player admission remains unchanged. The predecessor's known
+mixed-prevention refusal is retained in source history and its CI evidence.
+Its replacement cases exercise actual player/permanent menus, both replacement
+orders, native current/departed/reentered sources, whole-batch timing, finite
+player-only shields, restoration and coordinated capture forgeries. This source
+change is not a passing composition claim. Qualification of those real cases
+and the original remaining native suite is still required before promotion.
 
 After native qualification, coordinate Full promotion, append-only catalog and
 live store profile integration serially with the parent FDN branch. Recheck the

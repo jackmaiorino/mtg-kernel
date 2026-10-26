@@ -18138,11 +18138,10 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             crate::banishing_light_v1::finish(state, &item);
             return ResolutionProgress::Complete;
         }
-        let progress = if let Some(owner) = drakuseth_owner {
+        let progress = if let Some(owner) = drakuseth_owner.filter(|_| crystal_owner.is_none()) {
             let before = state.clone();
-            if crystal_owner.is_none()
-                && crate::drakuseth_damage_source_v76::execute_owned(state, &effect, &ctx, owner)
-                    .is_ok()
+            if crate::drakuseth_damage_source_v76::execute_owned(state, &effect, &ctx, owner)
+                .is_ok()
             {
                 ResolutionProgress::Complete
             } else {

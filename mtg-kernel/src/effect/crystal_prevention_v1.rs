@@ -179,10 +179,10 @@ impl BatchDamageV2 {
     fn proposed_with_context(&self, ctx: &ExecCtx) -> DamageProposed {
         let mut damage = self.proposed();
         crate::event::attach_niv_damage_origin_v1(ctx, &mut damage);
-        if ctx
-            .ability_source_contract
-            .is_some_and(|source| super::chandra_flameshaper_v1::definition(source.card_def))
-        {
+        if ctx.ability_source_contract.is_some_and(|source| {
+            super::chandra_flameshaper_v1::definition(source.card_def)
+                || crate::drakuseth_damage_source_v76::owns_definition(source.card_def)
+        }) {
             damage.historical_source = ctx.stack_item_id;
         }
         damage
@@ -203,6 +203,16 @@ pub struct BatchRecipientV2 {
     pub selected: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BatchPlayerV76 {
+    pub player: PlayerId,
+    pub life: i32,
+    pub has_lost: bool,
+    pub drew_from_empty: bool,
+    pub poison: u16,
+    pub hexproof: bool,
+    pub selected: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BatchCaptureV2 {
     pub ctx: ExecCtx,
     pub op: EffectOp,
@@ -222,6 +232,31 @@ pub struct BatchCaptureV2 {
         skip_serializing_if = "crate::twinflame_tyrant_v1::ordering::PreparedBatchOptionsV38::is_empty"
     )]
     pub multiplier_options: crate::twinflame_tyrant_v1::ordering::PreparedBatchOptionsV38,
+    /// Public damage/SBA inputs only. Hidden hands and libraries never become
+    /// factual history merely because a player is a damage recipient.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub players_v76: Option<[BatchPlayerV76; 2]>,
+}
+impl std::hash::Hash for BatchCaptureV2 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        use std::hash::Hash;
+        self.ctx.hash(h);
+        self.op.hash(h);
+        self.path.hash(h);
+        self.roster.hash(h);
+        self.proposals.hash(h);
+        self.options.hash(h);
+        self.initial_outcomes.hash(h);
+        self.choice_order.hash(h);
+        self.active_player.hash(h);
+        self.fight.hash(h);
+        self.preparation.hash(h);
+        self.multiplier_options.hash(h);
+        if let Some(players) = &self.players_v76 {
+            "crystal-mixed-player-roster/v76".hash(h);
+            players.hash(h);
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FightCaptureV3 {
@@ -435,6 +470,7 @@ pub(crate) struct OwnerV1 {
     root: EffectOp,
     initial: bool,
     gorehorn: Option<crate::gorehorn_damage_v1::OwnerV1>,
+    drakuseth: Option<crate::drakuseth_damage_source_v76::OwnerV76>,
     equipment: Option<crate::equipment_damage_source_v4::OwnerV4>,
 }
 impl OwnerV1 {
@@ -1101,7 +1137,9 @@ pub(crate) fn source_power_payment_matches(
                 && crate::equipment_damage_source_v4::printed_root(saved)
                     .is_ok_and(|root| boundary.root == root))
             || (crate::gorehorn_damage_v1::selected(saved)
-                && boundary.root == crate::trigger::gorehorn_raider_effect()))
+                && boundary.root == crate::trigger::gorehorn_raider_effect())
+            || (crate::drakuseth_damage_source_v76::selected(saved)
+                && boundary.root == crate::standard_cards_v1::drakuseth_attack_v1()))
 }
 fn fight_recipe(op: &EffectOp) -> bool {
     source_fight_recipe(op)
@@ -1144,6 +1182,10 @@ fn batch_recipe(op: &EffectOp) -> bool {
         EffectOp::DamageAllCreatures { .. } | EffectOp::DamageAllTargets { .. }
     ) || fight_recipe(op)
         || matches!(op, EffectOp::ChandraFlameshaperV74 { ability_index: 2 })
+        || drakuseth_batch(op)
+}
+fn drakuseth_batch(op: &EffectOp) -> bool {
+    *op == crate::standard_cards_v1::drakuseth_attack_v1()
 }
 pub(crate) fn has_damage(op: &EffectOp) -> bool {
     if fight_recipe(op) {
@@ -1225,7 +1267,7 @@ pub(crate) fn authenticates_legacy_frame(
     Ok(true)
 }
 fn supported(op: &EffectOp) -> bool {
-    if optional_discard_draw(op) || fight_recipe(op) {
+    if optional_discard_draw(op) || fight_recipe(op) || drakuseth_batch(op) {
         return true;
     }
     match op {
@@ -1315,7 +1357,14 @@ pub(crate) fn acquire_owner(
         || crate::fixed_source_damage_v3::tracked(state, item)
         || crate::equipment_damage_source_v4::tracked(state, item)
         || (crate::gorehorn_damage_v1::selected(item)
-            && crate::crystal_barricade_v1::active(state)))
+            && crate::crystal_barricade_v1::active(state))
+        || (crate::drakuseth_damage_source_v76::selected(item)
+            && state.engine.active_replacements.iter().any(|r| {
+                matches!(
+                    r.kind,
+                    ReplacementEffectKind::PreventNextDamage { remaining: 1.., .. }
+                )
+            })))
     {
         return Ok(None);
     }
@@ -1375,9 +1424,11 @@ pub(crate) fn acquire_owner(
         return Err("Crystal resume lost its published owner".into());
     }
     let gorehorn = crate::gorehorn_damage_v1::acquire_owner(state, item)?;
+    let drakuseth = crate::drakuseth_damage_source_v76::acquire_owner(state, item)?;
     let equipment = crate::equipment_damage_source_v4::acquire_owner(state, item)?;
     Ok(Some(OwnerV1 {
         gorehorn,
+        drakuseth,
         equipment,
         original: item.clone(),
         expected,
@@ -2139,6 +2190,13 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
         super::chandra_flameshaper_v1::finish_crystal(state, owner, &owner.expected)?;
         if let Some(gorehorn) = owner.gorehorn.as_ref() {
             crate::gorehorn_damage_v1::crystal::finish_owned(state, gorehorn, &owner.expected)?;
+        }
+        if let Some(drakuseth) = owner.drakuseth.as_ref() {
+            crate::drakuseth_damage_source_v76::finish_crystal_owned(
+                state,
+                drakuseth,
+                &owner.expected,
+            )?;
         }
     }
     if let Some(equipment) = owner.equipment.as_ref().filter(|_| !suspended) {
@@ -3130,6 +3188,7 @@ pub(crate) fn answer_discard(state: &mut GameState, target: Option<Target>) -> R
         root: boundary.root.clone(),
         initial: false,
         gorehorn: None,
+        drakuseth: None,
         equipment: None,
     };
     let mut commit = DiscardCommitV2 {
@@ -3516,13 +3575,7 @@ fn batch_choice(
         .proposals
         .get(at)
         .ok_or("Crystal batch choice lost proposal")?;
-    let Target::Object(id) = damage.target else {
-        return Err("Crystal creature batch lost recipient".into());
-    };
-    let recipient = capture
-        .roster
-        .iter()
-        .find(|r| r.object.object == id)
+    let chooser = batch_recipient_controller(capture, damage.target)
         .ok_or("Crystal batch choice lost recipient capture")?;
     let options = capture
         .options
@@ -3541,7 +3594,7 @@ fn batch_choice(
         original_amount: damage.amount,
         remaining_amount: damage.amount,
         touched: Vec::new(),
-        chooser: recipient.controller,
+        chooser,
         path: capture.path.clone(),
         options,
         remaining_frames: frames,
@@ -3679,6 +3732,36 @@ fn fight_proposals(
         })
         .collect())
 }
+fn batch_players(state: &GameState, proposals: &[BatchDamageV2]) -> [BatchPlayerV76; 2] {
+    [PlayerId::P0, PlayerId::P1].map(|player| {
+        let p = &state.players[player.index()];
+        BatchPlayerV76 {
+            player,
+            life: p.life,
+            has_lost: p.has_lost,
+            drew_from_empty: p.drew_from_empty,
+            poison: p.poison_counters.0,
+            hexproof: crate::crystal_barricade_v1::controller_has_hexproof(state, player),
+            selected: proposals.iter().any(|p| p.target == Target::Player(player)),
+        }
+    })
+}
+fn batch_recipient_controller(capture: &BatchCaptureV2, target: Target) -> Option<PlayerId> {
+    match target {
+        Target::Player(player) => capture
+            .players_v76
+            .as_ref()?
+            .iter()
+            .find(|p| p.player == player)
+            .map(|p| p.player),
+        Target::Object(id) => capture
+            .roster
+            .iter()
+            .find(|r| r.object.object == id)
+            .map(|r| r.controller),
+        Target::StackItem(_) => None,
+    }
+}
 fn capture_batch(
     state: &mut GameState,
     owner: &OwnerV1,
@@ -3707,7 +3790,19 @@ fn capture_batch(
     } else {
         None
     };
-    let proposals = if matches!(op, EffectOp::ChandraFlameshaperV74 { ability_index: 2 }) {
+    let proposals = if drakuseth_batch(op) {
+        Some(
+            crate::drakuseth_damage_source_v76::positional_damage(state, ctx)?
+                .into_iter()
+                .map(|(target, amount)| BatchDamageV2 {
+                    source: ctx.source,
+                    target,
+                    amount,
+                    touched: Vec::new(),
+                })
+                .collect(),
+        )
+    } else if matches!(op, EffectOp::ChandraFlameshaperV74 { ability_index: 2 }) {
         Some(
             super::chandra_flameshaper_v1::damage_allocations(state, ctx)?
                 .into_iter()
@@ -3850,11 +3945,14 @@ fn capture_batch(
         .filter_map(|(i, o)| o.as_ref().map(|_| i))
         .collect::<Vec<_>>();
     choice_order.sort_by_key(|at| {
-        let Target::Object(id) = proposals[*at].target else {
-            unreachable!()
+        let controller = match proposals[*at].target {
+            Target::Object(id) => state.objects.get(id).controller,
+            Target::Player(p) => p,
+            Target::StackItem(_) => unreachable!("batch recipes never damage stack items"),
         };
-        usize::from(state.objects.get(id).controller != state.active_player)
+        usize::from(controller != state.active_player)
     });
+    let players_v76 = drakuseth_batch(op).then(|| batch_players(state, &proposals));
     let mut capture = BatchCaptureV2 {
         ctx: ctx.clone(),
         op: op.clone(),
@@ -3868,6 +3966,7 @@ fn capture_batch(
         fight,
         preparation: None,
         multiplier_options,
+        players_v76,
     };
     let events = capture
         .proposals
@@ -4022,11 +4121,87 @@ fn validate_batch_capture(
     {
         return Err("Crystal batch changed captured recipe/context".into());
     }
+    if capture.players_v76.is_some() != drakuseth_batch(op) {
+        return Err("Crystal batch changed its mixed-player roster family".into());
+    }
+    if capture.players_v76.as_ref().is_some_and(|players| {
+        players
+            .iter()
+            .map(|p| p.player)
+            .ne([PlayerId::P0, PlayerId::P1])
+    }) {
+        return Err("Crystal batch player roster changed original seat order".into());
+    }
     let mut ids = std::collections::BTreeSet::new();
     if capture.roster.iter().any(|r| !ids.insert(r.object.object)) {
         return Err("Crystal batch repeated battlefield recipient".into());
     }
     let expected = match op {
+        op if drakuseth_batch(op) => {
+            if capture.fight.is_some() {
+                return Err("Drakuseth positional batch carries a foreign fight".into());
+            }
+            let players = capture
+                .players_v76
+                .as_ref()
+                .ok_or("Drakuseth player inputs absent")?;
+            let mut result = Vec::new();
+            for (slot, target) in ctx.targets.iter().copied().enumerate() {
+                let selected = match target {
+                    Target::Player(player) => {
+                        let p = players
+                            .iter()
+                            .find(|p| p.player == player)
+                            .ok_or("Drakuseth original player seat absent")?;
+                        if ctx
+                            .target_contracts
+                            .get(slot)
+                            .is_none_or(|c| c.target() != target)
+                            || p.selected != (player == ctx.controller || !p.hexproof)
+                        {
+                            return Err("Drakuseth original player legality changed".into());
+                        }
+                        p.selected
+                    }
+                    Target::Object(id) => {
+                        let r = capture.roster.iter().find(|r| r.object.object == id);
+                        if let Some(r) = r.filter(|r| r.selected) {
+                            if !matches!(ctx.target_contracts.get(slot),Some(crate::state::StackTargetContractV4::Object{object,owner,zone:Zone::Battlefield,zone_change_count,..})
+                                if *object==id && *owner==r.owner && *zone_change_count==r.object.expected_zone_change_count)
+                            {
+                                return Err(
+                                    "Drakuseth original recipient incarnation changed".into()
+                                );
+                            }
+                        }
+                        r.is_some_and(|r| r.selected)
+                    }
+                    Target::StackItem(_) => {
+                        return Err("Drakuseth batch acquired a stack recipient".into())
+                    }
+                };
+                if selected {
+                    result.push(BatchDamageV2 {
+                        source: ctx.source,
+                        target,
+                        amount: if slot == 0 { 4 } else { 3 },
+                        touched: Vec::new(),
+                    })
+                }
+            }
+            if capture.roster.iter().any(|r| {
+                r.selected
+                    != result
+                        .iter()
+                        .any(|p| p.target == Target::Object(r.object.object))
+            }) || players
+                .iter()
+                .any(|p| p.selected != result.iter().any(|r| r.target == Target::Player(p.player)))
+            {
+                return Err("Drakuseth complete selected recipient set changed".into());
+            }
+            result
+        }
         EffectOp::ChandraFlameshaperV74 { ability_index: 2 } => {
             if capture.fight.is_some() {
                 return Err("Chandra division carries foreign fight facts".into());
@@ -4148,25 +4323,16 @@ fn validate_batch_capture(
         .enumerate()
         .filter_map(|(i, o)| o.as_ref().map(|_| i))
         .collect::<Vec<_>>();
-    if capture.proposals.iter().any(|p| {
-        let Target::Object(id) = p.target else {
-            return true;
-        };
-        !capture.roster.iter().any(|r| r.object.object == id)
-    }) {
+    if capture
+        .proposals
+        .iter()
+        .any(|p| batch_recipient_controller(capture, p.target).is_none())
+    {
         return Err("Crystal batch proposal lost captured recipient".into());
     }
     choices.sort_by_key(|at| {
-        let Target::Object(id) = capture.proposals[*at].target else {
-            unreachable!()
-        };
         usize::from(
-            capture
-                .roster
-                .iter()
-                .find(|r| r.object.object == id)
-                .unwrap()
-                .controller
+            batch_recipient_controller(capture, capture.proposals[*at].target).unwrap()
                 != capture.active_player,
         )
     });
@@ -4251,6 +4417,22 @@ fn validate_batch_capture(
     Ok(())
 }
 fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<(), String> {
+    if drakuseth_batch(&capture.op) {
+        if capture.players_v76.as_ref() != Some(&batch_players(state, &capture.proposals))
+            || crate::drakuseth_damage_source_v76::positional_damage(state, &capture.ctx)?
+                != capture
+                    .proposals
+                    .iter()
+                    .map(|p| (p.target, p.amount))
+                    .collect::<Vec<_>>()
+        {
+            return Err(
+                "Drakuseth waiting batch changed player inputs or original target legality".into(),
+            );
+        }
+    } else if capture.players_v76.is_some() {
+        return Err("Crystal predecessor batch acquired foreign player inputs".into());
+    }
     let ids = [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(|p| state.players[p.index()].battlefield.iter().copied())
@@ -4733,6 +4915,12 @@ fn cannot_prevent(state: &GameState) -> bool {
 pub(crate) fn applicable(state: &GameState, damage: &DamageProposed) -> Vec<PreventionV1> {
     applicable_after(state, damage, &Default::default())
 }
+fn drakuseth_damage(state: &GameState, damage: &DamageProposed) -> bool {
+    damage.historical_source.is_some_and(|id| {
+        crate::drakuseth_damage_source_v76::has_publication(state, id)
+            && crate::drakuseth_damage_source_v76::damage_source(state, damage.source, id).is_ok()
+    })
+}
 fn applicable_after(
     state: &GameState,
     damage: &DamageProposed,
@@ -4773,9 +4961,10 @@ fn applicable_after(
                 }));
             }
         }
-        // Old Crystal only handled permanent packets. Player prevention is
-        // admitted only when the new multiplier actually creates an order.
+        // Preserve predecessor player admission. The exact Drakuseth producer
+        // additionally owns finite-player prevention in its mixed batch.
         if matches!(damage.target, Target::Object(_))
+            || drakuseth_damage(state, damage)
             || crate::twinflame_tyrant_v1::has_active_source(state)
             || !crate::twinflame_tyrant_v1::sources(state, damage)
                 .unwrap_or_default()
@@ -4814,9 +5003,10 @@ pub(crate) fn needs_choice(state: &GameState, damage: &DamageProposed) -> bool {
     let numeric=options.iter().any(|o| matches!(o,PreventionV1::Replacement(r) if matches!(r.kind,ReplacementEffectKind::PreventNextDamage{..})));
     numeric
         && options.len() > 1
-        && options
+        && (options
             .iter()
             .any(|o| matches!(o, PreventionV1::Barricade(_) | PreventionV1::Multiplier(_)))
+            || drakuseth_damage(state, damage))
 }
 fn menu(choice: ChoiceV1) -> PendingEffectChoice {
     PendingEffectChoice::ChooseOption {
@@ -5059,6 +5249,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         root,
         initial: false,
         gorehorn: None,
+        drakuseth: None,
         equipment: None,
     };
     // Arithmetic validation precedes the independent actual input occurrence.
@@ -5288,6 +5479,7 @@ pub(crate) fn answer_program_choice(state: &mut GameState, option: u16) -> Resul
         root: boundary.root,
         initial: false,
         gorehorn: None,
+        drakuseth: None,
         equipment: None,
     };
     state

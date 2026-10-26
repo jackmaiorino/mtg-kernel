@@ -33,6 +33,11 @@ pub enum JournalV76 {
         item: Box<StackItem>,
         outcome: OutcomeV76,
     },
+    CrystalResolved {
+        publication: u32,
+        boundary: u32,
+        item: Box<StackItem>,
+    },
 }
 // Only the native resolver may hold this loan across its actual stack removal.
 // A serialized journal is data, not an executable loan.
@@ -73,7 +78,7 @@ pub(crate) fn owns_definition(id: u16) -> bool {
 fn spec() -> TargetSpec {
     TargetSpec::StandardV1(StandardTargetV1::OneToThreeDistinctAnyTargetsV1)
 }
-fn selected(item: &StackItem) -> bool {
+pub(crate) fn selected(item: &StackItem) -> bool {
     item.kind == StackItemKind::TriggeredAbility
         && item.v4.granted_by.is_none()
         && item.inline_effect == Some(standard_cards_v1::drakuseth_attack_v1())
@@ -355,7 +360,7 @@ fn context(item: &StackItem) -> ExecCtx {
 }
 fn closed(state: &GameState, at: u32) -> usize {
     rows(state)
-        .filter(|(_, j)| matches!(j,JournalV76::Removed{publication,..}if *publication==at))
+        .filter(|(_, j)| matches!(j,JournalV76::Removed{publication,..}|JournalV76::CrystalResolved{publication,..}if *publication==at))
         .count()
 }
 pub(crate) fn acquire_owner(
@@ -366,7 +371,7 @@ pub(crate) fn acquire_owner(
         return Ok(None);
     }
     let (at, saved) = publication(state, item.v4.stack_item_id)?;
-    if saved != item
+    if !crate::effect::crystal_prevention_v1::source_power_payment_matches(state, item, saved)
         || closed(state, at) != 0
         || state
             .stack
@@ -381,7 +386,7 @@ pub(crate) fn acquire_owner(
     source_facts(state, item.v4.ability_source_contract.unwrap())?;
     Ok(Some(OwnerV76 {
         publication: at,
-        item: Box::new(item.clone()),
+        item: Box::new(saved.clone()),
     }))
 }
 pub(crate) fn record_removed(
@@ -428,7 +433,36 @@ pub(crate) fn execute_owned(
     {
         return Err("Drakuseth positional damage lost its native removed-row loan".into());
     }
-    damage_source(state, ctx.source, owner.item.v4.stack_item_id)?;
+    let proposals = positional_damage(state, ctx)?
+        .into_iter()
+        .map(|(target, amount)| {
+            let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, amount);
+            let ProposedEvent::Damage(damage) = &mut proposal else {
+                unreachable!()
+            };
+            damage.historical_source = ctx.stack_item_id;
+            proposal
+        })
+        .collect();
+    // Original positions and all legal recipients are committed together.
+    event::propose_and_commit_batch(state, proposals);
+    if state.engine.halted.is_some() {
+        return Err("Drakuseth damage batch did not complete".into());
+    }
+    record_removed(state, Some(owner), OutcomeV76::Resolved)
+}
+pub(crate) fn positional_damage(
+    state: &GameState,
+    ctx: &ExecCtx,
+) -> Result<Vec<(Target, i32)>, String> {
+    let id = ctx
+        .stack_item_id
+        .ok_or("Drakuseth positional context lost stack identity")?;
+    let (_, saved) = publication(state, id)?;
+    if !ctx.same_except_niv_damage_origin_v1(&context(saved)) {
+        return Err("Drakuseth positional context differs from original publication".into());
+    }
+    damage_source(state, ctx.source, id)?;
     let source = ctx.ability_source_contract.unwrap();
     let legal = legal_targets(
         state,
@@ -438,26 +472,86 @@ pub(crate) fn execute_owned(
         ctx.controller,
         &[],
     )?;
-    let proposals = ctx
+    Ok(ctx
         .targets
         .iter()
         .enumerate()
         .filter(|(slot, t)| ctx.target_incarnation_matches(*slot, state) && legal.contains(t))
-        .map(|(slot, t)| {
-            let mut p = event::damage_from_exec_ctx_v1(ctx, *t, if slot == 0 { 4 } else { 3 });
-            let ProposedEvent::Damage(d) = &mut p else {
-                unreachable!()
-            };
-            d.historical_source = ctx.stack_item_id;
-            p
-        })
-        .collect();
-    // Original positions and all legal recipients are committed together.
-    event::propose_and_commit_batch(state, proposals);
-    if state.engine.halted.is_some() {
-        return Err("Drakuseth damage batch did not complete".into());
+        .map(|(slot, t)| (*t, if slot == 0 { 4 } else { 3 }))
+        .collect())
+}
+fn validate_crystal_completion(
+    state: &GameState,
+    at: usize,
+    publication_at: u32,
+    boundary: u32,
+    item: &StackItem,
+) -> Result<(), String> {
+    let (index, saved) = publication(state, item.v4.stack_item_id)?;
+    let Some(E::CrystalPreventionBoundaryV1 { boundary: b }) =
+        state.engine.event_history.get(boundary as usize)
+    else {
+        return Err("Drakuseth Crystal completion lost actual final boundary".into());
+    };
+    if index != publication_at
+        || index >= boundary
+        || boundary as usize >= at
+        || b.history_index != boundary
+        || b.item.as_ref() != item
+        || b.root != standard_cards_v1::drakuseth_attack_v1()
+        || b.pending.is_some()
+        || b.previous.is_none()
+        || !crate::effect::crystal_prevention_v1::source_power_payment_matches(state, item, saved)
+        || closed(state, index) != 1
+    {
+        return Err("Drakuseth Crystal completion changed its original native owner".into());
     }
-    record_removed(state, Some(owner), OutcomeV76::Resolved)
+    Ok(())
+}
+pub(crate) fn finish_crystal_owned(
+    state: &mut GameState,
+    owner: &OwnerV76,
+    item: &StackItem,
+) -> Result<(), String> {
+    if closed(state, owner.publication) != 0
+        || state.engine.pending_effect.is_some()
+        || state
+            .stack
+            .iter()
+            .any(|i| i.v4.stack_item_id == item.v4.stack_item_id)
+        || !crate::effect::crystal_prevention_v1::source_power_payment_matches(
+            state,
+            item,
+            &owner.item,
+        )
+    {
+        return Err("Drakuseth Crystal completion lost its private removed-row loan".into());
+    }
+    let boundary = state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            E::CrystalPreventionBoundaryV1 { boundary }
+                if boundary.item.v4.stack_item_id == item.v4.stack_item_id =>
+            {
+                Some(boundary.history_index)
+            }
+            _ => None,
+        })
+        .ok_or("Drakuseth Crystal final boundary absent")?;
+    let at = state.engine.event_history.len();
+    append(
+        state,
+        JournalV76::CrystalResolved {
+            publication: owner.publication,
+            boundary,
+            item: Box::new(item.clone()),
+        },
+    );
+    validate_crystal_completion(state, at, owner.publication, boundary, item)
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if state
@@ -509,6 +603,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Drakuseth removal lost its earlier exact publication".into());
                 }
+            }
+            JournalV76::CrystalResolved {
+                publication,
+                boundary,
+                item,
+            } => {
+                validate_crystal_completion(state, at, *publication, *boundary, item)?;
             }
         }
     }

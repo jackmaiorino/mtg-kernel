@@ -352,67 +352,355 @@ fn paid_attack_departed_reentered_and_stolen_source_retains_original_controller_
     }
 }
 
-#[test]
-fn paid_attack_crystal_replacement_requires_successor_before_damage_or_trigger_removal_both_seats()
-{
-    for actor in [PlayerId::P0, PlayerId::P1] {
-        let (mut state, source) = paid(actor);
-        // Initial real-printing shield operand, not a paid Crystal cast claim.
-        put(
-            &mut state,
-            actor.opponent(),
-            "Crystal Barricade",
-            Zone::Battlefield,
-        );
-        let protected = put(
-            &mut state,
-            actor.opponent(),
-            "Llanowar Elves",
-            Zone::Battlefield,
-        );
-        attack(&mut state, source, actor);
-        choose(&mut state, source, &[Target::Object(protected)]);
-        // Crystal alone applies its ordinary prevention without an ordering
-        // choice. The unsupported case needs both eligible prevention families.
-        let mut ordinary = state.clone();
-        settle(&mut ordinary);
-        assert_eq!(ordinary.objects.get(protected).zone, Zone::Battlefield);
-        assert_eq!(ordinary.objects.get(protected).damage, 0);
-        assert!(ordinary.stack.is_empty());
-        assert!(state.engine.active_replacements.is_empty());
-        // Labelled native finite-shield primitive, installed after actual turn
-        // progression so cleanup cannot expire the intended mixed operand.
+fn mixed_prevention_scene(
+    actor: PlayerId,
+    form: u8,
+) -> (GameState, ObjectId, [ObjectId; 2], usize) {
+    let (mut state, source) = paid(actor);
+    // Registered support operands. Only Drakuseth has a paid-cast claim here.
+    put(&mut state, actor, "Crystal Barricade", Zone::Battlefield);
+    put(&mut state, actor, "Twinflame Tyrant", Zone::Battlefield);
+    let recipients =
+        [actor, actor.opponent()].map(|p| put(&mut state, p, "Serra Angel", Zone::Battlefield));
+    attack(&mut state, source, actor);
+    choose(
+        &mut state,
+        source,
+        &[
+            Target::Player(actor.opponent()),
+            Target::Object(recipients[0]),
+            Target::Object(recipients[1]),
+        ],
+    );
+    native_keyword_operand(&mut state, source, source, Keywords::LIFELINK);
+    if form != 0 {
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        if form == 2 {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert!(!engine::has_effective_keyword(
+                &state,
+                source,
+                Keywords::LIFELINK
+            ));
+        }
+    }
+    // Actual finite shield primitives installed after turn progression.
+    state.engine.next_replacement_id = 3;
+    for (id, target, remaining) in [
+        (1, Target::Player(actor.opponent()), 2),
+        (2, Target::Object(recipients[0]), 2),
+        (3, Target::Object(recipients[1]), 1),
+    ] {
         state
             .engine
             .active_replacements
             .push(crate::event::ActiveReplacement {
-                id: 1,
-                source: protected,
-                kind: crate::event::ReplacementEffectKind::PreventNextDamage {
-                    target: Target::Object(protected),
-                    remaining: 2,
+                id,
+                source: match target {
+                    Target::Object(o) => o,
+                    _ => source,
                 },
+                kind: crate::event::ReplacementEffectKind::PreventNextDamage { target, remaining },
             });
-        let shields = state.engine.active_replacements.clone();
-        let original = state.stack.last().unwrap().clone();
+    }
+    let start = state.engine.event_history.len();
+    (state, source, recipients, start)
+}
+fn pending_prevention(state: &GameState) -> &crate::effect::crystal_prevention_v1::ChoiceV1 {
+    let Some(crate::effect::PendingEffectChoice::ChooseOption {
+        purpose: crate::effect::EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|p| p.choice.as_ref())
+    else {
+        panic!("actual native prevention choice absent")
+    };
+    choice
+}
+fn finish_mixed_prevention(
+    state: &mut GameState,
+    source: ObjectId,
+    recipients: [ObjectId; 2],
+    start: usize,
+    multiply_first: bool,
+) -> Vec<(Target, PlayerId)> {
+    use crate::effect::crystal_prevention_v1::PreventionV1;
+    let mut seen = Vec::new();
+    for _ in 0..64 {
+        let decision = next(state);
+        if let Decision::ChooseEffectOption {
+            player,
+            source: actual,
+            option_count,
+        } = decision
+        {
+            assert_eq!(actual, source);
+            crate::effect::validate_pending_effect_choice(state).unwrap();
+            crate::drakuseth_damage_source_v76::validate_state(state).unwrap();
+            let choice = pending_prevention(state).clone();
+            assert!(choice.batch.is_some());
+            assert_eq!(choice.chooser, player);
+            assert_eq!(usize::from(option_count), choice.options.len());
+            if seen.last() != Some(&(choice.target, player)) {
+                seen.push((choice.target, player));
+            }
+            assert!(
+                damage_since(state, start, source).is_empty(),
+                "no recipient commits before all replacements are selected"
+            );
+            assert_eq!(state.players[0].life, 20);
+            assert_eq!(state.players[1].life, 20);
+            assert!(recipients.iter().all(|&o| state.objects.get(o).damage == 0
+                && state.objects.get(o).zone == Zone::Battlefield));
+            let saved = restored(state);
+            assert_eq!(&saved, state);
+            *state = saved;
+            let preferred = choice
+                .options
+                .iter()
+                .position(|o| {
+                    if multiply_first {
+                        matches!(o, PreventionV1::Multiplier(_) | PreventionV1::Barricade(_))
+                    } else {
+                        matches!(o, PreventionV1::Replacement(_))
+                    }
+                })
+                .unwrap_or(0);
+            engine::step(
+                state,
+                Action::ChooseEffectOption(u16::try_from(preferred).unwrap()),
+            )
+            .unwrap();
+        } else if state.stack.is_empty() && state.engine.pending_effect.is_none() {
+            return seen;
+        } else {
+            quiet(state, decision)
+        }
+    }
+    panic!("mixed original positional damage did not finish")
+}
+#[test]
+fn paid_attack_mixed_player_permanent_prevention_apnap_single_batch_source_lki_and_restore_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for form in 0..3 {
+            for multiply_first in [false, true] {
+                let (mut state, source, recipients, start) = mixed_prevention_scene(actor, form);
+                let mut replay = restored(&state);
+                for branch in [&mut state, &mut replay] {
+                    let seen =
+                        finish_mixed_prevention(branch, source, recipients, start, multiply_first);
+                    assert_eq!(
+                        seen,
+                        vec![
+                            (Target::Object(recipients[0]), actor),
+                            (Target::Player(actor.opponent()), actor.opponent()),
+                            (Target::Object(recipients[1]), actor.opponent())
+                        ]
+                    );
+                    let player_damage = if multiply_first { 6 } else { 4 };
+                    let creature_damage = if multiply_first { 5 } else { 4 };
+                    assert_eq!(
+                        damage_since(branch, start, source),
+                        vec![
+                            (Target::Player(actor.opponent()), player_damage),
+                            (Target::Object(recipients[1]), creature_damage)
+                        ]
+                    );
+                    assert_eq!(branch.objects.get(recipients[0]).zone, Zone::Battlefield);
+                    assert_eq!(branch.objects.get(recipients[0]).damage, 0);
+                    assert_eq!(branch.objects.get(recipients[1]).zone, Zone::Graveyard);
+                    assert_eq!(
+                        branch.players[actor.opponent().index()].life,
+                        20 - player_damage
+                    );
+                    assert_eq!(
+                        branch.players[actor.index()].life,
+                        20 + player_damage + creature_damage
+                    );
+                    let shield = branch.engine.active_replacements.iter().find(|r| r.id == 2);
+                    assert_eq!(shield.is_some(), multiply_first);
+                    assert_eq!(
+                        branch.engine.active_replacements.len(),
+                        usize::from(multiply_first)
+                    );
+                    crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                    crate::drakuseth_damage_source_v76::validate_state(branch).unwrap();
+                }
+                assert_eq!(state, replay);
+            }
+        }
+    }
+}
+#[test]
+fn paid_attack_player_finite_shield_choice_without_crystal_keeps_real_remaining_shields_and_restore_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = paid(actor);
+        attack(&mut state, source, actor);
+        choose(&mut state, source, &[Target::Player(actor.opponent())]);
+        state.engine.next_replacement_id = 2;
+        for (id, remaining) in [(1, 3), (2, 5)] {
+            state
+                .engine
+                .active_replacements
+                .push(crate::event::ActiveReplacement {
+                    id,
+                    source,
+                    kind: crate::event::ReplacementEffectKind::PreventNextDamage {
+                        target: Target::Player(actor.opponent()),
+                        remaining,
+                    },
+                });
+        }
+        let saved = restored(&state);
         let start = state.engine.event_history.len();
-        let mut refused = false;
+        for first_id in [1, 2] {
+            let mut expected = None;
+            for _ in 0..2 {
+                let mut branch = restored(&saved);
+                let mut first = true;
+                for _ in 0..24 {
+                    let d = next(&mut branch);
+                    if let Decision::ChooseEffectOption { player, .. } = d {
+                        assert_eq!(player, actor.opponent());
+                        let choice = pending_prevention(&branch);
+                        assert_eq!(choice.target, Target::Player(actor.opponent()));
+                        let index = if first {
+                            choice.options.iter().position(|o|matches!(o,crate::effect::crystal_prevention_v1::PreventionV1::Replacement(r)if r.id==first_id)).unwrap()
+                        } else {
+                            0
+                        };
+                        first = false;
+                        branch = restored(&branch);
+                        engine::step(
+                            &mut branch,
+                            Action::ChooseEffectOption(u16::try_from(index).unwrap()),
+                        )
+                        .unwrap();
+                    } else if branch.stack.is_empty() {
+                        break;
+                    } else {
+                        quiet(&mut branch, d)
+                    }
+                }
+                assert!(!first);
+                assert!(branch.stack.is_empty());
+                assert!(damage_since(&branch, start, source).is_empty());
+                assert_eq!(branch.players[actor.opponent().index()].life, 20);
+                let remaining = branch
+                    .engine
+                    .active_replacements
+                    .iter()
+                    .map(|r| match r.kind {
+                        crate::event::ReplacementEffectKind::PreventNextDamage {
+                            remaining,
+                            ..
+                        } => (r.id, remaining),
+                        _ => panic!(),
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    remaining,
+                    if first_id == 1 {
+                        vec![(2, 4)]
+                    } else {
+                        vec![(1, 3), (2, 1)]
+                    }
+                );
+                crate::effect::crystal_prevention_v1::validate(&branch).unwrap();
+                crate::drakuseth_damage_source_v76::validate_state(&branch).unwrap();
+                if let Some(ref old) = expected {
+                    assert_eq!(&branch, old)
+                } else {
+                    expected = Some(branch)
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn paid_mixed_batch_forged_player_roster_life_positional_amount_or_chooser_refuses_before_damage_both_seats(
+) {
+    use crate::effect::crystal_prevention_v1::BatchCaptureV2;
+    fn change(capture: &mut BatchCaptureV2, field: u8) {
+        match field {
+            0 => capture.players_v76 = None,
+            1 => capture.players_v76.as_mut().unwrap()[0].life += 1,
+            2 => capture.players_v76.as_mut().unwrap()[0].player = PlayerId::P1,
+            3 => capture.proposals[0].amount += 1,
+            _ => {}
+        }
+    }
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, recipients, start) = mixed_prevention_scene(actor, 2);
+        let mut reached = false;
         for _ in 0..16 {
-            let decision = engine::advance_until_decision(&mut state);
-            if matches!(decision, Decision::Halted { mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation, source: actual } if actual == source)
-            {
-                refused = true;
+            let d = next(&mut state);
+            if matches!(d, Decision::ChooseEffectOption { .. }) {
+                reached = true;
                 break;
             }
-            quiet(&mut state, decision);
+            quiet(&mut state, d);
         }
-        assert!(refused, "unsupported replacement root must fail closed");
-        assert!(damage_since(&state, start, source).is_empty());
-        assert_eq!(state.stack.last(), Some(&original));
-        assert_eq!(state.players[actor.index()].life, 20);
-        assert_eq!(state.objects.get(protected).damage, 0);
-        assert_eq!(state.objects.get(protected).zone, Zone::Battlefield);
-        assert_eq!(state.engine.active_replacements, shields);
+        assert!(reached);
+        crate::effect::validate_pending_effect_choice(&state).unwrap();
+        for field in 0..5 {
+            let mut forged = restored(&state);
+            for e in forged.engine.event_history.iter_mut() {
+                match e {
+                    CommittedEvent::CrystalBatchPreparedV3 { capture } => change(capture, field),
+                    CommittedEvent::CrystalExecutionV1 { execution } => {
+                        for step in &mut execution.steps {
+                            if let Some(capture) = step.batch_capture.as_mut() {
+                                change(capture, field)
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if field == 4 {
+                let Some(crate::effect::PendingEffectChoice::ChooseOption {
+                    purpose:
+                        crate::effect::EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                    ..
+                }) = forged
+                    .engine
+                    .pending_effect
+                    .as_mut()
+                    .unwrap()
+                    .choice
+                    .as_mut()
+                else {
+                    panic!()
+                };
+                choice.chooser = choice.chooser.opponent();
+            }
+            assert!(
+                crate::effect::validate_pending_effect_choice(&forged).is_err(),
+                "forged mixed field {field}"
+            );
+            let before = forged.engine.event_history.len();
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted { .. }
+            ));
+            assert_eq!(forged.engine.event_history.len(), before);
+            assert!(damage_since(&forged, start, source).is_empty());
+            assert!(recipients
+                .iter()
+                .all(|&o| forged.objects.get(o).damage == 0));
+            assert_eq!(forged.players[0].life, 20);
+            assert_eq!(forged.players[1].life, 20);
+        }
     }
 }
 
