@@ -18,12 +18,27 @@ pub(super) fn handles(name: &str) -> bool {
             | "Vampire Soulcaller"
             | "Tragic Banshee"
             | "Affectionate Indrik"
+            | "Grappling Kraken"
     )
 }
 
 /// The caller still checks all unrelated CardDef fields in the common guard.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (cost, color, subtypes, power, toughness, keywords, target_spec, filter) = match d.name {
+        "Grappling Kraken" => (
+            Cost {
+                generic: 4,
+                pips: &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)],
+                x_count: 0,
+            },
+            ManaColor::U,
+            &[Subtype::Kraken][..],
+            5,
+            6,
+            Keywords::NONE,
+            TargetSpec::OpponentControlledCreature,
+            json!({"zone":"Battlefield","type":"Creature","relation":"ControlledByOpponentOfCapturedTriggerController","uses_current_effective_type":true}),
+        ),
         "Affectionate Indrik" => (
             Cost {
                 generic: 5,
@@ -113,7 +128,21 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let pup = d.name == "Mischievous Pup";
     let banshee = d.name == "Tragic Banshee";
     let indrik = d.name == "Affectionate Indrik";
-    let program = if indrik {
+    let kraken = d.name == "Grappling Kraken";
+    let program = if kraken {
+        EffectOp::Sequence(vec![
+            EffectOp::TapObject {
+                object: ObjectRef::Target(0),
+            },
+            EffectOp::AddCountersToTarget {
+                target_index: 0,
+                optional: false,
+                plus1_plus1: 0,
+                lifelink: 0,
+                stun: 1,
+            },
+        ])
+    } else if indrik {
         EffectOp::Choice {
             controller: PlayerRef::Controller,
             options: vec![
@@ -203,7 +232,19 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "chooser":"CapturedTriggerController","selected_at":"TriggerStackPlacement",
         "normal_target_legality_and_protection_apply":true,"rechecked_at_resolution":true,
         "binding":"OriginalSelectedObjectIncarnation"});
-    let resolution = if indrik {
+    let resolution = if kraken {
+        json!([{"operation":"TapCreature","target_slot":0,
+                "binding":"OriginalSelectedCreatureIncarnation","already_tapped_target_is_legal":true,
+                "normal_tapping_rules_apply":true},
+            {"operation":"PutStunCountersOnCreature","target_slot":0,"count":1,"mandatory":true,
+                "does_not_require_tap_status_to_change":true,
+                "retains_existing_counters_and_adds_to_current_stun_count":true,
+                "normal_counter_placement_replacements_apply":true,
+                "ordinary_stun_rule":"WhenThisPermanentWouldUntapRemoveOneStunCounterInstead",
+                "counter_is_not_an_until_end_of_turn_effect":true,
+                "source_departure_does_not_remove_counter":true,
+                "new_target_incarnation_does_not_inherit_old_counter":true}])
+    } else if indrik {
         json!([{"operation":"MayHaveOriginalSourceFightTarget","target_slot":0,
             "chooser":"CapturedTriggerController","choose_at_resolution_after_target_selection":true,
             "native_options":[{"index":0,"operation":"DeclineWithoutEffect"},{"index":1,"operation":"Fight"}],

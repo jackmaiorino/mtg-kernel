@@ -1716,6 +1716,39 @@ mod paid {
     }
 
     #[test]
+    fn kraken_changed_double_blue_cost_size_subtype_keyword_or_cast_target_refuses() {
+        use crate::{
+            card_def::{Keywords, Subtype, TargetSpec},
+            mana::{Cost, ManaColor, Pip},
+        };
+        let id = crate::card_def::card_id_by_name("Grappling Kraken").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => {
+                    d.cost = Cost {
+                        generic: 5,
+                        pips: &[Pip::Colored(ManaColor::U)],
+                        x_count: 0,
+                    }
+                }
+                1 => d.toughness = Some(5),
+                2 => d.subtypes = &[Subtype::Octopus],
+                3 => d.keywords = Keywords::VIGILANCE,
+                _ => d.target_spec = TargetSpec::OpponentControlledCreature,
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Kraken changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn indrik_changed_cost_size_subtype_target_keyword_or_spell_program_refuses() {
         use crate::{
             card_def::{Keywords, Subtype, TargetSpec},
