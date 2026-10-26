@@ -499,6 +499,7 @@ jobs:
         group:
           - limited
           - limited-only
+          - limited-only-1
           - limited-v2
           - limited-v5
           - limited-v3
@@ -788,8 +789,13 @@ jobs:
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored standard_cards_v1::drakuseth_tests::paid_attack_mandatory_first_zero_one_two_other_targets_and_every_target_checkpoint_restore_both_seats
 
       - name: Validate every other Limited-only library case
-        if: ${{ !cancelled() && matrix.group == 'limited-only' }}
-        run: python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
+        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
+        run: |
+          shard=0
+          if [ '${{ matrix.group }}' = limited-only-1 ]; then
+            shard=1
+          fi
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 2 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
 
       - name: Retain actual Drakuseth event sample
         if: ${{ always() && matrix.group == 'limited-only' }}
