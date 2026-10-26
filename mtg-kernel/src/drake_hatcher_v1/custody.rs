@@ -1389,7 +1389,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         .scan_for_v1(&[crate::event_history_v1::EventKindV1::DrakeJournalV1])
         .iter()
         .enumerate()
-        .filter_map(|(position, event)| journal(event).map(|row| (position, row)))
+        .filter_map(|(position, event)| match event {
+            CommittedEvent::DrakeJournalV1 { record } => Some((position, &**record)),
+            _ => None,
+        })
         .map(|(position, row)| {
             // An identical appended row must not borrow the earlier record's
             // index and enclosing range. Authenticate its physical position

@@ -329,7 +329,7 @@ pub(crate) fn require_legacy_visible(
             .event_history
             .scan_for_v1(&[crate::event_history_v1::EventKindV1::FakeJournalV50])
             .iter()
-            .any(|event| journal(event).is_some())
+            .any(|event| matches!(event, CommittedEvent::FakeJournalV50 { .. }))
     {
         return Err(RlContractError(
             "Fake Your Own Death history requires V50 family facts".into(),

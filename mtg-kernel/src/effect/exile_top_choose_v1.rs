@@ -814,21 +814,22 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         EventKindV1::ExilePlaySelectionConsumedV1,
         EventKindV1::StrongboxRaidSkippedV1,
     ]) {
-        let stack = match e {
-            event::CommittedEvent::ExilePlaySelectionCapturedV1 {
-                resolving_stack_item,
-                ..
-            }
-            | event::CommittedEvent::ExilePlaySelectionConsumedV1 {
-                resolving_stack_item,
-                ..
-            }
-            | event::CommittedEvent::StrongboxRaidSkippedV1 {
-                resolving_stack_item,
-                ..
-            } => *resolving_stack_item,
-            _ => continue,
+        let (event::CommittedEvent::ExilePlaySelectionCapturedV1 {
+            resolving_stack_item,
+            ..
+        }
+        | event::CommittedEvent::ExilePlaySelectionConsumedV1 {
+            resolving_stack_item,
+            ..
+        }
+        | event::CommittedEvent::StrongboxRaidSkippedV1 {
+            resolving_stack_item,
+            ..
+        }) = e
+        else {
+            continue;
         };
+        let stack = *resolving_stack_item;
         let rows: Vec<_> = state
             .engine
             .event_history
