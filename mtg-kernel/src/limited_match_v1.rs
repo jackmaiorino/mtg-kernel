@@ -424,12 +424,18 @@ fn seat(player: PlayerSeatV1) -> PlayerId {
     }
 }
 
-fn step_index(session: &mut FastActorSessionV1, index: u32) -> Result<(), String> {
+/// `trusted` skips the pre-step contract re-check (see
+/// `limited_trusted_step_v1`); a world edited since its last advance takes the
+/// full step.
+fn step_index(session: &mut FastActorSessionV1, index: u32, trusted: bool) -> Result<(), String> {
     match session.current_response() {
-        FastActorResponseV1::Decision(d) => session
-            .step(d.episode_id, d.step, index)
-            .map(|_| ())
-            .map_err(|e| e.message),
+        FastActorResponseV1::Decision(d) => if trusted {
+            session.limited_trusted_step_v1(d.episode_id, d.step, index)
+        } else {
+            session.step(d.episode_id, d.step, index)
+        }
+        .map(|_| ())
+        .map_err(|e| e.message),
         FastActorResponseV1::Terminal(_) => Err("step after terminal".into()),
     }
 }
@@ -522,13 +528,14 @@ pub fn pimc_choose_v1(
             &[world_seed],
         ));
         let value = (|| {
-            step_index(&mut world_session, action as u32)?;
+            // The world was redeterminized: its root step revalidates.
+            step_index(&mut world_session, action as u32, false)?;
             for _ in 0..depth {
                 let FastActorResponseV1::Decision(d) = world_session.current_response() else {
                     break;
                 };
                 let pick = random_index(&mut rng, d.legal_action_count);
-                step_index(&mut world_session, pick)?;
+                step_index(&mut world_session, pick, true)?;
             }
             rollout_value(&world_session, root)
         })();
@@ -565,6 +572,9 @@ pub fn pimc_choose_v1(
 pub struct GameLimitsV1 {
     pub max_turns: u32,
     pub max_decisions: u64,
+    /// Re-check the session contract before every game step (slower; the
+    /// trusted step plays identically, see the equivalence test).
+    pub full_validation: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -692,7 +702,12 @@ pub fn play_game_v1(
                 }
             }
         };
-        if let Err(error) = session.step(decision.episode_id, decision.step, index) {
+        let stepped = if limits.full_validation {
+            session.step(decision.episode_id, decision.step, index)
+        } else {
+            session.limited_trusted_step_v1(decision.episode_id, decision.step, index)
+        };
+        if let Err(error) = stepped {
             let mut message = error.message;
             let strays = roster_strays_v1(session.game_state());
             if !strays.is_empty() {
