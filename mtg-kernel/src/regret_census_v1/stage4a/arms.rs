@@ -1162,7 +1162,12 @@ impl Roles {
         }
         let retain = retain.max(1);
         // Exact and per search: this context's keys only.
-        let mut memo = key_memo_enabled().then(KeyMemo::new);
+        let memo_use = key_memo_use();
+        let mut memo = match memo_use {
+            KeyMemoUse::Off => None,
+            KeyMemoUse::Quiet => Some(KeyMemo::quiet()),
+            KeyMemoUse::Reported => Some(KeyMemo::new()),
+        };
         let inference_cache = match self.search_inference_cache() {
             Ok(cache) => cache,
             Err(e) => {
@@ -1333,7 +1338,7 @@ impl Roles {
         if let Some(t) = trace {
             t.finish_tree(&tree);
         }
-        if let Some(m) = &memo {
+        if let (Some(m), KeyMemoUse::Reported) = (&memo, memo_use) {
             diag.key_memo = m.json();
         }
         if let Some(cache) = &inference_cache {
@@ -1723,15 +1728,34 @@ pub(crate) struct EdgeWin {
     pub(crate) wins_after: u64,
 }
 
-/// Whether E searches memoize key steps (`S4A_KEY_MEMO=1`; default off).
-/// Exact: selection, trees and key statistics are unchanged; only time is.
-pub(crate) fn key_memo_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| match std::env::var("S4A_KEY_MEMO").as_deref() {
-        Ok("1") => true,
-        Ok("0") | Err(_) => false,
-        Ok(v) => panic!("S4A_KEY_MEMO must be 0 or 1, got {v:?}"),
-    })
+/// How E searches use the exact key-step memo (`S4A_KEY_MEMO`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeyMemoUse {
+    /// `S4A_KEY_MEMO=0`.
+    Off,
+    /// Unset (the default): on, without counters in search records, so a
+    /// record is the same as with the memo off; limit `S4A_KEY_MEMO_MIB` or
+    /// `QUIET_KEY_MEMO_BYTES`.
+    Quiet,
+    /// `S4A_KEY_MEMO=1`: on, with counters; limit `S4A_KEY_MEMO_MIB` or
+    /// `KEY_MEMO_BYTES`.
+    Reported,
+}
+
+/// Exact either way: selection, trees and key statistics are unchanged;
+/// only time is.
+pub(crate) fn key_memo_use() -> KeyMemoUse {
+    static USE: std::sync::OnceLock<KeyMemoUse> = std::sync::OnceLock::new();
+    *USE.get_or_init(|| key_memo_use_from(std::env::var("S4A_KEY_MEMO").ok().as_deref()))
+}
+
+fn key_memo_use_from(value: Option<&str>) -> KeyMemoUse {
+    match value {
+        None => KeyMemoUse::Quiet,
+        Some("1") => KeyMemoUse::Reported,
+        Some("0") => KeyMemoUse::Off,
+        Some(v) => panic!("S4A_KEY_MEMO must be 0 or 1, got {v:?}"),
+    }
 }
 
 /// Search diagnostics (never read by selection, backup or execution).
@@ -1974,4 +1998,17 @@ pub(crate) fn tree_stats(tree: &Tree) -> Value {
     }
     json!({"nodes":tree.nodes.len(),"hash":tree.hash(),"root":root,
         "by_depth":by_depth.iter().map(|(d,(n,v))| json!({"depth":d,"nodes":n,"visits":v})).collect::<Vec<_>>()})
+}
+
+#[cfg(test)]
+mod key_memo_use_tests {
+    use super::{key_memo_use_from, KeyMemoUse};
+
+    #[test]
+    fn key_memo_is_on_by_default_and_reports_only_when_asked() {
+        assert_eq!(key_memo_use_from(None), KeyMemoUse::Quiet);
+        assert_eq!(key_memo_use_from(Some("1")), KeyMemoUse::Reported);
+        assert_eq!(key_memo_use_from(Some("0")), KeyMemoUse::Off);
+        assert!(std::panic::catch_unwind(|| key_memo_use_from(Some("yes"))).is_err());
+    }
 }

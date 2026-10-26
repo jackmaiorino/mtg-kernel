@@ -745,28 +745,40 @@ pub(crate) struct Step {
 /// 522 MiB.
 pub(crate) const KEY_MEMO_BYTES: usize = 512 << 20;
 
-/// The memo's size limit: `KEY_MEMO_BYTES` unless `S4A_KEY_MEMO_MIB` names
+/// The limit of the default (unreported) memo E searches use when
+/// `S4A_KEY_MEMO` is unset: a quarter of `KEY_MEMO_BYTES`, so many searches
+/// can run side by side. On the E1 timing games it saved nearly as much as
+/// 512 MiB did.
+pub(crate) const QUIET_KEY_MEMO_BYTES: usize = 128 << 20;
+
+/// The memo's size limit: `default` unless `S4A_KEY_MEMO_MIB` names
 /// another whole number of MiB (1 to 65536, and representable in bytes). The
 /// limit only decides which steps are stored, never a key, tree, selection
 /// or statistic of a transition- or work-limited search. A CPU-second budget
 /// (the allocation experiment) is timing-dependent: like `S4A_KEY_MEMO`
 /// itself or host load, the limit can change how many simulations fit.
-fn key_memo_max_bytes() -> usize {
-    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *BYTES.get_or_init(|| match std::env::var("S4A_KEY_MEMO_MIB") {
-        Err(_) => KEY_MEMO_BYTES,
-        Ok(v) => v
-            .parse::<usize>()
-            .ok()
-            .filter(|mib| (1..=65536).contains(mib))
-            .and_then(|mib| mib.checked_mul(1 << 20))
-            .unwrap_or_else(|| {
-                panic!("S4A_KEY_MEMO_MIB must be 1 to 65536 MiB and fit in memory, got {v:?}")
-            }),
-    })
+fn key_memo_max_bytes(default: usize) -> usize {
+    static BYTES: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    BYTES
+        .get_or_init(|| match std::env::var("S4A_KEY_MEMO_MIB") {
+            Err(_) => None,
+            Ok(v) => Some(
+                v.parse::<usize>()
+                    .ok()
+                    .filter(|mib| (1..=65536).contains(mib))
+                    .and_then(|mib| mib.checked_mul(1 << 20))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "S4A_KEY_MEMO_MIB must be 1 to 65536 MiB and fit in memory, got {v:?}"
+                        )
+                    }),
+            ),
+        })
+        .unwrap_or(default)
 }
 
-/// Exact per-search memo of key steps (`S4A_KEY_MEMO=1`).
+/// Exact per-search memo of key steps (on unless `S4A_KEY_MEMO=0`; see
+/// `arms::KeyMemoUse`).
 ///
 /// A keyer's step is a deterministic function of its mode, its starting
 /// history and the sequence of prepared frames and live actions applied to
@@ -822,7 +834,13 @@ impl KeyMemo {
     }
 
     pub(crate) fn new() -> Self {
-        Self::with_max_bytes(key_memo_max_bytes())
+        Self::with_max_bytes(key_memo_max_bytes(KEY_MEMO_BYTES))
+    }
+
+    /// The default E-search memo (`S4A_KEY_MEMO` unset): the same memo with
+    /// the smaller default limit.
+    pub(crate) fn quiet() -> Self {
+        Self::with_max_bytes(key_memo_max_bytes(QUIET_KEY_MEMO_BYTES))
     }
 
     fn with_max_bytes(max_bytes: usize) -> Self {
@@ -2031,6 +2049,19 @@ mod tests {
                 Some(&mut memo),
             )
             .unwrap();
+        }
+    }
+
+    /// The default (quiet) memo has the smaller default limit; both follow
+    /// `S4A_KEY_MEMO_MIB` when it is set.
+    #[test]
+    fn quiet_key_memo_uses_the_smaller_default_limit() {
+        let (quiet, reported) = (KeyMemo::quiet().max_bytes, KeyMemo::new().max_bytes);
+        if std::env::var_os("S4A_KEY_MEMO_MIB").is_none() {
+            assert_eq!(quiet, QUIET_KEY_MEMO_BYTES);
+            assert_eq!(reported, KEY_MEMO_BYTES);
+        } else {
+            assert_eq!(quiet, reported);
         }
     }
 
