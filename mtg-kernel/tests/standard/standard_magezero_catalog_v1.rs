@@ -7,7 +7,6 @@ use std::path::Path;
 
 use mtg_kernel::card_def::{
     card_id_by_name, preflight_fully_supported_deck, CardCapability, CardType, Subtype, CARD_DEFS,
-    KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -605,8 +604,10 @@ fn standard_catalog_identity_is_frozen() {
     // Observed from the pinned native build, including the shared Aura fixture.
     const EXPECTED_STANDARD_COMPLETION: u64 = 0xd237_d074_94e5_3952;
     assert_eq!(
-        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_COMPLETION,
-        "Standard completion catalog identity changed: {KERNEL_CARDDB_HASH:#018x}"
+        mtg_kernel::card_def::KERNEL_CARDDB_HASH,
+        EXPECTED_STANDARD_COMPLETION,
+        "Standard completion catalog identity changed: {:#018x}",
+        mtg_kernel::card_def::KERNEL_CARDDB_HASH
     );
 }
 
