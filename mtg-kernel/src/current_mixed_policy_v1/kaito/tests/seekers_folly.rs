@@ -162,38 +162,71 @@ fn paid_folly_opponent_private_two_card_choices_empty_single_hand_payment_and_re
             assert_eq!(choices.len(), 3);
             let saved = own.snapshot();
             let raw = native.snapshot_v1();
-            for choice in choices {
-                let A::Discard { cards, .. } = &choice else {
+            for first in choices {
+                let A::Discard { cards, .. } = &first else {
                     unreachable!()
                 };
-                assert_eq!(cards.len(), 2);
-                let chosen = cards.iter().map(|c| c.arena_id).collect::<Vec<_>>();
-                assert_ne!(chosen[0], chosen[1]);
-                let mut expected = None;
-                for _ in 0..2 {
-                    own.restore(&saved).unwrap();
-                    native.kaito_restore_v75(&raw).unwrap();
-                    act(&mut own, &mut native, |a| a == &choice);
-                    settle(&mut own, &mut native);
-                    let s = own.fixture_state();
-                    assert_eq!(s.objects.get(source).zone, Zone::Graveyard);
-                    assert_eq!(s.players[p.opponent().index()].hand.len(), 1);
-                    for &o in &hand {
-                        assert_eq!(
-                            s.objects.get(o).zone,
-                            if chosen.contains(&o.0) {
-                                Zone::Graveyard
-                            } else {
-                                Zone::Hand
-                            }
-                        );
-                    }
-                    hidden(s, p);
-                    assert_eq!(s.players[p.index()].mana_pool, [0; 6]);
-                    if let Some(ref state) = expected {
-                        assert_eq!(s, state);
-                    } else {
-                        expected = Some(s.clone());
+                assert_eq!(cards.len(), 1);
+                let first_id = cards[0].arena_id;
+                own.restore(&saved).unwrap();
+                native.kaito_restore_v75(&raw).unwrap();
+                act(&mut own, &mut native, |a| a == &first);
+                // The surface selects one card at a time. The native engine
+                // receives the entire two-card discard only after both picks.
+                assert_eq!(
+                    own.fixture_state().players[p.opponent().index()].hand.len(),
+                    3
+                );
+                assert!(hand
+                    .iter()
+                    .all(|&o| own.fixture_state().objects.get(o).zone == Zone::Hand));
+                assert_eq!(own.fixture_state().objects.get(source).zone, Zone::Stack);
+                hidden(own.fixture_state(), p);
+                let FastActorResponseV1::Decision(h) = own.current_response() else {
+                    panic!()
+                };
+                assert_eq!(h.acting_player, p.opponent().into());
+                let seconds = actions(&own)
+                    .into_iter()
+                    .filter(|a| matches!(a, A::Discard { .. }))
+                    .collect::<Vec<_>>();
+                assert_eq!(seconds.len(), 2);
+                checkpoint(&mut own, &mut native);
+                let partial = own.snapshot();
+                let partial_raw = native.snapshot_v1();
+                for second in seconds {
+                    let A::Discard { cards, .. } = &second else {
+                        unreachable!()
+                    };
+                    assert_eq!(cards.len(), 1);
+                    assert_ne!(first_id, cards[0].arena_id);
+                    let chosen = [first_id, cards[0].arena_id];
+                    let mut expected = None;
+                    for _ in 0..2 {
+                        own.restore(&partial).unwrap();
+                        native.kaito_restore_v75(&partial_raw).unwrap();
+                        act(&mut own, &mut native, |a| a == &second);
+                        settle(&mut own, &mut native);
+                        let s = own.fixture_state();
+                        assert_eq!(s.objects.get(source).zone, Zone::Graveyard);
+                        assert_eq!(s.players[p.opponent().index()].hand.len(), 1);
+                        for &o in &hand {
+                            assert_eq!(
+                                s.objects.get(o).zone,
+                                if chosen.contains(&o.0) {
+                                    Zone::Graveyard
+                                } else {
+                                    Zone::Hand
+                                }
+                            );
+                        }
+                        hidden(s, p);
+                        assert_eq!(s.players[p.index()].mana_pool, [0; 6]);
+                        if let Some(ref state) = expected {
+                            assert_eq!(s, state);
+                        } else {
+                            expected = Some(s.clone());
+                        }
                     }
                 }
             }
