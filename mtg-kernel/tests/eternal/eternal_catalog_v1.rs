@@ -290,12 +290,14 @@ last actions:
             .iter()
             .copied()
             .filter(|action| {
-                !targets_ward_permanent(action)
-                    && !(ward_targeted
-                        && matches!(
-                            action["semantic"]["action_kind"].as_str(),
-                            Some("cast_spell" | "activate_ability")
-                        ))
+                if targets_ward_permanent(action) {
+                    return false;
+                }
+                let starts_new = matches!(
+                    action["semantic"]["action_kind"].as_str(),
+                    Some("cast_spell" | "activate_ability")
+                );
+                !ward_targeted || !starts_new
             })
             .collect();
         let actions = if unwarded.is_empty() {
