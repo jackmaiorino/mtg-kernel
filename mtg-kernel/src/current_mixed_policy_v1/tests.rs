@@ -1403,6 +1403,39 @@ mod paid {
         }
     }
 
+    #[test]
+    fn koma_combat_damage_not_attack_ward_and_uncounterable_roots_reject_changes() {
+        use crate::card_def::{Keywords, WardCostDef};
+        let id = crate::card_def::card_id_by_name("Koma, World-Eater").unwrap();
+        let mut d = ordinary_recipe(id);
+        d.ward_cost = Some(WardCostDef::Generic(4));
+        let value = roots::baseline_recipe(id, &d).unwrap();
+        assert_eq!(value["observer_trigger_printing"]["power"], 8);
+        assert_eq!(value["observer_trigger_printing"]["toughness"], 12);
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["event"]["event"],
+            "ObserverDealsPositiveCombatDamageToPlayer"
+        );
+        assert_eq!(
+            value["observer_trigger_printing"]["ward"]["cost"]["amount"],
+            4
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            d.ward_cost = Some(WardCostDef::Generic(4));
+            match field {
+                0 => d.spell_cannot_be_countered = false,
+                1 => d.ward_cost = None,
+                2 => d.ward_cost = Some(WardCostDef::Generic(2)),
+                3 => d.keywords = Keywords::NONE,
+                4 => d.toughness = Some(8),
+                5 => d.cost = crate::mana::Cost::zero(),
+                _ => d.supertypes = &[],
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {

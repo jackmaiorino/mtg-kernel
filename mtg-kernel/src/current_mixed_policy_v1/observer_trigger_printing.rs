@@ -35,6 +35,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Nessian Hornbeetle"
             | "Mossborn Hydra"
             | "Searslicer Goblin"
+            | "Koma, World-Eater"
     )
 }
 
@@ -42,6 +43,20 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Koma, World-Eater" => (
+            3,
+            &[
+                Pip::Colored(ManaColor::G),
+                Pip::Colored(ManaColor::G),
+                Pip::Colored(ManaColor::U),
+                Pip::Colored(ManaColor::U),
+            ][..],
+            &[ManaColor::G, ManaColor::U][..],
+            &[Subtype::Serpent][..],
+            8,
+            12,
+            Keywords::TRAMPLE,
+        ),
         "Searslicer Goblin" => (
             1,
             &[Pip::Colored(ManaColor::R)][..],
@@ -257,7 +272,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     };
     let supertypes = if matches!(
         d.name,
-        "Tatyova, Benthic Druid" | "Balmor, Battlemage Captain"
+        "Tatyova, Benthic Druid" | "Balmor, Battlemage Captain" | "Koma, World-Eater"
     ) {
         &[Supertype::Legendary][..]
     } else {
@@ -272,6 +287,13 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.power != Some(power)
         || d.toughness != Some(toughness)
         || d.keywords != keywords
+        || d.ward_cost
+            != if d.name == "Koma, World-Eater" {
+                Some(crate::card_def::WardCostDef::Generic(4))
+            } else {
+                None
+            }
+        || d.spell_cannot_be_countered != (d.name == "Koma, World-Eater")
         || usize::from(d.mana_value) != usize::from(generic) + pips.len()
         || crate::engine::static_instant_sorcery_reduction_for_v1(d.name)
             != if d.name == "Archmage of Runes" {
@@ -318,6 +340,23 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "missing_or_reentered_source_gets_no_boost":true,"duration":"UntilCleanupExpirationAfterDiscard"})
     };
     let (condition, event, program, ordered) = match d.name {
+        "Koma, World-Eater" => {
+            let token_def = crate::card_def::card_id_by_name("Koma's Coil Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            (
+                TriggerCondition::DealsCombatDamageToPlayer,
+                json!({"event":"ObserverDealsPositiveCombatDamageToPlayer","damage_to_any_player_counts":true,"damage_to_creatures_or_planeswalkers_and_noncombat_damage_do_not_trigger":true,"fully_prevented_damage_does_not_trigger":true,"trigger_once_per_matching_damage_occurrence_not_per_point":true}),
+                EffectOp::CreateTokensDynamic {
+                    token_def,
+                    controller: PlayerRef::Controller,
+                    count: DynamicValueDef::Fixed(4),
+                    tapped: false,
+                },
+                vec![
+                    json!({"operation":"CreateTokens","controller":"CapturedTriggerController","count":4,"token_definition":super::baseline(token_def)?,"all_created_tokens_enter_as_one_simultaneous_batch":true,"enters_untapped_without_added_haste":true,"normal_token_replacements_and_entry_triggers_apply":true}),
+                ],
+            )
+        }
         "Searslicer Goblin" => {
             let token_def = crate::card_def::card_id_by_name("Goblin Token")
                 .ok_or(Error::UnsupportedPrintedRoot(id))?;
@@ -652,6 +691,21 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "operation":"EnterWithPlusOnePlusOneCounters","count":1,"requires_kicker":false,
             "is_not_a_trigger":true,"applies_to_each_actual_entry_including_noncast_entry":true,
             "normal_counter_placement_replacements_apply":true,"initialized_before_state_based_actions_and_entry_observers":true});
+    }
+    if d.name == "Koma, World-Eater" {
+        meaning["observer_trigger_printing"]["spell_cannot_be_countered"] = json!({
+            "applies_to_original_creature_spell_and_stack_created_spell_copies":true,
+            "does_not_prevent_targeting_by_counterspells_or_other_counterspell_instructions":true,
+            "does_not_protect_its_triggered_or_activated_abilities":true,
+            "does_not_prevent_other_stack_departures_or_battlefield_removal":true});
+        meaning["observer_trigger_printing"]["ward"] = json!({
+            "operation":"Ward","home_zone":"Battlefield","cost":{"operation":"PayGenericMana","amount":4},
+            "event":"BecomesTargetOfSpellOrAbilityControlledByOpponentOfCurrentController",
+            "own_controller_targeting_does_not_trigger":true,"uses_stack":true,"mandatory_trigger_optional_payment":true,
+            "trigger_controller":"SourceControllerAtTargeting","payer":"ControllerOfOriginalTargetingSpellOrAbility",
+            "bind_original_targeting_stack_item_incarnation":true,"if_unpaid":"CounterOriginalTargetingStackItemIfItStillExistsAndCanBeCountered",
+            "source_departure_or_control_change_after_capture_does_not_cancel_ward":true,
+            "normal_mana_payment_modifiers_and_countering_rules_apply":true});
     }
     if d.name == "Nessian Hornbeetle" {
         meaning["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"] = json!({

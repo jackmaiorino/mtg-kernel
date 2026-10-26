@@ -1339,13 +1339,12 @@ fn kiora_threshold_effect() -> EffectOp {
 fn koma_coils_effect() -> EffectOp {
     let token_def = crate::card_def::card_id_by_name("Koma's Coil Token")
         .expect("Koma's Coil Token in CARD_DEFS");
-    EffectOp::Sequence(vec![
-        EffectOp::CreateToken {
-            token_def,
-            controller: PlayerRef::Controller,
-        };
-        4
-    ])
+    EffectOp::CreateTokensDynamic {
+        token_def,
+        controller: PlayerRef::Controller,
+        count: DynamicValueDef::Fixed(4),
+        tapped: false,
+    }
 }
 
 fn homunculus_horde_effect() -> EffectOp {

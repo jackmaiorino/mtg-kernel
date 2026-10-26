@@ -772,7 +772,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || evolving.is_some()
             || surveil_one.is_some()
             || ordinary_equipment.is_some())
-        && (d.ward_cost.is_none() || ward_discount_creature.is_some())
+        && (d.ward_cost.is_none()
+            || ward_discount_creature.is_some()
+            || (observer_trigger.is_some() && d.name == "Koma, World-Eater"))
         && d.alt_cost.is_none()
         && (d.mode2.is_none()
             || (ordinary_removal.is_some() && d.name == "Abrade")
@@ -802,7 +804,8 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || ward_discount_creature.is_some()
             || cost_reduced_spell.is_some()
             || luminous.is_some())
-        && !d.spell_cannot_be_countered
+        && (!d.spell_cannot_be_countered
+            || (observer_trigger.is_some() && d.name == "Koma, World-Eater"))
         && !d.records_mana_spent
         && d.plot_cost.is_none()
         && d.madness_cost.is_none()

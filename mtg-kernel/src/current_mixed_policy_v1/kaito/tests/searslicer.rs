@@ -10,7 +10,7 @@ use crate::{
     state::{GameState, StackItemKind, Step, Zone},
 };
 
-fn through_combat(
+pub(super) fn through_combat(
     own: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     attacker: ObjectId,
