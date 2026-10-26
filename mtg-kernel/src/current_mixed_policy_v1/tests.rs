@@ -1273,6 +1273,34 @@ mod paid {
         }
     }
 
+    #[test]
+    fn hare_dynamic_count_meaning_and_changed_fields_refuse() {
+        let id = crate::card_def::card_id_by_name("Hare Apparent").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let op = &value["simple_trigger_printing"]["ordered_triggers"][0]["ordered_resolution"][0];
+        assert_eq!(
+            op["exclude_only_original_captured_source_incarnation"],
+            true
+        );
+        assert_eq!(
+            op["all_created_tokens_enter_as_one_simultaneous_batch"],
+            true
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.power = Some(3),
+                2 => d.subtypes = &[crate::card_def::Subtype::Rabbit],
+                3 => d.colors = &[crate::mana::ManaColor::G],
+                4 => d.spell_effect = || None,
+                5 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                _ => d.ward_cost = Some(crate::card_def::WardCostDef::Generic(1)),
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {

@@ -21,6 +21,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Gleaming Barrier"
             | "Prideful Parent"
             | "Guarded Heir"
+            | "Hare Apparent"
     )
 }
 
@@ -28,6 +29,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// cast, static, activation or replacement field remains forbidden there.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Hare Apparent" => (
+            1,
+            &[Pip::Colored(ManaColor::W)][..],
+            &[ManaColor::W][..],
+            &[Subtype::Rabbit, Subtype::Noble][..],
+            2,
+            2,
+            Keywords::NONE,
+        ),
         "Guarded Heir" => (
             5,
             &[Pip::Colored(ManaColor::W)][..],
@@ -148,6 +158,28 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     let dies = matches!(d.name, "Infestation Sage" | "Gleaming Barrier");
     let (program, ordered) = match d.name {
+        "Hare Apparent" => {
+            let token_def = crate::card_def::card_id_by_name("Rabbit Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            (
+                EffectOp::CreateTokensForOtherControlledCreaturesNamed {
+                    name: "Hare Apparent".into(),
+                    token_def,
+                },
+                vec![
+                    json!({"operation":"CreateTokensForOtherControlledCreaturesNamed","name":"Hare Apparent",
+                 "count_at_resolution":"CurrentBattlefieldCreaturesControlledByCapturedTriggerControllerWithMatchingEffectiveName",
+                 "exclude_only_original_captured_source_incarnation":true,"source_departure_does_not_disable_count":true,
+                 "reentered_source_is_another_incarnation_and_may_count":true,
+                 "current_creature_type_and_effective_name_and_control_apply":true,"token_creatures_may_count":true,
+                 "opposing_creatures_and_matching_name_noncreatures_do_not_count":true,
+                 "snapshot_count_once_before_creation":true,"count_is_not_targeted_or_capped":true,
+                 "zero_count_creates_no_tokens":true,"controller":"CapturedTriggerController",
+                 "token_definition":super::baseline(token_def)?,"all_created_tokens_enter_as_one_simultaneous_batch":true,
+                 "normal_token_replacements_and_battlefield_entry_triggers_apply":true}),
+                ],
+            )
+        }
         "Helpful Hunter" => (
             EffectOp::DrawCards {
                 player: PlayerRef::Controller,
@@ -249,7 +281,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"simple_trigger_printing":{
+    let mut meaning = json!({"card_id":id,"simple_trigger_printing":{
         "schema":"printed-entry-death/v1","cost":cost,"types":d.types,"subtypes":d.subtypes,
         "supertypes":[],"colors":d.colors,"power":power,"toughness":toughness,
         "keywords":keywords.0,"mana_value":d.mana_value,"token":false,
@@ -266,5 +298,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "death_requires_battlefield_to_graveyard_transition":dies,
             "source_incarnation":if dies {"DepartingBattlefieldIncarnation"}else{"EnteringBattlefieldIncarnation"},
             "survives_source_departure_and_later_control_change":true,"ordered_resolution":ordered}]
-    }})))
+    }});
+    if d.name == "Hare Apparent" {
+        meaning["simple_trigger_printing"]["deck_construction"] = json!({"any_number_of_cards_named_hare_apparent":true,"other_limited_deck_size_and_pool_rules_still_apply":true});
+    }
+    Ok(Some(meaning))
 }

@@ -22832,21 +22832,14 @@ fn execute_with_native_row_v1(
                 return;
             }
             let count = other_controlled_creatures_named_count(state, source, name);
-            if crate::doubling_season_v48::requires_successor(state) {
-                event::propose_and_commit_batch(
-                    state,
-                    (0..count)
-                        .map(|_| event::ProposedEvent::create_token(*token_def, ctx.controller))
-                        .collect(),
-                );
-                return;
-            }
-            for _ in 0..count {
-                event::propose_and_commit(
-                    state,
-                    event::ProposedEvent::create_token(*token_def, ctx.controller),
-                );
-            }
+            // One instruction creates the complete snapshotted count together.
+            // Entry observers and replacement expansion see the same batch.
+            event::propose_and_commit_batch(
+                state,
+                (0..count)
+                    .map(|_| event::ProposedEvent::create_token(*token_def, ctx.controller))
+                    .collect(),
+            );
         }
         EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {
             target_spec,

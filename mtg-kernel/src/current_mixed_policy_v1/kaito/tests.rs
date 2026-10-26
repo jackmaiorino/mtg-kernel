@@ -28,6 +28,7 @@ mod grappling_kraken;
 mod graveyard_batch_spell;
 mod grow_ashes;
 mod guarded_heir;
+mod hare;
 mod incinerating_blast;
 mod indrik;
 mod library_search;
