@@ -1265,7 +1265,10 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                     .map_err(|_| "replay worker panicked".to_owned())?
             })
             .unwrap_or_else(|e| json!({"error":e}));
-            let ok = rep["end"] == row["game"]["end"] && rep["sequence"] == row["game"]["sequence"];
+            // An error (a refused record, a failed replay) never matches.
+            let ok = rep.get("error").is_none()
+                && rep["end"] == row["game"]["end"]
+                && rep["sequence"] == row["game"]["sequence"];
             out.push_str(&format!(
                 "{}
 ",
