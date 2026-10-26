@@ -1,4 +1,4 @@
-//! Closed targeted entry observers with returns, weakening and optional fight.
+//! Closed targeted entry and landfall observers.
 use super::{Error, Result};
 use crate::{
     card_def::{CardDef, CardType, DynamicValueDef, Keywords, Subtype, TargetSpec},
@@ -248,7 +248,12 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         intervening_if_controls_another_source_card,
         effect,
     } = trigger;
-    if *condition != TriggerCondition::Etb
+    if *condition
+        != if kraken {
+            TriggerCondition::ControlledLandEnters
+        } else {
+            TriggerCondition::Etb
+        }
         || *home_zone != Zone::Battlefield
         || *face_index != 0
         || *intervening_if_kicked
@@ -322,13 +327,18 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "requires_original_target_incarnation":true,"does_not_return_to_trigger_controllers_hand_unless_owner":true,
             "normal_zone_replacements_apply":true,"tokens_that_leave_the_battlefield_cease_normally":true}])
     };
-    let trigger = json!({"event":"ThisPermanentEntersBattlefield","home_zone":"Battlefield","source_face":0,
+    let mut trigger = json!({"event":if kraken{"LandEntersUnderObserverControl"}else{"ThisPermanentEntersBattlefield"},"home_zone":"Battlefield","source_face":0,
         "requires_active_printed_abilities_at_capture":true,"intervening_if":null,"mandatory":true,"uses_stack":true,
-        "controller":"CapturedSourceControllerAtEntry","captures_original_source_incarnation":true,
+        "controller":if kraken{"CapturedSourceControllerAtLandEntry"}else{"CapturedSourceControllerAtEntry"},"captures_original_source_incarnation":true,
         "survives_source_departure_and_later_control_change":true,"targets":[target],
         "zero_targets_allowed":optional_targets,"zero_targets_perform_no_moves":optional_targets,
         "required_target_absence_prevents_stack_placement":!optional_targets,"all_chosen_targets_illegal_skips_resolution":true,
         "ordered_resolution":resolution});
+    if kraken {
+        trigger["landfall"] = json!({"requires_land_play":false,"token_lands_count":true,
+            "uses_current_effective_land_type_and_entry_controller":true,"trigger_once_per_entering_land":true,
+            "creature_entry_itself_does_not_trigger":true});
+    }
     Ok(Some(json!({"card_id":id,"targeted_entry_printing":{
         "schema":"printed-targeted-entry/v1","cost":cost,"mana_value":d.mana_value,
         "types":d.types,"subtypes":d.subtypes,"supertypes":[],"colors":d.colors,

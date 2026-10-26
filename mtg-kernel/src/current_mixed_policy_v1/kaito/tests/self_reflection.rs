@@ -40,7 +40,7 @@ fn paid(flashback: bool) {
             let lands = (0..10)
                 .map(|_| put(&mut s, p, "Island", Zone::Battlefield))
                 .collect::<Vec<_>>();
-            for name in ["Island", "Island", "Swamp"] {
+            for name in ["Island", "Island", "Swamp", "Swamp"] {
                 put(&mut s, p.opponent(), name, Zone::Battlefield);
             }
             let owner = if scene == 0 { p.opponent() } else { p };

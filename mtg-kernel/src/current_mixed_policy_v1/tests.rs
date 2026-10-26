@@ -2165,6 +2165,16 @@ mod paid {
             mana::{Cost, ManaColor, Pip},
         };
         let id = crate::card_def::card_id_by_name("Grappling Kraken").unwrap();
+        let value = roots::baseline(id).unwrap();
+        assert_eq!(
+            value["targeted_entry_printing"]["ordered_triggers"][0]["event"],
+            "LandEntersUnderObserverControl"
+        );
+        assert_eq!(
+            value["targeted_entry_printing"]["ordered_triggers"][0]["landfall"]
+                ["creature_entry_itself_does_not_trigger"],
+            true
+        );
         assert_eq!(
             roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
             roots::baseline(id).unwrap()
