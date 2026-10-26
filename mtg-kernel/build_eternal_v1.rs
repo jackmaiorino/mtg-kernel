@@ -226,8 +226,16 @@ const TAMIYO: [ActivatedAbilityRecipe; 3] = [
     ),
 ];
 
+/// The One Ring: "{T}: Put a burden counter on The One Ring, then draw a
+/// card for each burden counter on The One Ring."
+const THE_ONE_RING: [ActivatedAbilityRecipe; 1] = [instant(
+    &[Tap],
+    AbilityEffectRecipe::StandardProgram("crate::eternal_cards_v1::the_one_ring_draw"),
+)];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "The One Ring" => &THE_ONE_RING,
         "Tamiyo, Inquisitive Student" => &TAMIYO,
         "Melded Moxite" => &MELDED_MOXITE,
         "Inventor's Axe" => &INVENTORS_AXE,
@@ -289,6 +297,17 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_cards_v1::prismari_charm_surveil_draw",
         },
+        // Its alternative cost is `alt_cost_for` below.
+        "Misdirection" => Special::StandardProgram {
+            target_spec:
+                "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::SpellWithSingleTargetV1)",
+            program: "crate::eternal_cards_v1::misdirection",
+        },
+        // The land face is `transform_face_for` below.
+        "Sink into Stupor" => Special::StandardProgram {
+            target_spec: "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OpponentSpellOrNonlandPermanentV1)",
+            program: "crate::eternal_cards_v1::sink_into_stupor",
+        },
         _ => return None,
     })
 }
@@ -347,6 +366,16 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Tamiyo, Inquisitive Student" => {
             "attacks:investigate;draw_nth:3:exile_then_return_transformed_under_owner;face1_plus2:until_controllers_next_turn:each_creature_attacking_controller_gets_minus1_0_eot;face1_minus7:emblem_no_maximum_hand_size"
         }
+        "The One Ring" => {
+            "etb_if_cast:controller_protection_from_everything_until_controllers_next_turn;controller_upkeep:lose_life_per_burden_counter_lki"
+        }
+        "Chrome Mox" => {
+            "etb:may_exile_nonartifact_nonland_hand_card_linked_imprint;mana:tap_add_one_of_imprinted_card_colors"
+        }
+        "Sink into Stupor" => "land_face_play_from_hand:as_enters_may_pay_3_life_else_tapped",
+        "Cavern of Souls" => {
+            "as_enters:choose_creature_type_of_owned_creature_cards;restricted_mana_spell_cant_be_countered"
+        }
         _ => "none",
     }
 }
@@ -378,6 +407,8 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         // "{T}: Add {U}{B}." One activation adds both colors at once.
         "Dimir Aqueduct" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::B]), controller_damage: 0, max_activations_per_turn: None })",
+        // "{T}: Add {C}{C}. This land deals 2 damage to you."
+        "Ancient Tomb" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 2, max_activations_per_turn: None })",
         _ => "None",
     }
 }
@@ -390,6 +421,9 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Daze" => "Some(AltCostDef { components: &[CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandWithSubtype(Subtype::Island))], condition: AltCostCondition::Always })",
         "Force of Will" => "Some(AltCostDef { components: &[CostComponent::PayLife(1), CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::Always })",
+        // "You may exile a blue card from your hand rather than pay this
+        // spell's mana cost."
+        "Misdirection" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::Always })",
         _ => "None",
     }
 }
@@ -462,6 +496,8 @@ pub(super) fn escape_for(name: &str) -> String {
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Tamiyo, Inquisitive Student" => "Some(TransformFaceDef { name: \"Tamiyo, Seasoned Scholar\", types: &[CardType::Planeswalker], subtypes: &[Subtype::Tamiyo], colors: &[ManaColor::U, ManaColor::G], power: None, toughness: None, keywords: Keywords::NONE })",
+        // A modal double-faced card's land face, played from hand.
+        "Sink into Stupor" => "Some(TransformFaceDef { name: \"Soporific Springs\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
         _ => "None",
     }
 }
@@ -469,6 +505,7 @@ pub(super) fn transform_face_for(name: &str) -> &'static str {
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Tamiyo, Inquisitive Student" => Some("Tamiyo, Seasoned Scholar"),
+        "Sink into Stupor" => Some("Soporific Springs"),
         _ => None,
     }
 }

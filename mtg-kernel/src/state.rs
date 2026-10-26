@@ -1243,7 +1243,7 @@ pub fn stack_target_contract_is_structurally_valid(
         }
         let matches_kind = match &contract {
             StackTargetContractV4::Object { zone, .. } => {
-                *zone == crate::standard_cards_v1::target_zone(filter)
+                crate::standard_cards_v1::target_zone_allows(filter, *zone)
             }
             StackTargetContractV4::StackItem { .. } => false,
             StackTargetContractV4::Player(_) => matches!(

@@ -4123,6 +4123,15 @@ fn legal_targets_for_controller_from_source_unframed(
     };
     targets.retain(|target| {
         if let Target::Player(player) = *target {
+            #[cfg(feature = "eternal-fixtures")]
+            if !crate::eternal_cards_v1::e3::player_targetable(
+                state,
+                player,
+                controller,
+                source.map(|source| source.object),
+            ) {
+                return false;
+            }
             return player == controller
                 || !crate::crystal_barricade_v1::controller_has_hexproof(state, player);
         }
@@ -9688,6 +9697,8 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         .copied()
         .filter(|&id| {
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_playable_land()
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cards_v1::e3::playable_land_back_face(state, id))
         })
         .collect();
     // Impulse-drawn lands (Clockwork Percussionist/Experimental
@@ -10257,6 +10268,10 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
                 source: pending.source,
                 option_count: 4,
             };
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        if let Some(decision) = crate::eternal_cards_v1::e3::entry_choice_decision(state) {
+            return decision;
         }
 
         if let Some(d) = drain_pending_spell_copy_or_decide(state) {
@@ -15542,8 +15557,10 @@ pub(crate) fn counter_stack_item_by_id(
     effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
-        && card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize]
+        && (card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize]
             .spell_cannot_be_countered
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::spell_cannot_be_countered(state, item.source)))
     {
         // Some means the bound target still exists. A protected spell remains
         // on the stack after the attempt, so callers finish the effect normally.
@@ -17947,6 +17964,10 @@ pub fn damage_is_prevented_by_protection(
     source: ObjectId,
     target: Target,
 ) -> bool {
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cards_v1::e3::damage_prevented_by_protection(state, source, target) {
+        return true;
+    }
     let Target::Object(target) = target else {
         return false;
     };
@@ -17968,6 +17989,10 @@ pub fn object_mana_value(state: &GameState, id: ObjectId) -> u16 {
     let object = state.objects.get(id);
     if object.v4.face_down_v1.is_some() {
         return 0;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(value) = crate::eternal_cards_v1::e3::back_face_mana_value(state, id) {
+        return value;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if let Some((_, value, _)) = crate::standard_cards_v1::room_characteristics(state, id) {
@@ -20098,6 +20123,15 @@ pub(crate) fn step_without_linked_aura_v1(
             if !land_drop_candidates(p, state).contains(&id) {
                 return Err(format!("{id} is not a legal land drop for {p:?}"));
             }
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::eternal_cards_v1::e3::playable_land_back_face(state, id) {
+                crate::eternal_cards_v1::e3::play_land_back_face(state, p, id);
+                state.players[p.index()].lands_played_this_turn += 1;
+                collect_and_queue_triggers(state);
+                state.engine.priority_passes = [false, false];
+                state.priority_player = p;
+                return Ok(());
+            }
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
             if let Some(excluded_color) = def.as_enters_choose_color_other_than {
                 state.engine.pending_land_play = Some(PendingLandPlay {
@@ -20259,7 +20293,13 @@ pub(crate) fn step_without_linked_aura_v1(
             Ok(())
         }
         Action::ChooseEffectOption(option_index) => {
-            if state.engine.pending_land_play.is_some() {
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::entry_choice_pending(state)
+            {
+                crate::eternal_cards_v1::e3::answer_entry_choice(state, option_index)?;
+                collect_and_queue_triggers(state);
+                Ok(())
+            } else if state.engine.pending_land_play.is_some() {
                 apply_choose_land_color(state, option_index)
             } else if state.engine.pending_cast.is_some() {
                 apply_pending_cast_effect_option(state, option_index)
@@ -21460,6 +21500,60 @@ pub(crate) fn spell_copy_retarget_candidates(
         targeting_source_for_object(state, copy.source),
         state,
     )
+}
+
+/// The new targets a spell with a single target may be changed to
+/// (Misdirection, 115.7a): every legal target for its one target word other
+/// than its current target and the spell itself, chosen as if by its
+/// controller from its source. Empty when it has no other legal target.
+pub(crate) fn spell_retarget_candidates_v1(
+    state: &GameState,
+    stack_item: StackItemId,
+) -> Vec<Target> {
+    let Some(item) = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == stack_item && item.kind == StackItemKind::Spell)
+    else {
+        return Vec::new();
+    };
+    let Some(spec) = item.v4.target_spec else {
+        return Vec::new();
+    };
+    let [current] = item.targets.as_slice() else {
+        return Vec::new();
+    };
+    legal_targets_for_controller_from_source(
+        spec,
+        &[],
+        item.controller,
+        targeting_source_for_object(state, item.source),
+        state,
+    )
+    .into_iter()
+    .filter(|target| target != current && *target != Target::Object(item.source))
+    .collect()
+}
+
+/// Changes the one target of a spell on the stack to `target`, capturing
+/// its new incarnation contract and logging the new targeting.
+pub(crate) fn retarget_spell_v1(
+    state: &mut GameState,
+    stack_item: StackItemId,
+    target: Target,
+) -> Result<(), String> {
+    if !spell_retarget_candidates_v1(state, stack_item).contains(&target) {
+        return Err(format!("{target:?} is not a legal new target"));
+    }
+    let contract = StackTargetContractV4::capture(state, target);
+    let item = state
+        .stack
+        .iter_mut()
+        .find(|item| item.v4.stack_item_id == stack_item)
+        .ok_or("the retargeted spell left the stack")?;
+    item.targets = vec![target];
+    item.v4.target_contracts = vec![contract];
+    log_final_targeting_events(state, stack_item)
 }
 
 /// The spell copy's current targets.
@@ -22951,9 +23045,13 @@ fn finalize_owned_cast(
     let mandatory_payment_input = mandatory_cast_cost_v1::record_input(state, &pending);
     #[cfg(feature = "eternal-fixtures")]
     let delve_exiled = payment.delve_exiled().to_vec();
+    #[cfg(feature = "eternal-fixtures")]
+    let mana_taps = payment.mana_taps().to_vec();
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::note_delve_exile(state, pending.spell, &delve_exiled);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::note_spell_payment(state, pending.spell, &mana_taps);
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());

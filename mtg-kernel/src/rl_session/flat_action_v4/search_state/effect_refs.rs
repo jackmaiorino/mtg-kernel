@@ -328,6 +328,9 @@ impl Scan<'_> {
             DiscardDraw { choice, selected } => {
                 self.bs(&choice.hand) || self.bs(selected) || self.fs(&choice.remaining)
             }
+            EternalSelectionV1 { choice, .. } => {
+                self.bs(&choice.referenced_bindings()) || self.fs(&choice.remaining)
+            }
             ExileBatchSelect { choice, .. } | ExileBatchResume { choice } => {
                 self.fs(&choice.remaining)
                     || self.bs(&choice.cast)
@@ -570,6 +573,9 @@ impl Scan<'_> {
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
             DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),
             DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
+            EternalV1 { choice } => {
+                self.bs(&choice.referenced_bindings()) || self.fs(&choice.remaining)
+            }
             ExileBatch { choice } => {
                 self.fs(&choice.remaining)
                     || self.bs(&choice.cast)

@@ -1846,6 +1846,10 @@ pub enum ManaSpendRestrictionDef {
     LegendarySpell,
     Unrestricted,
     CreatureSpellOrCreatureAbility,
+    /// "Spend this mana only to cast a creature spell of the chosen type"
+    /// (Cavern of Souls): the creature type chosen as the source entered.
+    /// Appended for the eternal catalog.
+    CreatureSpellOfChosenTypeV1,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a

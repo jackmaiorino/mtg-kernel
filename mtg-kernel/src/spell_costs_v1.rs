@@ -153,6 +153,9 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) convoke: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
     pub(super) replicate: Option<Cost>,
+    /// The spell's sorted creature subtype ids, for mana restricted to a
+    /// chosen creature type (Cavern of Souls).
+    pub(super) spell_subtype_ids: Vec<u16>,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -377,6 +380,7 @@ impl SelectedSpellManaCostsV1 {
                 reserved,
                 additional_life,
                 self.legendary_spell,
+                &self.spell_subtype_ids,
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -452,6 +456,7 @@ pub(super) fn selected_spell_mana_costs_v1(
         delve: false,
         convoke: false,
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
+        spell_subtype_ids: spell_subtype_ids(definition),
     };
     match method {
         CastMethodV4::Normal => {
@@ -519,6 +524,27 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.components(additional);
     }
     Some(selected)
+}
+
+/// The sorted subtype ids a spell of `definition` has, every creature type
+/// for a changeling.
+fn spell_subtype_ids(definition: &card_def::CardDef) -> Vec<u16> {
+    let mut ids = definition
+        .subtypes
+        .iter()
+        .map(|subtype| subtype.stable_id())
+        .collect::<Vec<_>>();
+    if definition.changeling {
+        ids.extend(
+            card_def::Subtype::CREATURE_TYPES
+                .iter()
+                .filter(|subtype| subtype.is_creature_type())
+                .map(|subtype| subtype.stable_id()),
+        );
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 // Keep selected form, payment and source inputs explicit at this shared quote boundary.
@@ -884,6 +910,12 @@ impl PreparedSpellPaymentV1 {
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn delve_exiled(&self) -> &[ObjectId] {
         &self.mana.delve_exiled
+    }
+
+    /// The mana sources this payment taps and the color each adds.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn mana_taps(&self) -> &[(ObjectId, crate::mana::ManaColor)] {
+        &self.mana.mana.taps
     }
 
     fn commit_optional(&self, state: &mut GameState) {

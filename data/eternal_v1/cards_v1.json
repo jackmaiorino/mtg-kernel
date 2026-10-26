@@ -1368,6 +1368,187 @@
     "cast_from_graveyard",
     "exile_replacement"
    ]
+  },
+  {
+   "name": "Ancient Tomb",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-sneak-and-show",
+    "legacy-aluren",
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability",
+    "self_damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AncientTomb.java"
+  },
+  {
+   "name": "The One Ring",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "indestructible",
+    "etb_trigger",
+    "player_protection",
+    "upkeep_trigger",
+    "counters",
+    "card_draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TheOneRing.java"
+  },
+  {
+   "name": "Chrome Mox",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "imprint",
+    "etb_trigger",
+    "linked_exile",
+    "granted_mana_colors"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ChromeMox.java"
+  },
+  {
+   "name": "Misdirection",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "alt_cost",
+    "exile_from_hand_cost",
+    "change_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/Misdirection.java"
+  },
+  {
+   "name": "Sink into Stupor",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "U"
+   ],
+   "decks": [
+    "legacy-omni-tell"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "modal_double_faced",
+    "bounce",
+    "mana_ability",
+    "land_face"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SinkIntoStupor.java"
+  },
+  {
+   "name": "Cavern of Souls",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "choose_creature_type",
+    "restricted_mana",
+    "cant_be_countered_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CavernOfSouls.java"
   }
  ]
 }

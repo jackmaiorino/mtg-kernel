@@ -177,6 +177,13 @@ pub enum StandardTargetV1 {
     /// "Each of one or two targets": one or two distinct any-targets
     /// (Prismari Charm).
     OneOrTwoAnyTargetsV1,
+    /// "Target instant or sorcery spell" (Flusterstorm).
+    InstantOrSorcerySpellV1,
+    /// "Target spell with a single target" (Misdirection).
+    SpellWithSingleTargetV1,
+    /// "Target spell or nonland permanent an opponent controls" (Sink into
+    /// Stupor).
+    OpponentSpellOrNonlandPermanentV1,
 }
 
 impl StandardTargetV1 {
@@ -199,14 +206,65 @@ impl StandardTargetV1 {
             Self::InstantOrSorceryCardInOwnGraveyard | Self::CardInAGraveyard
         )
     }
+
+    /// Filters whose targets are spells on the stack.
+    fn on_stack(self) -> bool {
+        matches!(
+            self,
+            Self::InstantOrSorcerySpellV1 | Self::SpellWithSingleTargetV1
+        )
+    }
 }
 
 /// The zone a `TargetSpec::StandardV1` target is chosen in.
 pub(crate) fn target_zone(target: StandardTargetV1) -> Zone {
     if target.in_graveyard() {
         Zone::Graveyard
+    } else if target.on_stack() {
+        Zone::Stack
     } else {
         Zone::Battlefield
+    }
+}
+
+/// Whether an object target of `target` may be in `zone`. Sink into
+/// Stupor's filter takes a spell or a permanent.
+pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
+    zone == target_zone(target)
+        || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
+}
+
+/// Whether the stack spell `source` (not the one being announced) matches
+/// a spell filter for `controller`.
+fn stack_spell_matches(
+    target: StandardTargetV1,
+    controller: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> bool {
+    let announcing = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .map(|pending| pending.spell);
+    if Some(source) == announcing {
+        return false;
+    }
+    let Some(item) = state
+        .stack
+        .iter()
+        .find(|item| item.kind == crate::state::StackItemKind::Spell && item.source == source)
+    else {
+        return false;
+    };
+    match target {
+        StandardTargetV1::InstantOrSorcerySpellV1 => {
+            crate::engine::stack_spell_has_type(state, item, CardType::Instant)
+                || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery)
+        }
+        StandardTargetV1::SpellWithSingleTargetV1 => item.targets.len() == 1,
+        StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => item.controller != controller,
+        _ => false,
     }
 }
 
@@ -235,6 +293,30 @@ pub(crate) fn legal_targets(
             .map(Target::Object);
         return players
             .into_iter()
+            .chain(permanents)
+            .filter(|candidate| !prefix.contains(candidate))
+            .collect();
+    }
+    if target.on_stack() || target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 {
+        let spells = state
+            .stack
+            .iter()
+            .filter(|item| item.kind == crate::state::StackItemKind::Spell)
+            .map(|item| item.source)
+            .filter(|&spell| stack_spell_matches(target, controller, spell, state))
+            .filter(|&spell| source.is_none_or(|(id, _)| id != spell))
+            .map(Target::Object);
+        let permanents = (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1)
+            .then(|| {
+                [PlayerId::P0, PlayerId::P1]
+                    .iter()
+                    .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+                    .filter(|&id| target_matches(target, controller, id, state))
+                    .map(Target::Object)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        return spells
             .chain(permanents)
             .filter(|candidate| !prefix.contains(candidate))
             .collect();
@@ -301,7 +383,12 @@ pub(crate) fn target_matches(
             && !live.v4.is_token
             && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery));
     }
-    if live.zone != Zone::Battlefield {
+    if live.zone == Zone::Stack {
+        return (target.on_stack()
+            || target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1)
+            && stack_spell_matches(target, controller, object, state);
+    }
+    if live.zone != Zone::Battlefield || target.on_stack() {
         return false;
     }
     let has = |card_type| crate::engine::object_has_type(state, object, card_type);
@@ -343,6 +430,12 @@ pub(crate) fn target_matches(
                     .contains(&crate::card_def::Supertype::Legendary)
         }
         StandardTargetV1::InstantOrSorceryCardInOwnGraveyard => false,
+        StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => {
+            live.controller != controller && !has(CardType::Land)
+        }
+        StandardTargetV1::InstantOrSorcerySpellV1 | StandardTargetV1::SpellWithSingleTargetV1 => {
+            false
+        }
     }
 }
 
@@ -576,7 +669,7 @@ impl StandardOpV1 {
                 | Self::MayBecomeEverflame
                 | Self::ChooseTwoManaInAnyCombination
                 | Self::CopySpellMayChooseNewTargets { .. }
-        )
+        ) || matches!(self, Self::EternalV1(op) if op.contains_player_choice())
     }
 
     /// The exact object incarnations this leaf is bound to.
