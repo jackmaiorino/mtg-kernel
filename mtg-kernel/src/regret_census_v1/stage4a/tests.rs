@@ -58,7 +58,10 @@ fn exact_cost_defaults_cover_only_the_fixed_work_play_modes() {
     // Setting up a profile mode leaves both memo defaults off (no test sets
     // them for a play mode, which would make them process-wide).
     exact_cost_defaults_v1("s4a-search-profile");
-    assert_eq!(crate::native_flat_tensorizer_v2::default_digest_memo_mib_v1(), 0);
+    assert_eq!(
+        crate::native_flat_tensorizer_v2::default_digest_memo_mib_v1(),
+        0
+    );
     assert!(!super::arms::key_memo_default_on());
 }
 

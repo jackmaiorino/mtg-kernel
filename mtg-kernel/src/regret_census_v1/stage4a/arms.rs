@@ -2043,7 +2043,10 @@ mod key_memo_use_tests {
         assert_eq!(key_memo_use_from(None, true), KeyMemoUse::Quiet);
         assert_eq!(key_memo_use_from(None, false), KeyMemoUse::Off);
         for default_on in [false, true] {
-            assert_eq!(key_memo_use_from(Some("1"), default_on), KeyMemoUse::Reported);
+            assert_eq!(
+                key_memo_use_from(Some("1"), default_on),
+                KeyMemoUse::Reported
+            );
             assert_eq!(key_memo_use_from(Some("0"), default_on), KeyMemoUse::Off);
             assert!(
                 std::panic::catch_unwind(|| key_memo_use_from(Some("yes"), default_on)).is_err()
@@ -2055,14 +2058,23 @@ mod key_memo_use_tests {
     /// `S4A_KEY_MEMO=1` still applies.
     #[test]
     fn cpu_limited_searches_keep_the_default_key_memo_off() {
-        assert_eq!(key_memo_for_search(KeyMemoUse::Quiet, true), KeyMemoUse::Off);
-        assert_eq!(key_memo_for_search(KeyMemoUse::Quiet, false), KeyMemoUse::Quiet);
+        assert_eq!(
+            key_memo_for_search(KeyMemoUse::Quiet, true),
+            KeyMemoUse::Off
+        );
+        assert_eq!(
+            key_memo_for_search(KeyMemoUse::Quiet, false),
+            KeyMemoUse::Quiet
+        );
         for cpu_limited in [false, true] {
             assert_eq!(
                 key_memo_for_search(KeyMemoUse::Reported, cpu_limited),
                 KeyMemoUse::Reported
             );
-            assert_eq!(key_memo_for_search(KeyMemoUse::Off, cpu_limited), KeyMemoUse::Off);
+            assert_eq!(
+                key_memo_for_search(KeyMemoUse::Off, cpu_limited),
+                KeyMemoUse::Off
+            );
         }
     }
 }

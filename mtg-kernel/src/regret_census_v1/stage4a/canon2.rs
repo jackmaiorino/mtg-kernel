@@ -797,7 +797,7 @@ pub(crate) struct KeyMemo {
     /// prepared lookup would find, without building or preparing the view.
     /// Each value keeps the raw frame text (`raw_frame_text`), and a hit
     /// compares it in full: equal digests alone never select an entry.
-    raw_index: HashMap<(u32, [u8; 32]), (u32, Box<[u8]>)>,
+    raw_index: RawIndex,
     /// Estimated bytes of `raw_index`, its texts included, against its own
     /// budget (`max_bytes / RAW_INDEX_SHARE`), so step storage and every
     /// recorded memo counter stay exactly as without it.
@@ -819,6 +819,9 @@ struct MemoEntry {
     delta: KeyStats,
     children: HashMap<u32, u32>,
 }
+
+/// The raw index: (memo node, raw digest) to (entry, raw frame text).
+type RawIndex = HashMap<(u32, [u8; 32]), (u32, Box<[u8]>)>;
 
 /// Estimated bytes of one `raw_index` entry besides its text.
 const RAW_INDEX_ENTRY_BYTES: usize = 96;
@@ -953,7 +956,11 @@ fn frame_text_matches(text: &FrameText, obs: &Value, menu: &[Value]) -> bool {
         serde_json::to_vec(value).is_ok_and(|bytes| bytes == stored)
     }
     text.menu.len() == menu.len()
-        && text.menu.iter().zip(menu).all(|(stored, m)| same(stored, m))
+        && text
+            .menu
+            .iter()
+            .zip(menu)
+            .all(|(stored, m)| same(stored, m))
         && same(&text.obs, obs)
 }
 
