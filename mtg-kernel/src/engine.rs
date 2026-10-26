@@ -21909,14 +21909,6 @@ pub(crate) fn create_storm_spell_copies(
     Ok(())
 }
 
-/// The frozen copy count of a Storm trigger's cast binding.
-pub(crate) fn storm_copy_count_v1(
-    state: &GameState,
-    binding: StormCopyBindingV1,
-) -> Result<u16, String> {
-    storm_copy_count_from_binding(state, binding)
-}
-
 /// Storm copies of a targeted spell (Flusterstorm): each copy keeps the
 /// original's targets and target contracts as it was cast. Returns the
 /// copies' stack ids in creation order. Copies are not cast.
