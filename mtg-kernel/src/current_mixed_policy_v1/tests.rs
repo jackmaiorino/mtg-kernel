@@ -1716,6 +1716,55 @@ mod paid {
     }
 
     #[test]
+    fn voyage_changed_instruction_order_surveil_player_target_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, ObjectRef, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Uncharted Voyage").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Sequence(vec![
+                            EffectOp::SurveilOne {
+                                player: PlayerRef::Controller,
+                            },
+                            EffectOp::PutObjectInOwnersLibraryTopOrBottom {
+                                object: ObjectRef::Target(0),
+                            },
+                        ]))
+                    }
+                }
+                1 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::Sequence(vec![
+                            EffectOp::PutObjectInOwnersLibraryTopOrBottom {
+                                object: ObjectRef::Target(0),
+                            },
+                            EffectOp::SurveilOne {
+                                player: PlayerRef::Opponent,
+                            },
+                        ]))
+                    }
+                }
+                2 => d.target_spec = TargetSpec::OpponentControlledCreature,
+                3 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Sorcery],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Voyage changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn paired_return_changed_controller_relation_program_cost_or_timing_refuses() {
         use crate::{
             card_def::{CardType, TargetSpec},

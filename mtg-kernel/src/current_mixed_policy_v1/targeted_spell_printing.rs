@@ -29,6 +29,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Stroke of Midnight"
             | "Condemn"
             | "Run Away Together"
+            | "Uncharted Voyage"
     )
 }
 fn pump(power: i32, toughness: i32) -> EffectOp {
@@ -141,6 +142,41 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 ],
             )
         }
+        "Uncharted Voyage" => (
+            ManaColor::U,
+            3,
+            &[Pip::Colored(ManaColor::U)][..],
+            CardType::Instant,
+            TargetSpec::Creature,
+            json!({"type":"Creature","either_controller":true}),
+            EffectOp::Sequence(vec![
+                EffectOp::PutObjectInOwnersLibraryTopOrBottom {
+                    object: ObjectRef::Target(0),
+                },
+                EffectOp::SurveilOne {
+                    player: PlayerRef::Controller,
+                },
+            ]),
+            vec![
+                json!({"operation":"PutCreatureInOwnersLibraryTopOrBottom","target_slot":0,
+                    "requires_original_battlefield_incarnation":true,
+                    "chooser":"TargetsOwner","destination":"TargetsOwnersLibrary",
+                    "owner_is_not_replaced_by_current_controller_or_spell_controller":true,
+                    "native_options":[{"index":0,"placement":"Top"},{"index":1,"placement":"Bottom"}],
+                    "choice_mandatory":true,"placement_public":true,"does_not_shuffle":true,
+                    "normal_zone_replacements_apply":true}),
+                json!({"operation":"Surveil","recipient":"CapturedSpellController","count":1,
+                    "begins_only_after_owners_placement_choice_and_move_finish":true,
+                    "look_at_current_library_top_after_prior_instruction":true,
+                    "may_look_at_the_returned_creature_if_it_is_now_casters_top_card":true,
+                    "look_and_selection_private_to_caster_until_zone_move":true,
+                    "choices":["KeepOnTop","PutInOwnGraveyard"],
+                    "keep_does_not_reorder_remaining_library":true,
+                    "empty_library_skips_choice_without_drawing_or_losing":true,
+                    "normal_graveyard_move_replacements_apply":true,
+                    "surveil_does_not_require_unreplaced_library_destination":true}),
+            ],
+        ),
         "Condemn" => (
             ManaColor::W,
             0,
