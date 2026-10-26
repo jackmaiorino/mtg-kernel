@@ -116,7 +116,7 @@ fn live(state: &GameState, binding: EffectObjectBinding) -> bool {
 
 /// Whether `source` is being cast, or announced, from its owner's graveyard
 /// under a resolving instruction that pays its costs (Bilbo).
-fn graveyard_resolution_cast(state: &GameState, source: ObjectId) -> bool {
+pub(super) fn graveyard_resolution_cast(state: &GameState, source: ObjectId) -> bool {
     let Some(object) = state.objects.try_get(source) else {
         return false;
     };

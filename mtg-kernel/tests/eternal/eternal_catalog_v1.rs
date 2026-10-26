@@ -288,6 +288,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // Each deck plays the next one, so every deck takes both seats, once
     // with ranked actions and once with seeded random actions.
     let mut random_activations = 0;
+    // Every deck casts a spell in its two ranked games (one per seat); a
+    // single shuffle can leave one seat without a castable spell.
+    let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
     for index in 0..decks.len() {
         let (first, second) = (&decks[index], &decks[(index + 1) % decks.len()]);
         let pair = [first.mainboard.clone(), second.mainboard.clone()];
@@ -301,13 +304,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
                 first.archetype, second.archetype
             );
             if let Policy::Ranked = policy {
-                assert!(
-                    game.casts_by_seat.iter().all(|casts| *casts > 0),
-                    "{} / {}: {:?}",
-                    first.archetype,
-                    second.archetype,
-                    game.action_counts
-                );
+                *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
+                *ranked_casts.entry(second.archetype.as_str()).or_default() +=
+                    game.casts_by_seat[1];
             } else {
                 random_activations += game.action_counts.get("activate_ability").unwrap_or(&0);
             }
@@ -321,6 +320,10 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
             );
         }
     }
+    assert!(
+        ranked_casts.values().all(|casts| *casts > 0),
+        "{ranked_casts:?}"
+    );
     assert!(
         random_activations > 0,
         "random games activated no abilities"

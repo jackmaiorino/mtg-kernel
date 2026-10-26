@@ -7976,7 +7976,10 @@ fn viable_pending_spell_forms(
                 .spell_cast_origin
                 .is_some_and(|origin| {
                     matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })
-                }))
+                })
+            // Bilbo casts an Adventure's instant or sorcery from the graveyard.
+            || (cfg!(feature = "eternal-fixtures")
+                && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell)))
         .then_some((CastMethodV4::Omen, adventure.types))
     } else {
         supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))

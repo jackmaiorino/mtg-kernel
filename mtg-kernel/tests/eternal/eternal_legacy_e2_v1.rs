@@ -1691,6 +1691,19 @@ fn bilbo_casts_an_adventure_but_not_a_creature() {
         &mut state,
         Action::ChooseEffectTarget(Target::Object(borrower)),
     );
+    let decision = next(&mut state);
+    assert!(
+        matches!(decision, Decision::ChooseTargets { .. }),
+        "{decision:?}; borrower {:?}; pending cast {:?}; stack {:?}; pool {:?}",
+        state.objects.get(borrower).zone,
+        state.engine.pending_cast,
+        state
+            .stack
+            .iter()
+            .map(|item| (item.source, item.kind))
+            .collect::<Vec<_>>(),
+        state.players[0].mana_pool
+    );
     finish_bilbo_cast(&mut state, &[Target::Object(strix)]);
     assert_eq!(state.objects.get(strix).zone, Zone::Hand);
     assert_eq!(state.objects.get(borrower).zone, Zone::Exile);
