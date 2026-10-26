@@ -24,6 +24,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Make Your Move"
             | "Zombify"
             | "Bulk Up"
+            | "Incinerating Blast"
     )
 }
 fn pump(power: i32, toughness: i32) -> EffectOp {
@@ -48,6 +49,9 @@ fn grant_meaning(keyword: Keywords) -> Value {
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     if d.name == "Bulk Up" {
         return bulk_up(id, d);
+    }
+    if d.name == "Incinerating Blast" {
+        return incinerating_blast(id, d);
     }
     let (color, generic, pips, kind, target, filter, program, ordered) = match d.name {
         "Stab" => (
@@ -315,6 +319,82 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "physical_stack_departure":"GraveyardAfterResolutionOrCounter","virtual_spell_copy_ceases":true,
             "other_cast_permissions_require_current_candidate_authority":true}]
     }})))
+}
+
+fn incinerating_blast(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 4,
+        pips: &[Pip::Colored(ManaColor::R)],
+        x_count: 0,
+    };
+    let program = EffectOp::Sequence(vec![
+        EffectOp::DealDamage {
+            target: TargetRef::Target(0),
+            amount: 6,
+        },
+        EffectOp::MayPayCostThen {
+            discard: 1,
+            sacrifice_lands: 0,
+            return_permanent: None,
+            then: Box::new(EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            }),
+            otherwise: None,
+        },
+    ]);
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != 5
+        || d.types != [CardType::Sorcery]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::R]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::Creature
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)() != Some(program)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let optional = json!({"operation":"MayDiscardThenDraw","chooser":"CapturedSpellController",
+        "offer_only_if_entire_one_card_discard_is_payable":true,"may_decline":true,
+        "ordered_costs":[{"operation":"DiscardOwnHandCards","count":1,"any_card_type_including_land":true,
+            "selection_private_to_payer_until_discard":true,"normal_discard_and_zone_replacements_apply":true}],
+        "if_paid":[{"operation":"DrawCards","recipient":"CapturedSpellController","count":1,
+            "drawn_identity_visible_only_to_authorized_viewers":true,"normal_draw_replacements_and_empty_library_rules_apply":true}],
+        "if_declined_or_unpayable":[],"discard_is_resolution_cost_not_cast_cost":true,
+        "damage_prevention_or_target_survival_does_not_skip_optional_instruction":true});
+    let resolution = json!([{"operation":"DealNoncombatDamage","source":"OriginalResolvingSpell","target_slot":0,"amount":6,
+        "normal_source_keywords_replacements_and_prevention_apply":true},optional]);
+    let casts = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
+        "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+        "target_count":1,"target_slot":0,"target_filter":{"zone":"Battlefield","effective_type":"Creature","either_controller":true},
+        "requires_current_target_incarnation":true,"recheck_target_legality_at_resolution":true,
+        "all_targets_illegal_skips_damage_and_optional_discard_draw":true,"ordered_resolution":resolution,
+        "no_response_priority_or_state_based_actions_between_damage_and_finished_optional_cost":true,
+        "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
+        "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","stack_created_copies_do_not_pay_cast_costs":true,
+        "countering_skips_damage_and_optional_discard_draw_without_refunding_mana":true,
+        "normal_triggers_and_state_based_actions_follow_complete_resolution":true,
+        "normal_zone_replacements_apply":true,
+        "other_cast_permissions_require_current_candidate_authority":true}]);
+    Ok(Some(
+        json!({"card_id":id,"damage_optional_discard_draw_printing":{
+            "schema":"printed-creature-damage-optional-discard-draw/v1","cost":cost,"mana_value":5,
+            "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
+            "ordered_cast_roots":casts
+        }}),
+    ))
 }
 
 fn bulk_up(id: u16, d: &CardDef) -> Result<Option<Value>> {

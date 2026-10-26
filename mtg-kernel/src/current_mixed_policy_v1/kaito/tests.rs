@@ -23,6 +23,7 @@ mod exsanguinate;
 mod goblin_surprise;
 mod graveyard_batch_spell;
 mod guarded_heir;
+mod incinerating_blast;
 mod library_search;
 mod lookout;
 mod luminous;

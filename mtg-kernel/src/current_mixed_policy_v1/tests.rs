@@ -1755,6 +1755,57 @@ mod paid {
     }
 
     #[test]
+    fn blast_changed_damage_discard_draw_order_target_cast_cost_and_timing_refuse() {
+        use crate::{
+            card_def::{CardType, CostComponent, TargetSpec},
+            effect::{EffectOp, PlayerRef, TargetRef},
+        };
+        fn program(amount: i32, discard: u8, draw: u32, swap: bool) -> Option<EffectOp> {
+            let damage = EffectOp::DealDamage {
+                target: TargetRef::Target(0),
+                amount,
+            };
+            let cost = EffectOp::MayPayCostThen {
+                discard,
+                sacrifice_lands: 0,
+                return_permanent: None,
+                then: Box::new(EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: draw,
+                }),
+                otherwise: None,
+            };
+            Some(EffectOp::Sequence(if swap {
+                vec![cost, damage]
+            } else {
+                vec![damage, cost]
+            }))
+        }
+        let id = crate::card_def::card_id_by_name("Incinerating Blast").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..8 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.spell_effect = || program(5, 1, 1, false),
+                1 => d.spell_effect = || program(6, 2, 1, false),
+                2 => d.spell_effect = || program(6, 1, 2, false),
+                3 => d.spell_effect = || program(6, 1, 1, true),
+                4 => d.target_spec = TargetSpec::AnyPlayer,
+                5 => d.types = &[CardType::Instant],
+                6 => d.additional_cost = Some(&[CostComponent::DiscardCards(1)]),
+                _ => d.cost = crate::mana::Cost::zero(),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Blast changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};
