@@ -161,6 +161,11 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     // costs, has no facet in the frozen vocabulary.
                     out.atoms.push(Atom::Opaque);
                 }
+                crate::effect::ObjectSelectionActionV1::EnterAsCopyV1 => {
+                    // Entering as a copy of the chosen permanent has no facet
+                    // in the frozen vocabulary.
+                    out.atoms.push(Atom::Opaque);
+                }
                 crate::effect::ObjectSelectionActionV1::TapFiveThenTransformSource => {
                     out.control(ControlF::Conditional);
                     out.effect(
