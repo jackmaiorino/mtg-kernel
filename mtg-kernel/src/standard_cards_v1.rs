@@ -306,16 +306,16 @@ pub(crate) fn legal_targets(
             .filter(|&spell| stack_spell_matches(target, controller, spell, state))
             .filter(|&spell| source.is_none_or(|(id, _)| id != spell))
             .map(Target::Object);
-        let permanents = (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1)
-            .then(|| {
-                [PlayerId::P0, PlayerId::P1]
-                    .iter()
-                    .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
-                    .filter(|&id| target_matches(target, controller, id, state))
-                    .map(Target::Object)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let permanents = if target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 {
+            [PlayerId::P0, PlayerId::P1]
+                .iter()
+                .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+                .filter(|&id| target_matches(target, controller, id, state))
+                .map(Target::Object)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         return spells
             .chain(permanents)
             .filter(|candidate| !prefix.contains(candidate))

@@ -20989,12 +20989,12 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             eval_cond(&EffectCond::TargetInZone(*index, Zone::Stack), ctx, state)
                 && match ctx.targets.get(usize::from(*index)) {
                     Some(Target::Object(object)) => {
-                        !crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
+                        !(crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
                             .spell_cannot_be_countered
-                            && !(cfg!(feature = "eternal-fixtures")
+                            || (cfg!(feature = "eternal-fixtures")
                                 && crate::eternal_cards_v1::e3::spell_cannot_be_countered(
                                     state, *object,
-                                ))
+                                )))
                     }
                     _ => false,
                 }
