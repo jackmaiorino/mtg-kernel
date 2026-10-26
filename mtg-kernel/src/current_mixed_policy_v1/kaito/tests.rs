@@ -36,6 +36,7 @@ mod paladin;
 mod pilfer;
 mod sacrifice;
 mod sailor;
+mod seekers_folly;
 mod shivan;
 mod simple_triggers;
 mod solemn;

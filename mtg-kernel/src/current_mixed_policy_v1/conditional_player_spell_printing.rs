@@ -8,7 +8,10 @@ use crate::{
 use serde_json::{json, Value};
 
 pub(super) fn handles(name: &str) -> bool {
-    matches!(name, "Hidetsugu's Second Rite" | "Exsanguinate" | "Pilfer")
+    matches!(
+        name,
+        "Hidetsugu's Second Rite" | "Exsanguinate" | "Pilfer" | "Seeker's Folly"
+    )
 }
 
 /// Shared CardDef exclusions still run before the caller publishes this value.
@@ -21,6 +24,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     if d.name == "Pilfer" {
         return pilfer(id, d);
+    }
+    if d.name == "Seeker's Folly" {
+        return seekers_folly(id, d);
     }
     let cost = Cost {
         generic: 3,
@@ -87,6 +93,77 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "ordered_cast_roots":cast_roots
         }}),
     ))
+}
+
+fn seekers_folly(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    let cost = Cost {
+        generic: 2,
+        pips: &[Pip::Colored(ManaColor::B)],
+        x_count: 0,
+    };
+    if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || d.cost != cost
+        || d.mana_value != 3
+        || d.types != [CardType::Sorcery]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::B]
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.enters_battlefield_tapped
+        || d.target_spec != TargetSpec::TargetOpponent
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::DiscardCards {
+                player: PlayerRef::Target(0),
+                count: 2,
+            })
+        || !d.mode2.as_ref().is_some_and(|m| {
+            m.target_spec == TargetSpec::None
+                && (m.effect)()
+                    == EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+                        player: PlayerRef::Opponent,
+                        power: -1,
+                        toughness: -1,
+                        keywords: Keywords::NONE,
+                    }
+        })
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(Some(json!({"card_id":id,"seekers_folly_printing":{
+        "schema":"printed-opponent-discard-or-creature-weakening/v1","cost":cost,"mana_value":3,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"OwnMainPhaseEmptyStackWithPriority",
+            "mode_selection":{"chooser":"CastingPlayer","choose_exactly":1,"native_indices":[0,1],"before_targeting_and_final_payment":true,
+                "selected_mode_bound_to_original_pending_cast_and_stack_item":true,"empty_hand_or_creature_set_does_not_remove_mode":true},
+            "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+            "ordered_modes":[{"native_index":0,"target_count":1,"target_slot":0,"target_kind":"OpponentPlayer",
+                "caster_is_not_legal_target":true,"empty_hand_is_legal_target":true,"recheck_original_player_target_legality_at_resolution":true,
+                "all_targets_illegal_skips_entire_resolution":true,
+                "ordered_resolution":[{"operation":"DiscardCards","player":"OriginalTargetPlayer","requested_count":2,
+                    "clamp_to_available_hand":true,"chooser":"DiscardingPlayer","choice_is_private_to_chooser":true,
+                    "all_card_types_are_eligible":true,"casting_player_does_not_choose_or_see_unrevealed_hand":true,
+                    "discard_selected_cards_as_one_batch":true,"zero_available_cards_requires_no_choice":true,
+                    "is_cost":false,"normal_discard_and_zone_replacements_apply":true}]},
+                {"native_index":1,"targets":[],"ordered_resolution":[{"operation":"ModifyCurrentOpponentCreatureSet",
+                    "opponents_of":"CapturedSpellController","samples_set_once_at_resolution":true,
+                    "binds_exact_current_battlefield_incarnations":true,"power_delta":-1,"toughness_delta":-1,"keyword_bits":0,
+                    "places_no_counters":true,"later_entries_noncreatures_and_casters_creatures_excluded":true,
+                    "departed_and_reentered_incarnations_do_not_retain_modification":true,
+                    "duration":"UntilCleanupExpirationAfterDiscard","normal_continuous_layers_and_control_changes_apply":true}]}],
+            "no_priority_during_selected_mode":true,"normal_triggers_and_state_based_actions_follow_resolution":true,
+            "countering_skips_selected_mode":true,"countering_does_not_refund_cost":true,
+            "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard","virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+            "copy_uses_original_native_bound_mode":true,"other_cast_permissions_require_current_candidate_authority":true}]
+    }})))
 }
 
 fn pilfer(id: u16, d: &CardDef) -> Result<Option<Value>> {

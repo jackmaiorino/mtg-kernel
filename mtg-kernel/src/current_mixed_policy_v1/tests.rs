@@ -1669,6 +1669,50 @@ mod paid {
     }
 
     #[test]
+    fn folly_changed_discard_recipient_count_mode_target_weakening_and_timing_refuse() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, PlayerRef},
+        };
+        let id = crate::card_def::card_id_by_name("Seeker's Folly").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.mode2 = None,
+                1 => d.target_spec = TargetSpec::AnyPlayer,
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::DiscardCards {
+                            player: PlayerRef::Target(0),
+                            count: 1,
+                        })
+                    }
+                }
+                3 => d.mode2.as_mut().unwrap().target_spec = TargetSpec::AnyPlayer,
+                4 => {
+                    d.mode2.as_mut().unwrap().effect =
+                        || EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+                            player: PlayerRef::Controller,
+                            power: -1,
+                            toughness: -1,
+                            keywords: crate::card_def::Keywords::NONE,
+                        }
+                }
+                5 => d.types = &[CardType::Instant],
+                _ => d.cost = crate::mana::Cost::zero(),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Folly changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn rite_token_preserves_object_name_and_rejects_foreign_characteristics_and_rules() {
         use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
         use crate::effect::{EffectOp, PlayerRef};
