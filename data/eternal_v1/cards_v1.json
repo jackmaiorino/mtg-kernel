@@ -2078,6 +2078,134 @@
     "flash_grant"
    ],
    "java_file": "Mage.Sets/src/mage/cards/a/Aluren.java"
+  },
+  {
+   "name": "Emrakul, the Aeons Torn",
+   "engine_capability": "full",
+   "mana_cost": "{15}",
+   "mana_value": 15,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Eldrazi"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 15,
+   "toughness": 15,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show",
+    "legacy-omni-tell",
+    "legacy-creative-technique",
+    "legacy-green-cloudpost"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "cant_be_countered",
+    "cast_trigger",
+    "extra_turn",
+    "flying",
+    "protection",
+    "annihilator",
+    "graveyard_trigger",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EmrakulTheAeonsTorn.java"
+  },
+  {
+   "name": "Atraxa, Grand Unifier",
+   "engine_capability": "full",
+   "mana_cost": "{3}{G}{W}{U}{B}",
+   "mana_value": 7,
+   "colors": [
+    "W",
+    "U",
+    "B",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Angel"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 7,
+   "toughness": 7,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show",
+    "legacy-aluren",
+    "legacy-rakdos-reanimator",
+    "legacy-omni-tell",
+    "legacy-elves",
+    "legacy-reanimator",
+    "legacy-cradle-control",
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "vigilance",
+    "deathtouch",
+    "lifelink",
+    "etb_trigger",
+    "reveal",
+    "card_type_selection",
+    "library_bottom_random"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AtraxaGrandUnifier.java"
+  },
+  {
+   "name": "Raph & Mikey, Troublemakers",
+   "engine_capability": "full",
+   "mana_cost": "{5}{R/G}{R/G}",
+   "mana_value": 7,
+   "colors": [
+    "R",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Mutant",
+    "Ninja",
+    "Turtle"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 7,
+   "toughness": 7,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show",
+    "legacy-rakdos-reanimator"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "trample",
+    "haste",
+    "attack_trigger",
+    "reveal_until",
+    "put_onto_battlefield_attacking",
+    "library_bottom_random"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RaphAndMikeyTroublemakers.java"
   }
  ]
 }

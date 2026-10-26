@@ -12,7 +12,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E3_CARDS: [&str; 23] = [
+const E3_CARDS: [&str; 26] = [
     "Ancient Tomb",
     "The One Ring",
     "Chrome Mox",
@@ -36,6 +36,9 @@ const E3_CARDS: [&str; 23] = [
     "Sneak Attack",
     "Omniscience",
     "Aluren",
+    "Emrakul, the Aeons Torn",
+    "Atraxa, Grand Unifier",
+    "Raph & Mikey, Troublemakers",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1268,4 +1271,194 @@ fn aluren_lets_any_player_cast_small_creatures_free_at_instant_speed() {
     }
     assert_eq!(state.objects.get(oracle).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(oracle).controller, P1);
+}
+
+// ---- Emrakul, the Aeons Torn --------------------------------------------------------------------
+
+const EMRAKUL: &str = "Emrakul, the Aeons Torn";
+
+#[test]
+fn emrakul_cast_takes_an_extra_turn_and_cannot_be_countered() {
+    assert!(def(EMRAKUL).spell_cannot_be_countered);
+    let mut state = islands();
+    let emrakul = put(&mut state, P0, EMRAKUL, Zone::Hand);
+    pool(&mut state, P0, &[], 15);
+    cast(&mut state, emrakul, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(emrakul).zone, Zone::Battlefield);
+    assert!(
+        state.extra_turn_v1.is_some(),
+        "the cast trigger scheduled a turn"
+    );
+    let turn = state.turn;
+    pass_until(&mut state, |state| {
+        state
+            .extra_turn_v1
+            .as_ref()
+            .is_some_and(|extra| extra.current_extra.is_some())
+    });
+    assert_eq!(state.active_player, P0, "P0 takes the extra turn");
+    assert_eq!(state.turn, turn, "an extra turn keeps the round");
+}
+
+#[test]
+fn emrakul_has_protection_from_colored_spells() {
+    let mut state = islands();
+    let emrakul = put(&mut state, P0, EMRAKUL, Zone::Battlefield);
+    let other = put(&mut state, P0, "Street Wraith", Zone::Battlefield);
+    state.priority_player = P1;
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    act(&mut state, Action::CastSpell(bolt));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(!legal_targets.contains(&Target::Object(emrakul)));
+            assert!(legal_targets.contains(&Target::Object(other)));
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+    assert!(engine::damage_is_prevented_by_protection(
+        &state,
+        bolt,
+        Target::Object(emrakul)
+    ));
+    assert!(!engine::damage_is_prevented_by_protection(
+        &state,
+        bolt,
+        Target::Object(other)
+    ));
+}
+
+#[test]
+fn emrakul_annihilator_makes_the_defender_sacrifice_six_permanents() {
+    let mut state = islands();
+    let emrakul = put(&mut state, P0, EMRAKUL, Zone::Battlefield);
+    let lands: Vec<ObjectId> = (0..7)
+        .map(|_| put(&mut state, P1, "Island", Zone::Battlefield))
+        .collect();
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![emrakul]));
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            min_targets,
+            max_targets,
+            legal_targets,
+            ..
+        }) => {
+            assert_eq!(player, P1, "the defending player chooses");
+            assert_eq!((min_targets, max_targets), (6, 6));
+            assert_eq!(legal_targets.len(), 7);
+            for land in &lands[..6] {
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(*land)),
+                );
+            }
+        }
+        other => panic!("expected the sacrifice choice, got {other:?}"),
+    }
+    settled(&mut state);
+    for land in &lands[..6] {
+        assert_eq!(state.objects.get(*land).zone, Zone::Graveyard);
+    }
+    assert_eq!(state.objects.get(lands[6]).zone, Zone::Battlefield);
+}
+
+#[test]
+fn emrakul_put_into_a_graveyard_from_anywhere_shuffles_the_graveyard_in() {
+    let mut state = islands();
+    let emrakul = put(&mut state, P0, EMRAKUL, Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(emrakul, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert!(state.players[0].graveyard.is_empty());
+    assert_eq!(state.objects.get(emrakul).zone, Zone::Library);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Library);
+    assert_eq!(state.players[0].library.len(), 22);
+}
+
+// ---- Atraxa, Grand Unifier ----------------------------------------------------------------------
+
+#[test]
+fn atraxa_takes_one_revealed_card_per_card_type() {
+    let mut state = game(&[
+        "Island",
+        "Lightning Bolt",
+        "Ponder",
+        "Island",
+        "Chrome Mox",
+        "Street Wraith",
+        "Brainstorm",
+        "Sneak Attack",
+        "Jace, Wielder of Mysteries",
+        "Island",
+        "Doomsday",
+    ]);
+    let library = state.players[0].library.clone();
+    let atraxa = put(&mut state, P0, "Atraxa, Grand Unifier", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(atraxa, Zone::Battlefield),
+    );
+    // Island (land), Lightning Bolt (instant), Ponder (sorcery), then
+    // finish: the second Island and Brainstorm are no longer offered.
+    for pick in [library[0], library[1], library[2]] {
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+                assert!(legal_targets.contains(&Target::Object(pick)));
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(pick)));
+            }
+            other => panic!("expected a pick, got {other:?}"),
+        }
+    }
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            for taken_type in [library[3], library[6], library[9]] {
+                assert!(!legal_targets.contains(&Target::Object(taken_type)));
+            }
+            assert!(legal_targets.contains(&Target::Object(library[4])));
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        other => panic!("expected the next pick, got {other:?}"),
+    }
+    settled(&mut state);
+    for card in [library[0], library[1], library[2]] {
+        assert_eq!(state.objects.get(card).zone, Zone::Hand);
+    }
+    let after = &state.players[0].library;
+    assert_eq!(after.len(), 8);
+    assert_eq!(after[0], library[10], "the unrevealed card is now on top");
+}
+
+// ---- Raph & Mikey, Troublemakers ----------------------------------------------------------------
+
+#[test]
+fn raph_and_mikey_put_the_first_revealed_creature_in_attacking() {
+    let mut state = game(&["Island", "Ponder", "Street Wraith", "Brainstorm"]);
+    let library = state.players[0].library.clone();
+    let turtles = put(
+        &mut state,
+        P0,
+        "Raph & Mikey, Troublemakers",
+        Zone::Battlefield,
+    );
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![turtles]));
+    settled(&mut state);
+    let wraith = library[2];
+    assert_eq!(state.objects.get(wraith).zone, Zone::Battlefield);
+    assert!(state.objects.get(wraith).tapped);
+    assert!(state.engine.combat.attackers.contains(&wraith));
+    let after = &state.players[0].library;
+    assert_eq!(after.len(), 3);
+    assert_eq!(after[0], library[3]);
+    let mut bottom = after[1..].to_vec();
+    bottom.sort();
+    let mut expected = vec![library[0], library[1]];
+    expected.sort();
+    assert_eq!(bottom, expected);
 }

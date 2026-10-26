@@ -4167,7 +4167,10 @@ fn legal_targets_for_controller_from_source_unframed(
             object,
             controller,
             source.map(|source| source.object),
-        ) {
+        ) || source.is_some_and(|source| {
+            source.zone == Zone::Stack
+                && crate::eternal_cards_v1::e3::protected_from_spell(state, object, source.object)
+        }) {
             return false;
         }
         let live = state.objects.get(object);
@@ -14580,6 +14583,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
+    crate::extra_turn_v1::record_trigger_publication(state, &finalized);
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -16835,6 +16839,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     }
 
+    if item.kind == StackItemKind::TriggeredAbility
+        && item.inline_effect == Some(crate::extra_turn_v1::recipe())
+    {
+        // Emrakul, the Aeons Torn's cast trigger owns its extra turn the way
+        // a resolving Temporal Manipulation does.
+        let scheduled = temporal_owner
+            .is_some_and(|owner| crate::extra_turn_v1::schedule_owned(state, owner).is_ok());
+        if !scheduled {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(effect) = item.inline_effect.clone() {
         let effect_history_start = state.engine.event_history.len();
         if item

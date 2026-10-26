@@ -409,6 +409,14 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Moonshadow" => &["Keywords::MENACE"],
         "Orcish Bowmasters" => &["Keywords::FLASH"],
         "Tamiyo, Inquisitive Student" => &["Keywords::FLYING"],
+        "Emrakul, the Aeons Torn" => &["Keywords::FLYING"],
+        "Atraxa, Grand Unifier" => &[
+            "Keywords::FLYING",
+            "Keywords::VIGILANCE",
+            "Keywords::DEATHTOUCH",
+            "Keywords::LIFELINK",
+        ],
+        "Raph & Mikey, Troublemakers" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
         _ => &[],
     }
 }
@@ -467,6 +475,15 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "static:controller_draw_from_empty_library_wins_instead;minus8:win_if_library_empty_after_draw_seven"
         }
         "Lion's Eye Diamond" => "mana:discard_hand_sacrifice_self:instant_timing_only",
+        "Emrakul, the Aeons Torn" => {
+            "cast:controller_extra_turn_after_this_one;static:protection_from_colored_spells;attacks:annihilator:6;put_into_graveyard_from_anywhere:owner_shuffles_graveyard_into_library"
+        }
+        "Atraxa, Grand Unifier" => {
+            "etb:reveal_top10:each_card_type_may_put_one_of_that_type_into_hand:rest_bottom_random"
+        }
+        "Raph & Mikey, Troublemakers" => {
+            "attacks:reveal_until_creature:put_tapped_attacking:rest_bottom_random"
+        }
         "Show and Tell" => "spell:each_player_apnap_may_put_artifact_creature_enchantment_or_land_from_hand:no_aura",
         "Sneak Attack" => "activated_put_creature_from_hand:gains_haste:sacrifice_next_end_step",
         "Omniscience" => "static:controller_may_cast_hand_spells_without_paying_mana_cost",

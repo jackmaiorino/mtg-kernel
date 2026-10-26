@@ -114,6 +114,9 @@ pub enum EternalTriggerV1 {
     /// "When this enters, if you cast it" (The One Ring): it entered from
     /// the stack as a resolving permanent spell.
     EntersAfterCastV1,
+    /// "When this is put into a graveyard from anywhere" (Emrakul, the
+    /// Aeons Torn). Functions from the graveyard.
+    PutIntoGraveyardFromAnywhereV1,
 }
 
 /// Effect leaves owned by this module, carried as
@@ -209,6 +212,13 @@ pub enum EternalOpV1 {
     ShowAndTellV1,
     /// Sneak Attack's ability. A choice.
     SneakAttackV1,
+    /// "Defending player sacrifices `count` permanents" (annihilator). A
+    /// choice.
+    AnnihilatorV1 { count: u8 },
+    /// Atraxa, Grand Unifier's entry reveal. A choice.
+    AtraxaRevealV1,
+    /// Raph & Mikey, Troublemakers' attack trigger.
+    RevealUntilCreatureAttackingV1,
 }
 
 impl EternalOpV1 {
@@ -1009,7 +1019,10 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::ThassasOracleV1
         | EternalOpV1::WinIfLibraryEmptyV1
         | EternalOpV1::ShowAndTellV1
-        | EternalOpV1::SneakAttackV1 => e3::execute(op, ctx, state),
+        | EternalOpV1::SneakAttackV1
+        | EternalOpV1::AnnihilatorV1 { .. }
+        | EternalOpV1::AtraxaRevealV1
+        | EternalOpV1::RevealUntilCreatureAttackingV1 => e3::execute(op, ctx, state),
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
@@ -1470,6 +1483,9 @@ pub(crate) fn trigger_matches(
     source: ObjectId,
     state: &GameState,
 ) -> bool {
+    if condition == EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 {
+        return e3::trigger_matches(condition, events, index, source, state);
+    }
     let Some(name) = definition_name(state, source) else {
         return false;
     };
@@ -1502,7 +1518,7 @@ pub(crate) fn trigger_matches(
                     .iter()
                     .any(|event| permanent_card_to_graveyard(state, event, controller))
         }
-        EternalTriggerV1::EntersAfterCastV1 => {
+        EternalTriggerV1::EntersAfterCastV1 | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 => {
             e3::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::OpponentDrawsExceptFirstInDrawStep => {

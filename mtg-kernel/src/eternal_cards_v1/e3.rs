@@ -204,6 +204,14 @@ pub enum E3ChoiceKindV1 {
     },
     /// Sneak Attack: up to one creature card from the controller's hand.
     SneakAttackV1 { source: AbilitySourceContractV4 },
+    /// Annihilator: the defending player's permanents to sacrifice.
+    AnnihilatorV1,
+    /// Atraxa: the next revealed card to put into the hand, keeping one
+    /// distinct card type per picked card. Finishing ends the choice.
+    AtraxaV1 {
+        revealed: Vec<EffectObjectBinding>,
+        picked: Vec<EffectObjectBinding>,
+    },
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -247,8 +255,10 @@ impl E3ChoiceV1 {
             | E3ChoiceKindV1::DoomsdayV1
             | E3ChoiceKindV1::OracleV1 { .. }
             | E3ChoiceKindV1::ShowAndTellV1 { .. }
-            | E3ChoiceKindV1::SneakAttackV1 { .. } => {
-                crate::rl::TargetSelectionPurposeV4::CardSelection
+            | E3ChoiceKindV1::SneakAttackV1 { .. }
+            | E3ChoiceKindV1::AtraxaV1 { .. } => crate::rl::TargetSelectionPurposeV4::CardSelection,
+            E3ChoiceKindV1::AnnihilatorV1 => {
+                crate::rl::TargetSelectionPurposeV4::PermanentSelection
             }
             E3ChoiceKindV1::RetargetSpellV1 { .. } | E3ChoiceKindV1::RetargetCopyV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::EffectTargets
@@ -261,6 +271,9 @@ impl E3ChoiceV1 {
         let mut out = self.bindings.clone();
         if let E3ChoiceKindV1::ShowAndTellV1 { chosen, .. } = &self.kind {
             out.extend(chosen.iter().copied());
+        }
+        if let E3ChoiceKindV1::AtraxaV1 { revealed, .. } = &self.kind {
+            out.extend(revealed.iter().copied());
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
             out.push(EffectObjectBinding {
@@ -440,6 +453,24 @@ pub(crate) fn finish_selection(
                 sneak_in(state, *source, card.object)?;
             }
             Ok(false)
+        }
+        E3ChoiceKindV1::AnnihilatorV1 => {
+            sacrifice_all(state, choice.player, &bindings);
+            Ok(false)
+        }
+        E3ChoiceKindV1::AtraxaV1 { revealed, picked } => {
+            let mut picked = picked.clone();
+            let done = bindings.is_empty();
+            picked.extend(bindings.first().copied());
+            stage_atraxa(
+                state,
+                continuation,
+                choice.player,
+                revealed.clone(),
+                picked,
+                choice.path.clone(),
+                done,
+            )
         }
     }
 }
@@ -624,6 +655,51 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        EternalOpV1::AnnihilatorV1 { count } => {
+            let defender = continuation.ctx.controller.opponent();
+            let permanents = controlled_permanents(state, defender);
+            if permanents.len() <= usize::from(*count) {
+                sacrifice_all(state, defender, &permanents);
+                return Ok(false);
+            }
+            offer(
+                continuation,
+                E3ChoiceV1 {
+                    kind: E3ChoiceKindV1::AnnihilatorV1,
+                    player: defender,
+                    candidates: permanents
+                        .iter()
+                        .map(|permanent| Target::Object(permanent.object))
+                        .collect(),
+                    bindings: permanents,
+                    min: u16::from(*count),
+                    max: u16::from(*count),
+                    ordered: false,
+                    path,
+                    remaining: continuation.frames.clone(),
+                },
+            );
+            Ok(true)
+        }
+        EternalOpV1::AtraxaRevealV1 => {
+            let player = continuation.ctx.controller;
+            let library = state.players[player.index()].library.clone();
+            let count = library.len().min(10);
+            reveal_top_to_all(state, player, count);
+            let revealed = library[..count]
+                .iter()
+                .map(|&card| bind(state, card))
+                .collect();
+            stage_atraxa(
+                state,
+                continuation,
+                player,
+                revealed,
+                Vec::new(),
+                path,
+                false,
+            )
+        }
         EternalOpV1::ShowAndTellV1 => {
             let first = state.active_player;
             stage_show_and_tell(
@@ -680,6 +756,8 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::ThassasOracleV1
             | EternalOpV1::ShowAndTellV1
             | EternalOpV1::SneakAttackV1
+            | EternalOpV1::AnnihilatorV1 { .. }
+            | EternalOpV1::AtraxaRevealV1
     )
 }
 
@@ -920,15 +998,16 @@ pub(crate) fn player_protected(state: &GameState, player: PlayerId) -> bool {
 }
 
 /// Damage an E3 protection prevents: all damage to a player with
-/// protection from everything.
+/// protection from everything, and damage from colored spells to Emrakul.
 pub(crate) fn damage_prevented_by_protection(
     state: &GameState,
-    _source: ObjectId,
+    source: ObjectId,
     target: Target,
 ) -> bool {
     match target {
         Target::Player(player) => player_protected(state, player),
-        _ => false,
+        Target::Object(object) => protected_from_spell(state, object, source),
+        Target::StackItem(_) => false,
     }
 }
 
@@ -1273,6 +1352,26 @@ const FLUSTERSTORM_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Stack,
     ..trigger(TriggerCondition::CastSelf, storm_trigger)
 }];
+/// Emrakul: "When you cast this spell, take an extra turn after this one",
+/// annihilator 6, and "When Emrakul is put into a graveyard from anywhere,
+/// its owner shuffles their graveyard into their library."
+const EMRAKUL_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    TriggeredAbilityDef {
+        home_zone: Zone::Stack,
+        ..trigger(TriggerCondition::CastSelf, crate::extra_turn_v1::recipe)
+    },
+    trigger(TriggerCondition::Attacks, annihilator_six),
+    TriggeredAbilityDef {
+        home_zone: Zone::Graveyard,
+        ..eternal_trigger(
+            EternalTriggerV1::PutIntoGraveyardFromAnywhereV1,
+            shuffle_graveyard_into_library,
+        )
+    },
+];
+const ATRAXA_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb, atraxa_reveal)];
+const RAPH_AND_MIKEY_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::Attacks, raph_and_mikey_attack)];
 
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
@@ -1280,15 +1379,17 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
         FLUSTERSTORM => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
+        EMRAKUL => &EMRAKUL_TRIGGERS,
+        ATRAXA => &ATRAXA_TRIGGERS,
+        RAPH_AND_MIKEY => &RAPH_AND_MIKEY_TRIGGERS,
         _ => &[],
     }
 }
 
 pub(crate) fn trigger_target_spec(name: &str, _effect: &EffectOp) -> Option<TargetSpec> {
     match name {
-        THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | THASSAS_ORACLE => {
-            Some(TargetSpec::None)
-        }
+        THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | THASSAS_ORACLE | EMRAKUL
+        | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -1314,6 +1415,24 @@ pub(crate) fn trigger_matches(
                     ..
                 } if object == source
             ) && state.objects.get(source).spell_copy_origin.is_none()
+        }
+        EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 => {
+            // Emrakul: functions from the graveyard it was just put into.
+            let live = state.objects.get(source);
+            matches!(
+                events[index],
+                CommittedEvent::ZoneChange {
+                    object,
+                    to: Zone::Graveyard,
+                    ..
+                } if object == source
+            ) && live.zone == Zone::Graveyard
+                && state.players[live.owner.index()]
+                    .graveyard
+                    .contains(&source)
+                && !live.v4.is_token
+                && live.spell_copy_origin.is_none()
+                && printed(state, source).name == EMRAKUL
         }
         _ => false,
     }
@@ -1420,6 +1539,11 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 permanents,
             });
         }
+        EternalOpV1::RevealUntilCreatureAttackingV1 => {
+            if reveal_until_creature_attacking(state, ctx.controller).is_err() {
+                halt(state, ctx.source);
+            }
+        }
         EternalOpV1::WinIfLibraryEmptyV1 => {
             if state.players[ctx.controller.index()].library.is_empty() {
                 win_game(state, ctx.controller);
@@ -1431,7 +1555,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::DoomsdayPileV1
         | EternalOpV1::ThassasOracleV1
         | EternalOpV1::ShowAndTellV1
-        | EternalOpV1::SneakAttackV1 => {
+        | EternalOpV1::SneakAttackV1
+        | EternalOpV1::AnnihilatorV1 { .. }
+        | EternalOpV1::AtraxaRevealV1 => {
             // Choice leaves run only inside the resumable interpreter.
             halt(state, ctx.source);
         }
@@ -1969,4 +2095,251 @@ fn sneak_in(
     let binding = bind(state, card);
     crate::standard_cards_v1::register_reflection_delayed_sacrifice(state, binding, source);
     Ok(())
+}
+
+// ---- Emrakul, the Aeons Torn --------------------------------------------------------
+
+pub(crate) const EMRAKUL: &str = "Emrakul, the Aeons Torn";
+
+fn annihilator_six() -> EffectOp {
+    eternal(EternalOpV1::AnnihilatorV1 { count: 6 })
+}
+
+fn shuffle_graveyard_into_library() -> EffectOp {
+    eternal(EternalOpV1::ShuffleGraveyardIntoLibrary)
+}
+
+/// "Protection from spells that are one or more colors": whether `object`
+/// is an Emrakul that the colored spell `source` can't target or damage.
+pub(crate) fn protected_from_spell(state: &GameState, object: ObjectId, source: ObjectId) -> bool {
+    printed_battlefield_source(state, object, EMRAKUL)
+        && state.objects.try_get(source).is_some_and(|live| {
+            live.zone == Zone::Stack
+                && state
+                    .stack
+                    .iter()
+                    .any(|item| item.kind == StackItemKind::Spell && item.source == source)
+        })
+        && crate::engine::object_color_mask(state, source) != 0
+}
+
+/// The permanents `player` controls, bound to their incarnations.
+fn controlled_permanents(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&object| state.objects.get(object).controller == player)
+        .map(|object| bind(state, object))
+        .collect()
+}
+
+/// Sacrifices every still-live permanent in `chosen` that `player`
+/// controls, at once.
+fn sacrifice_all(state: &mut GameState, player: PlayerId, chosen: &[EffectObjectBinding]) {
+    let live = chosen
+        .iter()
+        .copied()
+        .filter(|binding| {
+            binding_live(state, *binding) && state.objects.get(binding.object).controller == player
+        })
+        .collect::<Vec<_>>();
+    for binding in &live {
+        event::log_sacrifice(state, binding.object);
+    }
+    if !live.is_empty() {
+        event::propose_and_commit_batch(
+            state,
+            live.iter()
+                .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Graveyard))
+                .collect(),
+        );
+    }
+}
+
+// ---- Atraxa, Grand Unifier ----------------------------------------------------------
+
+pub(crate) const ATRAXA: &str = "Atraxa, Grand Unifier";
+
+fn atraxa_reveal() -> EffectOp {
+    eternal(EternalOpV1::AtraxaRevealV1)
+}
+
+/// The card types (205.2a) of the printed card `card`.
+fn card_types(state: &GameState, card: ObjectId) -> Vec<CardType> {
+    let mut types = printed(state, card).types.to_vec();
+    types.sort_by_key(|card_type| *card_type as u8);
+    types.dedup();
+    types
+}
+
+/// Whether each of `cards` can stand for a different card type (Atraxa:
+/// "For each card type, you may put a card of that type").
+fn distinct_types_cover(state: &GameState, cards: &[ObjectId]) -> bool {
+    fn assign(index: usize, options: &[Vec<CardType>], used: &mut Vec<CardType>) -> bool {
+        if index == options.len() {
+            return true;
+        }
+        for card_type in &options[index] {
+            if !used.contains(card_type) {
+                used.push(*card_type);
+                if assign(index + 1, options, used) {
+                    return true;
+                }
+                used.pop();
+            }
+        }
+        false
+    }
+    let options = cards
+        .iter()
+        .map(|&card| card_types(state, card))
+        .collect::<Vec<_>>();
+    assign(0, &options, &mut Vec::new())
+}
+
+/// Offers Atraxa's next card, or ends the choice (when `done` or nothing
+/// more can be taken): picked cards go to the hand and the rest of the
+/// revealed cards to the bottom in a random order.
+fn stage_atraxa(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    revealed: Vec<EffectObjectBinding>,
+    picked: Vec<EffectObjectBinding>,
+    path: Vec<u16>,
+    done: bool,
+) -> Result<bool, String> {
+    if revealed
+        .iter()
+        .any(|binding| !binding_live(state, *binding))
+    {
+        return Err("an Atraxa card left the library".to_string());
+    }
+    let chosen = picked
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    let candidates = revealed
+        .iter()
+        .copied()
+        .filter(|binding| {
+            !picked.contains(binding) && {
+                let mut with = chosen.clone();
+                with.push(binding.object);
+                distinct_types_cover(state, &with)
+            }
+        })
+        .collect::<Vec<_>>();
+    if !done && !candidates.is_empty() {
+        offer(
+            continuation,
+            E3ChoiceV1 {
+                kind: E3ChoiceKindV1::AtraxaV1 { revealed, picked },
+                player,
+                candidates: candidates
+                    .iter()
+                    .map(|card| Target::Object(card.object))
+                    .collect(),
+                bindings: candidates,
+                min: 0,
+                max: 1,
+                ordered: false,
+                path,
+                remaining: continuation.frames.clone(),
+            },
+        );
+        return Ok(true);
+    }
+    for card in &chosen {
+        event::propose_and_commit(state, ProposedEvent::zone_change(*card, Zone::Hand));
+    }
+    let rest = revealed
+        .iter()
+        .filter(|binding| !picked.contains(binding))
+        .collect::<Vec<_>>();
+    bottom_in_random_order(
+        state,
+        player,
+        &rest
+            .iter()
+            .map(|binding| ObjectLinkV4 {
+                object: binding.object,
+                zone_change_count: binding.expected_zone_change_count,
+            })
+            .collect::<Vec<_>>(),
+    )?;
+    Ok(false)
+}
+
+/// Puts `cards`, the current top of `player`'s library in order, on the
+/// bottom in a random order.
+fn bottom_in_random_order(
+    state: &mut GameState,
+    player: PlayerId,
+    cards: &[ObjectLinkV4],
+) -> Result<(), String> {
+    if cards.is_empty() {
+        return Ok(());
+    }
+    let objects = cards.iter().map(|card| card.object).collect::<Vec<_>>();
+    state.apply_scry_result(player, cards, &[], &objects)?;
+    state
+        .randomize_library_bottom_v1(player, objects.len())
+        .map_err(|error| error.to_string())
+}
+
+/// Reveals the top `count` cards of `player`'s library to both players.
+fn reveal_top_to_all(state: &mut GameState, player: PlayerId, count: usize) {
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        state.reveal_library_top(observer, player, count);
+    }
+}
+
+// ---- Raph & Mikey, Troublemakers ----------------------------------------------------
+
+pub(crate) const RAPH_AND_MIKEY: &str = "Raph & Mikey, Troublemakers";
+
+fn raph_and_mikey_attack() -> EffectOp {
+    eternal(EternalOpV1::RevealUntilCreatureAttackingV1)
+}
+
+/// "Reveal cards from the top of your library until you reveal a creature
+/// card. Put that card onto the battlefield tapped and attacking and the
+/// rest on the bottom of your library in a random order."
+fn reveal_until_creature_attacking(state: &mut GameState, player: PlayerId) -> Result<(), String> {
+    let library = state.players[player.index()].library.clone();
+    let found = library
+        .iter()
+        .position(|&card| printed(state, card).has_type(CardType::Creature));
+    let revealed = found.map_or(library.len(), |index| index + 1);
+    reveal_top_to_all(state, player, revealed);
+    let rest = library[..found.unwrap_or(library.len())]
+        .iter()
+        .map(|&card| link(state, card))
+        .collect::<Vec<_>>();
+    if let Some(index) = found {
+        let creature = library[index];
+        event::propose_and_commit(
+            state,
+            ProposedEvent::zone_change(creature, Zone::Battlefield),
+        );
+        if state.objects.get(creature).zone == Zone::Battlefield {
+            state.objects.get_mut(creature).tapped = true;
+            let combat = &mut state.engine.combat;
+            if combat.attackers_declared
+                && state.active_player == player
+                && matches!(
+                    state.step,
+                    crate::state::Step::DeclareAttackers
+                        | crate::state::Step::DeclareBlockers
+                        | crate::state::Step::CombatDamage
+                )
+                && !combat.attackers.contains(&creature)
+            {
+                combat.attackers.push(creature);
+            }
+        }
+    }
+    bottom_in_random_order(state, player, &rest)
 }
