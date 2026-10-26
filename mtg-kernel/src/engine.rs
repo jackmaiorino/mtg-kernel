@@ -10986,7 +10986,7 @@ fn collect_and_queue_triggers(state: &mut GameState) {
     if resolution_cast_v1::defer_triggers(state) {
         return;
     }
-    if state
+    let resolving_discard = state
         .engine
         .pending_discard
         .as_ref()
@@ -10997,11 +10997,16 @@ fn collect_and_queue_triggers(state: &mut GameState) {
                     | DiscardResume::FinishSpellResolution { .. }
                     | DiscardResume::FinishEffectContinuation { .. }
             )
-        })
+        });
+    if resolving_discard
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
     {
-        // A terminal discard leaf still belongs to the resolving spell or
-        // ability. Capture earlier draw events now, but wait until the discard
-        // finishes before checking SBAs or placing any captured triggers.
+        // MayPayCostThen's offer, its selected sacrifice cost, and terminal
+        // discard leaves all remain inside a resolving spell or ability.
+        // Capture earlier damage/draw events without an SBA or trigger-placement
+        // window. Decline or complete payment resumes resolution; the ordinary
+        // terminal checkpoint then checks SBAs and places captured triggers.
         let captures = trigger::capture_triggers_without_sba(state);
         state.engine.pending_triggers.extend(captures);
         return;
