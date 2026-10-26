@@ -408,7 +408,8 @@ fn terminal_packed_v1() -> Vec<PinV1> {
         state_v1(),
         |state, digest| {
             let expected = expected_outputs_for_step(state.model_v1(), &forward, step);
-            let builder = NativePolicyPackedForwardBuilderV1::from_model_v1(state.model_v1()).unwrap();
+            let builder =
+                NativePolicyPackedForwardBuilderV1::from_model_v1(state.model_v1()).unwrap();
             let tapes = packed_tapes_for_step(&builder, &forward, step);
             let substeps = packed_substeps_for_step(&forward, step, &expected, &tapes);
             let base = groups_for_step(step, &substeps);
@@ -624,11 +625,13 @@ impl V4FixtureV1 {
 fn teaching_groups_v1<'a>(
     steps: &'a [Vec<NativePolicySubstepV1<'a>>; 2],
 ) -> [NativePolicyPhysicalDecisionV1<'a>; 2] {
-    steps.each_ref().map(|substeps| NativePolicyPhysicalDecisionV1 {
-        substeps,
-        terminal_return: 1,
-        baseline_bits: 0,
-    })
+    steps
+        .each_ref()
+        .map(|substeps| NativePolicyPhysicalDecisionV1 {
+            substeps,
+            terminal_return: 1,
+            baseline_bits: 0,
+        })
 }
 
 /// A runner-fixed state under the no-state-digest contract: the digest
@@ -659,8 +662,47 @@ fn no_state_digest_tensors_v1() -> [NativeFlatDecisionTensorV3; 2] {
     tensors
 }
 
+/// The wide train state's digests before the refactor (design section 5.5):
+/// a new runner-fixed wide state, and an owned snapshot of it with a later
+/// Adam step and nonzero moments. Platform-free: no libm is involved.
+fn wide_state_hash_pins_v1() -> Vec<PinV1> {
+    let model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+        NativePolicyValueModelConfigV1::contract_wide_v1(),
+    )
+    .unwrap();
+    let state = NativePolicyValueTrainStateWideV1::new_wide_v1(model).unwrap();
+    let mut snapshot = state.snapshot_v1().unwrap();
+    snapshot.adam_step = 7;
+    for (index, (first, second)) in snapshot
+        .first_moments
+        .iter_mut()
+        .zip(&mut snapshot.second_moments)
+        .enumerate()
+    {
+        if index == CARD_EMBEDDING || index == SCORER_SECOND_BIAS {
+            continue;
+        }
+        first.values[0] = 0.25 / (1.0 + index as f32);
+        second.values[0] = 0.125 / (1.0 + index as f32);
+    }
+    [
+        state.state_sha256_v1().unwrap(),
+        wide_owned_train_snapshot_state_sha256_v1(&snapshot).unwrap(),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(update, digest)| PinV1 {
+        route: "wide_state_sha256",
+        update,
+        forward_workers: 0,
+        backward_workers: 0,
+        digest: hex_sha256(digest),
+    })
+    .collect()
+}
+
 fn all_pins_v1() -> Vec<PinV1> {
-    let mut pins = Vec::new();
+    let mut pins = wide_state_hash_pins_v1();
     pins.extend(terminal_contract_v1(
         "terminal_contract_sequential",
         |state, groups, vc, lr| state.train_step_v1(groups, vc, lr).unwrap(),
@@ -679,7 +721,11 @@ fn all_pins_v1() -> Vec<PinV1> {
     pins.extend(small_v3_v1(
         "terminal_v3_sequential",
         |state, _, groups, digest| {
-            digest.result(&state.train_step_feature_transfer_v3(groups, VC, LR).unwrap());
+            digest.result(
+                &state
+                    .train_step_feature_transfer_v3(groups, VC, LR)
+                    .unwrap(),
+            );
         },
     ));
     for (route, workers) in [
