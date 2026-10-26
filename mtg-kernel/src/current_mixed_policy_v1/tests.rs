@@ -1436,6 +1436,34 @@ mod paid {
         }
     }
 
+    #[test]
+    fn inspiring_call_snapshot_and_changed_printing_refusals() {
+        let id = crate::card_def::card_id_by_name("Inspiring Call").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let root = &value["ordinary_batch_spell_printing"]["ordered_cast_roots"][0];
+        assert_eq!(root["timing"], "InstantWithPriority");
+        assert_eq!(
+            root["ordered_resolution"][0]["snapshot_time"],
+            "ResolutionBeforeFirstDraw"
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.types = &[crate::card_def::CardType::Sorcery],
+                2 => d.target_spec = crate::card_def::TargetSpec::ControlledCreature,
+                3 => {
+                    d.spell_effect = || {
+                        Some(crate::effect::EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn{keyword:crate::card_def::Keywords::HEXPROOF})
+                    }
+                }
+                4 => d.mana_value = 2,
+                _ => d.colors = &[crate::mana::ManaColor::U],
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {

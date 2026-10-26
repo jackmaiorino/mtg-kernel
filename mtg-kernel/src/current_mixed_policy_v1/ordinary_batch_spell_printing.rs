@@ -16,6 +16,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Lunar Insight"
             | "Goblin Surprise"
             | "Revenge of the Rats"
+            | "Inspiring Call"
     )
 }
 
@@ -33,10 +34,13 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let heroic = d.name == "Heroic Reinforcements";
     let bounty = d.name == "Brass's Bounty";
     let lunar = d.name == "Lunar Insight";
+    let inspiring = d.name == "Inspiring Call";
     let cost = Cost {
         generic: if bounty { 6 } else { 2 },
         pips: if heroic {
             &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::W)]
+        } else if inspiring {
+            &[Pip::Colored(ManaColor::G)]
         } else if lunar {
             &[Pip::Colored(ManaColor::U)]
         } else {
@@ -46,12 +50,30 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     };
     let colors: &[ManaColor] = if heroic {
         &[ManaColor::R, ManaColor::W]
+    } else if inspiring {
+        &[ManaColor::G]
     } else if lunar {
         &[ManaColor::U]
     } else {
         &[ManaColor::R]
     };
-    let (program, ordered) = if lunar {
+    let (program, ordered) = if inspiring {
+        (
+            EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn {
+                keyword: Keywords::INDESTRUCTIBLE,
+            },
+            vec![
+                json!({"operation":"SnapshotCounteredCreaturesThenDrawAndGrantKeyword",
+             "snapshot_time":"ResolutionBeforeFirstDraw","snapshot_filter":{"zone":"Battlefield","controller":"CapturedSpellController","current_effective_type":"Creature","plus_one_plus_one_counter_count_greater_than":0},
+             "tokens_and_currently_animated_creatures_may_qualify":true,"other_counter_kinds_and_countered_noncreatures_do_not_qualify":true,
+             "each_creature_counts_once_regardless_of_counter_count":true,"bind_exact_current_battlefield_incarnations":true,
+             "targets":[],"ordered_instructions":[
+                 {"operation":"DrawCards","recipient":"CapturedSpellController","count":"SnapshottedCreatureCount","one_draw_event_per_card":true,"normal_draw_replacements_and_empty_library_rules_apply":true,"drawn_identity_visible_only_to_authorized_viewers":true},
+                 {"operation":"GrantKeywordToSnapshottedIncarnations","keyword_bits":Keywords::INDESTRUCTIBLE.0,"duration":"UntilCleanupExpirationAfterDiscard","does_not_resample_after_draws":true,"later_entering_or_later_countered_creatures_not_included":true,"grant_follows_same_incarnation_after_control_change":true,"departed_or_reentered_incarnations_do_not_inherit_grant":true,"normal_continuous_layers_and_ability_removal_apply":true}
+             ],"zero_qualifying_creatures_draws_zero_and_grants_nothing":true,"draw_replacement_does_not_cancel_later_keyword_instruction":true}),
+            ],
+        )
+    } else if lunar {
         (
             EffectOp::DrawCardsDynamic {
                 player: PlayerRef::Controller,
@@ -143,7 +165,12 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     };
     if crate::card_def::card_id_by_name(d.name) != Some(id)
         || d.cost != cost
-        || d.types != [CardType::Sorcery]
+        || d.types
+            != [if inspiring {
+                CardType::Instant
+            } else {
+                CardType::Sorcery
+            }]
         || !d.subtypes.is_empty()
         || !d.supertypes.is_empty()
         || d.colors != colors
@@ -165,7 +192,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
     let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand",
-            "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+            "timing":if inspiring{"InstantWithPriority"}else{"OwnMainPhaseEmptyStackWithPriority"},"ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
             "targets":[],"ordered_resolution":ordered,"no_priority_between_ordered_instructions":true,
             "normal_queued_triggers_publish_after_resolution":true,
             "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",

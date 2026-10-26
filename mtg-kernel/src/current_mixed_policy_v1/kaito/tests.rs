@@ -32,6 +32,7 @@ mod guarded_heir;
 mod hare;
 mod incinerating_blast;
 mod indrik;
+mod inspiring_call;
 mod koma;
 mod library_search;
 mod lookout;
