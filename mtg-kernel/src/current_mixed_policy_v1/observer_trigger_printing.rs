@@ -33,6 +33,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Balmor, Battlemage Captain"
             | "Eager Trufflesnout"
             | "Nessian Hornbeetle"
+            | "Mossborn Hydra"
     )
 }
 
@@ -40,6 +41,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// exclusion guard. This module admits exactly one mandatory untargeted trigger.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Mossborn Hydra" => (
+            2,
+            &[Pip::Colored(ManaColor::G)][..],
+            &[ManaColor::G][..],
+            &[Subtype::Elemental, Subtype::Hydra][..],
+            0,
+            0,
+            Keywords::TRAMPLE,
+        ),
         "Nessian Hornbeetle" => (
             1,
             &[Pip::Colored(ManaColor::G)][..],
@@ -262,6 +272,10 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.is_land
         || d.is_token
         || d.enters_battlefield_tapped
+        || match d.enters_with_plus_one_counters {
+            Some(entry) => d.name != "Mossborn Hydra" || entry.count != 1 || entry.if_kicked,
+            None => d.name == "Mossborn Hydra",
+        }
         || d.target_spec != TargetSpec::None
         || !d.produces_mana.is_empty()
         || !d.mana_ability_choices.is_empty()
@@ -504,11 +518,13 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 vec![counter_meaning()]
             },
         ),
-        "Spitfire Lagac" | "Tatyova, Benthic Druid" | "Elfsworn Giant" => (
+        "Spitfire Lagac" | "Tatyova, Benthic Druid" | "Elfsworn Giant" | "Mossborn Hydra" => (
             TriggerCondition::ControlledLandEnters,
             json!({"event":"LandEntersUnderObserverControl","requires_land_play":false,
                 "tokens_count":true,"current_effective_entry_characteristics":true,"trigger_count_per_entering_land":1}),
-            if d.name == "Spitfire Lagac" {
+            if d.name == "Mossborn Hydra" {
+                EffectOp::BindDoublePlusOneCountersToTriggerSource
+            } else if d.name == "Spitfire Lagac" {
                 EffectOp::DealDamage {
                     target: TargetRef::Opponent,
                     amount: 1,
@@ -528,7 +544,18 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                     },
                 ])
             },
-            if d.name == "Spitfire Lagac" {
+            if d.name == "Mossborn Hydra" {
+                vec![
+                    json!({"operation":"DoubleCurrentPlusOnePlusOneCountersOnOriginalTriggerSource",
+                    "binding":"CapturedSourceObjectAndBattlefieldIncarnation","requires_same_live_battlefield_incarnation":true,
+                    "source_departure_or_reentry_prevents_modification":true,"current_control_change_does_not_change_bound_object":true,
+                    "sample_time":"EachTriggerResolution","implementation":"AddTheCurrentPositiveCounterCountOnce",
+                    "zero_or_negative_current_count_adds_none":true,"does_not_sample_at_land_entry":true,
+                    "only_plus_one_plus_one_counters_are_doubled":true,"does_not_double_power_or_toughness_directly":true,
+                    "each_land_entry_has_a_separate_trigger_and_resamples_current_count":true,
+                    "normal_counter_placement_replacements_and_triggers_apply":true}),
+                ]
+            } else if d.name == "Spitfire Lagac" {
                 vec![
                     json!({"operation":"DealDamage","recipient":"OpponentOfCapturedTriggerController","amount":1,
                     "source":"OriginalTriggerSource","damage_class":"Noncombat",
@@ -587,6 +614,12 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }});
     if d.name == "Archmage of Runes" {
         meaning["observer_trigger_printing"]["ordered_static_roots"] = json!([{"operation":"ReduceControllerInstantOrSorcerySpellGenericCost","source_zone":"Battlefield","requires_active_printed_source_abilities":true,"controller":"CurrentSourceController","current_effective_copied_printing_selects_rule":true,"spell_types_match_any":["Instant","Sorcery"],"reduction_per_live_source":1,"independent_sources_add":true,"minimum_generic_component":0,"does_not_reduce_colored_pips":true,"apply_to_total_cost_after_additional_costs_and_chosen_x":true,"normal_final_cost_floor_rules_apply_afterward":true,"does_not_reduce_activated_abilities_or_spell_mana_value":true,"recompute_at_cost_determination":true,"does_not_reprice_already_paid_spell":true,"ends_when_source_leaves_or_loses_printed_abilities":true}]);
+    }
+    if d.name == "Mossborn Hydra" {
+        meaning["observer_trigger_printing"]["battlefield_entry_replacement"] = json!({
+            "operation":"EnterWithPlusOnePlusOneCounters","count":1,"requires_kicker":false,
+            "is_not_a_trigger":true,"applies_to_each_actual_entry_including_noncast_entry":true,
+            "normal_counter_placement_replacements_apply":true,"initialized_before_state_based_actions_and_entry_observers":true});
     }
     if d.name == "Nessian Hornbeetle" {
         meaning["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"] = json!({

@@ -1329,6 +1329,52 @@ mod paid {
         }
     }
 
+    #[test]
+    fn mossborn_entry_counter_and_resolution_count_meaning_reject_changed_fields() {
+        use crate::card_def::{EntersWithPlusOneCountersDef, Keywords};
+        let id = crate::card_def::card_id_by_name("Mossborn Hydra").unwrap();
+        let mut d = ordinary_recipe(id);
+        d.enters_with_plus_one_counters =
+            crate::card_def::CARD_DEFS[usize::from(id)].enters_with_plus_one_counters;
+        let value = roots::baseline_recipe(id, &d).unwrap();
+        assert_eq!(
+            value["observer_trigger_printing"]["battlefield_entry_replacement"]["count"],
+            1
+        );
+        assert_eq!(
+            value["observer_trigger_printing"]["ordered_triggers"][0]["ordered_resolution"][0]
+                ["sample_time"],
+            "EachTriggerResolution"
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                count: 1,
+                if_kicked: false,
+            });
+            match field {
+                0 => d.enters_with_plus_one_counters = None,
+                1 => {
+                    d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                        count: 2,
+                        if_kicked: false,
+                    })
+                }
+                2 => {
+                    d.enters_with_plus_one_counters = Some(EntersWithPlusOneCountersDef {
+                        count: 1,
+                        if_kicked: true,
+                    })
+                }
+                3 => d.keywords = Keywords::NONE,
+                4 => d.power = Some(1),
+                5 => d.cost = crate::mana::Cost::zero(),
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {

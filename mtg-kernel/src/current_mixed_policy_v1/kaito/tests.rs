@@ -38,6 +38,7 @@ mod luminous;
 mod lunar_insight;
 mod macabre_waltz;
 mod micromancer;
+mod mossborn;
 mod nessian;
 mod observer_triggers;
 mod ordinary_auras;
