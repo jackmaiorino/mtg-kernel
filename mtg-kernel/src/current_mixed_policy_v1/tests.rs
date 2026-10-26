@@ -1716,6 +1716,34 @@ mod paid {
     }
 
     #[test]
+    fn indrik_changed_cost_size_subtype_target_keyword_or_spell_program_refuses() {
+        use crate::{
+            card_def::{Keywords, Subtype, TargetSpec},
+            effect::EffectOp,
+        };
+        let id = crate::card_def::card_id_by_name("Affectionate Indrik").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.power = Some(5),
+                2 => d.subtypes = &[Subtype::Spirit],
+                3 => d.target_spec = TargetSpec::Creature,
+                4 => d.keywords = Keywords::LIFELINK,
+                _ => d.spell_effect = || Some(EffectOp::Sequence(vec![])),
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Indrik changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn banshee_changed_printed_cost_size_type_keyword_cast_effect_or_foreign_mode_refuses() {
         use crate::{
             card_def::{CardType, Keywords},

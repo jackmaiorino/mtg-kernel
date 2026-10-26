@@ -1,8 +1,8 @@
-//! Closed targeted entry observers with returns and resolution-time weakening.
+//! Closed targeted entry observers with returns, weakening and optional fight.
 use super::{Error, Result};
 use crate::{
     card_def::{CardDef, CardType, DynamicValueDef, Keywords, Subtype, TargetSpec},
-    effect::{EffectCond, EffectOp, ObjectRef, TargetRef},
+    effect::{EffectCond, EffectOp, ObjectRef, PlayerRef, TargetRef},
     mana::{Cost, ManaColor, Pip},
     state::Zone,
     trigger::{TriggerCondition, TriggeredAbilityDef},
@@ -17,12 +17,27 @@ pub(super) fn handles(name: &str) -> bool {
             | "Elvish Regrower"
             | "Vampire Soulcaller"
             | "Tragic Banshee"
+            | "Affectionate Indrik"
     )
 }
 
 /// The caller still checks all unrelated CardDef fields in the common guard.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (cost, color, subtypes, power, toughness, keywords, target_spec, filter) = match d.name {
+        "Affectionate Indrik" => (
+            Cost {
+                generic: 5,
+                pips: &[Pip::Colored(ManaColor::G)],
+                x_count: 0,
+            },
+            ManaColor::G,
+            &[Subtype::Beast][..],
+            4,
+            4,
+            Keywords::NONE,
+            TargetSpec::OpponentControlledCreature,
+            json!({"zone":"Battlefield","type":"Creature","relation":"ControlledByOpponentOfCapturedTriggerController","uses_current_effective_type":true}),
+        ),
         "Tragic Banshee" => (
             Cost {
                 generic: 4,
@@ -97,7 +112,20 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     };
     let pup = d.name == "Mischievous Pup";
     let banshee = d.name == "Tragic Banshee";
-    let program = if banshee {
+    let indrik = d.name == "Affectionate Indrik";
+    let program = if indrik {
+        EffectOp::Choice {
+            controller: PlayerRef::Controller,
+            options: vec![
+                EffectOp::Sequence(vec![]),
+                EffectOp::FightObjects {
+                    first: ObjectRef::ThisSource,
+                    second: ObjectRef::Target(0),
+                    target_spec: TargetSpec::OpponentControlledCreature,
+                },
+            ],
+        }
+    } else if banshee {
         let weaken = |amount| EffectOp::PumpTargetUntilEndOfTurnDynamic {
             target: TargetRef::Target(0),
             power: DynamicValueDef::Fixed(amount),
@@ -175,7 +203,21 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "chooser":"CapturedTriggerController","selected_at":"TriggerStackPlacement",
         "normal_target_legality_and_protection_apply":true,"rechecked_at_resolution":true,
         "binding":"OriginalSelectedObjectIncarnation"});
-    let resolution = if banshee {
+    let resolution = if indrik {
+        json!([{"operation":"MayHaveOriginalSourceFightTarget","target_slot":0,
+            "chooser":"CapturedTriggerController","choose_at_resolution_after_target_selection":true,
+            "native_options":[{"index":0,"operation":"DeclineWithoutEffect"},{"index":1,"operation":"Fight"}],
+            "requires_current_original_source_incarnation_and_legal_target_incarnation":true,
+            "departed_source_last_known_power_does_not_allow_fighting":true,
+            "reentered_source_is_a_new_incarnation_and_cannot_substitute":true,
+            "target_type_controller_hexproof_protection_and_incarnation_rechecked":true,
+            "sample_both_current_effective_powers_before_either_damage_packet":true,
+            "nonpositive_power_deals_no_damage":true,"damage_class":"Noncombat",
+            "damage_sources":"OriginalSourceCreatureAndOriginalTargetCreature",
+            "recipients_are_each_other":true,"one_simultaneous_damage_batch":true,
+            "current_source_keywords_replacements_and_prevention_apply":true,
+            "state_based_actions_and_queued_triggers_follow_complete_batch":true}])
+    } else if banshee {
         json!([{"operation":"ModifyTargetPowerToughnessUntilEndOfTurn","target_slot":0,
             "binding":"OriginalSelectedCreatureIncarnation",
             "condition":{"operation":"AnyCreatureDiedThisTurn","sample_at_resolution":true,
