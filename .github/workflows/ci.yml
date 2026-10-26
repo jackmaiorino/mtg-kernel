@@ -788,15 +788,6 @@ jobs:
           mkdir -p "$MTG_EVENT_SAMPLES_V1"
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored standard_cards_v1::drakuseth_tests::paid_attack_mandatory_first_zero_one_two_other_targets_and_every_target_checkpoint_restore_both_seats
 
-      - name: Validate every other Limited-only library case
-        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
-        run: |
-          shard=0
-          if [ '${{ matrix.group }}' = limited-only-1 ]; then
-            shard=1
-          fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 2 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
-
       - name: Retain actual Drakuseth event sample
         if: ${{ always() && matrix.group == 'limited-only' }}
         uses: actions/upload-artifact@v4
@@ -805,6 +796,15 @@ jobs:
           path: fdn-event-samples/DrakusethDamageSourceV76.json
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Validate every other Limited-only library case
+        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
+        run: |
+          shard=0
+          if [ '${{ matrix.group }}' = limited-only-1 ]; then
+            shard=1
+          fi
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 2 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})
