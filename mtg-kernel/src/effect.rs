@@ -212,6 +212,10 @@ pub enum LibraryCardFilter {
     ArtifactWithManaValue(u16),
     LandWithBasicLandType,
     ArtifactCreatureOrEnchantmentManaValueAtMost(u16),
+    /// A card with either effective subtype ("a Swamp or Mountain card", the
+    /// fetchlands). Only lands carry land subtypes, so any match is a land,
+    /// basic or not. Appended for the eternal catalog.
+    CardWithAnySubtypeV1([Subtype; 2]),
 }
 
 impl LibraryCardFilter {
@@ -9256,12 +9260,17 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     eligible,
                     canonical_path,
                 } => {
+                    // Thoughtseize's "target player" may name its own caster;
+                    // Duress and Pilfer target an opponent.
+                    let any_player = pending.resolving_item.v4.target_spec
+                        == Some(crate::card_def::TargetSpec::AnyPlayer);
                     if *chooser != pending.ctx.controller
                         || path != canonical_path
-                        || *hand_player == pending.ctx.controller
+                        || (*hand_player == pending.ctx.controller && !any_player)
                         || pending.ctx.targets.as_slice() != [Target::Player(*hand_player)]
-                        || pending.resolving_item.v4.target_spec
-                            != Some(crate::card_def::TargetSpec::TargetOpponent)
+                        || !(any_player
+                            || pending.resolving_item.v4.target_spec
+                                == Some(crate::card_def::TargetSpec::TargetOpponent))
                         || *min_targets != 1
                         || *max_targets != 1
                         || *ordered
@@ -13793,7 +13802,10 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
                 );
                 let player = continuation.ctx.resolve_player(player, state);
-                if player == continuation.ctx.controller {
+                if player == continuation.ctx.controller
+                    && continuation.resolving_item.v4.target_spec
+                        != Some(crate::card_def::TargetSpec::AnyPlayer)
+                {
                     return Err("Duress must target an opponent".to_string());
                 }
                 let original_hand = bind_hand(state, player);
@@ -15851,6 +15863,9 @@ fn library_filter_matches(
             (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
                 && def.mana_value == value
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
+            .iter()
+            .any(|subtype| subtype.is_in_subtype_ids(subtype_ids)),
     })
 }
 
@@ -15886,6 +15901,11 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(value))
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
+            .iter()
+            .fold(fnv1a_u64(0xcbf2_9ce4_8422_2325, 11), |hash, subtype| {
+                fnv1a_u64(hash, u64::from(subtype.stable_id()))
+            }),
     }
 }
 

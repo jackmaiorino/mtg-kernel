@@ -10769,12 +10769,26 @@ fn pending_cast_semantic_v2(
                 )
             })
         });
-    let sacrifice_chosen =
-        if p.source_contract.cast_method == CastMethodV4::Escape || object_cost_is_tap {
-            Vec::new()
-        } else {
-            visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
-        };
+    // An alternative cost's returned permanent or exiled hand card (Daze,
+    // Force of Will) is not a sacrifice either.
+    let object_cost_is_alternative = p.cast_mode == Some(engine::CastMode::Alternative)
+        && source_def.alt_cost.is_some_and(|alt| {
+            alt.components.iter().any(|component| {
+                matches!(
+                    component,
+                    crate::card_def::CostComponent::ReturnControlledPermanentToOwnersHand(_)
+                        | crate::card_def::CostComponent::ExileCardFromHandWithColorV1(_)
+                )
+            })
+        });
+    let sacrifice_chosen = if p.source_contract.cast_method == CastMethodV4::Escape
+        || object_cost_is_tap
+        || object_cost_is_alternative
+    {
+        Vec::new()
+    } else {
+        visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
+    };
     Ok(PendingCastSemanticV2 {
         source: visible_card_ref(state, p.spell, acting_player)?,
         controller: p.controller.into(),
