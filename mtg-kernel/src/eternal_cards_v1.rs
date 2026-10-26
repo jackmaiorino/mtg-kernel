@@ -223,6 +223,7 @@ const MISHRAS_BAUBLE: &str = "Mishra's Bauble";
 const URZAS_BAUBLE: &str = "Urza's Bauble";
 const ORC_ARMY_TOKEN: &str = "Orc Army Token";
 const TAMIYO: &str = "Tamiyo, Inquisitive Student";
+const BILBO: &str = "Bilbo, Thief in the Night";
 
 const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> TriggeredAbilityDef {
     TriggeredAbilityDef {
@@ -283,6 +284,23 @@ fn bowmasters_ping_then_amass() -> EffectOp {
 
 fn delayed_upkeep_draw() -> EffectOp {
     eternal(EternalOpV1::DelayedUpkeepDrawV1)
+}
+
+/// "Whenever Bilbo attacks, you may cast an artifact, instant, or sorcery
+/// spell from your graveyard." The cast happens during the resolution and
+/// pays its costs; `exiled_instead_of_graveyard` applies the rest.
+fn bilbo_cast_from_graveyard() -> EffectOp {
+    EffectOp::SelectObjectsV1 {
+        rule: crate::effect::ObjectSelectionRuleV1 {
+            player: PlayerRef::Controller,
+            zone: Zone::Graveyard,
+            any_player: false,
+            filter: crate::effect::ObjectSelectionFilterV1::CastableArtifactInstantOrSorceryV1,
+            min: 0,
+            max: 1,
+            action: crate::effect::ObjectSelectionActionV1::CastFromGraveyardV1,
+        },
+    }
 }
 
 /// "Whenever Tamiyo attacks, investigate."
@@ -397,6 +415,10 @@ const MOONSHADOW_TRIGGERS: [TriggeredAbilityDef; 1] = [eternal_trigger(
     EternalTriggerV1::PermanentCardsToYourGraveyardWhileMinusCounter,
     remove_minus_one_counter_from_source,
 )];
+const BILBO_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::Attacks,
+    bilbo_cast_from_graveyard,
+)];
 const TAMIYO_TRIGGERS: [TriggeredAbilityDef; 2] = [
     trigger(TriggerCondition::Attacks, tamiyo_investigate),
     trigger(TriggerCondition::DrawNth(3), tamiyo_transform),
@@ -424,6 +446,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         MOONSHADOW => &MOONSHADOW_TRIGGERS,
         ORCISH_BOWMASTERS => &ORCISH_BOWMASTERS_TRIGGERS,
         TAMIYO => &TAMIYO_TRIGGERS,
+        BILBO => &BILBO_TRIGGERS,
         _ => &[],
     }
 }
@@ -446,7 +469,8 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         | MOONSHADOW
         | MISHRAS_BAUBLE
         | URZAS_BAUBLE
-        | TAMIYO => Some(TargetSpec::None),
+        | TAMIYO
+        | BILBO => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -1426,4 +1450,57 @@ pub(crate) fn trigger_matches(
                 })
         }
     }
+}
+
+/// Bilbo, Thief in the Night: "Spells you cast from anywhere other than your
+/// hand cost {1} less to cast." The generic reduction `player` gets for
+/// casting `source`, one per Bilbo they control.
+pub(crate) fn outside_hand_cast_reduction(
+    state: &GameState,
+    source: ObjectId,
+    player: PlayerId,
+) -> u32 {
+    let Some(object) = state.objects.try_get(source) else {
+        return 0;
+    };
+    let origin = if object.zone == Zone::Stack {
+        object.v4.spell_cast_origin.map(|origin| origin.origin_zone)
+    } else {
+        Some(object.zone)
+    };
+    if origin.is_none_or(|zone| zone == Zone::Hand) {
+        return 0;
+    }
+    let bilbos = state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&permanent| {
+            state.objects.get(permanent).controller == player
+                && printed_battlefield_source(state, permanent, BILBO)
+        })
+        .count();
+    u32::try_from(bilbos).unwrap_or(u32::MAX)
+}
+
+/// Bilbo's "If an instant or sorcery spell cast this way would be put into
+/// your graveyard, exile it instead": a spell cast from its owner's graveyard
+/// by a resolving instruction.
+pub(crate) fn exiled_instead_of_graveyard(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> bool {
+    !item.is_copy
+        && item
+            .v4
+            .source_contract
+            .and_then(|contract| contract.spell_cast_origin)
+            .is_some_and(|origin| {
+                origin.origin_zone == Zone::Graveyard
+                    && matches!(
+                        origin.route,
+                        crate::state::SpellCastRouteV4::ResolvingEffectV1 { .. }
+                    )
+            })
+        && (crate::engine::stack_spell_has_type(state, item, CardType::Instant)
+            || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery))
 }

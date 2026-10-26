@@ -71,8 +71,8 @@ reserved.
 | --- | --- | ---: | --- |
 | E0 | Feature, empty eternal registry, catalog test, session games, CI group, census | 0 | Infrastructure |
 | E1 | Pauper close-ins: Mono-Red Madness, Rally, Grixis Affinity, Dimir Faeries, Grixis and Dimir Control | 14 | Pauper 21% to about 53% |
-| E2 | Eternal staples: fetchlands, original duals, Wasteland, Strip Mine, Force of Will and Negation, Daze, Mental Misstep, Thoughtseize, Swords, Fatal Push, Dismember, Moxen, Lotus, Sol Ring, Crypt, Vault, Ancient Tomb, Ancestral, Time Walk, Demonic Tutor, Bauble | about 60 | Shared base for both formats |
-| E3 | Legacy decks greedily: Dimir Tempo, Izzet Delver, Doomsday, Sneak and Show, Aluren, Eldrazi, Boros Energy | about 95 | Legacy about 50% |
+| E2 | Legacy Dimir Tempo and Izzet Delver: original duals, surveil lands, fetchlands, Wasteland, Force of Will, Daze, Thoughtseize, Fatal Push, Unholy Heat, Prismari Charm, the Baubles, Brazen Borrower, Dragon's Rage Channeler, Murktide Regent, Moonshadow, Nethergoyf, Orcish Bowmasters, Tamiyo, Bilbo | 27 and a token | Legacy 0% to 19.3% |
+| E3 | Legacy decks greedily: Doomsday, Sneak and Show, Aluren, Eldrazi, Boros Energy, then the remaining staples (Strip Mine, Negation, Mental Misstep, Swords, Dismember) | about 95 | Legacy about 50% |
 | E4 | Vintage: Initiative, Jewel and Raker Shops, then companions and the Lurrus lists | about 80 | Vintage about 50% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
@@ -91,8 +91,18 @@ New, each built once in the first wave that needs it:
   adds one cast trigger that copies the spell per payment; `StandardTargetV1::TwoCreaturesV1`
   lets two target words name one creature; `ManaAbilityAmountDef::FixedColorsV1` adds a
   fixed color bundle; the karoo return is a land choice on resolution.
-- E2: two-subtype intrinsic land mana (original duals); pay-life fetch costs; pitch and
-  "not your turn" alternative costs; restricted mana; delayed draws; seeded coin flips.
+- E2, built in `src/eternal_cards_v1.rs` and `build_eternal_v1.rs`: original duals use
+  the existing two-type land mana; `LibraryCardFilter::CardWithAnySubtypeV1` lets
+  fetchlands find any card with either land type; alternative costs that return a
+  permanent (Daze) or exile a colored card from hand (Force of Will,
+  `CostComponent::ExileCardFromHandWithColorV1`) are staged like other cast object
+  costs; Nethergoyf's escape exiles cards until four card types are covered
+  (`CostComponent::ExileOtherGraveyardCardsWithCardTypesV1`); delayed upkeep draws
+  and Tamiyo's "until your next turn" attack trigger are delayed triggers owned by
+  their source; delirium, revolt and Bowmasters' first-draw exception read live state
+  or event history; planeswalker back faces enter with their loyalty; Bilbo casts from
+  the graveyard through the resolution-cast path with costs paid. Moxen, Lotus,
+  restricted mana and seeded coin flips move to E4.
 - E3: storm as a general keyword (today it is keyed to Weather the Storm), Thassa's Oracle
   and Doomsday library construction, Show and Tell's simultaneous choice, free-cast
   permissions (Sneak Attack, Aluren, Omniscience), Chalice of the Void, Misdirection

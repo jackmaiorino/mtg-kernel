@@ -341,6 +341,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Mishra's Bauble" | "Urza's Bauble" => {
             "delayed:next_upkeep_began:activator_draws_1:source_incarnation_contract"
         }
+        "Bilbo, Thief in the Night" => {
+            "static:controller_spells_cast_from_outside_hand_cost_generic_less:1;attacks:may_cast_one_artifact_instant_or_sorcery_from_own_graveyard_during_resolution_paying_costs:cast_instant_or_sorcery_exiled_instead_of_graveyard"
+        }
         "Tamiyo, Inquisitive Student" => {
             "attacks:investigate;draw_nth:3:exile_then_return_transformed_under_owner;face1_plus2:until_controllers_next_turn:each_creature_attacking_controller_gets_minus1_0_eot;face1_minus7:emblem_no_maximum_hand_size"
         }

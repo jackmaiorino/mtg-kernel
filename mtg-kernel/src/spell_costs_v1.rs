@@ -533,6 +533,14 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
     let (method, kicked, mode) = form;
     let mut selected =
         selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    // Bilbo, Thief in the Night: "Spells you cast from anywhere other than
+    // your hand cost {1} less to cast."
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_cards_v1::outside_hand_cast_reduction(state, source, player),
+        );
+    }
     if super::resolution_cast_v1::free_cast_for(state, source, player) {
         if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {
             return None;

@@ -2153,9 +2153,14 @@ fn validate_physical_spell_cast_origin(
     }
     let route_supports_method = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
-            origin.origin_zone == Zone::Exile
+            // A resolving instruction casts from exile for free, or (Bilbo)
+            // from the caster's graveyard paying its costs.
+            let from_graveyard = cfg!(feature = "eternal-fixtures")
+                && origin.origin_zone == Zone::Graveyard
+                && source.owner == item.controller;
+            (origin.origin_zone == Zone::Exile || from_graveyard)
                 && holder == item.controller
-                && item.v4.x_value == 0
+                && (from_graveyard || item.v4.x_value == 0)
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
                     || (is_pending_placeholder
                         && resolution_cast_v1::form_allowed(
@@ -2167,6 +2172,7 @@ fn validate_physical_spell_cast_origin(
                     || resolution_cast_v1::permit(state, item.source).is_some_and(|p| {
                         !p.land
                             && p.controller == item.controller
+                            && p.card.expected_zone == origin.origin_zone
                             && p.card.expected_zone_change_count == origin.origin_zone_change_count
                     }))
         }
@@ -2671,7 +2677,9 @@ fn storm_source_contract_is_structurally_valid(
     };
     let route_is_valid = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
-            origin.origin_zone == Zone::Exile && holder == contract.controller
+            (origin.origin_zone == Zone::Exile
+                || (cfg!(feature = "eternal-fixtures") && origin.origin_zone == Zone::Graveyard))
+                && holder == contract.controller
         }
         SpellCastRouteV4::Hand => {
             origin.origin_zone == Zone::Hand && contract.owner == contract.controller
@@ -15276,7 +15284,11 @@ fn plan_spell_departure(
     } else {
         SpellDeparture::Move {
             source: item.source,
-            to_zone: if item.is_flashback {
+            to_zone: if item.is_flashback
+                || (cfg!(feature = "eternal-fixtures")
+                    && requested_zone == Zone::Graveyard
+                    && crate::eternal_cards_v1::exiled_instead_of_graveyard(state, item))
+            {
                 Zone::Exile
             } else {
                 requested_zone

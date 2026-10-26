@@ -10479,6 +10479,23 @@ pub(crate) fn validate_resolution_play_authorization(
     answer: &EffectFrame,
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
+    if let EffectFrame::ApplySelectedObjectsV1 {
+        rule,
+        original_candidates,
+        selected,
+        path,
+    } = answer
+    {
+        return standard_selection_v1::validate_graveyard_cast_authorization(
+            state,
+            suspended,
+            *rule,
+            original_candidates,
+            selected,
+            path,
+            permission,
+        );
+    }
     let mut expected = suspended.clone();
     match answer {
         EffectFrame::ExilePlay { choice, play: true } => {
@@ -11799,6 +11816,39 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                         &path,
                         &expected_remaining_frames,
                     )?;
+                }
+                EffectFrame::ApplySelectedObjectsV1 {
+                    rule,
+                    original_candidates,
+                    selected,
+                    path,
+                } if rule.action == ObjectSelectionActionV1::CastFromGraveyardV1 => {
+                    standard_selection_v1::validate_answer(
+                        state,
+                        &continuation,
+                        rule,
+                        &original_candidates,
+                        &selected,
+                        &path,
+                    )?;
+                    if let [card] = selected.as_slice() {
+                        let card = *card;
+                        let answer = EffectFrame::ApplySelectedObjectsV1 {
+                            rule,
+                            original_candidates,
+                            selected,
+                            path,
+                        };
+                        crate::engine::resolution_cast_v1::stage(
+                            state,
+                            continuation,
+                            card,
+                            None,
+                            false,
+                            answer,
+                        )?;
+                        return Ok(ResumableProgress::Suspended);
+                    }
                 }
                 EffectFrame::ApplySelectedObjectsV1 {
                     rule,

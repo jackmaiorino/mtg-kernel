@@ -14,7 +14,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E2_CARDS: [&str; 27] = [
+const E2_CARDS: [&str; 28] = [
     "Underground Sea",
     "Volcanic Island",
     "Undercity Sewers",
@@ -42,6 +42,7 @@ const E2_CARDS: [&str; 27] = [
     "Orcish Bowmasters",
     "Orc Army Token",
     "Tamiyo, Inquisitive Student",
+    "Bilbo, Thief in the Night",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1493,4 +1494,204 @@ fn tamiyo_minus_seven_draws_half_the_library_and_lifts_the_hand_size() {
     assert!(kept > 7);
     pass_until(&mut state, |state| state.active_player == P1);
     assert_eq!(state.players[0].hand.len(), kept, "no discard to seven");
+}
+
+// ---- Bilbo, Thief in the Night -----------------------------------------------------
+
+#[test]
+fn bilbo_is_a_legendary_halfling_rogue() {
+    let bilbo = def("Bilbo, Thief in the Night");
+    assert_eq!(bilbo.capability, CardCapability::Full);
+    assert_eq!(bilbo.subtypes, &[Subtype::Halfling, Subtype::Rogue]);
+    assert_eq!((bilbo.power, bilbo.toughness), (Some(2), Some(2)));
+    assert_eq!(bilbo.mana_value, 2);
+}
+
+#[test]
+fn bilbo_makes_spells_cast_from_outside_the_hand_cost_one_less() {
+    // Flashback {3}{U} costs {2}{U} with Bilbo.
+    let mut state = islands();
+    let plunder = put(&mut state, P0, "Plunder the Trollshaws", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    assert!(!castable(&mut state, plunder));
+    put(
+        &mut state,
+        P0,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    assert!(castable(&mut state, plunder));
+    cast(&mut state, plunder, &[]);
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), 2);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+
+    // A spell cast from the hand pays its printed cost.
+    let mut state = islands();
+    put(
+        &mut state,
+        P0,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    let moxite = put(&mut state, P0, "Melded Moxite", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(!castable(&mut state, moxite));
+
+    // An opponent's Bilbo does not help.
+    let mut state = islands();
+    put(
+        &mut state,
+        P1,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    let plunder = put(&mut state, P0, "Plunder the Trollshaws", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    assert!(!castable(&mut state, plunder));
+}
+
+/// Bilbo attacks with `mana` floating, then his trigger offers the
+/// graveyard cast. Returns the offered candidates.
+fn bilbo_attacks(state: &mut GameState, colors: &[ManaColor], generic: u8) -> Vec<Target> {
+    let bilbo = named_on_battlefield(state, P0, "Bilbo, Thief in the Night")[0];
+    pass_until(state, |state| state.step == Step::DeclareAttackers);
+    act(state, Action::DeclareAttackers(vec![bilbo]));
+    pool(state, P0, colors, generic);
+    match settle(state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            min_targets,
+            legal_targets,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert_eq!(min_targets, 0, "you may");
+            legal_targets
+        }
+        other => panic!("expected Bilbo's choice, got {other:?}"),
+    }
+}
+
+/// Answers the rest of a chosen graveyard cast: each cast target from
+/// `targets`, and declines every resolution choice.
+fn finish_bilbo_cast(state: &mut GameState, targets: &[Target]) {
+    let mut targets = targets.iter().copied();
+    for _ in 0..50 {
+        match settle(state) {
+            None => return,
+            Some(Decision::ChooseTargets { legal_targets, .. }) => {
+                let target = targets.next().expect("a cast target");
+                assert!(legal_targets.contains(&target), "{legal_targets:?}");
+                act(state, Action::ChooseTarget(target));
+            }
+            Some(Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            }) => act(state, Action::FinishEffectSelection),
+            Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+                act(state, Action::ChooseEffectTarget(legal_targets[0]))
+            }
+            Some(Decision::ChooseEffectOption { .. }) => act(state, Action::ChooseEffectOption(0)),
+            Some(Decision::ChooseEffectBoolean { .. }) => {
+                act(state, Action::ChooseEffectBoolean(false))
+            }
+            Some(other) => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    panic!("the cast did not finish");
+}
+
+#[test]
+fn bilbo_casts_an_instant_from_the_graveyard_and_exiles_it_afterwards() {
+    let mut state = islands();
+    put(
+        &mut state,
+        P0,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    put(&mut state, P0, "Island", Zone::Graveyard);
+    put(&mut state, P0, "Faerie Seer", Zone::Graveyard);
+    let candidates = bilbo_attacks(&mut state, &[ManaColor::R], 0);
+    assert_eq!(
+        candidates,
+        vec![Target::Object(bolt)],
+        "not a land or creature"
+    );
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(bolt)));
+    finish_bilbo_cast(&mut state, &[Target::Player(P1)]);
+    assert_eq!(state.players[1].life, 17);
+    assert_eq!(
+        state.objects.get(bolt).zone,
+        Zone::Exile,
+        "exiled, not put back"
+    );
+    assert_eq!(state.players[0].mana_pool, [0; 6], "its costs were paid");
+}
+
+#[test]
+fn bilbo_may_decline_and_needs_mana_for_the_spell() {
+    let mut state = islands();
+    put(
+        &mut state,
+        P0,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    let candidates = bilbo_attacks(&mut state, &[ManaColor::R], 0);
+    assert_eq!(candidates, vec![Target::Object(bolt)]);
+    act(&mut state, Action::FinishEffectSelection);
+    finish_bilbo_cast(&mut state, &[]);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+    assert_eq!(state.players[1].life, 20);
+
+    // Without red mana the bolt is not offered.
+    let mut state = islands();
+    put(
+        &mut state,
+        P0,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    let ponder = put(&mut state, P0, "Ponder", Zone::Graveyard);
+    let candidates = bilbo_attacks(&mut state, &[ManaColor::U], 0);
+    assert_eq!(
+        candidates,
+        vec![Target::Object(ponder)],
+        "a sorcery, in combat"
+    );
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(ponder)),
+    );
+    finish_bilbo_cast(&mut state, &[]);
+    assert_eq!(state.objects.get(ponder).zone, Zone::Exile);
+    assert_eq!(state.players[0].hand.len(), 1, "Ponder drew");
+}
+
+#[test]
+fn bilbo_casts_an_adventure_but_not_a_creature() {
+    let mut state = islands();
+    put(
+        &mut state,
+        P0,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    let borrower = put(&mut state, P0, "Brazen Borrower", Zone::Graveyard);
+    let strix = put(&mut state, P1, "Baleful Strix", Zone::Battlefield);
+    // Petty Theft's {1}{U} costs {U}.
+    let candidates = bilbo_attacks(&mut state, &[ManaColor::U], 0);
+    assert_eq!(candidates, vec![Target::Object(borrower)]);
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(borrower)),
+    );
+    finish_bilbo_cast(&mut state, &[Target::Object(strix)]);
+    assert_eq!(state.objects.get(strix).zone, Zone::Hand);
+    assert_eq!(state.objects.get(borrower).zone, Zone::Exile);
+    assert!(state.objects.get(borrower).v4.on_adventure);
 }

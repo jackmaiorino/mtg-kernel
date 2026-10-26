@@ -1334,6 +1334,40 @@
    ],
    "java_file": "Mage.Sets/src/mage/cards/t/TamiyoInquisitiveStudent.java",
    "starting_loyalty": 2
+  },
+  {
+   "name": "Bilbo, Thief in the Night",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Halfling",
+    "Rogue"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "cost_reduction",
+    "attack_trigger",
+    "cast_from_graveyard",
+    "exile_replacement"
+   ]
   }
  ]
 }
