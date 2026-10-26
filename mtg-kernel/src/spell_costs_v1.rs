@@ -330,6 +330,13 @@ impl SelectedSpellManaCostsV1 {
             .sum::<u32>()
             .saturating_add(increase)
             .saturating_sub(reduction.saturating_add(self.own_generic_reduction));
+        // Trinisphere raises a total below three mana to three.
+        #[cfg(feature = "eternal-fixtures")]
+        let generic = generic.saturating_add(crate::eternal_vintage_v1::trinisphere_increase(
+            state,
+            pips.len(),
+            generic,
+        ));
         let additional_life = self
             .component_groups
             .iter()
@@ -377,6 +384,7 @@ impl SelectedSpellManaCostsV1 {
                 reserved,
                 additional_life,
                 self.legendary_spell,
+                self.types.contains(&CardType::Artifact),
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -884,6 +892,24 @@ impl PreparedSpellPaymentV1 {
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn delve_exiled(&self) -> &[ObjectId] {
         &self.mana.delve_exiled
+    }
+
+    /// Whether this payment spends colored mana (Void Mirror): a source
+    /// tapped for a color, or colored mana from the pool.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn spends_colored_mana(&self, state: &GameState, player: PlayerId) -> bool {
+        let plan = &self.mana.mana;
+        plan.taps
+            .iter()
+            .any(|(_, color)| *color != mana::ManaColor::C)
+            || plan.pool_used[..5].iter().any(|&amount| amount > 0)
+            || plan.restricted_pool_used.iter().any(|&index| {
+                state.players[player.index()]
+                    .restricted_mana_pool
+                    .0
+                    .get(index)
+                    .is_some_and(|unit| unit.color != mana::ManaColor::C)
+            })
     }
 
     fn commit_optional(&self, state: &mut GameState) {

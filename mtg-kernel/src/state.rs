@@ -1414,7 +1414,8 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureSpellOnStack
                     | TargetSpec::ArtifactSpellOnStack
                     | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
-                    | TargetSpec::SpellYouDontControl,
+                    | TargetSpec::SpellYouDontControl
+                    | TargetSpec::SpellWithManaValueV1(_),
                 0,
                 StackTargetContractV4::Object {
                     zone: Zone::Stack,

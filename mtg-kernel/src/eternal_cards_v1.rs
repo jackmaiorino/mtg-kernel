@@ -1087,8 +1087,9 @@ pub(crate) fn combat_static_rules(
 
 /// Brazen Borrower: "This creature can block only creatures with flying."
 pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
-    !printed_battlefield_source(state, blocker, BRAZEN_BORROWER)
-        || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING)
+    (!printed_battlefield_source(state, blocker, BRAZEN_BORROWER)
+        || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING))
+        && crate::eternal_vintage_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1229,7 +1230,7 @@ pub(crate) fn note_draw_step_draw(state: &mut GameState, player: PlayerId) {
         .draw_step_draw = Some(marker);
 }
 
-fn delayed_trigger(
+pub(crate) fn delayed_trigger(
     source: AbilitySourceContractV4,
     controller: PlayerId,
     effect: EffectOp,
@@ -1254,6 +1255,15 @@ fn delayed_trigger(
 /// The delayed triggers this collection sets off (603.7): the Baubles'
 /// draws at the beginning of an upkeep and Tamiyo's attack shrinks.
 pub(crate) fn delayed_triggers(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Vec<PendingTrigger> {
+    let mut triggers = legacy_delayed_triggers(state, events);
+    triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state));
+    triggers
+}
+
+fn legacy_delayed_triggers(
     state: &mut GameState,
     events: &[CommittedEvent],
 ) -> Vec<PendingTrigger> {
@@ -1299,7 +1309,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
                 EternalOpV1::ShrinkAttackerV1 { .. }
             ))
         ),
-        _ => false,
+        _ => crate::eternal_vintage_v1::delayed_effect_matches(name, effect),
     }
 }
 

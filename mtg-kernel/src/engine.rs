@@ -1838,7 +1838,8 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ControlledPermanentWithAnySubtype(_)
         | TargetSpec::CardInOwnGraveyardWithAnySubtype(_)
         | TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand
-        | TargetSpec::LegendaryCreature => 1,
+        | TargetSpec::LegendaryCreature
+        | TargetSpec::SpellWithManaValueV1(_) => 1,
         TargetSpec::StandardV1(filter) => filter.counts().0,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
@@ -3894,6 +3895,20 @@ fn legal_targets_for_controller_from_source_unframed(
         })
         .map(Target::Object)
         .collect(),
+        TargetSpec::SpellWithManaValueV1(mana_value) => {
+            let announcing = state
+                .engine
+                .pending_cast
+                .as_ref()
+                .map(|pending| pending.spell);
+            state
+                .stack
+                .iter()
+                .filter(|item| item.kind == StackItemKind::Spell && Some(item.source) != announcing)
+                .filter(|item| stack_spell_mana_value(state, item) == mana_value)
+                .map(|item| Target::Object(item.source))
+                .collect()
+        }
         TargetSpec::SpellManaValueAtMostControlledSubtypes { first, second } => {
             let controlled_count = state
                 .objects
@@ -4146,6 +4161,11 @@ fn legal_targets_for_controller_from_source_unframed(
             return Vec::new();
         };
         targets.retain(|target| !matches!(target, Target::Object(object) if crate::controlled_creature_grants_v1::protects_from_colors(state, *object, colors)));
+        // Protection from creatures (Seasoned Dungeoneer).
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_vintage_v1::source_is_creature(state, source.object) {
+            targets.retain(|target| !matches!(target, Target::Object(object) if crate::eternal_vintage_v1::protected_from_creatures(state, *object)));
+        }
         targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)
             || crate::standard_legends_v1::hexproof_from_color(state,*object,source.object,source.card_def,source.zone_change_count,controller)));
         if crate::source_type_hexproof_v1::enabled() && targets.iter().any(|target| matches!(target, Target::Object(id) if crate::source_type_hexproof_v1::active_rule(state, *id, controller).is_some())) {
@@ -8264,6 +8284,12 @@ fn is_castable_now(
     if !def.is_castable() {
         return false;
     }
+    // Archon of Emeria: "Each player can't cast more than one spell each
+    // turn."
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_v1::cast_prohibited(state, player) {
+        return false;
+    }
     if def.omen.is_some() && supported_omen(def).is_none() {
         return false;
     }
@@ -9390,6 +9416,8 @@ fn activate_mana_ability_for_with_checkpoint(
         effect::execute(&program, &ctx, state);
     }
     crate::standard_cards_v1::record_floating_mana(state, player, source, choice);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_v1::restrict_produced_mana(state, player, source, choice);
     if state.objects.get(source).zone_change_count == source_zone_change_count {
         state
             .objects
@@ -16520,6 +16548,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Complete;
     }
 
+    // Time Vault's "{T}: Take an extra turn after this one" is scheduled
+    // like Temporal Manipulation, by the owner acquired before the pop.
+    #[cfg(feature = "eternal-fixtures")]
+    let temporal_owner = match temporal_owner {
+        Some(owner) if item.kind == StackItemKind::ActivatedAbility => {
+            if crate::extra_turn_v1::schedule_owned(state, owner).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
+            return ResolutionProgress::Complete;
+        }
+        owner => owner,
+    };
     if item.kind == StackItemKind::Spell {
         if let Some(kind) = item.v4.optional_additional_cost_paid {
             state
@@ -16922,18 +16964,27 @@ fn advance_step(state: &mut GameState) {
     let mut next_idx = cur_idx + 1;
 
     if next_idx >= STEP_ORDER.len() {
-        match crate::extra_turn_v1::begin_next_turn(state) {
-            Ok(true) => {}
-            Ok(false) => {
-                state.active_player = state.active_player.opponent();
-                if state.active_player == state.starting_player {
-                    state.turn += 1;
+        loop {
+            match crate::extra_turn_v1::begin_next_turn(state) {
+                Ok(true) => {}
+                Ok(false) => {
+                    state.active_player = state.active_player.opponent();
+                    if state.active_player == state.starting_player {
+                        state.turn += 1;
+                    }
+                }
+                Err(_) => {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    return;
                 }
             }
-            Err(_) => {
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
-                return;
+            // Time Vault: a player who chose to skip this turn skips it and
+            // untaps the Vault; the next turn begins instead.
+            if !(cfg!(feature = "eternal-fixtures")
+                && crate::eternal_vintage_v1::take_turn_skip(state))
+            {
+                break;
             }
         }
         next_idx = 0;
@@ -17062,6 +17113,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     state.objects.get_mut(id).v4.skip_next_untap = false;
                 } else if !prevented_by_attachment
                     && !crate::slumbering_cerberus_v1::prevents_untap_step(state, id)
+                    && !(cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_vintage_v1::prevents_untap_step(state, id))
                 {
                     attempt_untap(state, id);
                 }
@@ -17164,10 +17217,18 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     .extra_turn_v1
                     .as_ref()
                     .is_none_or(|turn| turn.original_first_turn);
+            // Mana Vault: "At the beginning of your draw step, if this
+            // artifact is tapped". Put on the stack after the draw.
+            #[cfg(feature = "eternal-fixtures")]
+            let vintage_draw_step = crate::eternal_vintage_v1::begin_draw_step(state, p);
             if !is_first_turn_of_the_game {
                 event::propose_and_commit(state, ProposedEvent::draw(p));
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cards_v1::note_draw_step_draw(state, p);
+                collect_and_queue_triggers(state);
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if is_first_turn_of_the_game && vintage_draw_step {
                 collect_and_queue_triggers(state);
             }
         }
@@ -17838,7 +17899,8 @@ pub fn damage_is_prevented_by_protection(
                     object_color_mask(state, source),
                 )
                 || crate::standard_legends_v1::katilda_protected_from(state, target, source))
-    })
+    }) || (cfg!(feature = "eternal-fixtures")
+        && crate::eternal_vintage_v1::damage_prevented(state, source, Target::Object(target)))
 }
 
 /// Current mana value, including selected Room doors and stack spell forms.
@@ -21900,6 +21962,9 @@ fn validate_madness_decision_preflight(state: &GameState) -> Result<(ObjectId, P
 
 fn apply_choose_madness_cast(state: &mut GameState, cast_it: bool) -> Result<(), String> {
     let (card, owner) = validate_madness_decision_preflight(state)?;
+    // Archon of Emeria forbids the cast: the card goes to the graveyard.
+    #[cfg(feature = "eternal-fixtures")]
+    let cast_it = cast_it && !crate::eternal_vintage_v1::cast_prohibited(state, owner);
     let item = state
         .stack
         .pop()
@@ -22180,6 +22245,8 @@ fn apply_declare_blockers(
     }
     state.engine.combat.blocked_by = blocked_by;
     state.engine.combat.blockers_declared = true;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_v1::note_blockers_declared(state);
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())
@@ -22818,9 +22885,13 @@ fn finalize_owned_cast(
     let mandatory_payment_input = mandatory_cast_cost_v1::record_input(state, &pending);
     #[cfg(feature = "eternal-fixtures")]
     let delve_exiled = payment.delve_exiled().to_vec();
+    #[cfg(feature = "eternal-fixtures")]
+    let colored_mana_spent = payment.spends_colored_mana(state, pending.controller);
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::note_delve_exile(state, pending.spell, &delve_exiled);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_v1::note_cast_mana(state, pending.spell, mana_spent, colored_mana_spent);
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
@@ -23523,6 +23594,8 @@ fn push_paid_activation(
             ..StackStateV4::default()
         },
     });
+    #[cfg(feature = "eternal-fixtures")]
+    crate::extra_turn_v1::record_publication(state, stack_item_id);
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
     if crate::krenko_v1::record_paid(

@@ -4355,7 +4355,9 @@ pub fn log_initiative_trigger(
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
         || crate::card_def::CARD_DEFS
             .get(source.card_def as usize)
-            .is_none_or(|definition| definition.name != "Avenging Hunter")
+            .is_none_or(|definition| {
+                !crate::eternal_vintage_v1::initiative_granter(definition.name)
+            })
     {
         return Err("Initiative designation source contract is malformed".to_string());
     }
@@ -4417,6 +4419,12 @@ fn permanent_enters_battlefield_tapped(
 ) -> bool {
     let def = &crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
     if def.enters_battlefield_tapped {
+        return true;
+    }
+    // Archon of Emeria: "Nonbasic lands your opponents control enter
+    // tapped."
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_v1::enters_tapped(state, object, controller) {
         return true;
     }
     if let Some(rule) = def.enters_tapped_unless_controller {

@@ -48,6 +48,9 @@ fn selected_name(name: &str) -> bool {
 }
 
 fn selected(item: &StackItem, state: &GameState) -> bool {
+    if time_vault_ability(item) {
+        return true;
+    }
     [
         item.v4.source_contract.map(|source| source.card_def),
         state
@@ -60,7 +63,35 @@ fn selected(item: &StackItem, state: &GameState) -> bool {
     .any(selected_definition)
 }
 
+/// Time Vault: "{T}: Take an extra turn after this one." Its activated
+/// ability is scheduled like Temporal Manipulation's spell.
+fn time_vault_ability(item: &StackItem) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && item.kind == StackItemKind::ActivatedAbility
+        && item.v4.ability_source_contract.is_some_and(|source| {
+            source.source == item.source
+                && card_def::CARD_DEFS
+                    .get(usize::from(source.card_def))
+                    .is_some_and(|definition| definition.name == "Time Vault")
+        })
+}
+
+fn exact_ability_recipe(item: &StackItem) -> bool {
+    time_vault_ability(item)
+        && !item.is_copy
+        && item.inline_effect.as_ref() == Some(&recipe())
+        && item.targets.is_empty()
+        && item.v4.target_contracts.is_empty()
+        && item
+            .v4
+            .ability_source_contract
+            .is_some_and(|source| source.controller == item.controller)
+}
+
 fn exact_recipe(item: &StackItem) -> bool {
+    if exact_ability_recipe(item) {
+        return true;
+    }
     if item
         .v4
         .source_contract
@@ -533,7 +564,9 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                                     if *object==item.source && *controller_before==item.controller)
                             }
                         }).count();
-                        if departures != 1 {
+                        // An activated ability leaves no card behind.
+                        let expected = usize::from(item.kind != StackItemKind::ActivatedAbility);
+                        if departures != expected {
                             return Err("removed Temporal spell lacks its unique independent actual Stack departure".into());
                         }
                     }

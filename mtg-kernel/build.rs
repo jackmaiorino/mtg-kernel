@@ -2814,6 +2814,8 @@ enum StackSpellFilter {
     Noncreature,
     Artifact,
     Creature,
+    /// "Target spell with mana value 1" (Mental Misstep).
+    ManaValueOneV1,
 }
 
 impl MillPlayer {
@@ -2835,6 +2837,7 @@ impl StackSpellFilter {
             StackSpellFilter::Noncreature => "noncreature",
             StackSpellFilter::Artifact => "artifact",
             StackSpellFilter::Creature => "creature",
+            StackSpellFilter::ManaValueOneV1 => "mana_value_1",
         }
     }
 
@@ -2849,6 +2852,7 @@ impl StackSpellFilter {
             StackSpellFilter::Noncreature => "TargetSpec::NoncreatureSpellOnStack",
             StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
             StackSpellFilter::Creature => "TargetSpec::CreatureSpellOnStack",
+            StackSpellFilter::ManaValueOneV1 => "TargetSpec::SpellWithManaValueV1(1)",
         }
     }
 }
@@ -4821,7 +4825,10 @@ fn additional_cost_for(name: &str) -> &'static str {
         "Raze" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Land }])"
         }
-        _ => build_standard_v1::additional_cost_for(name),
+        _ => match build_standard_v1::additional_cost_for(name) {
+            "None" => build_eternal_vintage_v1::additional_cost_for(name),
+            cost => cost,
+        },
     }
 }
 
@@ -11144,6 +11151,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Lhurgoyf" => "Subtype::Lhurgoyf",
         "Halfling" => "Subtype::Halfling",
         "Tamiyo" => "Subtype::Tamiyo",
+        "Archon" => "Subtype::Archon",
+        "Karn" => "Subtype::Karn",
+        "Tezzeret" => "Subtype::Tezzeret",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

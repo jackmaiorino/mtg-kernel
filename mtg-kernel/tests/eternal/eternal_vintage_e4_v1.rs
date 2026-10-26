@@ -462,3 +462,576 @@ fn time_walk_takes_an_extra_turn() {
     });
     assert_eq!(state.players[1].hand.len(), 1, "then P1's regular turn");
 }
+
+// ---- Batch two: helpers -----------------------------------------------------
+
+/// Settles, answering every library or effect selection by finishing with
+/// whatever is already selected, every option with the first, every Boolean
+/// with `false`, and every target prompt with the first legal one.
+fn settle_declining_selections(state: &mut GameState) {
+    while let Some(decision) = settle(state) {
+        match decision {
+            Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            } => act(state, Action::FinishEffectSelection),
+            Decision::ChooseEffectTargets { legal_targets, .. } => {
+                act(state, Action::ChooseEffectTarget(legal_targets[0]))
+            }
+            Decision::ChooseEffectOption { .. } => act(state, Action::ChooseEffectOption(0)),
+            Decision::ChooseEffectBoolean { .. } => act(state, Action::ChooseEffectBoolean(false)),
+            Decision::ChooseTargets { legal_targets, .. } if !legal_targets.is_empty() => {
+                act(state, Action::ChooseTarget(legal_targets[0]))
+            }
+            other => panic!("unexpected choice: {other:?}"),
+        }
+    }
+}
+
+/// P1 becomes the active player in its first main phase, holding priority.
+fn opponents_main_phase(state: &mut GameState) {
+    state.active_player = P1;
+    state.priority_player = P1;
+    state.step = Step::Main1;
+}
+
+fn plays(state: &GameState, player: PlayerId, name: &str) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .any(|&id| CARD_DEFS[state.objects.get(id).card_def as usize].name == name)
+}
+
+/// Passes priority and declares nothing until `answer` handles a decision
+/// (returning true), panicking on any other decision.
+fn pass_until_answered(
+    state: &mut GameState,
+    mut answer: impl FnMut(&mut GameState, &Decision) -> bool,
+) {
+    for _ in 0..400 {
+        let decision = next(state);
+        if answer(state, &decision) {
+            return;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::DeclareAttackers { .. } => act(state, Action::DeclareAttackers(Vec::new())),
+            Decision::DeclareBlockers { .. } => act(state, Action::DeclareBlockers(Vec::new())),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    panic!("never answered");
+}
+
+// ---- Batch two: spells ------------------------------------------------------
+
+#[test]
+fn mental_misstep_counters_a_mana_value_one_spell_for_two_life() {
+    let mut state = islands();
+    let misstep = put(&mut state, P0, "Mental Misstep", Zone::Hand);
+    state.priority_player = P1;
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Player(P0)]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P1, .. }
+    ));
+    act(&mut state, Action::Pass);
+    // No blue mana: the Phyrexian symbol costs 2 life.
+    cast(&mut state, misstep, &[Target::Object(bolt)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].life, 18);
+
+    // A mana value 2 spell is not a legal target.
+    let mut state = islands();
+    let misstep = put(&mut state, P0, "Mental Misstep", Zone::Hand);
+    opponents_main_phase(&mut state);
+    let walk = put(&mut state, P1, "Time Walk", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::U], 1);
+    cast(&mut state, walk, &[]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P1, .. }
+    ));
+    act(&mut state, Action::Pass);
+    assert!(!castable(&mut state, misstep));
+}
+
+#[test]
+fn tinker_sacrifices_an_artifact_and_puts_one_from_the_library_onto_the_battlefield() {
+    let mut state = game(&["Island", "Sol Ring", "Island"]);
+    let sol_ring = state.players[0].library[1];
+    let mox = put(&mut state, P0, "Mox Pearl", Zone::Battlefield);
+    let tinker = put(&mut state, P0, "Tinker", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    cast(&mut state, tinker, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+            assert_eq!(legal_targets, vec![Target::Object(sol_ring)]);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(sol_ring)),
+            );
+        }
+        other => panic!("expected the search, got {other:?}"),
+    }
+    settle_declining_selections(&mut state);
+    assert_eq!(state.objects.get(mox).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(sol_ring).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(tinker).zone, Zone::Graveyard);
+
+    // Without an artifact to sacrifice, Tinker can't be cast.
+    let mut state = islands();
+    let tinker = put(&mut state, P0, "Tinker", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    assert!(!castable(&mut state, tinker));
+}
+
+#[test]
+fn paradoxical_outcome_returns_nontoken_nonland_permanents_and_draws_for_each() {
+    let mut state = islands();
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    let mox = put(&mut state, P0, "Mox Jet", Zone::Battlefield);
+    let land = put(&mut state, P0, "Island", Zone::Battlefield);
+    let outcome = put(&mut state, P0, "Paradoxical Outcome", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    assert!(castable(&mut state, outcome));
+    act(&mut state, Action::CastSpell(outcome));
+    match next(&mut state) {
+        Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => {
+            assert!(can_finish, "any number includes none");
+            assert!(legal_targets.contains(&Target::Object(ring)));
+            assert!(legal_targets.contains(&Target::Object(mox)));
+            assert!(!legal_targets.contains(&Target::Object(land)));
+            act(&mut state, Action::ChooseTarget(Target::Object(ring)));
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(!legal_targets.contains(&Target::Object(ring)));
+            act(&mut state, Action::ChooseTarget(Target::Object(mox)));
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+    if let Decision::ChooseTargets { .. } = next(&mut state) {
+        act(&mut state, Action::FinishEffectSelection);
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(ring).zone, Zone::Hand);
+    assert_eq!(state.objects.get(mox).zone, Zone::Hand);
+    assert_eq!(state.objects.get(land).zone, Zone::Battlefield);
+    // Two returned cards and two draws.
+    assert_eq!(state.players[0].hand.len(), 4);
+}
+
+// ---- Batch two: artifacts ---------------------------------------------------
+
+#[test]
+fn coveted_jewel_draws_three_taps_for_three_and_changes_hands_when_unblocked() {
+    let mut state = islands();
+    let jewel = put(&mut state, P0, "Coveted Jewel", Zone::Hand);
+    pool(&mut state, P0, &[], 6);
+    cast(&mut state, jewel, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(jewel).zone, Zone::Battlefield);
+    assert_eq!(state.players[0].hand.len(), 3);
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(jewel, ManaColor::G),
+    );
+    assert_eq!(mana(&state, P0, ManaColor::G), 3);
+
+    // P0 attacks P1, who controls a tapped Jewel, and isn't blocked.
+    let mut state = islands();
+    let jewel = put(&mut state, P1, "Coveted Jewel", Zone::Battlefield);
+    state.objects.get_mut(jewel).tapped = true;
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    for _ in 0..60 {
+        match next(&mut state) {
+            Decision::DeclareAttackers { .. } => {
+                act(&mut state, Action::DeclareAttackers(vec![elves]))
+            }
+            Decision::DeclareBlockers { .. } => act(&mut state, Action::DeclareBlockers(vec![])),
+            Decision::CastSpellOrPass { .. } if state.step == Step::Main2 => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.objects.get(jewel).controller, P0);
+    assert!(state.players[0].battlefield.contains(&jewel));
+    assert!(!state.objects.get(jewel).tapped, "it untaps");
+    assert_eq!(state.players[0].hand.len(), 3, "the attacker draws three");
+    assert_eq!(state.players[1].hand.len(), 0);
+}
+
+#[test]
+fn mishras_workshop_mana_casts_only_artifact_spells() {
+    let mut state = islands();
+    let workshop = put(&mut state, P0, "Mishra's Workshop", Zone::Battlefield);
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Hand);
+    let outcome = put(&mut state, P0, "Paradoxical Outcome", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    next(&mut state);
+    act(&mut state, Action::ActivateManaAbility(workshop));
+    assert!(state.objects.get(workshop).tapped);
+    assert_eq!(state.players[0].restricted_mana_pool.0.len(), 3);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+    assert!(
+        !castable(&mut state, outcome),
+        "Workshop mana can't pay for a nonartifact spell"
+    );
+    cast(&mut state, ring, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(ring).zone, Zone::Battlefield);
+}
+
+#[test]
+fn manifold_key_untaps_another_artifact_or_makes_a_creature_unblockable() {
+    let mut state = islands();
+    let key = put(&mut state, P0, "Manifold Key", Zone::Battlefield);
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    state.objects.get_mut(ring).tapped = true;
+    pool(&mut state, P0, &[], 1);
+    assert!(activatable(&mut state, key, 0));
+    act(&mut state, Action::ActivateAbility(key, 0));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(!legal_targets.contains(&Target::Object(key)), "another");
+            act(&mut state, Action::ChooseTarget(Target::Object(ring)));
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+    settled(&mut state);
+    assert!(!state.objects.get(ring).tapped);
+    assert!(state.objects.get(key).tapped);
+
+    let mut state = islands();
+    let key = put(&mut state, P0, "Manifold Key", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    pool(&mut state, P0, &[], 3);
+    activate(&mut state, key, 1, &[Target::Object(elves)]);
+    settled(&mut state);
+    assert!(engine::has_effective_keyword(
+        &state,
+        elves,
+        mtg_kernel::card_def::Keywords::CANT_BE_BLOCKED
+    ));
+}
+
+#[test]
+fn vexing_bauble_counters_spells_cast_without_mana_and_cycles() {
+    let mut state = islands();
+    put(&mut state, P0, "Vexing Bauble", Zone::Battlefield);
+    opponents_main_phase(&mut state);
+    let mox = put(&mut state, P1, "Mox Ruby", Zone::Hand);
+    cast(&mut state, mox, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(mox).zone, Zone::Graveyard, "countered");
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Hand);
+    pool(&mut state, P1, &[], 1);
+    cast(&mut state, ring, &[]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(ring).zone,
+        Zone::Battlefield,
+        "mana spent"
+    );
+
+    let mut state = islands();
+    let bauble = put(&mut state, P0, "Vexing Bauble", Zone::Battlefield);
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, bauble, 0, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(bauble).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].hand.len(), 1);
+}
+
+#[test]
+fn void_mirror_counters_spells_cast_without_colored_mana() {
+    let mut state = islands();
+    put(&mut state, P0, "Void Mirror", Zone::Battlefield);
+    opponents_main_phase(&mut state);
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Hand);
+    pool(&mut state, P1, &[], 1);
+    cast(&mut state, ring, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(ring).zone, Zone::Graveyard, "colorless");
+    let recall = put(&mut state, P1, "Ancestral Recall", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::U], 0);
+    cast(&mut state, recall, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(state.players[1].hand.len(), 3, "blue mana was spent");
+    // Generic paid with colored mana counts as colored mana spent.
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::U], 0);
+    cast(&mut state, ring, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(ring).zone, Zone::Battlefield);
+}
+
+#[test]
+fn trinisphere_makes_cheap_spells_cost_three_while_untapped() {
+    let mut state = islands();
+    let sphere = put(&mut state, P0, "Trinisphere", Zone::Battlefield);
+    let mox = put(&mut state, P0, "Mox Emerald", Zone::Hand);
+    pool(&mut state, P0, &[], 2);
+    assert!(!castable(&mut state, mox));
+    pool(&mut state, P0, &[], 1);
+    cast(&mut state, mox, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(mox).zone, Zone::Battlefield);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+
+    // A colored cost keeps its color and adds generic up to three.
+    let recall = put(&mut state, P0, "Ancestral Recall", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    assert!(!castable(&mut state, recall));
+    pool(&mut state, P0, &[], 1);
+    assert!(castable(&mut state, recall));
+
+    // Tapped, it does nothing.
+    state.objects.get_mut(sphere).tapped = true;
+    let ruby = put(&mut state, P0, "Mox Ruby", Zone::Hand);
+    state.players[0].mana_pool = [0; 6];
+    assert!(castable(&mut state, ruby));
+}
+
+#[test]
+fn mana_vault_stays_tapped_and_pays_four_to_untap_or_burns_its_controller() {
+    for pay in [true, false] {
+        let mut state = islands();
+        let vault = put(&mut state, P0, "Mana Vault", Zone::Battlefield);
+        for _ in 0..4 {
+            put(&mut state, P0, "Island", Zone::Battlefield);
+        }
+        next(&mut state);
+        act(&mut state, Action::ActivateManaAbility(vault));
+        assert_eq!(mana(&state, P0, ManaColor::C), 3);
+        assert!(state.objects.get(vault).tapped);
+        // Through P1's turn to P0's next upkeep payment choice.
+        pass_until_answered(&mut state, |state, decision| {
+            let Decision::ChooseEffectBoolean { player, .. } = decision else {
+                return false;
+            };
+            assert_eq!(*player, P0);
+            assert!(state.objects.get(vault).tapped, "it did not untap");
+            act(state, Action::ChooseEffectBoolean(pay));
+            true
+        });
+        pass_until(&mut state, |state| {
+            state.active_player == P0 && state.step == Step::Main1
+        });
+        assert_eq!(state.objects.get(vault).tapped, !pay, "pay {pay}");
+        let life = if pay { 20 } else { 19 };
+        assert_eq!(state.players[0].life, life, "pay {pay}");
+    }
+}
+
+#[test]
+fn time_vault_enters_tapped_skips_a_turn_to_untap_and_takes_an_extra_turn() {
+    let mut state = islands();
+    let vault = put(&mut state, P0, "Time Vault", Zone::Hand);
+    pool(&mut state, P0, &[], 2);
+    cast(&mut state, vault, &[]);
+    settled(&mut state);
+    assert!(state.objects.get(vault).tapped, "it enters tapped");
+    // P1's end step: P0 may skip their next turn.
+    pass_until_answered(&mut state, |state, decision| {
+        let Decision::ChooseEffectOption {
+            player,
+            option_count,
+            ..
+        } = decision
+        else {
+            return false;
+        };
+        assert_eq!(*player, P0);
+        assert_eq!(state.active_player, P1);
+        assert_eq!(*option_count, 2);
+        act(state, Action::ChooseEffectOption(0));
+        true
+    });
+    assert!(state.objects.get(vault).tapped, "untapped only by the skip");
+    pass_until(&mut state, |state| state.step == Step::Main1);
+    assert_eq!(state.active_player, P1, "P0's turn was skipped");
+    assert!(!state.objects.get(vault).tapped, "the skip untapped it");
+    // At instant speed during P1's turn: P0 takes an extra turn after it.
+    state.priority_player = P0;
+    activate(&mut state, vault, 0, &[]);
+    settled(&mut state);
+    assert!(state.extra_turn_v1.is_some());
+}
+
+// ---- Batch two: creatures and static abilities ------------------------------
+
+#[test]
+fn archon_of_emeria_limits_spells_and_taps_opponents_nonbasic_lands() {
+    let mut state = islands();
+    put(&mut state, P0, "Archon of Emeria", Zone::Battlefield);
+    let first = put(&mut state, P0, "Mox Jet", Zone::Hand);
+    let second = put(&mut state, P0, "Mox Ruby", Zone::Hand);
+    cast(&mut state, first, &[]);
+    settled(&mut state);
+    assert!(!castable(&mut state, second), "one spell each turn");
+
+    let mut state = islands();
+    put(&mut state, P0, "Archon of Emeria", Zone::Battlefield);
+    let own = put(&mut state, P0, "Strip Mine", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(own));
+    assert!(!state.objects.get(own).tapped, "only opponents' lands");
+    opponents_main_phase(&mut state);
+    let mine = put(&mut state, P1, "Strip Mine", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(mine));
+    assert!(state.objects.get(mine).tapped, "nonbasic enters tapped");
+
+    let mut state = islands();
+    put(&mut state, P0, "Archon of Emeria", Zone::Battlefield);
+    opponents_main_phase(&mut state);
+    let island = put(&mut state, P1, "Snow-Covered Island", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(island));
+    assert!(
+        !state.objects.get(island).tapped,
+        "basic lands are unaffected"
+    );
+}
+
+#[test]
+fn clarion_conqueror_stops_artifact_creature_and_planeswalker_abilities() {
+    let mut state = islands();
+    put(&mut state, P1, "Clarion Conqueror", Zone::Battlefield);
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    let key = put(&mut state, P0, "Manifold Key", Zone::Battlefield);
+    let mine = put(&mut state, P0, "Strip Mine", Zone::Battlefield);
+    let land = put(&mut state, P1, "Island", Zone::Battlefield);
+    pool(&mut state, P0, &[], 3);
+    next(&mut state);
+    assert!(engine::step(&mut state, Action::ActivateManaAbility(ring)).is_err());
+    assert!(!activatable(&mut state, key, 0));
+    assert!(!activatable(&mut state, key, 1));
+    activate(&mut state, mine, 0, &[Target::Object(land)]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(land).zone,
+        Zone::Graveyard,
+        "lands still work"
+    );
+}
+
+#[test]
+fn white_plume_adventurer_untaps_a_creature_each_opponent_upkeep() {
+    let mut state = islands();
+    let plume = put(&mut state, P0, "White Plume Adventurer", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    state.objects.get_mut(plume).tapped = true;
+    state.objects.get_mut(elves).tapped = true;
+    pass_until_answered(&mut state, |state, decision| {
+        let Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            ..
+        } = decision
+        else {
+            return false;
+        };
+        assert_eq!(*player, P0);
+        assert_eq!(state.active_player, P1);
+        assert!(legal_targets.contains(&Target::Object(elves)));
+        act(state, Action::ChooseEffectTarget(Target::Object(elves)));
+        true
+    });
+    settled(&mut state);
+    assert!(!state.objects.get(elves).tapped);
+    assert!(state.objects.get(plume).tapped);
+
+    // Having completed a dungeon, all of them untap.
+    let mut state = islands();
+    let plume = put(&mut state, P0, "White Plume Adventurer", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    state.objects.get_mut(plume).tapped = true;
+    state.objects.get_mut(elves).tapped = true;
+    state.players[0].dungeon.completed_dungeons = vec![1];
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1
+    });
+    assert!(!state.objects.get(elves).tapped);
+    assert!(!state.objects.get(plume).tapped);
+}
+
+#[test]
+fn white_plume_adventurer_and_seasoned_dungeoneer_take_the_initiative() {
+    for name in ["White Plume Adventurer", "Seasoned Dungeoneer"] {
+        let mut state = islands();
+        let creature = put(&mut state, P0, name, Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::W], 3);
+        cast(&mut state, creature, &[]);
+        settle_declining_selections(&mut state);
+        assert_eq!(state.initiative, Some(P0), "{name}");
+        assert!(plays(&state, P0, name), "{name}");
+    }
+}
+
+#[test]
+fn seasoned_dungeoneer_protects_an_attacking_warrior_from_creatures_and_explores() {
+    let mut state = islands();
+    let top = state.players[0].library[0];
+    let dungeoneer = put(&mut state, P0, "Seasoned Dungeoneer", Zone::Battlefield);
+    let blocker = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let mut blockable = None;
+    for _ in 0..60 {
+        match next(&mut state) {
+            Decision::DeclareAttackers { .. } => {
+                act(&mut state, Action::DeclareAttackers(vec![dungeoneer]))
+            }
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Object(dungeoneer)]);
+                act(&mut state, Action::ChooseTarget(legal_targets[0]));
+            }
+            Decision::DeclareBlockers { legal_blockers, .. } => {
+                blockable = Some(
+                    legal_blockers
+                        .iter()
+                        .any(|(_, blockers)| blockers.contains(&blocker)),
+                );
+                act(&mut state, Action::DeclareBlockers(vec![]));
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            Decision::ChooseEffectBoolean { .. } => {
+                act(&mut state, Action::ChooseEffectBoolean(false))
+            }
+            Decision::ChooseEffectOption { .. } => act(&mut state, Action::ChooseEffectOption(0)),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(blockable, Some(false), "protection from creatures");
+    assert_eq!(state.objects.get(top).zone, Zone::Hand, "the land explored");
+}
+
+/// Temporary while wave E4 is in progress: reports the catalog hash.
+#[test]
+fn e4_temp_reports_the_eternal_catalog_hash() {
+    panic!(
+        "eternal catalog hash {:#018x}",
+        mtg_kernel::card_def::KERNEL_CARDDB_HASH
+    );
+}

@@ -4213,7 +4213,8 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
-    if card.name == "Avenging Hunter" && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+    if crate::eternal_vintage_v1::initiative_granter(card.name)
+        && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
     {
         return true;
     }
@@ -4375,7 +4376,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
         {
             spec
-        } else if card.name == "Avenging Hunter" {
+        } else if crate::eternal_vintage_v1::initiative_granter(card.name) {
             match effect {
                 EffectOp::ResolveInitiativeTrigger { binding } => match binding.kind {
                     InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::Forge)
