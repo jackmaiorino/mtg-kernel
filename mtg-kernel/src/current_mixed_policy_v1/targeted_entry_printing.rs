@@ -20,12 +20,27 @@ pub(super) fn handles(name: &str) -> bool {
             | "Affectionate Indrik"
             | "Grappling Kraken"
             | "Felidar Savior"
+            | "Sun-Blessed Healer"
     )
 }
 
 /// The caller still checks all unrelated CardDef fields in the common guard.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (cost, color, subtypes, power, toughness, keywords, target_spec, filter) = match d.name {
+        "Sun-Blessed Healer" => (
+            Cost {
+                generic: 1,
+                pips: &[Pip::Colored(ManaColor::W)],
+                x_count: 0,
+            },
+            ManaColor::W,
+            &[Subtype::Human, Subtype::Cleric][..],
+            3,
+            1,
+            Keywords::LIFELINK,
+            TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
+            json!({"zone":"GraveyardOfCapturedTriggerController","kind":"Card","printed_permanent_type":true,"exclude_land_type":true,"printed_mana_value_at_most":2,"not_limited_to_creatures":true}),
+        ),
         "Felidar Savior" => (
             Cost {
                 generic: 3,
@@ -145,8 +160,15 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let indrik = d.name == "Affectionate Indrik";
     let kraken = d.name == "Grappling Kraken";
     let felidar = d.name == "Felidar Savior";
+    let healer = d.name == "Sun-Blessed Healer";
     let optional_targets = pup || felidar;
-    let program = if felidar {
+    let program = if healer {
+        EffectOp::Conditional {
+            cond: EffectCond::WasKicked,
+            then: Box::new(EffectOp::ReturnTargetPermanentToBattlefield { target_index: 0 }),
+            else_: Box::new(EffectOp::Sequence(vec![])),
+        }
+    } else if felidar {
         EffectOp::Sequence(
             (0..2)
                 .map(|target_index| EffectOp::Conditional {
@@ -221,6 +243,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || d.power != Some(power)
         || d.toughness != Some(toughness)
         || d.keywords != keywords
+        || d.kicker_cost != if healer { Some(cost) } else { None }
         || d.target_spec != TargetSpec::None
         || d.is_land
         || d.is_token
@@ -256,7 +279,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         }
         || *home_zone != Zone::Battlefield
         || *face_index != 0
-        || *intervening_if_kicked
+        || *intervening_if_kicked != healer
         || *intervening_if_controls_another_source_card
         || effect() != program
         || crate::trigger::target_spec_for_trigger(id, &program) != Some(target_spec)
@@ -269,11 +292,35 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "ordered_resolution":[{"operation":"MoveOriginalSpellToBattlefield","controller":"Caster"}],
         "countering_skips_entry_and_does_not_refund_cost":true,"countered_spell_destination":"OwnersGraveyard",
         "normal_zone_replacements_and_entry_triggers_apply":true,"other_cast_permissions_require_current_candidate_authority":true});
+    let casts = if healer {
+        [false,true].into_iter().map(|kicked|{
+        let mut root=cast.clone();root["kicked"]=json!(kicked);
+        root["ordered_costs"]=json!([{"operation":"PayTotalManaCost","printed_mana_component":cost,
+            "chosen_kicker_additional_component":if kicked{Some(cost)}else{None},
+            "base_total_before_increases_and_reductions":Cost{generic:if kicked{2}else{1},pips:if kicked{&[Pip::Colored(ManaColor::W),Pip::Colored(ManaColor::W)]}else{cost.pips},x_count:0},
+            "one_native_payment_plan":true,"normal_cost_increases_and_reductions_apply_to_total":true}]);
+        root["kicker_chosen_before_payment_does_not_change_mana_value"]=json!(true);root
+    }).collect::<Vec<_>>()
+    } else {
+        vec![cast]
+    };
     let target = json!({"slot":0,"kind":"Object","filter":filter,"minimum":if optional_targets {0} else {1},"maximum":if felidar {2}else{1},
         "chooser":"CapturedTriggerController","selected_at":"TriggerStackPlacement",
         "normal_target_legality_and_protection_apply":true,"rechecked_at_resolution":true,
         "binding":"OriginalSelectedObjectIncarnation"});
-    let resolution = if felidar {
+    let resolution = if healer {
+        json!([{"operation":"IfCapturedEnteringSpellWasKickedReturnOriginalGraveyardTargetToBattlefield",
+            "target_slot":0,"requires_original_target_incarnation_and_complete_current_legality":true,
+            "controller":"ReturnedCardsOwner","not_returned_to_hand":true,"not_intrinsically_tapped":true,
+            "normal_entry_tap_replacements_and_enters_with_characteristics_apply":true,
+            "normal_battlefield_entry_triggers_apply":true,"noncreature_nonland_permanents_are_eligible":true,
+            "returning_aura_uses_legal_untargeted_attachment_host_choice_if_needed":true,
+            "aura_host_choice_must_obey_enchant_restrictions_and_protection":true,
+            "untargeted_aura_entry_does_not_trigger_ward_or_obey_hexproof_or_shroud_targeting_restrictions":true,
+            "no_legal_aura_host_leaves_aura_in_graveyard":true,
+            "source_departure_or_new_incarnation_does_not_cancel_original_trigger":true,
+            "captured_kicker_fact_rechecked_at_resolution_not_future_source_incarnation":true}])
+    } else if felidar {
         json!([{"operation":"PutPlusOnePlusOneCounterOnEachLegalChosenCreature","target_slots":[0,1],"count_per_target":1,
             "choose_zero_one_or_two_distinct_other_creatures":true,"missing_optional_slots_skipped":true,
             "each_slot_rechecks_original_incarnation_current_creature_type_control_and_normal_target_legality":true,
@@ -339,9 +386,12 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "uses_current_effective_land_type_and_entry_controller":true,"trigger_once_per_entering_land":true,
             "creature_entry_itself_does_not_trigger":true});
     }
+    if healer {
+        trigger["intervening_if"] = json!({"operation":"EnteringSpellWasKicked","check_at_entry_and_resolution":true,"noncast_entries_are_not_kicked":true,"captures_original_entry_cast_fact":true});
+    }
     Ok(Some(json!({"card_id":id,"targeted_entry_printing":{
         "schema":"printed-targeted-entry/v1","cost":cost,"mana_value":d.mana_value,
         "types":d.types,"subtypes":d.subtypes,"supertypes":[],"colors":d.colors,
         "power":power,"toughness":toughness,"keywords":keywords.0,"token":false,
-        "ordered_cast_roots":[cast],"ordered_triggers":[trigger]}})))
+        "ordered_cast_roots":casts,"ordered_triggers":[trigger]}})))
 }

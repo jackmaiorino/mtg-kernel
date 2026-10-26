@@ -1498,6 +1498,36 @@ mod paid {
         }
     }
 
+    #[test]
+    fn sun_healer_kicker_target_filter_and_changed_printing_refusals() {
+        let id = crate::card_def::card_id_by_name("Sun-Blessed Healer").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let p = &value["targeted_entry_printing"];
+        assert_eq!(p["mana_value"], 2);
+        assert_eq!(
+            p["ordered_cast_roots"][1]["ordered_costs"][0]
+                ["base_total_before_increases_and_reductions"]["generic"],
+            2
+        );
+        assert_eq!(
+            p["ordered_triggers"][0]["targets"][0]["filter"]["printed_mana_value_at_most"],
+            2
+        );
+        for field in 0..7 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.kicker_cost = None,
+                1 => d.kicker_cost = Some(crate::mana::Cost::zero()),
+                2 => d.cost = crate::mana::Cost::zero(),
+                3 => d.keywords = crate::card_def::Keywords::NONE,
+                4 => d.mana_value = 4,
+                5 => d.target_spec = crate::card_def::TargetSpec::Creature,
+                _ => d.power = Some(2),
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
     // A complete local CardDef fixture. Non-Copy optional programs are absent
     // in both admitted recipes; no live catalog entry is mutated.
     fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {

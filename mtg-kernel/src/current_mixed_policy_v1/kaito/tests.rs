@@ -60,6 +60,7 @@ mod shivan;
 mod simple_triggers;
 mod solemn;
 mod stroke_midnight;
+mod sun_healer;
 mod surveil_many;
 mod surveil_one;
 mod syphoner;

@@ -794,6 +794,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || (ordinary_batch_spell.is_some() && d.name == "Revenge of the Rats"))
         && (d.kicker_cost.is_none()
             || (targeted_spell.is_some() && d.name == "Burst Lightning")
+            || (targeted_entry.is_some() && d.name == "Sun-Blessed Healer")
             || (library_search.is_some() && d.name == "Grow from the Ashes"))
         && (d.additional_cost.is_none() || discard_cost_spell.is_some())
         && d.optional_additional_cost.is_none()
