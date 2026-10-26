@@ -22,6 +22,7 @@
 //! compilation.
 
 mod build_eternal_v1;
+mod build_eternal_vintage_v1;
 mod build_standard_v1;
 #[allow(dead_code)]
 #[path = "../build_support/native_store_build_capture_v1.rs"]
@@ -4671,7 +4672,7 @@ fn conditional_tap_yield_for(name: &str) -> &'static str {
         "Urza's Tower" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Mine }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::PowerPlant }], amount_when_met: 3, amount_otherwise: 1 })",
         "Urza's Mine" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Tower }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::PowerPlant }], amount_when_met: 2, amount_otherwise: 1 })",
         "Urza's Power Plant" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Mine }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Tower }], amount_when_met: 2, amount_otherwise: 1 })",
-        _ => "None",
+        _ => build_eternal_vintage_v1::conditional_tap_yield_for(name),
     }
 }
 
@@ -4684,7 +4685,7 @@ fn conditional_tap_yield_program_for(name: &str) -> Option<&'static str> {
         "Urza's Tower" => Some("mana_ability_add_urzas_tower"),
         "Urza's Mine" => Some("mana_ability_add_urzas_mine"),
         "Urza's Power Plant" => Some("mana_ability_add_urzas_power_plant"),
-        _ => None,
+        _ => build_eternal_vintage_v1::conditional_tap_yield_program_for(name),
     }
 }
 

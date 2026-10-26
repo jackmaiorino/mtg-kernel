@@ -244,7 +244,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Wasteland" => &WASTELAND,
         "Mishra's Bauble" => &MISHRAS_BAUBLE,
         "Urza's Bauble" => &URZAS_BAUBLE,
-        _ => &[],
+        _ => super::build_eternal_vintage_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -289,7 +289,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_cards_v1::prismari_charm_surveil_draw",
         },
-        _ => return None,
+        _ => return super::build_eternal_vintage_v1::special_for(name),
     })
 }
 
@@ -306,7 +306,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Moonshadow" => &["Keywords::MENACE"],
         "Orcish Bowmasters" => &["Keywords::FLASH"],
         "Tamiyo, Inquisitive Student" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_vintage_v1::keywords_for(name),
     }
 }
 
@@ -347,7 +347,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Tamiyo, Inquisitive Student" => {
             "attacks:investigate;draw_nth:3:exile_then_return_transformed_under_owner;face1_plus2:until_controllers_next_turn:each_creature_attacking_controller_gets_minus1_0_eot;face1_minus7:emblem_no_maximum_hand_size"
         }
-        _ => "none",
+        _ => super::build_eternal_vintage_v1::trigger_recipe_for(name),
     }
 }
 
@@ -378,7 +378,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         // "{T}: Add {U}{B}." One activation adds both colors at once.
         "Dimir Aqueduct" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::B]), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_vintage_v1::mana_ability_def_for(name),
     }
 }
 

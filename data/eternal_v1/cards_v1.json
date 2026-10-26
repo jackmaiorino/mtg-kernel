@@ -1368,6 +1368,415 @@
     "cast_from_graveyard",
     "exile_replacement"
    ]
+  },
+  {
+   "name": "Mox Emerald",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "G"
+   ],
+   "decks": [
+    "vintage-jewel-shops",
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoxEmerald.java"
+  },
+  {
+   "name": "Mox Jet",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "B"
+   ],
+   "decks": [
+    "vintage-jewel-shops",
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoxJet.java"
+  },
+  {
+   "name": "Mox Pearl",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "W"
+   ],
+   "decks": [
+    "vintage-jewel-shops",
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoxPearl.java"
+  },
+  {
+   "name": "Mox Ruby",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "R"
+   ],
+   "decks": [
+    "vintage-jewel-shops",
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoxRuby.java"
+  },
+  {
+   "name": "Mox Sapphire",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "U"
+   ],
+   "decks": [
+    "vintage-jewel-shops",
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoxSapphire.java"
+  },
+  {
+   "name": "Black Lotus",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "vintage-jewel-shops",
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "any_color_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BlackLotus.java"
+  },
+  {
+   "name": "Sol Ring",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SolRing.java"
+  },
+  {
+   "name": "Mana Crypt",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "vintage-jewel-shops",
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "upkeep_trigger",
+    "coin_flip"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/ManaCrypt.java"
+  },
+  {
+   "name": "Snow-Covered Island",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Island"
+   ],
+   "supertypes": [
+    "Basic",
+    "Snow"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U"
+   ],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SnowCoveredIsland.java"
+  },
+  {
+   "name": "Strip Mine",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "activated_ability",
+    "sacrifice_cost",
+    "destroy_target",
+    "land_destruction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StripMine.java"
+  },
+  {
+   "name": "Karakas",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W"
+   ],
+   "decks": [
+    "vintage-mono-white-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "activated_ability",
+    "bounce"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/Karakas.java"
+  },
+  {
+   "name": "Tolarian Academy",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U"
+   ],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "artifact_count_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TolarianAcademy.java"
+  },
+  {
+   "name": "Ancestral Recall",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AncestralRecall.java"
+  },
+  {
+   "name": "Time Walk",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "extra_turn"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TimeWalk.java"
   }
  ]
 }

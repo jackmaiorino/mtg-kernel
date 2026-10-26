@@ -61,6 +61,12 @@ pub struct EternalStateV1 {
     /// Emblems with "You have no maximum hand size", per player.
     #[serde(default, skip_serializing_if = "is_no_emblem")]
     pub no_maximum_hand_size: [bool; 2],
+    /// The Vintage cards' state (`eternal_vintage_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_vintage_v1::VintageStateV1::is_empty"
+    )]
+    pub vintage: crate::eternal_vintage_v1::VintageStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -101,6 +107,8 @@ pub enum EternalTriggerV1 {
     /// "Whenever an opponent draws a card except the first one they draw in
     /// each of their draw steps" (Orcish Bowmasters).
     OpponentDrawsExceptFirstInDrawStep,
+    /// A condition owned by the Vintage cards' module.
+    VintageV1(crate::eternal_vintage_v1::VintageTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -160,6 +168,8 @@ pub enum EternalOpV1 {
     /// library, rounded up. You get an emblem with 'You have no maximum hand
     /// size.'"
     DrawHalfLibraryThenNoMaximumHandSizeV1,
+    /// A leaf owned by the Vintage cards' module.
+    VintageV1(crate::eternal_vintage_v1::VintageOpV1),
 }
 
 /// The number of energy counters `player` has.
@@ -447,7 +457,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         ORCISH_BOWMASTERS => &ORCISH_BOWMASTERS_TRIGGERS,
         TAMIYO => &TAMIYO_TRIGGERS,
         BILBO => &BILBO_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_vintage_v1::triggers_for(name),
     }
 }
 
@@ -471,7 +481,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         | URZAS_BAUBLE
         | TAMIYO
         | BILBO => Some(TargetSpec::None),
-        _ => None,
+        _ => crate::eternal_vintage_v1::trigger_target_spec(name, effect),
     }
 }
 
@@ -635,6 +645,7 @@ pub fn campfire_shuffle_graveyard() -> EffectOp {
 
 pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        EternalOpV1::VintageV1(op) => crate::eternal_vintage_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1403,6 +1414,9 @@ pub(crate) fn trigger_matches(
     }
     let controller = state.objects.get(source).controller;
     match condition {
+        EternalTriggerV1::VintageV1(condition) => {
+            crate::eternal_vintage_v1::trigger_matches(condition, events, index, source, state)
+        }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {
                 object,

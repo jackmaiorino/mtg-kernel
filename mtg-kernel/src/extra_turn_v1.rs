@@ -38,7 +38,13 @@ pub fn recipe() -> EffectOp {
 pub(crate) fn selected_definition(id: u16) -> bool {
     card_def::CARD_DEFS
         .get(usize::from(id))
-        .is_some_and(|definition| definition.name == "Temporal Manipulation")
+        .is_some_and(|definition| selected_name(definition.name))
+}
+
+/// The printed spells whose whole program is "Take an extra turn after this
+/// one": Temporal Manipulation, and Time Walk in the eternal catalog.
+fn selected_name(name: &str) -> bool {
+    name == "Temporal Manipulation" || (cfg!(feature = "eternal-fixtures") && name == "Time Walk")
 }
 
 fn selected(item: &StackItem, state: &GameState) -> bool {
@@ -66,7 +72,7 @@ fn exact_recipe(item: &StackItem) -> bool {
         .source_contract
         .and_then(|source| card_def::CARD_DEFS.get(usize::from(source.card_def)))
         .is_some_and(|definition| {
-            definition.name == "Temporal Manipulation"
+            selected_name(definition.name)
                 && definition.target_spec == TargetSpec::None
                 && (definition.spell_effect)() == Some(recipe())
         })

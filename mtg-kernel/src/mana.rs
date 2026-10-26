@@ -763,6 +763,14 @@ fn gather_sources_for_spell_restrictions_v1(
         {
             continue;
         }
+        // Tolarian Academy adds nothing while its controller controls no
+        // artifact; the planner's yield floor of one must not apply to it.
+        #[cfg(feature = "eternal-fixtures")]
+        if def.conditional_tap_yield.is_some_and(|value| {
+            crate::engine::evaluate_dynamic_value(state, value, obj.controller) <= 0
+        }) {
+            continue;
+        }
         let mut choices = if def.is_automatic_payment_mana_source() {
             def.primary_mana_ability_choices(obj.v4.chosen_color)
         } else {
