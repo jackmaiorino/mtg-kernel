@@ -138,14 +138,7 @@ fn seekers_folly(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"seekers_folly_printing":{
-        "schema":"printed-opponent-discard-or-creature-weakening/v1","cost":cost,"mana_value":3,
-        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"OwnMainPhaseEmptyStackWithPriority",
-            "mode_selection":{"chooser":"CastingPlayer","choose_exactly":1,"native_indices":[0,1],"before_targeting_and_final_payment":true,
-                "selected_mode_bound_to_original_pending_cast_and_stack_item":true,"empty_hand_or_creature_set_does_not_remove_mode":true},
-            "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
-            "ordered_modes":[{"native_index":0,"target_count":1,"target_slot":0,"target_kind":"OpponentPlayer",
+    let modes = json!([{"native_index":0,"target_count":1,"target_slot":0,"target_kind":"OpponentPlayer",
                 "caster_is_not_legal_target":true,"empty_hand_is_legal_target":true,"recheck_original_player_target_legality_at_resolution":true,
                 "all_targets_illegal_skips_entire_resolution":true,
                 "ordered_resolution":[{"operation":"DiscardCards","player":"OriginalTargetPlayer","requested_count":2,
@@ -158,11 +151,20 @@ fn seekers_folly(id: u16, d: &CardDef) -> Result<Option<Value>> {
                     "binds_exact_current_battlefield_incarnations":true,"power_delta":-1,"toughness_delta":-1,"keyword_bits":0,
                     "places_no_counters":true,"later_entries_noncreatures_and_casters_creatures_excluded":true,
                     "departed_and_reentered_incarnations_do_not_retain_modification":true,
-                    "duration":"UntilCleanupExpirationAfterDiscard","normal_continuous_layers_and_control_changes_apply":true}]}],
+                    "duration":"UntilCleanupExpirationAfterDiscard","normal_continuous_layers_and_control_changes_apply":true}]}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"OwnMainPhaseEmptyStackWithPriority",
+            "mode_selection":{"chooser":"CastingPlayer","choose_exactly":1,"native_indices":[0,1],"before_targeting_and_final_payment":true,
+                "selected_mode_bound_to_original_pending_cast_and_stack_item":true,"empty_hand_or_creature_set_does_not_remove_mode":true},
+            "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+            "ordered_modes":modes,
             "no_priority_during_selected_mode":true,"normal_triggers_and_state_based_actions_follow_resolution":true,
             "countering_skips_selected_mode":true,"countering_does_not_refund_cost":true,
             "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard","virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
-            "copy_uses_original_native_bound_mode":true,"other_cast_permissions_require_current_candidate_authority":true}]
+            "copy_uses_original_native_bound_mode":true,"other_cast_permissions_require_current_candidate_authority":true}]);
+    Ok(Some(json!({"card_id":id,"seekers_folly_printing":{
+        "schema":"printed-opponent-discard-or-creature-weakening/v1","cost":cost,"mana_value":3,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":cast_roots
     }})))
 }
 
@@ -198,14 +200,7 @@ fn pilfer(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"pilfer_printing":{
-        "schema":"printed-revealed-opponent-hand-nonland-discard/v1","cost":cost,"mana_value":2,
-        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"OwnMainPhaseEmptyStackWithPriority",
-            "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],"target_count":1,"target_slot":0,
-            "target_kind":"OpponentPlayer","caster_is_not_legal_target":true,"empty_hand_is_legal_target":true,
-            "recheck_original_player_target_legality_at_resolution":true,"all_targets_illegal_skips_entire_resolution":true,
-            "ordered_resolution":[{"operation":"RevealEntireCurrentTargetPlayerHand","target_slot":0,"audience":"BothPlayers",
+    let resolution = json!([{"operation":"RevealEntireCurrentTargetPlayerHand","target_slot":0,"audience":"BothPlayers",
                 "capture_time":"Resolution","binds_every_current_hand_card_and_original_zone_incarnation":true,
                 "does_not_reveal_future_draws_or_other_hidden_zones":true,
                 "public_identity_knowledge_is_retained_only_under_normal_native_card_knowledge_rules":true},
@@ -214,13 +209,22 @@ fn pilfer(id: u16, d: &CardDef) -> Result<Option<Value>> {
                     "creature_cards_are_eligible":true,"land_cards_are_ineligible_even_if_also_other_types":true,
                     "full_current_native_candidate_order_and_zone_incarnations_preserved":true},
                 {"operation":"TargetPlayerDiscardsChosenCard","target_slot":0,"count":1,
-                    "binding":"OriginalChosenHandCardIncarnation","is_cost":false,"normal_discard_and_zone_replacements_apply":true}],
+                    "binding":"OriginalChosenHandCardIncarnation","is_cost":false,"normal_discard_and_zone_replacements_apply":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","timing":"OwnMainPhaseEmptyStackWithPriority",
+            "ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],"target_count":1,"target_slot":0,
+            "target_kind":"OpponentPlayer","caster_is_not_legal_target":true,"empty_hand_is_legal_target":true,
+            "recheck_original_player_target_legality_at_resolution":true,"all_targets_illegal_skips_entire_resolution":true,
+            "ordered_resolution":resolution,
             "no_priority_between_reveal_choice_and_discard":true,
             "countering_skips_reveal_choice_and_discard":true,"countering_does_not_refund_cost":true,
             "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
             "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
             "normal_triggers_and_state_based_actions_follow_resolution":true,
-            "other_cast_permissions_require_current_candidate_authority":true}]
+            "other_cast_permissions_require_current_candidate_authority":true}]);
+    Ok(Some(json!({"card_id":id,"pilfer_printing":{
+        "schema":"printed-revealed-opponent-hand-nonland-discard/v1","cost":cost,"mana_value":2,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,"power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":cast_roots
     }})))
 }
 
@@ -253,11 +257,14 @@ fn exsanguinate(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(json!({"card_id":id,"exsanguinate_printing":{
-        "schema":"printed-x-opponent-life-loss/v1","cost":cost,"printed_mana_value":2,
-        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
-        "power":null,"toughness":null,"keywords":0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand",
+    let resolution = json!([{"operation":"EachOpponentLosesLife","amount":"OriginalChosenX",
+                    "relation":"OpponentsOfCapturedSpellController","does_not_target":true,"is_not_damage":true,
+                    "loss_not_clipped_to_current_life":true,"normal_life_loss_replacements_apply":true},
+                {"operation":"GainLife","recipient":"CapturedSpellController",
+                    "amount":"SumActualLifeLostByOpponentsToImmediatelyPrecedingInstruction",
+                    "uses_committed_life_loss_not_requested_x_or_current_life_difference":true,
+                    "normal_life_gain_replacements_and_triggers_apply":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand",
             "origin_owner_must_be_caster":true,"timing":"OwnMainPhaseEmptyStackWithPriority","targets":[],
             "chosen_x":{"chooser":"CastingPlayer","minimum":0,"maximum":u16::MAX,
                 "binding":"OriginalNativeCastXValue","source_is_original_current_cast_choice":true,
@@ -266,17 +273,16 @@ fn exsanguinate(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "ordered_costs":[{"operation":"PayNativeAdjustedPrintedMana","printed_cost":cost,
                 "generic_x_coefficient":1,"normal_increases_and_reductions_apply":true,"colored_pips_unchanged":true}],
             "mana_value":{"on_stack":"TwoPlusChosenX","elsewhere":2,"native_mana_value_ceiling":u16::MAX},
-            "ordered_resolution":[{"operation":"EachOpponentLosesLife","amount":"OriginalChosenX",
-                    "relation":"OpponentsOfCapturedSpellController","does_not_target":true,"is_not_damage":true,
-                    "loss_not_clipped_to_current_life":true,"normal_life_loss_replacements_apply":true},
-                {"operation":"GainLife","recipient":"CapturedSpellController",
-                    "amount":"SumActualLifeLostByOpponentsToImmediatelyPrecedingInstruction",
-                    "uses_committed_life_loss_not_requested_x_or_current_life_difference":true,
-                    "normal_life_gain_replacements_and_triggers_apply":true}],
+            "ordered_resolution":resolution,
             "zero_x_loses_and_gains_zero_life":true,"state_based_actions_follow_complete_resolution":true,
             "countering_skips_all_resolution_instructions":true,"countering_does_not_refund_cost":true,
             "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
             "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","copied_spell_uses_its_native_bound_x":true,
-            "other_cast_permissions_require_current_candidate_authority":true,"normal_zone_replacements_apply":true}]
+            "other_cast_permissions_require_current_candidate_authority":true,"normal_zone_replacements_apply":true}]);
+    Ok(Some(json!({"card_id":id,"exsanguinate_printing":{
+        "schema":"printed-x-opponent-life-loss/v1","cost":cost,"printed_mana_value":2,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+        "power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":cast_roots
     }})))
 }

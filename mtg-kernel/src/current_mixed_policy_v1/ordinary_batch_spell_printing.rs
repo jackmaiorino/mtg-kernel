@@ -224,17 +224,7 @@ fn goblin_surprise(id: u16, d: &CardDef) -> Result<Option<Value>> {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
     let token_meaning = super::baseline(token)?;
-    Ok(Some(json!({"card_id":id,"ordinary_batch_spell_printing":{
-        "schema":"printed-modal-untargeted-spell/v1","cost":cost,"mana_value":3,
-        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
-        "power":null,"toughness":null,"keywords":0,"token":false,
-        "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand",
-            "timing":"InstantWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
-            "targets":[],"mode_selection":{"chooser":"CastingPlayer","choose_exactly":1,
-                "native_indices":[0,1],"before_targeting_and_final_payment":true,
-                "selected_mode_bound_to_original_pending_cast_and_stack_item":true,
-                "empty_creature_set_does_not_remove_first_mode":true},
-            "ordered_modes":[{"native_index":0,"targets":[],"ordered_resolution":[{
+    let modes = json!([{"native_index":0,"targets":[],"ordered_resolution":[{
                 "operation":"ModifyCurrentControlledCreatureSet","controller":"CapturedSpellController",
                 "samples_set_once_at_resolution":true,"binds_exact_current_battlefield_incarnations":true,
                 "power_delta":2,"toughness_delta":0,"keyword_bits":0,"places_no_counters":true,
@@ -248,7 +238,14 @@ fn goblin_surprise(id: u16, d: &CardDef) -> Result<Option<Value>> {
                     "token_definition":token_meaning,"entry_tapped":false,
                     "entry_batch":"SimultaneousBeforeEntryObservations",
                     "normal_token_replacements_and_entry_triggers_apply":true}],
-                    "new_tokens_gain_no_haste_or_other_mode_bonus_from_this_spell":true}],
+                    "new_tokens_gain_no_haste_or_other_mode_bonus_from_this_spell":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand",
+            "timing":"InstantWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
+            "targets":[],"mode_selection":{"chooser":"CastingPlayer","choose_exactly":1,
+                "native_indices":[0,1],"before_targeting_and_final_payment":true,
+                "selected_mode_bound_to_original_pending_cast_and_stack_item":true,
+                "empty_creature_set_does_not_remove_first_mode":true},
+            "ordered_modes":modes,
             "no_priority_between_ordered_instructions":true,
             "normal_queued_triggers_and_state_based_actions_follow_resolution":true,
             "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
@@ -256,6 +253,11 @@ fn goblin_surprise(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "countering_skips_selected_mode":true,"countering_does_not_refund_cost":true,
             "copy_uses_original_native_bound_mode":true,
             "other_cast_permissions_require_current_candidate_authority":true,
-            "normal_zone_replacements_apply":true}]
+            "normal_zone_replacements_apply":true}]);
+    Ok(Some(json!({"card_id":id,"ordinary_batch_spell_printing":{
+        "schema":"printed-modal-untargeted-spell/v1","cost":cost,"mana_value":3,
+        "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+        "power":null,"toughness":null,"keywords":0,"token":false,
+        "ordered_cast_roots":cast_roots
     }})))
 }

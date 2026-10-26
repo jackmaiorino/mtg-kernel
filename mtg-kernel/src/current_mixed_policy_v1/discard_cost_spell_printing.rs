@@ -46,28 +46,31 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
+    let costs = json!([{"operation":"DiscardOwnHandCards","count":1,"mandatory":true,"chooser":"CastingPlayer",
+                        "any_card_type_including_land":true,"announced_spell_is_no_longer_hand_card":true,
+                        "selection_is_private_to_payer_until_discard_occurs":true,
+                        "normal_discard_replacements_and_triggers_apply":true},
+                    {"operation":"PayNativeAdjustedPrintedMana","printed_cost":cost}]);
+    let resolution = json!([{"operation":"DrawCards","recipient":"CapturedSpellController","count":2,
+                    "individual_draw_events_in_order":true,"normal_draw_replacements_and_empty_library_loss_apply":true,
+                    "card_identities_stay_with_authorized_viewers":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
+                "timing":"InstantWithPriority","targets":[],
+                "ordered_costs":costs,
+                "native_cast_staging_selects_discard_before_final_mana_payment":true,
+                "no_priority_between_cost_selection_and_complete_payment":true,
+                "requires_entire_additional_cost_payable":true,"all_costs_paid_before_response_priority":true,
+                "ordered_resolution":resolution,
+                "countering_skips_draws_but_does_not_refund_mana_or_discard":true,
+                "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
+                "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","copies_created_on_stack_do_not_pay_cast_costs":true,
+                "other_cast_permissions_require_current_candidate_authority":true,"normal_zone_replacements_apply":true}]);
     Ok(Some(
         json!({"card_id":id,"mandatory_discard_draw_printing":{
             "schema":"printed-mandatory-discard-draw/v1","cost":cost,"mana_value":2,
             "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
             "power":null,"toughness":null,"keywords":0,"token":false,
-            "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
-                "timing":"InstantWithPriority","targets":[],
-                "ordered_costs":[{"operation":"DiscardOwnHandCards","count":1,"mandatory":true,"chooser":"CastingPlayer",
-                        "any_card_type_including_land":true,"announced_spell_is_no_longer_hand_card":true,
-                        "selection_is_private_to_payer_until_discard_occurs":true,
-                        "normal_discard_replacements_and_triggers_apply":true},
-                    {"operation":"PayNativeAdjustedPrintedMana","printed_cost":cost}],
-                "native_cast_staging_selects_discard_before_final_mana_payment":true,
-                "no_priority_between_cost_selection_and_complete_payment":true,
-                "requires_entire_additional_cost_payable":true,"all_costs_paid_before_response_priority":true,
-                "ordered_resolution":[{"operation":"DrawCards","recipient":"CapturedSpellController","count":2,
-                    "individual_draw_events_in_order":true,"normal_draw_replacements_and_empty_library_loss_apply":true,
-                    "card_identities_stay_with_authorized_viewers":true}],
-                "countering_skips_draws_but_does_not_refund_mana_or_discard":true,
-                "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
-                "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","copies_created_on_stack_do_not_pay_cast_costs":true,
-                "other_cast_permissions_require_current_candidate_authority":true,"normal_zone_replacements_apply":true}]
+            "ordered_cast_roots":cast_roots
         }}),
     ))
 }

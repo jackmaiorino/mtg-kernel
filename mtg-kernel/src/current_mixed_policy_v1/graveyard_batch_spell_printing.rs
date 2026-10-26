@@ -131,12 +131,15 @@ fn macabre_waltz(id: u16, d: &CardDef) -> Result<Option<Value>> {
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    Ok(Some(
-        json!({"card_id":id,"graveyard_return_then_discard_printing":{
-            "schema":"printed-targeted-graveyard-return-discard/v1","cost":cost,"mana_value":2,
-            "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
-            "power":null,"toughness":null,"keywords":0,"token":false,
-            "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
+    let resolution = json!([{"operation":"ReturnStillLegalOriginalTargetsToOwnersHands",
+                        "entry_batch":"Simultaneous","original_target_order_preserved":true,
+                        "illegal_or_reentered_targets_skipped_without_rebinding":true,
+                        "returned_card_identities_remain_publicly_known":true,"normal_zone_replacements_apply":true},
+                    {"operation":"DiscardOwnHandCards","count":1,"chooser":"CapturedSpellController",
+                        "not_a_cast_cost":true,"returned_cards_are_eligible":true,"any_card_type_including_land":true,
+                        "fewer_than_one_available_discards_as_many_as_possible":true,
+                        "hand_selection_private_to_chooser_until_discard":true,"normal_discard_replacements_and_triggers_apply":true}]);
+    let cast_roots = json!([{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
                 "timing":"OwnMainPhaseEmptyStackWithPriority",
                 "targets":{"minimum":0,"maximum":2,"all_distinct":true,"chooser":"CastingPlayer",
                     "filter":{"zone":"CapturedSpellControllersGraveyard","type":"CreatureCard"},
@@ -144,20 +147,19 @@ fn macabre_waltz(id: u16, d: &CardDef) -> Result<Option<Value>> {
                     "normal_target_legality_applies_and_is_rechecked_at_resolution":true,
                     "may_finish_after_zero_or_one_target":true},
                 "ordered_costs":[{"operation":"PayNativeAdjustedPrintedMana","printed_cost":cost}],
-                "ordered_resolution":[{"operation":"ReturnStillLegalOriginalTargetsToOwnersHands",
-                        "entry_batch":"Simultaneous","original_target_order_preserved":true,
-                        "illegal_or_reentered_targets_skipped_without_rebinding":true,
-                        "returned_card_identities_remain_publicly_known":true,"normal_zone_replacements_apply":true},
-                    {"operation":"DiscardOwnHandCards","count":1,"chooser":"CapturedSpellController",
-                        "not_a_cast_cost":true,"returned_cards_are_eligible":true,"any_card_type_including_land":true,
-                        "fewer_than_one_available_discards_as_many_as_possible":true,
-                        "hand_selection_private_to_chooser_until_discard":true,"normal_discard_replacements_and_triggers_apply":true}],
+                "ordered_resolution":resolution,
                 "zero_original_targets_still_resolves_discard_instruction":true,
                 "at_least_one_original_target_and_all_illegal_skips_entire_resolution_including_discard":true,
                 "state_based_actions_and_response_priority_wait_for_resolution_discard_to_finish":true,
                 "physical_spell_destination_after_resolution_or_counter":"OwnersGraveyard",
                 "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone","countering_does_not_refund_cost":true,
-                "countering_skips_return_and_discard":true,"other_cast_permissions_require_current_candidate_authority":true}]
+                "countering_skips_return_and_discard":true,"other_cast_permissions_require_current_candidate_authority":true}]);
+    Ok(Some(
+        json!({"card_id":id,"graveyard_return_then_discard_printing":{
+            "schema":"printed-targeted-graveyard-return-discard/v1","cost":cost,"mana_value":2,
+            "types":d.types,"subtypes":[],"supertypes":[],"colors":d.colors,
+            "power":null,"toughness":null,"keywords":0,"token":false,
+            "ordered_cast_roots":cast_roots
         }}),
     ))
 }
