@@ -138,3 +138,24 @@ Original failed and timed-out attempts remain in the cold evidence records. The 
 | `LilianaDreadhordeV1` | `5e52982e89b0` | `effect::liliana_dreadhorde_v1::tests::paid_zombie_exact_token_season_cost_and_original_controller_after_departure_both_seats` | `fd6f78af0e89d3e9e31165a119d7f9abed101288f654882b73d72bad7821c719` |
 | `ChandraFlameshaperV74` | `65e23248d2c2` | `rl::complete_copy_prefix_scope_tests::paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refusal_both_seats` | `f252a9121c17f26cb619d7470859cb259abaee793c72678e3ecfc11d999edd8a` |
 | `KaitoCunningV75` | `5e52982e89b0` | `effect::kaito_cunning_v75::tests::genuine_paid_zero_or_one_target_draw_discard_and_waiting_restore_both_seats` | `bdc39fa270e814b332e23a18b8b1a67dbb3132fdab8e6a72134bcaed6c50ff07` |
+
+## Appended Drakuseth event sample (October 26, 2026)
+
+Row 314, `DrakusethDamageSourceV76`, is the actual first event emitted by
+`standard_cards_v1::drakuseth_tests::paid_attack_mandatory_first_zero_one_two_other_targets_and_every_target_checkpoint_restore_both_seats`
+at source `088cc890e94987c42ad5159d4e809af98f4af530`. That complete native case
+passed in 0.063444293 seconds in [CI 40272003668, job 121410706264](https://github.com/jackmaiorino/mtg-kernel/actions/runs/40272003668/job/121410706264);
+the native job passed all 457 cases. Only that named producer had the harvest
+environment enabled. The original 313 event payloads retain their bytes and order.
+
+The original 798-byte payload has SHA-256
+`a0ffe9181e70ebd433ef56c99ff3e39e856efcbed965d2dd0a1e1944893d7a7e`.
+It came from artifact `12630466327`, whose original 591-byte ZIP has SHA-256
+`35f6f1706dd0b9f6a5920ac10657c35a3a9c5897856e5209c380a05f41d8a056`.
+Original ZIP, payload, producer log and receipts are byte-verified on D: and E:
+under `fdn110-ward-20261025/ci40272003668`; the E: root is
+`E:/fdn110-ward-20261025/ci40272003668`. The receipt
+`every-kind-314-append-receipt.json` records the preserved prefix and complete
+kind order. This standalone event fragment tests serialization; it does not
+make the artificial mixed fixture a valid native replay or qualify a gameplay
+profile or Drakuseth consumers.
