@@ -47,7 +47,7 @@ fn paid_colony_base_declined_kicked_entry_counter_dynamic_grant_both_turns_remov
             }
             let source = put(&mut s, p, "Gnarlid Colony", Zone::Hand);
             let hawk = put(&mut s, p, "Healer's Hawk", Zone::Battlefield);
-            s.objects.get_mut(hawk).counters.lifelink = 1;
+            s.objects.get_mut(hawk).counters.charge = 1;
             let plain = put(&mut s, p, "Savannah Lions", Zone::Battlefield);
             let opposing = put(&mut s, p.opponent(), "Healer's Hawk", Zone::Battlefield);
             s.objects.get_mut(opposing).counters.plus1_plus1 = 1;

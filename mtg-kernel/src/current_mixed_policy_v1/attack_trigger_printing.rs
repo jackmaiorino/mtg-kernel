@@ -264,7 +264,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     };
     let mut value = json!({"card_id":id,"attack_trigger_printing":{
         "schema":"printed-attack-observer/v1","cost":cost,"mana_value":d.mana_value,"types":d.types,
-        "subtypes":d.subtypes,"supertypes":d.supertypes,"colors":d.colors,"power":power,"toughness":toughness,
+        "subtypes":d.subtypes,"supertypes":if ruby {json!(["Legendary"])} else {json!([])},"colors":d.colors,"power":power,"toughness":toughness,
         "keywords":keywords.0,"token":false,
         "ordered_cast_roots":[{"method":"Normal","route":"Hand","origin":"OwnHand","origin_owner_must_be_caster":true,
             "timing":"OwnMainPhaseEmptyStackWithPriority","ordered_costs":[{"operation":"PayPrintedMana","cost":cost}],
