@@ -205,6 +205,20 @@ fn choose_target(state: &mut GameState, target: Target) {
             );
             act(state, Action::ChooseTarget(target));
         }
+        // "Up to one" targets are chosen through the effect-target prompt.
+        Decision::ChooseEffectTargets { legal_targets, .. } => {
+            assert!(
+                legal_targets.contains(&target),
+                "{target:?} not in {legal_targets:?}"
+            );
+            act(state, Action::ChooseEffectTarget(target));
+            if let Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            } = next(state)
+            {
+                act(state, Action::FinishEffectSelection);
+            }
+        }
         other => panic!("expected targets, got {other:?}"),
     }
 }
@@ -1651,7 +1665,8 @@ fn chancellor_of_the_annex_taxes_every_opponent_spell_while_in_play() {
     settled(&mut state);
     assert_eq!(state.objects.get(ring).zone, Zone::Battlefield);
     assert_eq!(state.players[1].mana_pool, [0; 6]);
-    // Unable to pay, the spell is countered.
+    // Unable to pay (Sol Ring is tapped), the spell is countered.
+    state.objects.get_mut(ring).tapped = true;
     let mox = put(&mut state, P1, "Mox Jet", Zone::Hand);
     cast(&mut state, mox, &[]);
     if let Some(Decision::ChooseEffectOption { .. }) = settle(&mut state) {
@@ -1723,6 +1738,24 @@ fn rank(action: &Value) -> u8 {
     }
 }
 
+/// Whether the public session can follow this action. Policy observation v5
+/// fails closed while an extra turn is scheduled (its transport is a
+/// successor observation), so these games never cast Time Walk or activate
+/// Time Vault; the engine paths are covered by the rules tests above.
+fn session_can_follow(action: &Value) -> bool {
+    let s = &action["semantic"];
+    if !matches!(
+        s["action_kind"].as_str(),
+        Some("cast_spell" | "activate_ability")
+    ) {
+        return true;
+    }
+    let Some(id) = s["source"]["card_db_id"].as_u64() else {
+        return true;
+    };
+    !matches!(CARD_DEFS[id as usize].name, "Time Walk" | "Time Vault")
+}
+
 #[derive(Clone, Copy)]
 enum Policy {
     Ranked,
@@ -1784,6 +1817,7 @@ fn play_session(
             .as_array()
             .unwrap()
             .iter()
+            .filter(|action| session_can_follow(action))
             .collect();
         let action = match policy {
             Policy::Ranked => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
@@ -1841,13 +1875,4 @@ fn e4_proxy_decks_finish_and_replay_through_public_sessions() {
         }
     }
     assert!(activations > 0, "random games activated no abilities");
-}
-
-/// Temporary while wave E4 is in progress: reports the catalog hash.
-#[test]
-fn e4_temp_reports_the_eternal_catalog_hash() {
-    panic!(
-        "eternal catalog hash {:#018x}",
-        mtg_kernel::card_def::KERNEL_CARDDB_HASH
-    );
 }

@@ -3051,11 +3051,8 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        // E4-TEMP: re-pinned strictly once wave E4's catalog is final.
-        const EXPECTED_ETERNAL: u64 = 0x2c29_b36c_17aa_bd16;
-        if KERNEL_CARDDB_HASH != EXPECTED_ETERNAL {
-            eprintln!("eternal catalog hash {KERNEL_CARDDB_HASH:#018x}");
-        }
+        const EXPECTED_ETERNAL: u64 = 0x393b_fa3e_2057_af1f;
+        assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_ETERNAL);
     }
 
     #[test]
