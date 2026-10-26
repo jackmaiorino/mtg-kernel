@@ -776,13 +776,20 @@ jobs:
       # suite. The runner lists the default build too and runs every such case
       # that no Limited filter above selects, so a new one cannot fall outside
       # CI (known failures: python/tools/rust_limited_only_known_failures.json).
-      - name: Validate every other Limited-only library case
+      # Run this existing whole case once through the same bounded runner,
+      # retaining a sample with an unambiguous native producer. The inventory
+      # scanner excludes this exact covered name from the following step.
+      - name: Validate Drakuseth attack and retain its actual event sample
         if: ${{ !cancelled() && matrix.group == 'limited-only' }}
         env:
           MTG_EVENT_SAMPLES_V1: ${{ github.workspace }}/fdn-event-samples
         run: |
           mkdir -p "$MTG_EVENT_SAMPLES_V1"
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored standard_cards_v1::drakuseth_tests::paid_attack_mandatory_first_zero_one_two_other_targets_and_every_target_checkpoint_restore_both_seats
+
+      - name: Validate every other Limited-only library case
+        if: ${{ !cancelled() && matrix.group == 'limited-only' }}
+        run: python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index 0 --shard-count 1 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
 
       - name: Retain actual Drakuseth event sample
         if: ${{ always() && matrix.group == 'limited-only' }}
