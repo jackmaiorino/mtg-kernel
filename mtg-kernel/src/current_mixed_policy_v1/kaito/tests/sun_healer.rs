@@ -231,7 +231,7 @@ fn paid_kicked_healer_returns_aura_with_untargeted_ward_host_choice_source_depar
                 settle(&mut own, &mut native);
                 let state = own.fixture_state();
                 assert_eq!(state.objects.get(aura).zone, Zone::Battlefield);
-                assert_eq!(state.objects.get(aura).v4.attached_to, Some(host));
+                assert_eq!(state.objects.get(aura).v4.attached_to.unwrap().object, host);
                 assert_eq!(
                     state.objects.get(source).zone,
                     if removed {
