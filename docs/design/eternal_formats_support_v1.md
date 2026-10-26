@@ -72,7 +72,7 @@ reserved.
 | E0 | Feature, empty eternal registry, catalog test, session games, CI group, census | 0 | Infrastructure |
 | E1 | Pauper close-ins: Mono-Red Madness, Rally, Grixis Affinity, Dimir Faeries, Grixis and Dimir Control | 14 | Pauper 21% to about 53% |
 | E2 | Legacy Dimir Tempo and Izzet Delver: original duals, surveil lands, fetchlands, Wasteland, Force of Will, Daze, Thoughtseize, Fatal Push, Unholy Heat, Prismari Charm, the Baubles, Brazen Borrower, Dragon's Rage Channeler, Murktide Regent, Moonshadow, Nethergoyf, Orcish Bowmasters, Tamiyo, Bilbo | 27 and a token | Legacy 0% to 19.3% |
-| E3 | Legacy decks greedily: Doomsday, Sneak and Show, Aluren, Eldrazi, Boros Energy, then the remaining staples (Strip Mine, Negation, Mental Misstep, Swords, Dismember) | about 95 | Legacy about 50% |
+| E3 | Legacy combo decks: Doomsday, Sneak and Show, Aluren, Omni-Tell (Show and Tell, Sneak Attack, Omniscience, Aluren, Doomsday, Thassa's Oracle, Jace, Emrakul, Atraxa, Acererak and the three Forgotten Realms dungeons, Chrome Mox, Lion's Eye Diamond, The One Ring, Cavern of Souls, Misdirection, Flusterstorm, Veil of Summer) | 27 and four tokens | Legacy 19.3% to 33.5% |
 | E4 | Vintage: Initiative, Jewel and Raker Shops, then companions and the Lurrus lists | about 80 | Vintage about 50% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
@@ -103,12 +103,22 @@ New, each built once in the first wave that needs it:
   or event history; planeswalker back faces enter with their loyalty; Bilbo casts from
   the graveyard through the resolution-cast path with costs paid. Moxen, Lotus,
   restricted mana and seeded coin flips move to E4.
-- E3: storm as a general keyword (today it is keyed to Weather the Storm), Thassa's Oracle
-  and Doomsday library construction, Show and Tell's simultaneous choice, free-cast
-  permissions (Sneak Attack, Aluren, Omniscience), Chalice of the Void, Misdirection
-  retargeting, Emrakul (cast trigger, annihilator, protection), naming a card (Pithing
-  Needle, Disruptor Flute, Cavern of Souls), "can't be activated" and cost-tax statics
-  (Null Rod, Trinisphere, Thalia).
+- E3, built in `src/eternal_cards_v1/e3.rs`, `e3/dungeons.rs` and `build_eternal_v1.rs`:
+  one typed resolution choice (`E3ChoiceV1`) that the interpreter stages through
+  `EffectTargetSelectionPurpose::EternalV1`; targeted Storm copies that may choose new
+  targets (Flusterstorm); spell retargeting (Misdirection); Doomsday and Thassa's Oracle
+  library construction; Show and Tell's choices in turn order; free hand casts
+  (`HandFreeCastV1`: Omniscience, Aluren with its flash timing); Sneak Attack's haste and
+  end-step sacrifice; Emrakul's uncounterable cast trigger owning an extra turn like
+  Temporal Manipulation, protection from colored spells, annihilator and graveyard
+  shuffle; venturing through Lost Mine of Phandelver, Dungeon of the Mad Mage and Tomb
+  of Annihilation (rooms sourced by the venturing card, completed on entering the
+  bottommost room, Mad Wizard's Lair casting from hand during the resolution); modal
+  double-faced land backs (Sink into Stupor); as-enters choices (Cavern of Souls'
+  creature type and its uncounterable restricted mana, Soporific Springs); imprint
+  (Chrome Mox); Lion's Eye Diamond's instant-speed mana; The One Ring's protection and
+  burden counters. Chalice of the Void, naming a card and cost-tax statics are left to
+  later waves.
 - E4: Urza's Saga as a land Saga with Construct tokens; Karn's wish, where "outside the
   game" is empty in best-of-one mainboard sessions; Time Vault; Coveted Jewel's control
   change; Vexing Bauble; Archon of Emeria's cast limit; companions (reveal, pay 3, put
