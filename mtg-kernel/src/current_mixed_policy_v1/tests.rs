@@ -1716,6 +1716,44 @@ mod paid {
     }
 
     #[test]
+    fn condemn_changed_attack_filter_capture_program_slot_cost_or_timing_refuses() {
+        use crate::{
+            card_def::{CardType, TargetSpec},
+            effect::{EffectOp, ObjectRef},
+        };
+        let id = crate::card_def::card_id_by_name("Condemn").unwrap();
+        assert_eq!(
+            roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap(),
+            roots::baseline(id).unwrap()
+        );
+        for field in 0..5 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.target_spec = TargetSpec::AttackingOrBlockingCreature,
+                1 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { target_index: 1 })
+                    }
+                }
+                2 => {
+                    d.spell_effect = || {
+                        Some(EffectOp::MoveObject {
+                            object: ObjectRef::Target(0),
+                            to_zone: crate::state::Zone::Library,
+                        })
+                    }
+                }
+                3 => d.cost = crate::mana::Cost::zero(),
+                _ => d.types = &[CardType::Sorcery],
+            }
+            assert!(
+                roots::baseline_recipe(id, &d).is_err(),
+                "Condemn changed field {field}"
+            );
+        }
+    }
+
+    #[test]
     fn stroke_changed_token_recipient_binding_count_definition_target_cost_or_timing_refuses() {
         use crate::{
             card_def::{CardType, TargetSpec},

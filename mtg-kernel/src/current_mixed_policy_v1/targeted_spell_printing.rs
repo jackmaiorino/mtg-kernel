@@ -27,6 +27,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Incinerating Blast"
             | "Burst Lightning"
             | "Stroke of Midnight"
+            | "Condemn"
     )
 }
 fn pump(power: i32, toughness: i32) -> EffectOp {
@@ -136,6 +137,30 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 ],
             )
         }
+        "Condemn" => (
+            ManaColor::W,
+            0,
+            &[Pip::Colored(ManaColor::W)][..],
+            CardType::Instant,
+            TargetSpec::AttackingCreature,
+            json!({"type":"Creature","current_combat_role":"Attacking","either_controller":true}),
+            EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
+                target_index: 0,
+            },
+            vec![
+                json!({"operation":"PutCreatureOnOwnersLibraryBottomThenCapturedControllerGainsToughness",
+                "target_slot":0,"requires_current_attacking_creature_and_original_incarnation":true,
+                "capture_current_controller_and_effective_toughness_before_move":true,
+                "move_destination":"OwnersLibraryBottom","public_placement":true,"does_not_shuffle":true,
+                "removed_from_combat_on_departure":true,"new_zone_incarnation":true,
+                "normal_zone_replacements_apply":true,
+                "life_recipient":"CapturedPreMoveController","life_amount":"CapturedPreMoveEffectiveToughness",
+                "gain_only_if_captured_toughness_is_positive":true,
+                "gain_does_not_require_unreplaced_library_destination":true,
+                "normal_life_gain_replacements_apply":true,
+                "no_priority_or_state_based_actions_between_move_and_life_gain":true}),
+            ],
+        ),
         "Stroke of Midnight" => {
             let human = crate::card_def::card_id_by_name("Human Token")
                 .ok_or(Error::UnsupportedPrintedRoot(id))?;
