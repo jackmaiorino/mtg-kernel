@@ -640,6 +640,32 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
         CostComponent::RemoveSourceCountersV1 { kind: _, count: _ } => {
             out.atoms.push(Atom::Opaque);
         }
+        CostComponent::PayEnergyV1(_) => {
+            // Energy counters leave the payer; the player counter kind and
+            // quantity are outside the frozen cost vocabulary.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::ExileCardFromHandWithColorV1(color) => {
+            // One card of the color, other than the source, moves from the
+            // payer's hand to exile. The color refinement has no facet.
+            let _ = color;
+            move_cost(out, ZoneF::Hand, ZoneF::Exile, ObjF::AnyCard, 1);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
+            // Any number of other graveyard cards covering `minimum` card
+            // types move to exile; the variable count and the type-coverage
+            // condition are outside the frozen cost vocabulary.
+            let _ = minimum;
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Graveyard,
+                to: ZoneF::Exile,
+                obj: ObjF::AnyCard,
+                amount: AmtF::Dynamic,
+            });
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::RemoveChargeCounterFromSelf => {
             // Exactly one charge counter leaves the source as payment.
             out.cost(CostAtom::RemoveCounters);

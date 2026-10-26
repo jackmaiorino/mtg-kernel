@@ -3,6 +3,69 @@ use super::play::{Meter, PlayErr};
 use super::*;
 
 #[test]
+fn rollout_opponent_is_refused_outside_the_budget_player_and_its_checks() {
+    for mode in ROLLOUT_MODES {
+        assert!(validate_rollout_mode(mode, true).is_ok(), "{mode}");
+    }
+    for mode in [
+        "s4a-refresh",
+        "s4a-branch",
+        "s4a-search-profile",
+        "s4a-utility-root",
+        "s4a-reuse-prefix",
+        "s4a-policy-ensemble",
+        "s4a-diag",
+        "s4a-run",
+        "corpus",
+    ] {
+        let refused = validate_rollout_mode(mode, true).unwrap_err();
+        assert!(refused.contains("S4A_ROLLOUT_OPPONENT"), "{refused}");
+        assert!(validate_rollout_mode(mode, false).is_ok(), "{mode}");
+    }
+}
+
+/// The memo and tanh defaults reach only the fixed-work play modes; the
+/// profile modes (whose rows report memo counters and whose experiments
+/// stop on CPU time) and every other mode keep their base behavior.
+#[test]
+fn exact_cost_defaults_cover_only_the_fixed_work_play_modes() {
+    for mode in ["s4a-budget", "s4a-budget-replay", "s4a-root-rebuild"] {
+        assert!(exact_cost_defaults_apply_v1(mode), "{mode}");
+    }
+    for mode in [
+        "s4a-search-profile",
+        "s4a-corpus",
+        "s4a-wm-dump",
+        "s4a-run",
+        "s4a-diag",
+        "s4a-bank",
+        "s4a-bank-parity",
+        "s4a-label-replay",
+        "s4a-bank-trace",
+        "s4a-refresh",
+        "s4a-branch",
+        "s4a-canon-offline",
+        "s4a-utility-root",
+        "s4a-utility-root-inspect",
+        "s4a-root-actions",
+        "s4a-reuse-prefix",
+        "s4a-reused-action",
+        "s4a-policy-ensemble",
+        "decisions",
+    ] {
+        assert!(!exact_cost_defaults_apply_v1(mode), "{mode}");
+    }
+    // Setting up a profile mode leaves both memo defaults off (no test sets
+    // them for a play mode, which would make them process-wide).
+    exact_cost_defaults_v1("s4a-search-profile");
+    assert_eq!(
+        crate::native_flat_tensorizer_v2::default_digest_memo_mib_v1(),
+        0
+    );
+    assert!(!super::arms::key_memo_default_on());
+}
+
+#[test]
 fn selection_setting_refuses_invalid_encoding_unknown_rule_and_formal_modes() {
     use std::env::VarError;
     assert_eq!(

@@ -1031,6 +1031,7 @@ fn label_common(
                 CostKind::DiscardCards => "Discard",
                 CostKind::ExileFromGraveyard => "Exile from your graveyard",
                 CostKind::ExileCraftMaterial => "Exile as craft material",
+                CostKind::ExileFromHandV1 => "Exile from your hand",
                 CostKind::TapPermanents => "Tap",
                 CostKind::ReturnPermanentsToHand => "Return to its owner's hand",
                 CostKind::ChooseCreatureOrRevealCreature => {

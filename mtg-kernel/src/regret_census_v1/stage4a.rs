@@ -132,6 +132,35 @@ pub(super) fn is_mode(mode: &str) -> bool {
     )
 }
 
+/// Per-thread digest memo budget (MiB) that the fixed-work play modes use
+/// when `MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB` is unset.
+const DIGEST_MEMO_DEFAULT_MIB: usize = 64;
+
+/// The fixed-work play modes that get the exact cost defaults: the searched
+/// budget player (the seat-clock games) and the two paths that check its
+/// records. Their searches stop on transitions, never on CPU time. Every
+/// other mode, the profile modes included, runs exactly as before.
+const EXACT_COST_DEFAULT_MODES: [&str; 3] = ["s4a-budget", "s4a-budget-replay", "s4a-root-rebuild"];
+
+/// Whether `mode` gets the exact cost defaults.
+pub(super) fn exact_cost_defaults_apply_v1(mode: &str) -> bool {
+    EXACT_COST_DEFAULT_MODES.contains(&mode)
+}
+
+/// Exact cost defaults for the fixed-work play modes, set before the policy
+/// loads: the tensorizer's whole-message digest memo and the quiet key memo
+/// are on unless their variables say otherwise, and the vector tanh proof
+/// is settled now (its record read, or the proof run), so it never lands
+/// inside a timed search. None changes a result bit or a record field.
+pub(super) fn exact_cost_defaults_v1(mode: &str) {
+    if !exact_cost_defaults_apply_v1(mode) {
+        return;
+    }
+    crate::native_flat_tensorizer_v2::set_default_digest_memo_mib_v1(DIGEST_MEMO_DEFAULT_MIB);
+    arms::set_key_memo_default_on();
+    crate::vector_tanh_v1::prepare_v1();
+}
+
 const SPY_DECK: &str = "Spy";
 
 fn hex(bytes: &[u8]) -> String {
@@ -1057,6 +1086,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
     if cfg.mode == policy_ensemble::MODE {
         return policy_ensemble::run(cfg, policy, &sh, &spec_bytes);
     }
+    validate_rollout_mode(&cfg.mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
+    let rollout = refresh::parse_rollout_opponent(std::env::var(ROLLOUT_OPPONENT), &sh.labels)?;
+    let rollout_label = rollout.map(|r| sh.labels[r].clone());
     if cfg.mode == "s4a-utility-root" {
         return utility_root::run(cfg, policy, &sh, &spec_bytes);
     }
@@ -1256,16 +1288,23 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             };
             let actions: Vec<u32> = serde_json::from_value(row["game"]["actions"].clone())
                 .map_err(|e| e.to_string())?;
-            let rep = std::thread::scope(|scope| {
-                std::thread::Builder::new()
-                    .stack_size(256 << 20)
-                    .spawn_scoped(scope, || refresh::budget_replay(&sh, &src, &actions))
-                    .map_err(|e| e.to_string())?
-                    .join()
-                    .map_err(|_| "replay worker panicked".to_owned())?
-            })
-            .unwrap_or_else(|e| json!({"error":e}));
-            let ok = rep["end"] == row["game"]["end"] && rep["sequence"] == row["game"]["sequence"];
+            // A record of another rollout model is refused, not replayed.
+            let rep = refresh::check_rollout(&row, rollout_label.as_deref())
+                .and_then(|()| {
+                    std::thread::scope(|scope| {
+                        std::thread::Builder::new()
+                            .stack_size(256 << 20)
+                            .spawn_scoped(scope, || refresh::budget_replay(&sh, &src, &actions))
+                            .map_err(|e| e.to_string())?
+                            .join()
+                            .map_err(|_| "replay worker panicked".to_owned())?
+                    })
+                })
+                .unwrap_or_else(|e| json!({"error":e}));
+            // An error (a refused record, a failed replay) never matches.
+            let ok = rep.get("error").is_none()
+                && rep["end"] == row["game"]["end"]
+                && rep["sequence"] == row["game"]["sequence"];
             out.push_str(&format!(
                 "{}
 ",
@@ -1298,7 +1337,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             Err(_) => None,
         };
         let list = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
-        let out = root_rebuild::rows(&sh.spec, &list, schedule.as_ref());
+        let out = root_rebuild::rows(&sh.spec, &list, schedule.as_ref(), rollout_label.as_deref());
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
     if cfg.mode == "s4a-budget" {
@@ -1351,6 +1390,10 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         if plain && extras != refresh::BudgetExtras::default() {
             return Err("S4A_ALLOCATION and S4A_NODE_STATS require BUDGET_ARM=search-v1".into());
         }
+        if plain && rollout.is_some() {
+            return Err(format!("{ROLLOUT_OPPONENT} requires BUDGET_ARM=search-v1"));
+        }
+        let extras = refresh::BudgetExtras { rollout, ..extras };
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1582,7 +1625,26 @@ pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
     if mode != policy_ensemble::MODE && std::env::var_os("POLICY_ENSEMBLE_MEMBERS").is_some() {
         return Err("POLICY_ENSEMBLE_MEMBERS is supported only for s4a-policy-ensemble".into());
     }
+    validate_rollout_mode(mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
     refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
+}
+
+/// Opt-in rollout opponent (`refresh::BudgetExtras::rollout`): the label of
+/// the OPPONENTS policy that plays the opponent inside searches, while the
+/// live opponent stays the case's scheduled one.
+const ROLLOUT_OPPONENT: &str = "S4A_ROLLOUT_OPPONENT";
+/// Modes that honour `S4A_ROLLOUT_OPPONENT`: the searched budget player and
+/// the two paths that check its records.
+const ROLLOUT_MODES: [&str; 3] = ["s4a-budget", "s4a-budget-replay", "s4a-root-rebuild"];
+
+fn validate_rollout_mode(mode: &str, set: bool) -> Result<(), String> {
+    if set && !ROLLOUT_MODES.contains(&mode) {
+        return Err(format!(
+            "{ROLLOUT_OPPONENT} is supported only for {}",
+            ROLLOUT_MODES.join(", ")
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {

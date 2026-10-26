@@ -151,6 +151,8 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) own_generic_reduction: u32,
     pub(super) delve: bool,
     pub(super) convoke: bool,
+    /// Replicate's cost, paid once for each unit of the announced X.
+    pub(super) replicate: Option<Cost>,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -277,7 +279,11 @@ impl SelectedSpellManaCostsV1 {
                 return None;
             }
             if components.iter().any(|component| {
-                matches!(component, CostComponent::ExileOtherCardsFromOwnGraveyard(_))
+                matches!(
+                    component,
+                    CostComponent::ExileOtherCardsFromOwnGraveyard(_)
+                        | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+                )
             }) {
                 if chosen.iter().any(|object| reserved.contains(object)) {
                     return None;
@@ -305,15 +311,22 @@ impl SelectedSpellManaCostsV1 {
         if self.convoke && self.delve {
             return None;
         }
+        let replicated = self
+            .replicate
+            .iter()
+            .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)));
         let pips = self
             .costs
             .iter()
+            .copied()
+            .chain(replicated.clone())
             .flat_map(|cost| cost.pips.iter().copied())
             .collect::<Vec<_>>();
         let generic = self
             .costs
             .iter()
             .map(|cost| u32::from(cost.generic) + u32::from(cost.x_count) * u32::from(x))
+            .chain(replicated.map(|cost| u32::from(cost.generic)))
             .sum::<u32>()
             .saturating_add(increase)
             .saturating_sub(reduction.saturating_add(self.own_generic_reduction));
@@ -438,6 +451,7 @@ pub(super) fn selected_spell_mana_costs_v1(
         own_generic_reduction: 0,
         delve: false,
         convoke: false,
+        replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
     };
     match method {
         CastMethodV4::Normal => {
@@ -519,6 +533,14 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
     let (method, kicked, mode) = form;
     let mut selected =
         selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    // Bilbo, Thief in the Night: "Spells you cast from anywhere other than
+    // your hand cost {1} less to cast."
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_cards_v1::outside_hand_cast_reduction(state, source, player),
+        );
+    }
     if super::resolution_cast_v1::free_cast_for(state, source, player) {
         if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {
             return None;
@@ -644,6 +666,7 @@ pub(super) fn selected_spell_quote_branch_v1(
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     let mut family = None;
+    let mut graveyard_types_needed = None;
     let mut discard_count = 0usize;
     let mut needs_creature = false;
     let mut reveals_hand = false;
@@ -673,6 +696,24 @@ pub(super) fn selected_spell_quote_branch_v1(
                 1,
                 super::tap_permanent_cost_candidates(player, state, *filter, &[]),
             )),
+            CostComponent::ReturnControlledPermanentToOwnersHand(filter) => Some((
+                1,
+                super::return_permanent_cost_candidates(player, state, *filter, &[])
+                    .into_iter()
+                    .map(|binding| binding.object)
+                    .collect(),
+            )),
+            CostComponent::ExileCardFromHandWithColorV1(color) => Some((
+                1,
+                super::hand_exile_cost_candidates(player, source, *color, state),
+            )),
+            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
+                graveyard_types_needed = Some(*minimum);
+                Some((
+                    0,
+                    super::checked_graveyard_exile_candidates(player, source, state, &[])?,
+                ))
+            }
             CostComponent::DiscardCards(count) => {
                 discard_count += usize::from(*count);
                 None
@@ -747,6 +788,31 @@ pub(super) fn selected_spell_quote_branch_v1(
     let Some((needed, candidates)) = family else {
         return chosen_prefix.is_empty().then(|| quote(&[])).flatten();
     };
+    if let Some(minimum) = graveyard_types_needed {
+        // Any number of cards covering `minimum` card types: complete the
+        // chosen prefix with cards that add a new card type. Which cards
+        // pay never changes the mana payment.
+        if chosen_prefix.iter().enumerate().any(|(index, object)| {
+            !candidates.contains(object) || chosen_prefix[..index].contains(object)
+        }) {
+            return None;
+        }
+        let mut chosen = chosen_prefix.to_vec();
+        for object in candidates {
+            if crate::eternal_cards_v1::card_type_count(state, &chosen) >= usize::from(minimum) {
+                break;
+            }
+            if chosen.contains(&object) {
+                continue;
+            }
+            let before = crate::eternal_cards_v1::card_type_count(state, &chosen);
+            chosen.push(object);
+            if crate::eternal_cards_v1::card_type_count(state, &chosen) == before {
+                chosen.pop();
+            }
+        }
+        return quote(&chosen);
+    }
     if chosen_prefix.len() > needed
         || chosen_prefix.iter().enumerate().any(|(index, object)| {
             !candidates.contains(object) || chosen_prefix[..index].contains(object)
@@ -814,6 +880,12 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    /// The graveyard cards Delve will exile, in exile order.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn delve_exiled(&self) -> &[ObjectId] {
+        &self.mana.delve_exiled
+    }
+
     fn commit_optional(&self, state: &mut GameState) {
         match self.optional_kind {
             Some(super::OptionalAdditionalCostDef::CollectEvidence { .. }) => {

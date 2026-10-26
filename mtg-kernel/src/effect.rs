@@ -212,6 +212,10 @@ pub enum LibraryCardFilter {
     ArtifactWithManaValue(u16),
     LandWithBasicLandType,
     ArtifactCreatureOrEnchantmentManaValueAtMost(u16),
+    /// A card with either effective subtype ("a Swamp or Mountain card", the
+    /// fetchlands). Only lands carry land subtypes, so any match is a land,
+    /// basic or not. Appended for the eternal catalog.
+    CardWithAnySubtypeV1([Subtype; 2]),
 }
 
 impl LibraryCardFilter {
@@ -1779,6 +1783,8 @@ pub enum LibraryPickFilterV1 {
     LegendaryCreature,
     /// Library cards use their front-face power, including accepted CDAs.
     CreaturePowerAtMost(i32),
+    /// An instant or sorcery card (Augur of Bolas). Appended.
+    InstantOrSorcery,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -6162,7 +6168,7 @@ fn validated_definition_owned_root_effect(
     } else {
         return Err("answered effect frame lost its definition-owned root program".to_string());
     };
-    if let EffectOp::CopySpellSnapshot { spell } = &*root {
+    if let Some((spell, _)) = crate::engine::own_spell_copy_snapshot(&root) {
         crate::engine::validate_copy_snapshot(state, spell)?;
         return Ok(root);
     }
@@ -9254,12 +9260,17 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     eligible,
                     canonical_path,
                 } => {
+                    // Thoughtseize's "target player" may name its own caster;
+                    // Duress and Pilfer target an opponent.
+                    let any_player = pending.resolving_item.v4.target_spec
+                        == Some(crate::card_def::TargetSpec::AnyPlayer);
                     if *chooser != pending.ctx.controller
                         || path != canonical_path
-                        || *hand_player == pending.ctx.controller
+                        || (*hand_player == pending.ctx.controller && !any_player)
                         || pending.ctx.targets.as_slice() != [Target::Player(*hand_player)]
-                        || pending.resolving_item.v4.target_spec
-                            != Some(crate::card_def::TargetSpec::TargetOpponent)
+                        || !(any_player
+                            || pending.resolving_item.v4.target_spec
+                                == Some(crate::card_def::TargetSpec::TargetOpponent))
                         || *min_targets != 1
                         || *max_targets != 1
                         || *ordered
@@ -10468,6 +10479,23 @@ pub(crate) fn validate_resolution_play_authorization(
     answer: &EffectFrame,
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
+    if let EffectFrame::ApplySelectedObjectsV1 {
+        rule,
+        original_candidates,
+        selected,
+        path,
+    } = answer
+    {
+        return standard_selection_v1::validate_graveyard_cast_authorization(
+            state,
+            suspended,
+            *rule,
+            original_candidates,
+            selected,
+            path,
+            permission,
+        );
+    }
     let mut expected = suspended.clone();
     match answer {
         EffectFrame::ExilePlay { choice, play: true } => {
@@ -11788,6 +11816,39 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                         &path,
                         &expected_remaining_frames,
                     )?;
+                }
+                EffectFrame::ApplySelectedObjectsV1 {
+                    rule,
+                    original_candidates,
+                    selected,
+                    path,
+                } if rule.action == ObjectSelectionActionV1::CastFromGraveyardV1 => {
+                    standard_selection_v1::validate_answer(
+                        state,
+                        &continuation,
+                        rule,
+                        &original_candidates,
+                        &selected,
+                        &path,
+                    )?;
+                    if let [card] = selected.as_slice() {
+                        let card = *card;
+                        let answer = EffectFrame::ApplySelectedObjectsV1 {
+                            rule,
+                            original_candidates,
+                            selected,
+                            path,
+                        };
+                        crate::engine::resolution_cast_v1::stage(
+                            state,
+                            continuation,
+                            card,
+                            None,
+                            false,
+                            answer,
+                        )?;
+                        return Ok(ResumableProgress::Suspended);
+                    }
                 }
                 EffectFrame::ApplySelectedObjectsV1 {
                     rule,
@@ -13791,7 +13852,10 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
                 );
                 let player = continuation.ctx.resolve_player(player, state);
-                if player == continuation.ctx.controller {
+                if player == continuation.ctx.controller
+                    && continuation.resolving_item.v4.target_spec
+                        != Some(crate::card_def::TargetSpec::AnyPlayer)
+                {
                     return Err("Duress must target an opponent".to_string());
                 }
                 let original_hand = bind_hand(state, player);
@@ -15849,6 +15913,9 @@ fn library_filter_matches(
             (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
                 && def.mana_value == value
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
+            .iter()
+            .any(|subtype| subtype.is_in_subtype_ids(subtype_ids)),
     })
 }
 
@@ -15884,6 +15951,11 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(value))
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
+            .iter()
+            .fold(fnv1a_u64(0xcbf2_9ce4_8422_2325, 11), |hash, subtype| {
+                fnv1a_u64(hash, u64::from(subtype.stable_id()))
+            }),
     }
 }
 
@@ -16115,6 +16187,10 @@ fn library_partition_matching_prefix(
                     LibraryPickFilterV1::AnySubtype(subtypes) => subtypes
                         .iter()
                         .any(|subtype| subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)),
+                    LibraryPickFilterV1::InstantOrSorcery => {
+                        definition.has_type(CardType::Instant)
+                            || definition.has_type(CardType::Sorcery)
+                    }
                 },
             },
         };

@@ -169,6 +169,14 @@ pub enum StandardTargetV1 {
     CardInAGraveyard,
     TappedOpponentCreature,
     CrewedSourceThisTurn,
+    /// Two "target creature" words (Agony Warp): exactly two targets, each
+    /// any creature, and both may name the same creature (115.3).
+    TwoCreaturesV1,
+    /// "Target nonbasic land" (Wasteland).
+    NonbasicLandV1,
+    /// "Each of one or two targets": one or two distinct any-targets
+    /// (Prismari Charm).
+    OneOrTwoAnyTargetsV1,
 }
 
 impl StandardTargetV1 {
@@ -177,6 +185,8 @@ impl StandardTargetV1 {
         match self {
             Self::UpToTwoAnyTargets => (2, 0),
             Self::UpToOneCreature => (1, 0),
+            Self::TwoCreaturesV1 => (2, 2),
+            Self::OneOrTwoAnyTargetsV1 => (2, 1),
             _ => (1, 1),
         }
     }
@@ -209,7 +219,10 @@ pub(crate) fn legal_targets(
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
-    if target == StandardTargetV1::UpToTwoAnyTargets {
+    if matches!(
+        target,
+        StandardTargetV1::UpToTwoAnyTargets | StandardTargetV1::OneOrTwoAnyTargetsV1
+    ) {
         // 115.4: a creature, player or planeswalker; each target once.
         let players = [PlayerId::P0, PlayerId::P1].map(Target::Player);
         let permanents = [PlayerId::P0, PlayerId::P1]
@@ -308,12 +321,17 @@ pub(crate) fn target_matches(
             live.controller == controller && has(CardType::Artifact)
         }
         StandardTargetV1::AnotherNonlandPermanent => !has(CardType::Land),
-        StandardTargetV1::UpToTwoAnyTargets => {
+        StandardTargetV1::UpToTwoAnyTargets | StandardTargetV1::OneOrTwoAnyTargetsV1 => {
             has(CardType::Creature) || has(CardType::Planeswalker)
         }
-        StandardTargetV1::UpToOneCreature | StandardTargetV1::CrewedSourceThisTurn => {
-            has(CardType::Creature)
+        StandardTargetV1::NonbasicLandV1 => {
+            has(CardType::Land)
+                && !crate::engine::effective_supertypes(state, object)
+                    .contains(&crate::card_def::Supertype::Basic)
         }
+        StandardTargetV1::UpToOneCreature
+        | StandardTargetV1::CrewedSourceThisTurn
+        | StandardTargetV1::TwoCreaturesV1 => has(CardType::Creature),
         StandardTargetV1::TappedOpponentCreature => {
             live.controller != controller && live.tapped && has(CardType::Creature)
         }
@@ -540,6 +558,8 @@ pub enum StandardOpV1 {
     /// Untap only the captured ability-source incarnation, through stun replacement.
     UntapCapturedSourceV1,
     ZulAshurPermissionV1,
+    /// A leaf owned by the eternal catalog's card module.
+    EternalV1(crate::eternal_cards_v1::EternalOpV1),
 }
 
 impl StandardOpV1 {
@@ -593,11 +613,17 @@ impl StandardOpV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StandardPermanentFilterV1 {
     Any,
+    /// A land (Dimir Aqueduct's "return a land you control").
+    Land,
+    /// An Army (amass, 701.47a).
+    ArmyV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StandardChosenActionV1 {
     ReturnToOwnersHand,
+    /// Put this many +1/+1 counters on it (amass, 701.47a).
+    PutPlusOneCountersV1(u8),
 }
 
 /// The exact battlefield permanents `player` controls that match `filter`,
@@ -617,6 +643,12 @@ pub(crate) fn controlled_permanent_candidates(
                 && live.controller == player
                 && match filter {
                     StandardPermanentFilterV1::Any => true,
+                    StandardPermanentFilterV1::Land => {
+                        crate::engine::object_has_type(state, object, CardType::Land)
+                    }
+                    StandardPermanentFilterV1::ArmyV1 => {
+                        crate::engine::has_effective_subtype(state, object, Subtype::Army)
+                    }
                 }
         })
         .map(|object| EffectObjectBinding {
@@ -642,6 +674,17 @@ pub(crate) fn apply_chosen_permanent(
     match action {
         StandardChosenActionV1::ReturnToOwnersHand => {
             event::propose_and_commit(state, ProposedEvent::zone_change(chosen.object, Zone::Hand))
+        }
+        StandardChosenActionV1::PutPlusOneCountersV1(count) => {
+            let controller = live.controller;
+            if event::add_plus_one_counters(state, chosen.object, controller, i32::from(count))
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    chosen.object,
+                ));
+            }
         }
     }
 }
@@ -692,6 +735,7 @@ pub(crate) fn register_reflection_delayed_sacrifice(
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::EternalV1(op) => crate::eternal_cards_v1::execute(op, ctx, state),
         StandardOpV1::ZulAshurPermissionV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -1537,6 +1581,8 @@ pub enum StandardTriggerV1 {
     ControllerPrecombatMain,
     CastArtifactOrCreatureUsingSourceMana,
     AegisAttached,
+    /// A trigger condition owned by the eternal catalog's card module.
+    EternalV1(crate::eternal_cards_v1::EternalTriggerV1),
 }
 
 /// How many times each turn a trigger condition may trigger, if limited.
@@ -1609,6 +1655,9 @@ pub(crate) fn trigger_matches(
     state: &GameState,
 ) -> bool {
     match condition {
+        StandardTriggerV1::EternalV1(condition) => {
+            crate::eternal_cards_v1::trigger_matches(condition, events, index, source, state)
+        }
         StandardTriggerV1::AegisAttached => false, // captured by attach_object_exact
         StandardTriggerV1::ControllerPrecombatMain => {
             matches!(events[index],CommittedEvent::BeginningPrecombatMainV1{active_player} if active_player == state.objects.get(source).controller)
@@ -2024,7 +2073,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
             &EXILE_UNTIL_LEAVES_TRIGGERS
         }
-        _ => &[],
+        _ => crate::eternal_cards_v1::triggers_for(name),
     }
 }
 
@@ -2331,6 +2380,9 @@ pub(crate) fn trigger_target_spec(
     effect: &EffectOp,
 ) -> Option<crate::card_def::TargetSpec> {
     use crate::card_def::TargetSpec;
+    if let Some(spec) = crate::eternal_cards_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if name == "Subterranean Schooner" {
         return Some(TargetSpec::StandardV1(
             StandardTargetV1::CrewedSourceThisTurn,

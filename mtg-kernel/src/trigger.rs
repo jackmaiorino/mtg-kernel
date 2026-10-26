@@ -3709,7 +3709,11 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Harrier Strix" => &HARRIER_STRIX_TRIGGERS,
         "Bojuka Bog" => &BOJUKA_BOG_TRIGGERS,
         "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
-        "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => &CONDUIT_PYLONS_TRIGGERS,
+        "Elegant Parlor"
+        | "Lush Portico"
+        | "Underground Mortuary"
+        | "Undercity Sewers"
+        | "Thundering Falls" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
         "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
@@ -4195,6 +4199,15 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         Some(crate::card_def::OptionalAdditionalCostDef::Casualty(_))
     ) && matches!(effect, EffectOp::CopySpellSnapshot { .. })
     {
+        return true;
+    }
+    if crate::eternal_cards_v1::replicate_cost(card.name).is_some()
+        && crate::engine::own_spell_copy_snapshot(effect).is_some()
+    {
+        return true;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cards_v1::delayed_effect_matches(card.name, effect) {
         return true;
     }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
@@ -5848,6 +5861,8 @@ fn triggers_from_events(
     new_triggers.extend(crate::standard_cards_v1::end_step_delayed_triggers(
         state, events,
     ));
+    #[cfg(feature = "eternal-fixtures")]
+    new_triggers.extend(crate::eternal_cards_v1::delayed_triggers(state, events));
 
     uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
     state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);

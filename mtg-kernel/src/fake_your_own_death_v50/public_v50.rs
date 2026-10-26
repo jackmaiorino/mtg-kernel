@@ -327,14 +327,20 @@ pub(crate) fn require_legacy_visible(
         || state
             .engine
             .event_history
+            .scan_for_v1(&[crate::event_history_v1::EventKindV1::FakeJournalV50])
             .iter()
-            .any(|event| journal(event).is_some())
+            .any(|event| matches!(event, CommittedEvent::FakeJournalV50 { .. }))
     {
         return Err(RlContractError(
             "Fake Your Own Death history requires V50 family facts".into(),
         ));
     }
+    // The definition test first: it is a constant false in builds without
+    // the card, and visibility matters only for objects that pass it.
     let known = state.objects.iter().any(|(id, object)| {
+        if !spell_custody::selected_definition(object.card_def) {
+            return false;
+        }
         let hand_known = object.zone == Zone::Hand
             && actor.is_some_and(|actor| {
                 actor == object.owner
@@ -358,7 +364,7 @@ pub(crate) fn require_legacy_visible(
                     .face_down_v1
                     .is_some_and(|face| face.lookers & (1 << actor.index()) != 0)
             });
-        visible && definition_known && spell_custody::selected_definition(object.card_def)
+        visible && definition_known
     });
     if known {
         Err(RlContractError(

@@ -11,6 +11,10 @@ pub(crate) fn active(state: &GameState, source: ObjectId) -> CombatStaticRulesDe
     let Some(def) = CARD_DEFS.get(usize::from(object.card_def)) else {
         return CombatStaticRulesDef::NONE;
     };
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(rules) = crate::eternal_cards_v1::combat_static_rules(state, source) {
+        return rules;
+    }
     if def.combat_static_rules == CombatStaticRulesDef::NONE {
         return CombatStaticRulesDef::NONE;
     }

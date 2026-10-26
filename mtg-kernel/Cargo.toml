@@ -34,6 +34,10 @@ limited-fdn-fixtures = []
 # the FDN one. It enables `limited-fdn-fixtures` only for that feature's rules
 # behavior; build.rs selects the Standard card file and catalog identity.
 standard-magezero-fixtures = ["limited-fdn-fixtures"]
+# Pauper, Legacy and Vintage metagame cards (docs/design/eternal_formats_support_v1.md).
+# The registry is the frozen Pauper prefix, the Standard registry unchanged, then
+# `data/eternal_v1/cards_v1.json`, so every Standard card keeps its id and program.
+eternal-fixtures = ["standard-magezero-fixtures"]
 # PERFORMANCE-ONLY instrumentation for examples/bench_kernel.rs (section 5,
 # allocator profile): installs a counting global allocator wrapping the
 # system allocator. Off by default; no effect on any normal build/test.
@@ -190,9 +194,18 @@ name = "standard_integration"
 required-features = ["standard-magezero-fixtures"]
 
 [[test]]
+name = "eternal_integration"
+required-features = ["eternal-fixtures"]
+
+[[test]]
 name = "retain_freed_memory"
 harness = false
 
 [[bin]]
 name = "kernel_limited_prepared_env_v5"
 path = "src/bin/kernel_limited_prepared_env_v5.rs"
+
+[[bin]]
+name = "kernel_limited_match_v1"
+path = "src/bin/kernel_limited_match_v1.rs"
+required-features = ["limited-fdn-fixtures"]

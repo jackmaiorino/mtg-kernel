@@ -246,6 +246,8 @@ pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
 mod equipment_damage_source_v4;
+/// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
+pub mod eternal_cards_v1;
 pub mod event;
 pub mod event_history_v1;
 pub mod expanded_deck_training_v1;
@@ -337,6 +339,8 @@ pub mod limited_common_session_v1;
 pub mod limited_common_session_v2;
 pub mod limited_common_session_v3;
 pub mod limited_elenda_session_v4;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub mod limited_match_v1;
 pub mod limited_prepared_session_v5;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;
