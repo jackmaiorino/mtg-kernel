@@ -949,9 +949,9 @@ fn memo_digest(digest: [u8; 32]) -> [u8; 32] {
 /// Whether `text` holds exactly the JSON text of the prepared view and menu
 /// (`FrameView::text`'s format). Equal text means equal values.
 fn frame_text_matches(text: &FrameText, obs: &Value, menu: &[Value]) -> bool {
-    let same = |stored: &[u8], value: &Value| {
+    fn same(stored: &[u8], value: &Value) -> bool {
         serde_json::to_vec(value).is_ok_and(|bytes| bytes == stored)
-    };
+    }
     text.menu.len() == menu.len()
         && text.menu.iter().zip(menu).all(|(stored, m)| same(stored, m))
         && same(&text.obs, obs)

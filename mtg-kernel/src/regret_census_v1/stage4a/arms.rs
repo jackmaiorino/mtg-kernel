@@ -1166,8 +1166,8 @@ impl Roles {
         // would fit more simulations); only an explicit request turns them on.
         let cpu_limited = options.cpu_seconds.is_some();
         let memo_use = key_memo_for_search(key_memo_use(), cpu_limited);
-        let _digest_memo_default = cpu_limited
-            .then(crate::native_flat_tensorizer_v2::suppress_default_digest_memo_v1);
+        let _digest_memo_default =
+            cpu_limited.then(crate::native_flat_tensorizer_v2::suppress_default_digest_memo_v1);
         let mut memo = match memo_use {
             KeyMemoUse::Off => None,
             KeyMemoUse::Quiet => Some(KeyMemo::quiet()),
