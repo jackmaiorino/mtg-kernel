@@ -166,6 +166,8 @@ pub(super) fn exact_parallel_backward_v1(
 ) -> Option<BackwardResultV1> {
     let substeps = groups.iter().map(|group| group.tapes.len()).sum::<usize>();
     let workers = workers.min(substeps / EXACT_BACKWARD_MIN_SUBSTEPS_PER_WORKER_V1);
+    #[cfg(test)]
+    record_effective_backward_workers_for_test_v1(workers.max(1));
     if workers < 2 {
         return None;
     }

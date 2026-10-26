@@ -110,6 +110,25 @@ thread_local! {
     static PACKED_ACTUAL_RECOMPUTE_CALL_COUNT_V1: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     static ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1: RefCell<Option<Arc<PackedRecomputeTestControlV1>>> = const { RefCell::new(None) };
     static ACTIVE_FIXED_PARTITION_BACKWARD_TEST_CONTROL_V1: RefCell<Option<Arc<FixedPartitionBackwardTestControlV1>>> = const { RefCell::new(None) };
+    static EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+}
+
+/// Test-only: the effective GAE forward and exact-backward worker counts the
+/// updates on this thread recorded since the last call, then cleared. Zero
+/// means that stage was not consulted.
+#[cfg(test)]
+pub(crate) fn take_effective_update_workers_for_test_v1() -> (usize, usize) {
+    EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1.with(|workers| workers.replace((0, 0)))
+}
+
+#[cfg(test)]
+fn record_effective_forward_workers_for_test_v1(count: usize) {
+    EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1.with(|workers| workers.set((count, workers.get().1)));
+}
+
+#[cfg(test)]
+fn record_effective_backward_workers_for_test_v1(count: usize) {
+    EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1.with(|workers| workers.set((workers.get().0, count)));
 }
 
 #[cfg(test)]
@@ -5734,6 +5753,8 @@ mod tests {
     };
     use serde::Deserialize;
     use sha2::{Digest, Sha256};
+
+    mod narrow_dims_refactor_bit_pins_v1;
 
     const FORWARD_JSON: &str =
         include_str!("../../data/native_policy_value_net_v1/runner_fixed_forward_goldens_v1.json");

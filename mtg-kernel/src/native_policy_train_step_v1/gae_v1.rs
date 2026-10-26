@@ -983,6 +983,8 @@ fn precompute_encoded_forward_tapes_v1(
         }
     }
     let worker_count = forward_workers.min(tasks.len() / GAE_FORWARD_MIN_SUBSTEPS_PER_WORKER_V1);
+    #[cfg(test)]
+    record_effective_forward_workers_for_test_v1(worker_count.max(1));
     if worker_count < 2 {
         return None;
     }
