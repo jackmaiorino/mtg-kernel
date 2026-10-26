@@ -4375,9 +4375,9 @@ fn validate_batch_capture(
         match (options, outcome) {
             (Some(options), BatchOutcomeV2::Waiting)
                 if !options.is_empty()
-                    && options.iter().any(|o| {
+                    && (options.iter().any(|o| {
                         matches!(o, PreventionV1::Barricade(_) | PreventionV1::Multiplier(_))
-                    })
+                    }) || (drakuseth_batch(op) && options.len() > 1))
                     && options.iter().any(|o| {
                         matches!(o, PreventionV1::Replacement(r)
                     if matches!(r.kind, ReplacementEffectKind::PreventNextDamage { .. }))
