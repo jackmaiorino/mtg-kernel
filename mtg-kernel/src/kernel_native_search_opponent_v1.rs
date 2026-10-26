@@ -1007,7 +1007,7 @@ fn evaluator_digest_hex_v1() -> String {
     hex_lower_v1(&Sha256::digest(bytes))
 }
 
-fn evaluate_state_v1(state: &GameState, root_player: PlayerId) -> i32 {
+pub(crate) fn evaluate_state_v1(state: &GameState, root_player: PlayerId) -> i32 {
     let root = evaluate_player_v1(state, root_player);
     let opponent = evaluate_player_v1(state, root_player.opponent());
     (root - opponent).clamp(-EVALUATOR_WEIGHTS_V1.clamp, EVALUATOR_WEIGHTS_V1.clamp)

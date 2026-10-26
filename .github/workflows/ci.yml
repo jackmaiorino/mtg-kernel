@@ -213,6 +213,7 @@ jobs:
           - workspace-lib
           - workspace-targets
           - standard
+          - eternal
           - cuda
           - native-store
           - trace
@@ -223,7 +224,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -339,6 +340,17 @@ jobs:
         run: |
           python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: rl_session::heartfire_v12:: human_bo3_v1::sower_v14:: human_bo3_v1::heartfire_v12:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: human_bo3_v1::frenzied_v15:: human_bo3_v1::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: human_bo3_v1::authority_v17:: human_bo3_v1::employment_v18:: human_bo3_v1::cerberus_v19::
           python python/tools/run_rust_integration_tests.py standard_integration --features standard-magezero-fixtures
+
+      # Pauper, Legacy and Vintage catalog: the Standard catalog plus
+      # data/eternal_v1. The Standard suite also runs on it, since every
+      # Standard card keeps its id and program in this build.
+      - name: Validate the eternal catalog
+        if: matrix.group == 'eternal'
+        run: |
+          cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
+          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def::
+          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
+          python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
 
       # The library tests and all other targets compile disjoint units, so
       # the two halves of the workspace suite run as parallel jobs.
@@ -731,6 +743,9 @@ jobs:
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures flamewake_phoenix_v1::v57_genuine_paid_phoenix_and_juggernaut_keep_distinct_combat_facts_and_legacy_refusal_both_seats
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_prepared_env_v5
           MTG_LIMITED_PREPARED_TIMING_V5=1 python python/tools/check_limited_prepared_client_v5.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_prepared_env_v5$binary_suffix"
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_match_v1::
+          cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_match_v1
+          python python/tools/limited_match_v1.py smoke --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_match_v1$binary_suffix"
 
       # Enumerate both compiled subtrees in each job and partition their exact
       # names by recorded duration (python/tools/rust_case_seconds.json).

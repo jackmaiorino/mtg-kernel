@@ -1613,6 +1613,8 @@ fn initialize_entry_counters(
     crate::fdn_raid_v1::apply_entry_counters(state, object, counter_input);
     #[cfg(feature = "standard-magezero-fixtures")]
     crate::standard_statics_v1::apply_conditional_entry_counters(state, object, counter_input);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::apply_entry_counters(state, object, counter_input);
 }
 
 pub(crate) fn log_plus_one_counters_added(

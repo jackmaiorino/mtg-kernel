@@ -1249,6 +1249,7 @@ pub fn stack_target_contract_is_structurally_valid(
             StackTargetContractV4::Player(_) => matches!(
                 filter,
                 crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
+                    | crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1
             ),
         };
         if !matches_kind {
@@ -2210,6 +2211,11 @@ pub struct GameState {
     pub wildwood_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raid_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
+    /// Card state for the eternal catalog's own cards (energy counters).
+    /// Absent until one of them needs it, so every earlier state keeps its
+    /// bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eternal_v1: Option<crate::eternal_cards_v1::EternalStateV1>,
 }
 
 /// The round counter and active seat together identify the declaring turn.
@@ -2445,6 +2451,10 @@ impl Hash for GameState {
             "raid-entry-waiting/v1".hash(state);
             waiting.hash(state);
         }
+        if let Some(eternal) = &self.eternal_v1 {
+            "eternal-v1".hash(state);
+            eternal.hash(state);
+        }
     }
 }
 
@@ -2654,6 +2664,7 @@ impl GameState {
             attack_declaration_turn_v1: None,
             wildwood_waiting_v1: None,
             raid_waiting_v1: None,
+            eternal_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
@@ -3356,6 +3367,34 @@ impl GameState {
                     && !card.v4.is_token
                     && !crate::card_def::CARD_DEFS[card.card_def as usize].is_token
                     && card.spell_copy_origin.is_none()
+            })
+            .collect::<Vec<_>>();
+        if cards.len() < 2 {
+            return Ok(cards.first().copied());
+        }
+        let mut projected = self.clone();
+        projected.players[owner.index()].library = cards;
+        projected.shuffle_library(owner)?;
+        let chosen = projected.players[owner.index()].library.first().copied();
+        self.randomness = projected.randomness;
+        Ok(chosen)
+    }
+
+    /// Sample one card in `owner`'s hand at random without changing any zone
+    /// order or knowledge (Urza's Bauble). Same checked randomness
+    /// transaction as `random_graveyard_card_v1`.
+    pub(crate) fn random_hand_card_v1(
+        &mut self,
+        owner: PlayerId,
+    ) -> Result<Option<ObjectId>, LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let cards = self.players[owner.index()]
+            .hand
+            .iter()
+            .copied()
+            .filter(|id| {
+                let card = self.objects.get(*id);
+                card.zone == Zone::Hand && card.owner == owner
             })
             .collect::<Vec<_>>();
         if cards.len() < 2 {

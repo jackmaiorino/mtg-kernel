@@ -570,6 +570,12 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
         LibraryCardFilter::AnyLand | LibraryCardFilter::LandWithBasicLandType => {
             ObjF::Typed(CardTypeF::Land)
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => {
+            // Land subtypes occur only on lands. Vocabulary gap: ObjF has no
+            // subtype class.
+            let _ = subtypes;
+            ObjF::Typed(CardTypeF::Land)
+        }
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(_) => ObjF::Permanent,
         LibraryCardFilter::ArtifactWithManaValue(_) => {

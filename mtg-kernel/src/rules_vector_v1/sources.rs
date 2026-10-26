@@ -303,6 +303,11 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             out.atoms.push(Atom::Opaque);
             AmtF::Dynamic
         }
+        ManaAbilityAmountDef::FixedColorsV1(colors) => {
+            // A fixed simultaneous color set has no color facet either.
+            out.atoms.push(Atom::Opaque);
+            AmtF::fixed(colors.len() as i64)
+        }
     };
     out.effect(
         EffectAtom::new(EvF::AddMana)

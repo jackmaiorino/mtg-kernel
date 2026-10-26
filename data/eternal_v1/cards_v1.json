@@ -1,0 +1,1373 @@
+{
+ "version": 2,
+ "cards": [
+  {
+   "name": "Melded Moxite",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-red-madness"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "discard",
+    "draw_card",
+    "activated_ability",
+    "sacrifice_cost",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MeldedMoxite.java"
+  },
+  {
+   "name": "Robot Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Robot"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/RobotToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Inventor's Axe",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Equipment"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-red-rally"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "etb_trigger",
+    "energy",
+    "etb_attach_controlled_creature",
+    "equipment",
+    "equip"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/InventorsAxe.java"
+  },
+  {
+   "name": "Baleful Strix",
+   "engine_capability": "full",
+   "mana_cost": "{U}{B}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-affinity",
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "flying",
+    "deathtouch",
+    "etb_trigger",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BalefulStrix.java"
+  },
+  {
+   "name": "Giant's Boulder",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "pauper-grixis-affinity"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "scry",
+    "mana_ability",
+    "any_color_mana",
+    "activated_ability",
+    "tap_ability",
+    "sacrifice_cost",
+    "destroy"
+   ]
+  },
+  {
+   "name": "Utrom Monitor",
+   "engine_capability": "full",
+   "mana_cost": "{4}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Utrom",
+    "Scientist"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-affinity"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "affinity",
+    "flying"
+   ]
+  },
+  {
+   "name": "Agony Warp",
+   "engine_capability": "full",
+   "mana_cost": "{U}{B}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "two_targets",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AgonyWarp.java"
+  },
+  {
+   "name": "Augur of Bolas",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Merfolk",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "library_look",
+    "reveal"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AugurOfBolas.java"
+  },
+  {
+   "name": "Mukotai Ambusher",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Rat",
+    "Ninja"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "ninjutsu",
+    "lifelink"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MukotaiAmbusher.java"
+  },
+  {
+   "name": "Seething Landscape",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "tap_ability",
+    "fetch_effect",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SeethingLandscape.java"
+  },
+  {
+   "name": "Thorn of the Black Rose",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Assassin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424",
+    "pauper-grixis-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "deathtouch",
+    "monarch",
+    "etb_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThornOfTheBlackRose.java"
+  },
+  {
+   "name": "Campfire",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "lifegain",
+    "exile_cost",
+    "shuffle_graveyard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Campfire.java"
+  },
+  {
+   "name": "Lose Focus",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "replicate",
+    "counterspell",
+    "copy_spell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LoseFocus.java"
+  },
+  {
+   "name": "Plunder the Trollshaws",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "draw_card",
+    "flashback",
+    "cast_from_graveyard"
+   ]
+  },
+  {
+   "name": "Dimir Aqueduct",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U",
+    "B"
+   ],
+   "decks": [
+    "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "bounce_land"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DimirAqueduct.java"
+  },
+  {
+   "name": "Underground Sea",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Island",
+    "Swamp"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U",
+    "B"
+   ],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UndergroundSea.java"
+  },
+  {
+   "name": "Volcanic Island",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Island",
+    "Mountain"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U",
+    "R"
+   ],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VolcanicIsland.java"
+  },
+  {
+   "name": "Undercity Sewers",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Island",
+    "Swamp"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U",
+    "B"
+   ],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "enters_tapped",
+    "etb_trigger",
+    "surveil"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UndercitySewers.java"
+  },
+  {
+   "name": "Thundering Falls",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Island",
+    "Mountain"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U",
+    "R"
+   ],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "enters_tapped",
+    "etb_trigger",
+    "surveil"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThunderingFalls.java"
+  },
+  {
+   "name": "Bloodstained Mire",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BloodstainedMire.java"
+  },
+  {
+   "name": "Flooded Strand",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FloodedStrand.java"
+  },
+  {
+   "name": "Marsh Flats",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MarshFlats.java"
+  },
+  {
+   "name": "Misty Rainforest",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MistyRainforest.java"
+  },
+  {
+   "name": "Polluted Delta",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PollutedDelta.java"
+  },
+  {
+   "name": "Scalding Tarn",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/ScaldingTarn.java"
+  },
+  {
+   "name": "Wasteland",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "activated_ability",
+    "sacrifice_cost",
+    "destroy_target",
+    "land_destruction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/Wasteland.java"
+  },
+  {
+   "name": "Thoughtseize",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "target_player",
+    "reveal_hand",
+    "discard",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/Thoughtseize.java"
+  },
+  {
+   "name": "Fatal Push",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "removal",
+    "destroy_target",
+    "revolt"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FatalPush.java"
+  },
+  {
+   "name": "Unholy Heat",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "removal",
+    "damage",
+    "delirium"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UnholyHeat.java"
+  },
+  {
+   "name": "Daze",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "counter_unless_pay",
+    "alt_cost",
+    "return_land_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Daze.java"
+  },
+  {
+   "name": "Force of Will",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "counterspell",
+    "alt_cost",
+    "pay_life_cost",
+    "exile_from_hand_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/ForceOfWill.java"
+  },
+  {
+   "name": "Prismari Charm",
+   "engine_capability": "full",
+   "mana_cost": "{U}{R}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "modal",
+    "surveil",
+    "draw_card",
+    "damage",
+    "bounce"
+   ]
+  },
+  {
+   "name": "Brazen Borrower",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Faerie",
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "flying",
+    "block_restriction",
+    "adventure",
+    "bounce"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BrazenBorrower.java"
+  },
+  {
+   "name": "Mishra's Bauble",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "look_at_library",
+    "delayed_draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MishrasBauble.java"
+  },
+  {
+   "name": "Urza's Bauble",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "look_at_random_hand_card",
+    "delayed_draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UrzasBauble.java"
+  },
+  {
+   "name": "Dragon's Rage Channeler",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Shaman"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "cast_trigger",
+    "surveil",
+    "delirium",
+    "static_boost",
+    "must_attack"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DragonsRageChanneler.java"
+  },
+  {
+   "name": "Murktide Regent",
+   "engine_capability": "full",
+   "mana_cost": "{5}{U}{U}",
+   "mana_value": 7,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dragon"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "delve",
+    "flying",
+    "enters_with_counters",
+    "graveyard_leave_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MurktideRegent.java"
+  },
+  {
+   "name": "Moonshadow",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental"
+   ],
+   "supertypes": [],
+   "power": 7,
+   "toughness": 7,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "menace",
+    "enters_with_counters",
+    "minus_one_minus_one_counter",
+    "graveyard_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/Moonshadow.java"
+  },
+  {
+   "name": "Nethergoyf",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Lhurgoyf"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "characteristic_defining_power_toughness",
+    "escape"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/Nethergoyf.java"
+  },
+  {
+   "name": "Orcish Bowmasters",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Orc",
+    "Archer"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "etb_trigger",
+    "opponent_draw_trigger",
+    "damage",
+    "amass"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OrcishBowmasters.java"
+  },
+  {
+   "name": "Orc Army Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Orc",
+    "Army"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "amass"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/OrcArmyToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Tamiyo, Inquisitive Student",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "MOONFOLK",
+    "Wizard"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 0,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-izzet-delver"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "attack_trigger",
+    "investigate",
+    "draw_trigger",
+    "transform",
+    "planeswalker",
+    "loyalty_abilities",
+    "emblem"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TamiyoInquisitiveStudent.java",
+   "starting_loyalty": 2
+  },
+  {
+   "name": "Bilbo, Thief in the Night",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Halfling",
+    "Rogue"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "cost_reduction",
+    "attack_trigger",
+    "cast_from_graveyard",
+    "exile_replacement"
+   ]
+  }
+ ]
+}
