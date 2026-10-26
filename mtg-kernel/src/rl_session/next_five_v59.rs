@@ -684,6 +684,16 @@ pub struct NextFiveSnapshotV59 {
     owner: std::sync::Arc<()>,
 }
 impl NextFiveDecisionV59 {
+    /// Compare a retained private binding with a freshly issued complete input.
+    /// This is not execution authority; stepping still recaptures native input.
+    pub(crate) fn same_issued_input_v59(&self, fresh: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.owner, &fresh.owner)
+            && self.generation == fresh.generation
+            && self.expected == fresh.expected
+            && self.binding == fresh.binding
+            && self.observation == fresh.observation
+            && self.actions == fresh.actions
+    }
     pub fn observation(&self) -> &NextFiveObservationV59 {
         &self.observation
     }

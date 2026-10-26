@@ -1113,9 +1113,8 @@ impl HumanNextFiveSessionV59 {
         if decision.expected() != expected {
             return Err(Error::StaleDecision);
         }
-        self.inner
-            .validate_decision_v59(&decision)
-            .map_err(|_| Error::StaleDecision)?;
+        // decision_v59 just captured and checked this complete native input
+        // under our immutable borrow. Do not reconstruct it a second time.
         Ok(decision)
     }
     pub fn public_observation(
@@ -1149,8 +1148,8 @@ impl HumanNextFiveSessionV59 {
         if decision.expected() != expected {
             return Err(RlContractError("stale NextFive opponent decision".into()));
         }
-        self.inner.validate_decision_v59(&decision)?;
         let index = policy(decision.observation(), decision.actions())?;
+        // step_v59 validates the complete private binding after the callback.
         self.inner.step_v59(&decision, index)
     }
 }
@@ -1188,10 +1187,7 @@ impl HumanNextFiveProjectorV59 {
         if let Some(pending) = &self.pending {
             if pending.authority == session.authority
                 && pending.decision.expected() == expected
-                && session
-                    .inner
-                    .validate_decision_v59(&pending.decision)
-                    .is_ok()
+                && pending.decision.same_issued_input_v59(&decision)
             {
                 let (visible, indexes) =
                     project(&decision, self.human_seat, pending.visible.prompt_seq)?;
@@ -1243,18 +1239,17 @@ impl HumanNextFiveProjectorV59 {
         if request.action_index as usize >= pending.visible.actions.len() {
             return Err(Error::InvalidAction);
         }
-        session
-            .inner
-            .validate_decision_v59(&pending.decision)
-            .map_err(|_| Error::StaleDecision)?;
         let engine_index = *pending
             .indexes
             .get(request.action_index as usize)
             .ok_or(Error::InvalidAction)?;
-        session
-            .inner
-            .step_v59(&pending.decision, engine_index)
-            .map_err(|_| Error::ExecutionFailed)?;
+        session.inner.step_with_current_check(
+            &pending.decision,
+            engine_index,
+            |_, _| Ok(()),
+            |_| Error::StaleDecision,
+            |_| Error::ExecutionFailed,
+        )?;
         self.pending = None;
         let receipt = HumanActionReceiptV1 {
             prompt_seq: request.prompt_seq,
