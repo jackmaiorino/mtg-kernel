@@ -4888,6 +4888,7 @@ mod tests {
             chosen_creature_cost: None,
             convoke_chosen: Vec::new(),
             convoke_finished: false,
+            escape_exile_finished_v1: false,
             mandatory_additional_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();

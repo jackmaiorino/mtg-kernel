@@ -1218,6 +1218,7 @@ fn nethergoyf_escapes_by_exiling_cards_with_four_card_types() {
     assert!(castable(&mut state, goyf), "escape from the graveyard");
     act(&mut state, Action::CastSpell(goyf));
     let mut picks = vec![island, bolt, ponder, bauble].into_iter();
+    let mut offered_more = false;
     loop {
         match next(&mut state) {
             Decision::ChooseCostTargets {
@@ -1231,12 +1232,25 @@ fn nethergoyf_escapes_by_exiling_cards_with_four_card_types() {
                 assert!(candidates.contains(&pick));
                 act(&mut state, Action::ChooseCostTarget(pick));
             }
+            // "Any number of other cards": once four types are covered the
+            // caster may exile more or stop.
+            Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish,
+                ..
+            } => {
+                assert!(can_finish);
+                assert_eq!(legal_targets, vec![Target::Object(counterspell)]);
+                offered_more = true;
+                act(&mut state, Action::FinishEffectSelection);
+            }
             Decision::CastSpellOrPass { .. } => break,
             other => panic!("unexpected decision: {other:?}"),
         }
     }
-    // Land, instant, sorcery and artifact: the fourth type ends the picks.
+    // Land, instant, sorcery and artifact: the fourth type meets the cost.
     assert_eq!(picks.next(), None, "all four picks were needed");
+    assert!(offered_more, "the remaining card was offered");
     for card in [island, bolt, ponder, bauble] {
         assert_eq!(state.objects.get(card).zone, Zone::Exile);
     }
@@ -1245,6 +1259,54 @@ fn nethergoyf_escapes_by_exiling_cards_with_four_card_types() {
     assert_eq!(state.objects.get(goyf).zone, Zone::Battlefield);
     assert_eq!(state.players[0].mana_pool, [0; 6]);
     assert_eq!(power_toughness(&state, goyf), (1, 2), "one instant left");
+}
+
+#[test]
+fn nethergoyf_escape_may_exile_more_cards_after_its_types_are_covered() {
+    // {Artifact Creature, Artifact Creature, Land, Instant}: the first three
+    // cover four types and the second artifact creature is still exiled.
+    let mut state = islands();
+    let goyf = put(&mut state, P0, "Nethergoyf", Zone::Graveyard);
+    let first_strix = put(&mut state, P0, "Baleful Strix", Zone::Graveyard);
+    let second_strix = put(&mut state, P0, "Baleful Strix", Zone::Graveyard);
+    let island = put(&mut state, P0, "Island", Zone::Graveyard);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    act(&mut state, Action::CastSpell(goyf));
+    for pick in [first_strix, island, bolt] {
+        match next(&mut state) {
+            Decision::ChooseCostTargets { candidates, .. } => {
+                assert!(candidates.contains(&pick));
+                act(&mut state, Action::ChooseCostTarget(pick));
+            }
+            other => panic!("expected an escape exile pick, got {other:?}"),
+        }
+    }
+    match next(&mut state) {
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            can_finish,
+            min_targets,
+            ..
+        } => {
+            assert!(can_finish);
+            assert_eq!(min_targets, 0);
+            assert_eq!(legal_targets, vec![Target::Object(second_strix)]);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(second_strix)),
+            );
+        }
+        other => panic!("expected the optional extra exile, got {other:?}"),
+    }
+    // Nothing else remains to exile, so the cast completes.
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    for card in [first_strix, second_strix, island, bolt] {
+        assert_eq!(state.objects.get(card).zone, Zone::Exile);
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(goyf).zone, Zone::Battlefield);
+    assert_eq!(power_toughness(&state, goyf), (0, 1), "empty graveyard");
 }
 
 // ---- Orcish Bowmasters --------------------------------------------------------------

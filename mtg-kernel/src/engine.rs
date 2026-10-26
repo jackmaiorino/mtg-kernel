@@ -936,6 +936,11 @@ pub struct PendingCast {
     pub convoke_chosen: Vec<EffectObjectBinding>,
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub convoke_finished: bool,
+    /// Nethergoyf's escape exiles "any number of other cards": true once the
+    /// caster stops exiling more after the card-type requirement is met.
+    /// Only the eternal catalog sets it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub escape_exile_finished_v1: bool,
 }
 impl std::hash::Hash for PendingCast {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -967,6 +972,9 @@ impl std::hash::Hash for PendingCast {
             std::hash::Hash::hash(&0x636f6e766f6b6531_u64, state);
             std::hash::Hash::hash(&self.convoke_chosen, state);
             std::hash::Hash::hash(&self.convoke_finished, state);
+        }
+        if self.escape_exile_finished_v1 {
+            std::hash::Hash::hash(&"escape-exile-finished/v1", state);
         }
     }
 }
@@ -7127,6 +7135,108 @@ fn graveyard_exile_cards_needed(
         .unwrap_or(0)
 }
 
+/// Nethergoyf's escape exiles "any number of other cards from your
+/// graveyard with four or more card types among them". Once the chosen
+/// cards cover the card types, the caster may keep choosing other graveyard
+/// cards until they finish: `Some` with the remaining candidates while that
+/// choice is open.
+fn escape_extra_exile_candidates(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+) -> Option<Vec<ObjectId>> {
+    if !cfg!(feature = "eternal-fixtures")
+        || pending.escape_exile_finished_v1
+        || pending.source_contract.cast_method != CastMethodV4::Escape
+    {
+        return None;
+    }
+    let minimum = def
+        .escape
+        .as_ref()?
+        .cost
+        .iter()
+        .find_map(|component| match component {
+            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => Some(*minimum),
+            _ => None,
+        })?;
+    if crate::eternal_cards_v1::card_type_count(state, &pending.sacrifice_chosen)
+        < usize::from(minimum)
+    {
+        return None;
+    }
+    let candidates = checked_graveyard_exile_candidates(
+        pending.controller,
+        pending.spell,
+        state,
+        &pending.sacrifice_chosen,
+    )?;
+    (!candidates.is_empty()).then_some(candidates)
+}
+
+/// Exiles one more graveyard card for Nethergoyf's escape after its card
+/// types are covered.
+fn choose_escape_extra_exile(state: &mut GameState, target: Target) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .clone()
+        .ok_or("no cast is choosing escape cards")?;
+    validate_pending_cast(state, &pending)?;
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let candidates = escape_extra_exile_candidates(&pending, def, state)
+        .ok_or("the escape exile choice is not open")?;
+    let Target::Object(object) = target else {
+        return Err("an escape exile choice is a graveyard card".to_string());
+    };
+    if !candidates.contains(&object) {
+        return Err(format!("{object} is not a legal escape exile card"));
+    }
+    state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("validated cast remains pending")
+        .sacrifice_chosen
+        .push(object);
+    Ok(())
+}
+
+/// Stops exiling further cards for Nethergoyf's escape.
+fn finish_escape_extra_exile(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .clone()
+        .ok_or("no cast is choosing escape cards")?;
+    validate_pending_cast(state, &pending)?;
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    if escape_extra_exile_candidates(&pending, def, state).is_none() {
+        return Err("the escape exile choice is not open".to_string());
+    }
+    state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("validated cast remains pending")
+        .escape_exile_finished_v1 = true;
+    Ok(())
+}
+
+/// Whether the pending cast is offering Nethergoyf's further escape exiles.
+fn escape_extra_exile_open(state: &GameState) -> bool {
+    state.engine.pending_cast.as_ref().is_some_and(|pending| {
+        state.objects.try_get(pending.spell).is_some_and(|spell| {
+            escape_extra_exile_candidates(
+                pending,
+                &card_def::CARD_DEFS[spell.card_def as usize],
+                state,
+            )
+            .is_some()
+        })
+    })
+}
+
 /// The cards of `color` in `player`'s hand other than `source`: the
 /// candidates for "exile a blue card from your hand" (Force of Will).
 pub(crate) fn hand_exile_cost_candidates(
@@ -12488,6 +12598,18 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             cost_kind: CostKind::ExileFromGraveyard,
             remaining,
             candidates,
+        });
+    }
+    if let Some(candidates) = escape_extra_exile_candidates(&pending, def, state) {
+        let chosen = pending.sacrifice_chosen.len();
+        return Some(Decision::ChooseEffectTargets {
+            player: pending.controller,
+            source: pending.spell,
+            selected_count: u16::try_from(chosen).unwrap_or(u16::MAX),
+            min_targets: 0,
+            max_targets: u16::try_from(chosen + candidates.len()).unwrap_or(u16::MAX),
+            legal_targets: candidates.into_iter().map(Target::Object).collect(),
+            can_finish: true,
         });
     }
 
@@ -19537,6 +19659,9 @@ enum PendingCastActionStage {
     AwaitEngineAdvance,
     ChooseConvoke,
     ChooseMandatoryAdditionalCost,
+    /// Nethergoyf's escape: more graveyard cards after its card types are
+    /// covered, or finish.
+    ChooseEscapeExileV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19607,6 +19732,9 @@ fn pending_cast_action_stage(
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
+    if escape_extra_exile_candidates(pending, def, state).is_some() {
+        return Ok(PendingCastActionStage::ChooseEscapeExileV1);
+    }
     if pending.sacrifice_chosen.len()
         < controlled_permanent_sacrifice_needed(pending, def)
             .map_or(0, |(count, _)| usize::from(count))
@@ -19661,7 +19789,7 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
     matches!(
         (stage, action),
         (
-            PendingCastActionStage::ChooseConvoke,
+            PendingCastActionStage::ChooseConvoke | PendingCastActionStage::ChooseEscapeExileV1,
             Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
         ) | (
             PendingCastActionStage::ChooseKicker,
@@ -20150,6 +20278,8 @@ pub(crate) fn step_without_linked_aura_v1(
         Action::ChooseEffectTarget(target) => {
             if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.x_value.is_some() && !p.convoke_finished) {
                 standard_cast_convoke::choose(state, target)
+            } else if escape_extra_exile_open(state) {
+                choose_escape_extra_exile(state, target)
             } else if state.engine.pending_cast.is_some() {
                 apply_choose_collect_evidence_target(state, target)
             } else if state.engine.pending_activation.is_some() {
@@ -20163,6 +20293,8 @@ pub(crate) fn step_without_linked_aura_v1(
         Action::FinishEffectSelection => {
             if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.x_value.is_some() && !p.convoke_finished) {
                 standard_cast_convoke::finish(state)
+            } else if escape_extra_exile_open(state) {
+                finish_escape_extra_exile(state)
             } else if state.engine.pending_cast.is_some() {
                 finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
@@ -22715,6 +22847,7 @@ fn begin_cast_ex(
         chosen_creature_cost: None,
         convoke_chosen: Vec::new(),
         convoke_finished: false,
+        escape_exile_finished_v1: false,
         mandatory_additional_cost: mandatory_cast_cost_v1::seed(def),
     });
 }
