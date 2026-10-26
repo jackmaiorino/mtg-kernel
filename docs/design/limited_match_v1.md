@@ -84,6 +84,27 @@ gorge's two line formats, which `draftzero.engine.Gorge.coverage()` parses.
 command runs coverage, a random match and a fair-search match on the two original fixture decks
 and replays each with another worker count; CI runs it in the Limited V5 group.
 
+## Throughput (first measurement)
+
+CI smoke on a hosted 4-vCPU Ubuntu runner, two workers, the two fixture decks, release build
+(CI run 40288862019):
+
+| Match | Games | Decisions | Wall s | Decisions/s | Games/hour |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| random vs random | 4 | 3,682 | 32.9 | 112 | 438 |
+| `pimc:sims=4:depth=8:closedlist` vs random | 2 | 1,675 | 100.0 | 16.7 | 72 |
+
+The cost is the Prepared V57 session, not the policies. Before every step it re-runs
+`prepared_observation_v57::validate_state` and rebuilds the whole action menu to compare it
+with the bound one. The existing V5 process check shows about 19 ms of apply time per step even
+for 40 Forest against 40 Island. Both checks are read-only, so a trusted internal step path for
+self-play and search rollouts could skip them without changing play. That is filed as separate
+engineering because it reshapes the shared step path.
+
+One natural fair-search game (seed 11, pair 0, leg 0) ends in the engine refusal
+`fail_closed:ravenous_v51_required:Phoenix public roster incomplete`. The game is replayed
+exactly, so it reproduces; error rows name the refused action for the card-coverage owner.
+
 Not covered yet: gorge's training records (`-record-features`, `dzgorge pack`) and its position
 encoding, which DraftZero's networks consume, have no mtg-kernel counterpart. Networks trained on
 gorge do not transfer; DraftZero can use this driver for evaluation, deck-builder scoring and
