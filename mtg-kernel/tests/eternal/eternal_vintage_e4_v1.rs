@@ -7,8 +7,12 @@ use mtg_kernel::card_def::{
 };
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
+use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -1655,6 +1659,188 @@ fn chancellor_of_the_annex_taxes_every_opponent_spell_while_in_play() {
     }
     settled(&mut state);
     assert_eq!(state.objects.get(mox).zone, Zone::Graveyard);
+}
+
+// ---- Public session games -------------------------------------------------
+
+/// The two E4 decks from the snapshot, with the six cards wave E3 supplies
+/// replaced by basic lands until E3 lands: they play every E4 card through
+/// public sessions before the decks join `PLAYABLE`.
+fn proxy_decks() -> [CustomDeckV1; 2] {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("data/eternal_v1/meta_snapshot_mtggoldfish_20261026.json");
+    let snapshot: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let e3 = [
+        "Ancient Tomb",
+        "Cavern of Souls",
+        "Chrome Mox",
+        "Misdirection",
+        "Sink into Stupor",
+        "The One Ring",
+    ];
+    ["vintage-jewel-shops", "vintage-mono-white-initiative"].map(|archetype| {
+        let deck = snapshot["formats"]["vintage"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|deck| deck["archetype"] == archetype)
+            .unwrap();
+        let basic = if archetype == "vintage-jewel-shops" {
+            "Island"
+        } else {
+            "Plains"
+        };
+        let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+        for row in deck["mainboard"].as_array().unwrap() {
+            let name = row[1].as_str().unwrap();
+            let count = row[0].as_u64().unwrap();
+            let name = if e3.contains(&name) { basic } else { name };
+            *counts.entry(name.to_owned()).or_default() += count;
+        }
+        CustomDeckV1 {
+            cards: counts
+                .into_iter()
+                .map(|(name, count)| CustomCardCountV1 {
+                    name,
+                    count: count as _,
+                })
+                .collect(),
+        }
+    })
+}
+
+fn rank(action: &Value) -> u8 {
+    let s = &action["semantic"];
+    match s["action_kind"].as_str().unwrap() {
+        "play_land" => 0,
+        "cast_spell" => 1,
+        "choose_attacker_inclusion" | "choose_blocker_inclusion" if s["include"] == true => 2,
+        "choose_combat_damage_range" if s["upper_half"] == false => 3,
+        "pass" => 10,
+        "activate_mana_ability" | "activate_ability" => 11,
+        _ => 5,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Policy {
+    Ranked,
+    Random(u64),
+}
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// Plays one game to a natural terminal and returns its transcript hash
+/// and the kinds of actions chosen.
+fn play_session(
+    decks: [CustomDeckV1; 2],
+    seed: u64,
+    policy: Policy,
+) -> (String, BTreeMap<String, usize>) {
+    const MAX_STEPS: usize = 131_072;
+    let mut server = LimitedJsonlServerV1::new_with_london_mulligans_v1();
+    let mut request = json!({"schema_version":4,"request_type":"reset","request_id":"reset",
+        "decks":decks,"episode_id":seed,"env_seed":seed,
+        "max_physical_decisions":65536,"max_policy_steps":MAX_STEPS})
+    .to_string();
+    let mut transcript = Sha256::new();
+    let mut counts = BTreeMap::new();
+    let mut recent: Vec<String> = Vec::new();
+    let mut random_state = match policy {
+        Policy::Random(state) => state,
+        Policy::Ranked => 0,
+    };
+    for index in 0..MAX_STEPS {
+        let raw = server.handle_line(&request);
+        transcript.update(request.as_bytes());
+        transcript.update(b"\n");
+        transcript.update(raw.as_bytes());
+        transcript.update(b"\n");
+        let reply: Value = serde_json::from_str(&raw).unwrap();
+        assert_ne!(
+            reply["response_type"],
+            "error",
+            "seed={seed} step={index}: {reply}\nlast actions:\n{}",
+            recent.join("\n")
+        );
+        if reply["response_type"] == "terminal" {
+            assert_eq!(
+                reply["terminal"]["terminal_code"],
+                "natural_game_over",
+                "seed={seed}: {reply}\nlast actions:\n{}",
+                recent.join("\n")
+            );
+            return (format!("{:x}", transcript.finalize()), counts);
+        }
+        let decision = &reply["decision"];
+        let actions: Vec<&Value> = decision["legal_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .collect();
+        let action = match policy {
+            Policy::Ranked => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
+            Policy::Random(_) => {
+                actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
+            }
+        };
+        recent.push(action["semantic"].to_string());
+        if recent.len() > 8 {
+            recent.remove(0);
+        }
+        *counts
+            .entry(
+                action["semantic"]["action_kind"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            )
+            .or_default() += 1;
+        request =
+            json!({"schema_version":4,"request_type":"step","request_id":format!("step-{index}"),
+            "episode_id":decision["episode_id"],"expected_step":decision["step"],
+            "selected_index":action["selected_index"],"selected_action_id":action["stable_id"]})
+            .to_string();
+    }
+    panic!("seed {seed} did not reach a natural terminal");
+}
+
+#[test]
+fn e4_proxy_decks_finish_and_replay_through_public_sessions() {
+    let [shops, initiative] = proxy_decks();
+    for deck in [&shops, &initiative] {
+        let ids = deck.resolve().unwrap();
+        mtg_kernel::card_def::preflight_fully_supported_deck(&ids).unwrap();
+    }
+    let mut activations = 0;
+    for (index, pair) in [
+        [shops.clone(), initiative.clone()],
+        [initiative.clone(), shops.clone()],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for round in 0..3_u64 {
+            let seed = 0x4534_5052_0000 + index as u64 * 16 + round;
+            for policy in [Policy::Ranked, Policy::Random(seed)] {
+                let (transcript, counts) = play_session(pair.clone(), seed, policy);
+                let (replay, _) = play_session(pair.clone(), seed, policy);
+                assert_eq!(transcript, replay, "seed {seed}");
+                if let Policy::Random(_) = policy {
+                    activations += counts.get("activate_ability").unwrap_or(&0);
+                }
+                println!("seed={seed} actions={counts:?}");
+            }
+        }
+    }
+    assert!(activations > 0, "random games activated no abilities");
 }
 
 /// Temporary while wave E4 is in progress: reports the catalog hash.

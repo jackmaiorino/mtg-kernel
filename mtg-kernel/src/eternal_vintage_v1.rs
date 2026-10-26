@@ -236,7 +236,6 @@ const MISHRAS_WORKSHOP: &str = "Mishra's Workshop";
 const TEZZERET: &str = "Tezzeret, Cruel Captain";
 const URZAS_SAGA: &str = "Urza's Saga";
 const WITCH_ENCHANTER: &str = "Witch Enchanter";
-const PHYREXIAN_METAMORPH: &str = "Phyrexian Metamorph";
 const ANOINTED_PEACEKEEPER: &str = "Anointed Peacekeeper";
 const CHANCELLOR: &str = "Chancellor of the Annex";
 
