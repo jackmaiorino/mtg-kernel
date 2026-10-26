@@ -1738,7 +1738,11 @@ mod paid {
                     d.mode2 = crate::card_def::CARD_DEFS
                         [usize::from(crate::card_def::card_id_by_name("Abrade").unwrap())]
                     .mode2
-                    .clone()
+                    .as_ref()
+                    .map(|mode| crate::card_def::ModeDef {
+                        target_spec: mode.target_spec,
+                        effect: mode.effect,
+                    })
                 }
             }
             assert!(
