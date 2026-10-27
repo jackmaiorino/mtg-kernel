@@ -17,7 +17,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 49] = [
+const PLAYABLE: [(&str, &str); 55] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -75,6 +75,12 @@ const PLAYABLE: [(&str, &str); 49] = [
     ("legacy", "legacy-mystic-forge-combo"),
     ("legacy", "legacy-eldrazi"),
     ("legacy", "legacy-tron"),
+    ("legacy", "legacy-sewer-cam-combo"),
+    ("legacy", "legacy-rakdos-reanimator"),
+    ("legacy", "legacy-the-epic-storm"),
+    ("legacy", "legacy-stiflenought"),
+    ("legacy", "legacy-mardu-energy"),
+    ("legacy", "legacy-affinity-stompy"),
     ("vintage", "vintage-jewel-shops"),
     ("vintage", "vintage-mono-white-initiative"),
     ("vintage", "vintage-esper-lurrus-control"),

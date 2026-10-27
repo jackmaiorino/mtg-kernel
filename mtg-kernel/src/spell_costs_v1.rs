@@ -153,6 +153,9 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) own_generic_increase: u32,
     pub(super) delve: bool,
     pub(super) convoke: bool,
+    /// Improvise (Kappa Cannoneer): the convoke payment taps artifacts, each
+    /// for one generic mana.
+    pub(super) improvise: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
     pub(super) replicate: Option<Cost>,
     /// The spell's sorted creature subtype ids, for mana restricted to a
@@ -356,7 +359,7 @@ impl SelectedSpellManaCostsV1 {
             })
             .sum::<u32>();
         if self.convoke {
-            let (mana, convoke_tapped) = mana::plan_spell_mana_total_with_convoke_v1(
+            let (mana, convoke_tapped) = mana::plan_spell_mana_total_with_tappers_v1(
                 &pips,
                 generic,
                 player,
@@ -364,6 +367,7 @@ impl SelectedSpellManaCostsV1 {
                 self.types.contains(&CardType::Creature),
                 reserved,
                 additional_life,
+                self.improvise,
             )?;
             return Some(SpellManaPaymentV1 {
                 mana,
@@ -471,6 +475,8 @@ pub(super) fn selected_spell_mana_costs_v1(
         own_generic_increase: 0,
         delve: false,
         convoke: false,
+        improvise: cfg!(feature = "eternal-fixtures")
+            && crate::eternal_legacy_e7a_v1::improvise_definition(definition.name),
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
         spell_subtype_ids: spell_subtype_ids(definition),
         colorless_eldrazi: definition.colors.is_empty()
@@ -997,6 +1003,12 @@ impl PreparedSpellPaymentV1 {
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn mana_taps(&self) -> &[(ObjectId, crate::mana::ManaColor)] {
         &self.mana.mana.taps
+    }
+
+    /// The restricted mana units this payment spends, by pool index.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn restricted_pool_used(&self) -> &[usize] {
+        &self.mana.mana.restricted_pool_used
     }
 
     /// Whether this payment spends colored mana (Void Mirror): a source

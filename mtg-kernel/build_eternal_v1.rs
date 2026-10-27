@@ -503,7 +503,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
 pub(super) fn equipment_for(name: &str) -> &'static str {
     match name {
         "Inventor's Axe" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
-        _ => "None",
+        _ => super::build_eternal_e7a_v1::equipment_for(name),
     }
 }
 

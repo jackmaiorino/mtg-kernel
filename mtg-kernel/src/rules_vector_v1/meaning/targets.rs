@@ -718,6 +718,12 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::PlayerThenGraveyardCardsV1 | S::CreatureThenGraveyardCardsV1 => ObjF::AnyCard,
         S::UpToOneColoredPermanentV1 => ObjF::Permanent,
         S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => ObjF::Permanent,
+        S::ArtifactCardInOwnGraveyardV1 | S::ArtifactCardInOwnGraveyardManaValueAtMostV1(_) => {
+            typed(CardType::Artifact)
+        }
+        S::CreatureCardInAGraveyardV1 => creature(),
+        S::UpToThreeLandCardsInOwnGraveyardV1 => typed(CardType::Land),
+        S::ArtifactThenArtifactCardInItsControllersGraveyardV1 => typed(CardType::Artifact),
     }
 }
 
@@ -726,7 +732,11 @@ pub(super) fn standard_target_origin(
 ) -> (Option<ZoneF>, Option<RelF>) {
     use crate::standard_cards_v1::StandardTargetV1 as S;
     match filter {
-        S::InstantOrSorceryCardInOwnGraveyard => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::InstantOrSorceryCardInOwnGraveyard
+        | S::ArtifactCardInOwnGraveyardV1
+        | S::ArtifactCardInOwnGraveyardManaValueAtMostV1(_)
+        | S::UpToThreeLandCardsInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::CreatureCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
         S::CardInAGraveyard | S::PlayerThenGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
@@ -760,6 +770,7 @@ pub(super) fn standard_target_origin(
         | S::CreatureThenGraveyardCardsV1
         | S::UpToOneColoredPermanentV1
         | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
+        | S::ArtifactThenArtifactCardInItsControllersGraveyardV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -946,6 +957,31 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), Some(RelF::Opponent), zone);
             out.target(TargetAtom::MultipleTargets);
             // The power bound has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::ArtifactCardInOwnGraveyardV1 | S::CreatureCardInAGraveyardV1 => {
+            object(out, standard_target_obj(filter), relation, zone);
+        }
+        S::ArtifactCardInOwnGraveyardManaValueAtMostV1(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: typed(CardType::Artifact),
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+        }
+        S::UpToThreeLandCardsInOwnGraveyardV1 => {
+            object(out, typed(CardType::Land), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+        }
+        S::ArtifactThenArtifactCardInItsControllersGraveyardV1 => {
+            object(out, typed(CardType::Artifact), None, zone);
+            object(out, typed(CardType::Artifact), None, ZoneF::Graveyard);
+            out.target(TargetAtom::MultipleTargets);
+            // "That player's graveyard" has no facet.
             out.atoms.push(Atom::Opaque);
         }
     }

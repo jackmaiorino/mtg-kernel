@@ -396,6 +396,10 @@ pub enum Subtype {
     Lair,
     Locus,
     Planet,
+    /// Appended for the eternal catalog's wave E7a (Abhorrent Oculus,
+    /// Phyrexian Dreadnought).
+    Eye,
+    Dreadnought,
 }
 
 impl Subtype {
@@ -730,6 +734,10 @@ impl Subtype {
         Subtype::Crab,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Kor,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Eye,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Dreadnought,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -836,6 +844,8 @@ impl Subtype {
                     | Subtype::Scion
                     | Subtype::Crab
                     | Subtype::Kor
+                    | Subtype::Eye
+                    | Subtype::Dreadnought
             )
         {
             return true;

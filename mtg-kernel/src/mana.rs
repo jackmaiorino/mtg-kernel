@@ -593,6 +593,36 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
     excluded: &[ObjectId],
     additional_life: u32,
 ) -> Option<(PaymentPlan, Vec<ObjectId>)> {
+    plan_spell_mana_total_with_tappers_v1(
+        pips,
+        generic,
+        player,
+        state,
+        creature_spell,
+        excluded,
+        additional_life,
+        false,
+    )
+}
+
+/// Convoke's planner, or with `improvise` improvise's: untapped artifacts
+/// instead of creatures, each paying only one generic mana.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_spell_mana_total_with_tappers_v1(
+    pips: &[Pip],
+    generic: u32,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    excluded: &[ObjectId],
+    additional_life: u32,
+    improvise: bool,
+) -> Option<(PaymentPlan, Vec<ObjectId>)> {
+    let tapper_type = if improvise {
+        crate::card_def::CardType::Artifact
+    } else {
+        crate::card_def::CardType::Creature
+    };
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
         return None;
@@ -607,7 +637,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
                 && object.zone == crate::state::Zone::Battlefield
                 && !object.tapped
                 && !excluded.contains(id)
-                && crate::engine::object_has_type(state, *id, crate::card_def::CardType::Creature)
+                && crate::engine::object_has_type(state, *id, tapper_type)
         })
         .collect::<Vec<_>>();
     creatures.sort_by_key(|id| !state.objects.get(*id).summoning_sick);
@@ -618,7 +648,12 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
         require_convoke: true,
     };
     for creature in creatures {
-        let colors = crate::engine::object_color_mask(state, creature);
+        // An improvising artifact pays only generic mana.
+        let colors = if improvise {
+            0
+        } else {
+            crate::engine::object_color_mask(state, creature)
+        };
         // Colorless is not a creature color. A colorless creature can pay
         // generic via Convoke, but cannot pay a {C} pip.
         let choices = [

@@ -301,8 +301,13 @@ pub(crate) fn katilda_mana_colors(
             return colors;
         }
         // Petrified Hamlet: 'Lands with the chosen name have "{T}: Add
-        // {C}."'
-        let colors = crate::eternal_legacy_e5b_v1::granted_mana_colors(state, object);
+        // {C}."' Yavimaya, Cradle of Growth makes each land a Forest.
+        let mut colors = crate::eternal_legacy_e5b_v1::granted_mana_colors(state, object);
+        for color in crate::eternal_legacy_e7a_v1::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
         if !colors.is_empty() {
             return colors;
         }
