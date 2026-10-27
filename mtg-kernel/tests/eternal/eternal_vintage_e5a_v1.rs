@@ -125,7 +125,26 @@ fn zone(state: &GameState, object: ObjectId) -> Zone {
 
 fn next(state: &mut GameState) -> Decision {
     let decision = engine::advance_until_decision(state);
-    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+    assert!(
+        !matches!(decision, Decision::Halted { .. }),
+        "{decision:?}
+stack {:?}
+pending cast {:?}
+pending effect {:?}
+pending triggers {:?}
+recent events {:?}",
+        state.stack,
+        state.engine.pending_cast,
+        state.engine.pending_effect,
+        state.engine.pending_triggers,
+        state
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .take(12)
+            .collect::<Vec<_>>()
+    );
     decision
 }
 
@@ -795,16 +814,13 @@ fn flash_puts_a_creature_onto_the_battlefield_and_sacrifices_it_unless_paid() {
 
 #[test]
 fn suplex_exiles_a_creature_that_would_die_or_exiles_an_artifact() {
+    // With no artifact on the battlefield, only the damage mode can be
+    // chosen, so it is chosen without a prompt.
     let mut state = islands();
     let suplex = put(&mut state, P0, "Suplex", Zone::Hand);
     let raker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
     pool(&mut state, P0, &[ManaColor::R], 1);
-    act(&mut state, Action::CastSpell(suplex));
-    match next(&mut state) {
-        Decision::ChooseSpellMode { .. } => act(&mut state, Action::ChooseSpellMode(0)),
-        other => panic!("expected the mode, got {other:?}"),
-    }
-    choose_target(&mut state, Target::Object(raker));
+    cast(&mut state, suplex, &[Target::Object(raker)]);
     settled(&mut state);
     assert_eq!(zone(&state, raker), Zone::Exile, "exiled instead of dying");
 
@@ -812,12 +828,7 @@ fn suplex_exiles_a_creature_that_would_die_or_exiles_an_artifact() {
     let suplex = put(&mut state, P0, "Suplex", Zone::Hand);
     let key = put(&mut state, P1, "Voltaic Key", Zone::Battlefield);
     pool(&mut state, P0, &[ManaColor::R], 1);
-    act(&mut state, Action::CastSpell(suplex));
-    match next(&mut state) {
-        Decision::ChooseSpellMode { .. } => act(&mut state, Action::ChooseSpellMode(1)),
-        other => panic!("expected the mode, got {other:?}"),
-    }
-    choose_target(&mut state, Target::Object(key));
+    cast(&mut state, suplex, &[Target::Object(key)]);
     settled(&mut state);
     assert_eq!(zone(&state, key), Zone::Exile);
 }

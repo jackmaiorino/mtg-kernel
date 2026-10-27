@@ -12116,8 +12116,28 @@ pub(crate) fn validate_pending_cast(
                         && permission.controller == pending.controller
                         && !permission.land
                 });
+            // Mystic Forge and Bolas's Citadel: the top card of the library.
+            let has_library_permission = cfg!(feature = "eternal-fixtures")
+                && pending.origin_zone == Zone::Library
+                && source.owner == pending.controller
+                && pending
+                    .source_contract
+                    .spell_cast_origin
+                    .is_some_and(|origin| {
+                        matches!(
+                            origin.route,
+                            SpellCastRouteV4::LibraryPermissionV1 { holder, .. }
+                                if holder == pending.controller
+                        ) && crate::eternal_e5a_v1::permissions::library_permission(
+                            state,
+                            pending.spell,
+                            pending.controller,
+                            origin.origin_zone_change_count,
+                        )
+                    });
             if pending.origin_zone != Zone::Hand
                 && !has_graveyard_permission
+                && !has_library_permission
                 && !has_resolution_graveyard_permission
                 && !(pending.origin_zone == Zone::Exile
                     && (has_prior_exile_permission() || has_adventure_exile_permission))
