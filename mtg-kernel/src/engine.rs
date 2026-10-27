@@ -17905,14 +17905,18 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             }
             // Mana Drain: "At the beginning of your next main phase".
             #[cfg(feature = "eternal-fixtures")]
-            crate::eternal_lurrus_v1::begin_main_phase(state);
+            {
+                let drains = crate::eternal_lurrus_v1::begin_main_phase(state);
+                state.engine.pending_triggers.extend(drains);
+            }
             collect_and_queue_triggers(state);
         }
         Step::Main2 => {
             // Mana Drain: "At the beginning of your next main phase".
             #[cfg(feature = "eternal-fixtures")]
-            if crate::eternal_lurrus_v1::begin_main_phase(state) {
-                collect_and_queue_triggers(state);
+            {
+                let drains = crate::eternal_lurrus_v1::begin_main_phase(state);
+                state.engine.pending_triggers.extend(drains);
             }
         }
         Step::BeginCombat => {

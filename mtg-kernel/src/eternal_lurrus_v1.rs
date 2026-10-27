@@ -1137,22 +1137,20 @@ pub(crate) fn note_combat_damage(state: &mut GameState, events: &[CommittedEvent
 
 /// A main phase began for the active player: Mana Drain's delayed triggers
 /// for that player.
-pub(crate) fn begin_main_phase(state: &mut GameState) -> bool {
+pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
     let player = state.active_player;
     let Some(eternal) = state.eternal_v1.as_mut() else {
-        return false;
+        return Vec::new();
     };
     if eternal.lurrus.mana_drains.is_empty() {
-        return false;
+        return Vec::new();
     }
     let (due, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut eternal.lurrus.mana_drains)
         .into_iter()
         .partition(|drain| drain.controller == player);
     eternal.lurrus.mana_drains = rest;
-    let mut queued = false;
     for drain in due {
         if let Some(source) = spell_delayed_source(state, drain.source, drain.controller) {
-            queued = true;
             queue_trigger(
                 state,
                 source,
@@ -1163,7 +1161,10 @@ pub(crate) fn begin_main_phase(state: &mut GameState) -> bool {
             );
         }
     }
-    queued
+    // A main phase begins without trigger events, so the event-driven
+    // collection would not pick these up: they go straight to the pending
+    // triggers.
+    delayed_triggers(state, &[])
 }
 
 /// The beginning of `active`'s turn ends this module's turn-bound records.
