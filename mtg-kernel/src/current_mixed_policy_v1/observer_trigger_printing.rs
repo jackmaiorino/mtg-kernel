@@ -36,6 +36,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Mossborn Hydra"
             | "Searslicer Goblin"
             | "Skyship Buccaneer"
+            | "Skyknight Squire"
             | "Koma, World-Eater"
             | "Mischievous Mystic"
             | "Homunculus Horde"
@@ -79,6 +80,15 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             8,
             12,
             Keywords::TRAMPLE,
+        ),
+        "Skyknight Squire" => (
+            1,
+            &[Pip::Colored(ManaColor::W)][..],
+            &[ManaColor::W][..],
+            &[Subtype::Cat, Subtype::Scout][..],
+            1,
+            1,
+            Keywords::NONE,
         ),
         "Skyship Buccaneer" => (
             3,
@@ -326,6 +336,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 None
             }
         || d.spell_cannot_be_countered != (d.name == "Koma, World-Eater")
+        || (d.name == "Skyknight Squire"
+            && crate::engine::static_plus_one_counter_characteristics_for(d.name)
+                != Some((3, Keywords::FLYING, Subtype::Knight)))
         || usize::from(d.mana_value) != usize::from(generic) + pips.len()
         || crate::engine::static_instant_sorcery_reduction_for_v1(d.name)
             != if d.name == "Archmage of Runes" {
@@ -650,7 +663,11 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
                 ]
             },
         ),
-        "Dazzling Angel" | "Youthful Valkyrie" | "Beast-Kin Ranger" | "Good-Fortune Unicorn" => (
+        "Dazzling Angel"
+        | "Youthful Valkyrie"
+        | "Beast-Kin Ranger"
+        | "Good-Fortune Unicorn"
+        | "Skyknight Squire" => (
             TriggerCondition::OtherControlledCreatureEnters {
                 subtype: if d.name == "Youthful Valkyrie" {
                     Some(Subtype::Angel)
@@ -823,6 +840,17 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "current_effective_types_power_and_control_apply":true,
             "no_trigger_if_false_at_beginning_even_if_later_becomes_true":true,
             "no_counter_if_false_at_resolution_even_if_true_at_beginning":true});
+    }
+    if d.name == "Skyknight Squire" {
+        meaning["observer_trigger_printing"]["ordered_static_roots"] = json!([{
+            "operation":"GrantFlyingAndAdditionalKnightSubtypeToThisSource",
+            "condition":{"counter":"PlusOnePlusOne","count_at_least":3},
+            "source_zone":"Battlefield","source_face":0,"requires_active_printed_abilities":true,
+            "rechecks_current_counter_count":true,"other_counter_kinds_do_not_qualify":true,
+            "applies_on_both_players_turns":true,"subtype_layer":4,"keyword_layer":6,
+            "preserves_other_current_subtypes":true,"places_no_counters":true,
+            "normal_layers_and_timestamped_ability_removal_apply":true
+        }]);
     }
     if matches!(d.name, "Searslicer Goblin" | "Skyship Buccaneer") {
         meaning["observer_trigger_printing"]["ordered_triggers"][0]["intervening_if"] = json!({
