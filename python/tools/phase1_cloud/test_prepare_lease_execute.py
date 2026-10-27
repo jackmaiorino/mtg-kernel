@@ -271,6 +271,49 @@ class AmbiguousCreateTests(unittest.TestCase):
             api.create.assert_not_called()
 
 
+class RetainFirstTests(unittest.TestCase):
+    """Round 3 review finding 5 (I1): a valid POST ID is retained before sanitization or receipts."""
+
+    def run_create(self, temporary, response, write_patch=None):
+        output = prepared_output(temporary)
+        snapshot = snapshot_path(temporary)
+        api = Mock(); api.create.return_value = response
+        with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+            if write_patch:
+                with patch.object(pl, 'write', write_patch), self.assertRaises(Exception):
+                    pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+            else:
+                with self.assertRaises(Exception):
+                    pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+        return output
+
+    def test_sanitization_failure_keeps_the_valid_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.run_create(temporary, pod_response(costPerHr='bad'))
+            self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
+            self.assertEqual(read(output / 'create-pod-failure.json')['pod_id'], 'pod123')
+            self.assertEqual(read(output / 'create-ambiguous.json')['pod_id'], 'pod123')
+
+    def test_receipt_write_failure_keeps_the_valid_id(self):
+        original = pl.write
+
+        def failing(path, value, **kwargs):
+            if Path(path).name == 'created-pod.json':
+                raise OSError('disk full')
+            return original(path, value, **kwargs)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.run_create(temporary, pod_response(), write_patch=failing)
+            self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
+            self.assertEqual(read(output / 'create-ambiguous.json')['pod_id'], 'pod123')
+
+    def test_non_string_id_is_never_coerced(self):
+        for bad in (None, True, 123):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as temporary:
+                output = self.run_create(temporary, pod_response(id=bad))
+                self.assertFalse((output / 'known-pods').exists())
+                self.assertIsNone(read(output / 'create-pod-failure.json')['pod_id'])
+
+
 def fresh_spec():
     # main() has no --now hook for the offline --spec step either, so the
     # lease's own created_epoch/account_observed_epoch/quote_observed_epoch

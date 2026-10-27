@@ -198,10 +198,11 @@ def finite_or_none(value):
 
 
 def pod_identity(pod, name):
-    """Identity only (id, name): never fails on pricing fields."""
-    if not isinstance(pod, dict) or pod.get("name") != name or not re.fullmatch(r"[A-Za-z0-9]+", str(pod.get("id", ""))):
+    """Identity only (id, name): never fails on pricing fields. The ID is validated as a raw string,
+    never coerced, so JSON null or true can never become a Pod ID (I1)."""
+    if not isinstance(pod, dict) or pod.get("name") != name or not external_guard.valid_id(pod.get("id")):
         raise ValueError("provider Pod identity does not match the prepared name")
-    return {"id": str(pod["id"]), "name": name}
+    return {"id": pod["id"], "name": name}
 
 
 def safe_pod(pod, name):
@@ -289,9 +290,12 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
         recorded = pod_identity(returned, lease["name"])
     except Exception:  # noqa: BLE001
         recorded = None
-    if recorded:
-        retain(root, recorded["id"], "receipt", clock())
-        best_effort(root / "lease/created-pod.json", recorded)
+    if recorded:   # I1: retained before any other parsing or receipt write
+        kept = retain(root, recorded["id"], "receipt", clock())
+        written = best_effort(root / "lease/created-pod.json", recorded)
+        if not (kept or written):   # last fallback the guardian reads: the ID in an ambiguity record
+            best_effort(root / "lease/create-ambiguous.json", {"epoch": clock(), "exact_name": lease["name"],
+                        "post_error": None, "pod_id": recorded["id"], "receipt_write_failed": True})
     # 2. reconciliation, each step isolated; every diagnostic is best-effort and never gates a DELETE
     matches = None
     try:
@@ -431,8 +435,8 @@ def guardian(root, once=False, *, key=None, run_guard=None):
                   "epoch": time.time(), "deadline_epoch": lease["deadline_epoch"]}, replace=True)
         except Exception:  # noqa: BLE001 - create refuses without a fresh receipt; the guard still runs
             pass
-    # Receipt failure must not prevent a deadline or completion DELETE.
-    external_guard.write = lambda path, value, **kwargs: lease_guard.best_effort_receipt(path, value)
+    # external_guard wraps its own writes: a failed receipt never prevents a DELETE, and a failed
+    # known-Pod, marker or retention write is a store failure that blocks completion (I2).
     (run_guard or external_guard.run)(root, key, once=once,
                                       preserve=None if once else (lambda pod_id, t: preserve(root, pod_id, t)),
                                       marker_probe=pod_marker_probe(root),
@@ -468,9 +472,17 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
     key = key or external_guard.api_key()
     unresolved = external_guard.create_unresolved(root) or external_guard.ambiguous_unresolved(root)
     try:
-        ids = set(external_guard.known_pods(root))
-        if (root / "lease/created-pod.json").exists():
-            ids.add(read(root / "lease/created-pod.json")["id"])
+        ids = set(external_guard.known_pods(root))   # strict: any unreadable record raises (I2)
+        receipt_id, receipt_error = external_guard.receipt_state(root)
+        if receipt_error:
+            raise ValueError(receipt_error)
+        if receipt_id:
+            ids.add(receipt_id)
+        for name in ("lease/create-ambiguous.json", "lease/create-pod-failure.json"):
+            if (root / name).exists():
+                fallback = read(root / name).get("pod_id")
+                if fallback is not None:
+                    ids.add(fallback)
         ids_ok = all(external_guard.valid_id(pod_id) for pod_id in ids)
     except Exception:  # noqa: BLE001 - unreadable retained IDs: never absence
         ids, ids_ok = set(), False

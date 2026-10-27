@@ -6,6 +6,7 @@ call cap (lease_test_support); a guard that never finishes ends the test with St
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import external_guard as eg
 from common import read, write
@@ -436,7 +437,7 @@ class ReviewR2Tests(Base):
         self.assertIsNone(known['a1']['role'])
         self.assertEqual(known['b2']['role'], 'duplicate')
         self.assertEqual(len(errors), 1)
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(ValueError):
             eg.known_pods(self.root)
 
     def test_census_entry_with_changed_or_missing_name_is_presence(self):
@@ -449,6 +450,93 @@ class ReviewR2Tests(Base):
                 self.assertEqual(self.loop(world, polls=10), 'running')
                 self.assertIsNone(self.completion())
                 self.assertGreaterEqual(world.deletes.count('pod1'), 10)
+
+
+class InvariantTests(Base):
+    """Round 3 review: I1 retain first, I2 fail closed, I3 primary recovery."""
+
+    def test_failed_unlink_of_a_stale_marker_never_restores_confirmation(self):
+        # finding 1 (I2): dup2 is confirmed absent, reappears while unlink and DELETE fail, then the
+        # census omits it and GETs fail; one guard process throughout
+        self.record('pod1'); self.started()
+        eg.remember(self.root, 'dup2', 'duplicate', 1100.)
+        world = World([pod('pod1')]); sleeps = [0]
+        real_unlink = Path.unlink
+
+        def unlink(path, *args, **kwargs):
+            if path.name.endswith('.absent.json'):
+                raise PermissionError('denied')
+            return real_unlink(path, *args, **kwargs)
+
+        def sleep(seconds):
+            sleeps[0] += 1; self.clock.advance(seconds)
+            if sleeps[0] == 3:
+                self.assertTrue((self.root / eg.KNOWN_DIR / 'dup2.absent.json').exists())
+            if sleeps[0] == 4:                                   # reappears
+                world.pods['dup2'] = pod('dup2'); world.delete_failures = -1
+            if sleeps[0] == 6:                                   # census omits it, GETs fail
+                world.census = lambda current: [p for p in current if p['id'] != 'dup2']
+                world.get_failures = -1
+                write(self.root / 'release-authorized.json', {}, replace=True)
+            if sleeps[0] >= 16:
+                raise Stop()
+        with mock.patch.object(Path, 'unlink', autospec=True, side_effect=unlink), no_network():
+            with self.assertRaises(Stop):
+                eg.run(self.root, 'k', pods=world.list, provider=world.provider, clock=self.clock, sleep=sleep)
+        self.assertTrue((self.root / eg.KNOWN_DIR / 'dup2.absent.json').exists())   # stale marker remains
+        self.assertIsNone(self.completion())
+        self.assertNotIn('dup2', self.status()['confirmed_absent'])
+        self.assertTrue(any(e.startswith('unmark:dup2') for e in self.status()['store_errors']))
+        self.assertGreaterEqual(world.deletes.count('dup2'), 10)
+
+    def test_unreadable_receipt_never_resolves_the_create_or_permits_completion(self):
+        # finding 2 (I2): receipt unreadable before the guard retained its ID, census omits the Pod
+        write(self.root / 'lease/create-attempt.json', {})
+        (self.root / 'lease/created-pod.json').write_text('{broken')
+        write(self.root / 'release-authorized.json', {})
+        self.assertTrue(eg.create_unresolved(self.root))
+        self.clock.t = lease()['deadline_epoch']
+        self.assertEqual(self.loop(World([]), polls=10), 'running')
+        self.assertIsNone(self.completion())
+        self.assertIn('receipt:', ','.join(self.status()['store_errors']))
+
+    def test_retained_receipt_record_is_the_primary_without_created_pod_json(self):
+        # finding 4 (I3): price checks and release apply to the retained create result
+        eg.remember(self.root, 'pod1', 'receipt', 1100.)
+        self.started()
+        world = World([pod('pod1', costPerHr=5.0)])
+        status = self.once(world)
+        self.assertEqual(status['pod_id'], 'pod1')
+        self.assertEqual(status['reason'], 'rate_above_ceiling')
+        self.assertEqual(world.deletes, ['pod1'])
+
+    def test_receipt_role_outranks_an_earlier_census_record(self):
+        eg.remember(self.root, 'pod1', 'census', 1100.)
+        eg.remember(self.root, 'pod1', 'receipt', 1101.)
+        self.assertEqual(eg.known_pods(self.root)['pod1']['role'], 'receipt')
+
+    def test_fallback_id_in_an_ambiguity_record_is_retained_and_guarded(self):
+        # finding 5 (I1): the create could not retain or write its receipt; the ID survives in the record
+        write(self.root / 'lease/create-attempt.json', {})
+        write(self.root / 'lease/create-ambiguous.json', {'pod_id': 'pod1'})
+        self.started()
+        world = World([pod('pod1', costPerHr='bad')])
+        world.census = lambda current: []                           # census omits the Pod
+        status = self.once(world)
+        self.assertEqual(status['pod_id'], 'pod1')
+        self.assertEqual(status['reason'], 'price_malformed')
+        self.assertEqual(world.deletes, ['pod1'])
+        self.assertEqual(eg.known_pods(self.root)['pod1']['role'], 'receipt')
+
+    def test_failed_retention_write_is_a_store_failure_that_blocks_completion(self):
+        # I1: the ID is kept in memory; the pass counts as a store failure
+        self.record('pod1'); self.started(); write(self.root / 'release-authorized.json', {})
+        world = World([pod('pod1')])
+        with mock.patch.object(eg, 'remember', side_effect=OSError('read-only store')):
+            self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertEqual(world.deletes[0], 'pod1')
+        self.assertIsNone(self.completion())
+        self.assertTrue(any(e.startswith('retain:pod1') for e in self.status()['store_errors']))
 
 
 if __name__ == '__main__':

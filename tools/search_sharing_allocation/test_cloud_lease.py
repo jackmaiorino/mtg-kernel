@@ -36,7 +36,7 @@ class Base(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
         self.folder = Path(self.temporary.name)
         for patcher in (patch.object(lease.host_slots_v1, "process_state", return_value="alive"),
-                        # guardian() replaces external_guard.write; restore it after every test
+                        # keep external_guard.write intact for every test
                         patch.object(lease.external_guard, "write", lease.external_guard.write)):
             patcher.start(); self.addCleanup(patcher.stop)
         network = no_network(); network.__enter__(); self.addCleanup(network.__exit__, None, None, None)
@@ -447,6 +447,72 @@ class ReviewR1CreateTests(Base):
         with patch.object(lease, "write", write):
             self.assertEqual(self.create(root, world, two)["id"], "A")
         self.assertEqual(world.deletes, ["B"])
+
+
+class InvariantTests(Base):
+    """Round 3 review: I1 retain first (no coercion), I2 fail closed, I3 primary recovery."""
+
+    def test_malformed_returned_id_is_never_a_receipt(self):
+        import shutil
+        for bad in (None, True, 7):
+            with self.subTest(bad=bad):
+                root = self.control(); world = World()
+
+                def poster(body, bad=bad):
+                    world.pods["A"] = pod("A"); return dict(pod("A"), id=bad)
+                self.assertEqual(self.create(root, world, poster)["id"], "A")   # reconciled from the census
+                self.assertEqual(set(lease.external_guard.known_pods(root)), {"A"})
+                self.assertEqual(lease.read(root / "lease/created-pod.json")["id"], "A")
+                shutil.rmtree(root)
+        root = self.control(); world = World()
+        with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+            self.create(root, world, lambda body: dict(pod("A"), id=None))
+        self.assertFalse((root / "lease/created-pod.json").exists())
+        self.assertEqual(lease.external_guard.known_pods(root), {})
+
+    def test_guardian_recovers_the_primary_when_receipt_and_release_writes_failed(self):
+        failing = {"created-pod.json", "release-authorized.json"}
+        original = lease.write
+
+        def write(path, value, **kw):
+            if Path(path).name in failing:
+                raise OSError("disk full")
+            return original(path, value, **kw)
+        root = self.control(); world = World(); world.delete_failures = -1
+
+        def poster(body):
+            world.pods["A"] = pod("A", costPerHr=9.0); return pod("A", costPerHr=9.0)
+        with patch.object(lease, "write", write):
+            with self.assertRaisesRegex(ValueError, "price or allocation invalid"):
+                self.create(root, world, poster)
+        self.assertFalse((root / "lease/created-pod.json").exists())
+        self.assertEqual(world.deletes, ["A"])
+        clock = FakeClock(lease.read(root / "lease/lease.json")["created_epoch"] + 60)
+        lease.external_guard.run(root, "k", pods=world.list, provider=world.provider, clock=clock,
+                                 sleep=clock.sleep, once=True)
+        status = lease.read(root / "external-guard.json")
+        self.assertEqual((status["pod_id"], status["reason"]), ("A", "rate_above_ceiling"))
+        self.assertEqual(world.deletes, ["A", "A"])
+
+    def test_unreadable_receipt_blocks_release(self):
+        root = self.control()
+        lease.write(root / "lease/create-attempt.json", {})
+        (root / "lease/created-pod.json").write_text("{broken")
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        clock = FakeClock(1000.0)
+        self.assertFalse(lease.verify_absent(root, key="k", pods=World([]).list, provider=World([]).provider,
+                                             clock=clock, sleep=clock.advance))
+
+    def test_fallback_id_in_an_ambiguity_record_is_checked_by_verify_absent(self):
+        root = self.control()
+        lease.write(root / "lease/create-attempt.json", {})
+        lease.write(root / "lease/create-ambiguous.json", {"pod_id": "A"})
+        lease.write(root / lease.external_guard.OPERATOR_RESOLUTION, {"checked_by": "operator"})
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        world = World([pod("A")]); world.census = lambda current: []
+        clock = FakeClock(1000.0)
+        self.assertFalse(lease.verify_absent(root, key="k", pods=world.list, provider=world.provider,
+                                             clock=clock, sleep=clock.advance))
 
 
 if __name__ == "__main__":

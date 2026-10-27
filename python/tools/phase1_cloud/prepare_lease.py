@@ -31,6 +31,7 @@ import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
 from lease_guard import validate
+from external_guard import remember_in, valid_id
 from runtime_observation import IMAGE_REFERENCE
 
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
@@ -287,8 +288,17 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     # refusal as a create that may have allocated a Pod no receipt names.
     write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
     api = api or Provider(key)
+    pod_id = None
     try:
         raw = api.create(body)
+        # I1: a valid raw ID (a string, never coerced) is retained for the external
+        # guard before sanitization or any receipt write can fail.
+        if isinstance(raw, dict) and raw.get('name') == body.get('name') and valid_id(raw.get('id')):
+            pod_id = raw['id']
+            try:
+                remember_in(output / 'known-pods', pod_id, 'receipt', now)
+            except Exception:  # noqa: BLE001 - the receipts below also carry the ID
+                pass
         sanitized = sanitize_pod(raw)
     except Exception as error:
         # Only an explicit provider refusal (HTTP 4xx) proves no Pod exists. A
@@ -298,9 +308,10 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
         definite = isinstance(error, RuntimeError) and re.fullmatch(r'provider HTTP 4\d\d', str(error)) is not None
         for path, value in ((output / 'create-pod-failure.json', {'schema': FAILURE_SCHEMA,
                              'failed_epoch': now, 'error_type': type(error).__name__,
-                             'error': str(error), 'definite': definite}),
+                             'error': str(error), 'definite': definite, 'pod_id': pod_id}),
                             (output / 'create-ambiguous.json', None if definite else {
-                             'epoch': now, 'exact_name': body.get('name'), 'error_type': type(error).__name__})):
+                             'epoch': now, 'exact_name': body.get('name'), 'error_type': type(error).__name__,
+                             'pod_id': pod_id})):
             if value is not None:
                 try:
                     write(path, value, replace=True)
@@ -308,7 +319,15 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
                     pass
         raise
     result = {'schema': CREATED_SCHEMA, 'created_epoch': now, **sanitized}
-    write(output / 'created-pod.json', result, replace=True)
+    try:
+        write(output / 'created-pod.json', result, replace=True)
+    except Exception:
+        try:   # the ID stays recoverable for the guard even when the receipt cannot be written
+            write(output / 'create-ambiguous.json', {'epoch': now, 'exact_name': body.get('name'),
+                  'error_type': 'ReceiptWriteFailed', 'pod_id': pod_id}, replace=True)
+        except Exception:  # noqa: BLE001
+            pass
+        raise
     return result
 
 

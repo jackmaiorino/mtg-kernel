@@ -7,18 +7,32 @@ stay with the resident guard once the worker has started. No provider call on
 import; the key is read from the environment (or, on Windows, the user's
 registry environment), kept in memory and never written.
 
-Ownership: every Pod with this lease's exact name is this lease's own. Each
-such ID (the create receipt, a Pod adopted or seen in a census, a duplicate
-recorded by create) is retained durably under lease/known-pods/ and acted on
-until that ID alone is confirmed absent: two observations at least 30 s apart,
-each a 404 for its exact-ID GET and a successful, well-formed census that does
-not list it under any name. A confirmed ID that is listed or returned again
-loses its confirmation and is a target again. An unreadable store record keeps
-its ID as a target and blocks completion. The primary Pod is the receipt's ID, else one adopted when the
-census shows exactly one unreceipted Pod and no create is ambiguous; every
-other retained ID is a duplicate and is deleted on every pass. Name prefixes
-(lease['study_tag']) are never targets here: the shared tool has no ownership
-source for them.
+Ownership: every Pod with this lease's exact name is this lease's own. Three
+invariants hold on every path (the guard here, create in prepare_lease and
+cloud_lease, and verify-absent in cloud_lease):
+
+I1 retain first: a Pod ID from a POST response, a census entry with this
+   lease's exact name, or a GET is validated as a raw string (valid_id, no
+   coercion) and retained durably under lease/known-pods/ before any other
+   parsing, sanitization or receipt write. When that write fails the guard
+   keeps the ID in memory and the pass counts as a store failure.
+I2 fail closed: an unreadable, unwritable or unremovable local record (create
+   receipt, known-Pod record, absence marker) blocks completion and
+   verify-absent. An absence marker is honored only if this process has seen no
+   presence of that ID since; presence is kept in memory, so a failed unlink
+   cannot restore a confirmation.
+I3 primary recovery: the primary Pod is the readable receipt's ID, else a
+   retained record whose role marks it as the create result ('receipt', then
+   'adopted'), so price checks and release apply to it even when
+   created-pod.json is missing or unreadable.
+
+Each retained ID is acted on until that ID alone is confirmed absent: two
+observations at least 30 s apart, each a 404 for its exact-ID GET and a
+successful, well-formed census that does not list it under any name. A
+confirmed ID that is listed or returned again loses its confirmation. Every
+retained ID other than the primary is a duplicate, deleted on every pass once a
+primary exists (or on any release reason). Name prefixes (lease['study_tag'])
+are never targets here: the shared tool has no ownership source for them.
 
 Each pass:
 (A) reasons that need no provider data: deadline (deadline - recovery) and
@@ -32,14 +46,15 @@ Each pass:
     never gates a DELETE.
 The startup allowance ends the lease without worker-started.json;
 marker_probe(pod) may read a Pod-side marker instead ("not ready" on failure).
-Completion needs every retained ID confirmed absent and two spaced empty
-censuses. A create that may have allocated a Pod no receipt names (a
-lease/create-attempt.json or lease/create-ambiguous.json with neither a receipt
-nor a definite provider refusal) blocks completion until an operator writes
-lease/ambiguous-resolved-by-operator.json; lease/create-ambiguous.json is also
-a release reason. Release authorization never proves that a create failed.
-released() true (the lease was verified released) ends the guard without
-deleting anything. once=True runs a single pass (a watchdog).
+Completion needs every retained ID confirmed absent, two spaced empty censuses
+and no store failure in the pass. A create attempt (lease/create-attempt.json
+or lease/create-ambiguous.json) is resolved only by readable evidence: a valid
+receipt, a retained 'receipt' record, a definite provider refusal, or
+lease/ambiguous-resolved-by-operator.json; until then completion is blocked,
+and lease/create-ambiguous.json is also a release reason. Release authorization
+never proves that a create failed. released() true (the lease was verified
+released) ends the guard without deleting anything. once=True runs a single
+pass (a watchdog).
 
 usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json required)
 """
@@ -65,6 +80,7 @@ MARKER_PROBE_SECONDS = 60
 CONTROLLER_DONE_SECONDS = 600     # completion.json with nothing created ends an unused lease
 OPERATOR_RESOLUTION = 'lease/ambiguous-resolved-by-operator.json'
 KNOWN_DIR = 'lease/known-pods'
+CREATE_ROLES = ('receipt', 'adopted')   # roles that mark a retained ID as the create result (I3)
 POD_ID = re.compile('[A-Za-z0-9]+')
 
 
@@ -87,12 +103,36 @@ def api_key():
 
 
 def valid_id(pod_id):
+    """A Pod ID is a raw string of letters and digits; nothing is coerced (I1)."""
     return isinstance(pod_id, str) and POD_ID.fullmatch(pod_id) is not None
+
+
+def receipt_state(root):
+    """(Pod ID, error) for lease/created-pod.json: (None, None) when absent, an error when unreadable or invalid."""
+    path = Path(root) / 'lease/created-pod.json'
+    if not path.exists():
+        return None, None
+    try:
+        value = read(path)
+    except Exception as e:  # noqa: BLE001
+        return None, 'receipt:' + type(e).__name__
+    pod_id = value.get('id') if isinstance(value, dict) else None
+    return (pod_id, None) if valid_id(pod_id) else (None, 'receipt:invalid')
+
+
+def create_evidence(root):
+    """Readable evidence naming the create's Pod: a valid receipt or a retained 'receipt' record."""
+    if receipt_state(root)[0]:
+        return True
+    try:
+        return any(info['role'] == 'receipt' for info in known_pods(root, []).values())
+    except Exception:  # noqa: BLE001 - unreadable store: no evidence
+        return False
 
 
 def ambiguous_unresolved(root):
     root = Path(root)
-    return (root / 'lease/create-ambiguous.json').exists() and not (root / 'lease/created-pod.json').exists() \
+    return (root / 'lease/create-ambiguous.json').exists() and not create_evidence(root) \
         and not (root / OPERATOR_RESOLUTION).exists()
 
 
@@ -108,24 +148,39 @@ def definite_create_failure(root):
 
 
 def create_unresolved(root):
-    """A POST may have allocated a Pod that no receipt names."""
+    """A POST may have allocated a Pod that no readable record names."""
     root = Path(root)
     attempted = (root / 'lease/create-attempt.json').exists() or (root / 'lease/create-ambiguous.json').exists()
-    return attempted and not (root / 'lease/created-pod.json').exists() and not definite_create_failure(root) \
+    return attempted and not create_evidence(root) and not definite_create_failure(root) \
         and not (root / OPERATOR_RESOLUTION).exists()
 
 
-def remember(root, pod_id, role, epoch):
-    """Durably retain a Pod ID of this lease (one create-once file per ID, so writers never race)."""
+def remember_in(folder, pod_id, role, epoch):
+    """Durably retain a Pod ID in a known-pods folder (one create-once file per ID, so writers never race)."""
     if not valid_id(pod_id):
         raise ValueError('invalid Pod ID')
-    path = Path(root) / KNOWN_DIR / (pod_id + '.json')
+    path = Path(folder) / (pod_id + '.json')
+    value = {'id': pod_id, 'role': role, 'epoch': epoch}
     if path.exists():
+        if role not in CREATE_ROLES:
+            return
+        # A create result outranks an earlier census or duplicate record of the same ID (I3).
+        try:
+            existing = read(path).get('role')
+        except Exception:  # noqa: BLE001 - unreadable: rewrite it with the create role
+            existing = None
+        if existing == 'receipt' or existing == role:
+            return
+        write(path, value, replace=True)
         return
     try:
-        write(path, {'id': pod_id, 'role': role, 'epoch': epoch})
+        write(path, value)
     except FileExistsError:
-        pass
+        remember_in(folder, pod_id, role, epoch)
+
+
+def remember(root, pod_id, role, epoch):
+    remember_in(Path(root) / KNOWN_DIR, pod_id, role, epoch)
 
 
 def known_pods(root, errors=None):
@@ -146,7 +201,10 @@ def known_pods(root, errors=None):
         if not valid_id(pod_id):
             continue
         try:
-            role = read(path).get('role')
+            value = read(path)
+            if not isinstance(value, dict) or value.get('id') != pod_id:
+                raise ValueError('known-Pod record malformed')
+            role = value.get('role')
         except Exception as e:  # noqa: BLE001
             if errors is None:
                 raise
@@ -161,8 +219,10 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
     highest = lease['rate_ceiling_usd_hour']; preserved = False; deletes = 0; last_probe = None
     census_absence = AbsenceConfirmer(clock)
     id_absence = {}
-    memory = {}        # retained ID -> role (survives an unreadable store within this process)
-    confirmed = set()  # IDs confirmed absent
+    memory = {}          # retained ID -> role (survives an unreadable store within this process)
+    confirmed = set()    # IDs confirmed absent
+    present_seen = set() # IDs seen present since their last confirmation (I2)
+    store_errors = []    # this pass's local-record failures; any one blocks completion (I2)
 
     def note(name, value):
         try:
@@ -181,28 +241,38 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
             return False
 
     def keep(pod_id, role):
+        """I1: retain in memory, then durably; a failed durable write is a store failure."""
+        if role in CREATE_ROLES and memory.get(pod_id) not in CREATE_ROLES:
+            memory[pod_id] = role
         memory.setdefault(pod_id, role)
         try:
             remember(root, pod_id, role, clock())
         except Exception as e:  # noqa: BLE001 - the in-memory copy keeps acting on it
-            note('external-known-error.json', {'pod_id': pod_id, 'epoch': clock(), 'error_type': type(e).__name__})
+            store_errors.append('retain:' + pod_id + ':' + type(e).__name__)
+
+    def marker(pod_id):
+        return root / KNOWN_DIR / (pod_id + '.absent.json')
+
+    def unmark(pod_id):
+        try:
+            marker(pod_id).unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as e:  # noqa: BLE001 - present_seen keeps the stale marker from being honored
+            store_errors.append('unmark:' + pod_id + ':' + type(e).__name__)
 
     def reactivate(pod_id, evidence):
         """Positive presence invalidates an absence confirmation: the ID is a delete target again."""
-        confirmed.discard(pod_id); id_absence.pop(pod_id, None)
-        try:
-            (root / KNOWN_DIR / (pod_id + '.absent.json')).unlink()
-        except Exception:  # noqa: BLE001 - the next pass sees the presence again
-            pass
+        present_seen.add(pod_id); confirmed.discard(pod_id); id_absence.pop(pod_id, None)
+        unmark(pod_id)
         note('external-reactivated-pod.json', {'pod_id': pod_id, 'evidence': evidence, 'epoch': clock()})
 
     def mark_absent(pod_id):
-        confirmed.add(pod_id)
+        confirmed.add(pod_id); present_seen.discard(pod_id)
         try:
-            write(root / KNOWN_DIR / (pod_id + '.absent.json'), {'id': pod_id, 'epoch': clock(),
-                  'absent_confirmations': 2}, replace=True)
-        except Exception:  # noqa: BLE001
-            pass
+            write(marker(pod_id), {'id': pod_id, 'epoch': clock(), 'absent_confirmations': 2}, replace=True)
+        except Exception as e:  # noqa: BLE001
+            store_errors.append('mark:' + pod_id + ':' + type(e).__name__)
 
     while True:
         try:
@@ -212,6 +282,7 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         except Exception:  # noqa: BLE001 - unknown: keep guarding
             pass
         failures = []
+        del store_errors[:]
         now = clock()
         # (A) reasons from the clock and local files only
         reason = None
@@ -219,32 +290,47 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
             reason = 'deadline'
         elif (root / 'release-authorized.json').exists():
             reason = 'controller_release'
-        recorded = None
+        # local records: receipt, a create-failure fallback ID, the known-Pod store and absence markers
+        recorded, receipt_error = receipt_state(root)
+        if receipt_error:
+            store_errors.append(receipt_error)
+        if recorded:
+            keep(recorded, 'receipt')
+        for name in ('lease/create-ambiguous.json', 'lease/create-pod-failure.json'):
+            try:
+                if (root / name).exists():
+                    fallback = read(root / name).get('pod_id')
+                    if valid_id(fallback):
+                        keep(fallback, 'receipt')
+            except Exception as e:  # noqa: BLE001
+                store_errors.append(name + ':' + type(e).__name__)
+        record_errors = []
         try:
-            if (root / 'lease/created-pod.json').exists():
-                receipt_id = read(root / 'lease/created-pod.json')['id']
-                if not valid_id(receipt_id):
-                    raise ValueError('invalid receipt Pod ID')
-                recorded = receipt_id
-                keep(recorded, 'receipt')
-        except Exception as e:  # noqa: BLE001
-            failures.append('receipt:' + type(e).__name__)
-        store_errors = []
-        try:
-            for pod_id, info in known_pods(root, store_errors).items():
+            for pod_id, info in known_pods(root, record_errors).items():
+                if info['role'] in CREATE_ROLES and memory.get(pod_id) not in CREATE_ROLES:
+                    memory[pod_id] = info['role']
                 memory.setdefault(pod_id, info['role'])
                 if info['absent']:
-                    confirmed.add(pod_id)
+                    if pod_id in present_seen:
+                        unmark(pod_id)            # a stale marker is retried, never honored
+                    else:
+                        confirmed.add(pod_id)
         except Exception as e:  # noqa: BLE001
-            store_errors.append('store:' + type(e).__name__)
-        if store_errors:   # a guard failure that also blocks completion
-            failures.append('known:' + ','.join(store_errors))
+            record_errors.append('store:' + type(e).__name__)
+        store_errors.extend(record_errors)
+        for pod_id in sorted(confirmed):          # a confirmation without its durable marker is rewritten
+            if not marker(pod_id).exists():
+                mark_absent(pod_id)
 
         def primary_id():
+            """I3: the readable receipt, else a retained create-result record."""
             if recorded:
                 return recorded
-            adopted = sorted(p for p, role in memory.items() if role == 'adopted')
-            return adopted[0] if adopted else None
+            for role in CREATE_ROLES:
+                candidates = sorted(p for p, r in memory.items() if r == role)
+                if candidates:
+                    return candidates[0]
+            return None
         # (B) after the deadline every retained ID is deleted first, before anything can fail
         if reason == 'deadline':
             for pod_id in sorted(p for p in memory if p not in confirmed):
@@ -332,6 +418,8 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
                 now - lease['created_epoch'] > lease['startup_idle_seconds']:
             reason = 'startup_idle'
         open_known = sorted(p for p in memory if p not in confirmed)
+        if store_errors:
+            failures.append('store:' + ','.join(store_errors))
         if failures and open_known:
             reason = reason or 'guard_failure'
         ambiguous = primary is None and ambiguous_unresolved(root)
@@ -357,9 +445,9 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
             return
         absent_now = census_clear and all(observed.get(p) == 'absent' for p in open_known)
         note('external-guard.json', dict(pod_id=primary, epoch=now, reason=reason, failures=failures,
-             known=sorted(memory), confirmed_absent=sorted(confirmed), absent_now=absent_now,
-             ambiguous=ambiguous, create_unresolved=unresolved, pid=os.getpid(), once=once,
-             study_tag_ignored=bool(lease.get('study_tag')),
+             store_errors=list(store_errors), known=sorted(memory), confirmed_absent=sorted(confirmed),
+             absent_now=absent_now, ambiguous=ambiguous, create_unresolved=unresolved, pid=os.getpid(),
+             once=once, study_tag_ignored=bool(lease.get('study_tag')),
              **{k: v for k, v in status.items() if k != 'reason'}))
         # (D) act: duplicates always (once a primary exists), the primary and the rest on a reason
         targets = []
