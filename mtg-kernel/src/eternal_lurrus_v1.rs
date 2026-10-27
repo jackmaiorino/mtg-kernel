@@ -1139,8 +1139,14 @@ pub(crate) fn note_combat_damage(state: &mut GameState, events: &[CommittedEvent
 }
 
 /// A main phase began for the active player: Mana Drain's delayed triggers
-/// for that player.
+/// for that player, and Static Prison's first-main-phase trigger.
 pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
+    let mut triggers = crate::eternal_legacy_e5b_v1::begin_main_phase(state);
+    triggers.extend(mana_drains_due(state));
+    triggers
+}
+
+fn mana_drains_due(state: &mut GameState) -> Vec<PendingTrigger> {
     let player = state.active_player;
     let Some(eternal) = state.eternal_v1.as_mut() else {
         return Vec::new();

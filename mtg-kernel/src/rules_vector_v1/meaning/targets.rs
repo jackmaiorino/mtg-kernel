@@ -710,6 +710,9 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::AnyNumberControlledNonlandNontokenPermanentsV1 => ObjF::NonlandPermanent,
         S::PlayerThenArtifactV1 | S::PlayerThenCreatureV1 => ObjF::PlayerOrPermanent,
         S::ArtifactThenCreatureV1 => ObjF::Permanent,
+        S::UpToOneOtherNonlandPermanentV1 => ObjF::NonlandPermanent,
+        S::TriggeredAbilityOrColorlessSpellV1 => ObjF::Spell,
+        S::CreaturesThenNonlandPermanentsV1 { .. } => ObjF::Permanent,
     }
 }
 
@@ -731,7 +734,9 @@ pub(super) fn standard_target_origin(
         | S::OpponentArtifactOrCreature
         | S::TappedOpponentCreature
         | S::OpponentSpellOrNonlandPermanentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
-        S::InstantOrSorcerySpellV1 | S::SpellWithSingleTargetV1 => (Some(ZoneF::Stack), None),
+        S::InstantOrSorcerySpellV1
+        | S::SpellWithSingleTargetV1
+        | S::TriggeredAbilityOrColorlessSpellV1 => (Some(ZoneF::Stack), None),
         S::AnotherNonlandPermanent
         | S::UpToTwoAnyTargets
         | S::OneOrTwoAnyTargetsV1
@@ -743,6 +748,8 @@ pub(super) fn standard_target_origin(
         | S::PlayerThenArtifactV1
         | S::PlayerThenCreatureV1
         | S::ArtifactThenCreatureV1
+        | S::UpToOneOtherNonlandPermanentV1
+        | S::CreaturesThenNonlandPermanentsV1 { .. }
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -865,6 +872,25 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             out.target(TargetAtom::MultipleTargets);
             // Both target words may name one artifact creature.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOneOtherNonlandPermanentV1 => {
+            object(out, ObjF::NonlandPermanent, relation, zone);
+            out.target(TargetAtom::UpTo);
+            // Source exclusion.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::TriggeredAbilityOrColorlessSpellV1 => {
+            object(out, ObjF::Spell, relation, zone);
+            // The triggered-ability alternative and the colorless refinement
+            // have no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::CreaturesThenNonlandPermanentsV1 { .. } => {
+            object(out, creature(), relation, zone);
+            object(out, ObjF::NonlandPermanent, relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            // The per-mode slot counts have no facet.
             out.atoms.push(Atom::Opaque);
         }
     }

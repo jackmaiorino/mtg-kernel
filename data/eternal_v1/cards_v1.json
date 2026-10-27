@@ -4912,6 +4912,1080 @@
     "counter_ability"
    ],
    "java_file": "Mage.Sets/src/mage/cards/s/Stifle.java"
+  },
+  {
+   "name": "Consign to Memory",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-tempo",
+    "legacy-boros-energy",
+    "legacy-izzet-delver",
+    "legacy-sneak-and-show",
+    "legacy-aluren",
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-sewer-cam-combo",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-omni-tell",
+    "legacy-jeskai-control",
+    "legacy-stiflenought",
+    "legacy-cephalid-breakfast",
+    "legacy-affinity-stompy",
+    "legacy-esper-control",
+    "legacy-grixis-control",
+    "legacy-beseech-storm",
+    "legacy-azorius-tempo",
+    "legacy-reanimator",
+    "legacy-ninjas",
+    "legacy-dimir-control",
+    "legacy-blue-cloudpost",
+    "legacy-merfolk",
+    "legacy-azorius-control",
+    "legacy-high-tide",
+    "legacy-8-cast",
+    "legacy-temur-delver",
+    "legacy-bant-control",
+    "vintage-esper-lurrus-control",
+    "vintage-dimir-lurrus-control",
+    "vintage-oath-of-druids",
+    "vintage-jeskai-lurrus",
+    "vintage-blue-tinker",
+    "vintage-doomsday",
+    "vintage-4c-psychic-frog",
+    "vintage-grixis-lurrus-control",
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "replicate",
+    "counter_ability",
+    "counterspell",
+    "copy_spell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ConsignToMemory.java"
+  },
+  {
+   "name": "Galvanic Discharge",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-izzet-terror",
+    "legacy-boros-energy"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "energy",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GalvanicDischarge.java"
+  },
+  {
+   "name": "Wrath of the Skies",
+   "engine_capability": "full",
+   "mana_cost": "{X}{W}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-jeskai-control",
+    "legacy-stiflenought",
+    "legacy-esper-control",
+    "legacy-azorius-tempo",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card",
+    "legacy-azorius-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "energy",
+    "board_wipe"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WrathOfTheSkies.java"
+  },
+  {
+   "name": "Terminus",
+   "engine_capability": "full",
+   "mana_cost": "{4}{W}{W}",
+   "mana_value": 6,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beanstalk-control-non-yorion"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "miracle",
+    "board_wipe",
+    "library_bottom"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/Terminus.java"
+  },
+  {
+   "name": "Leyline Binding",
+   "engine_capability": "full",
+   "mana_cost": "{5}{W}",
+   "mana_value": 6,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beanstalk-control-non-yorion"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "domain",
+    "cost_reduction",
+    "etb_trigger",
+    "exile_until_leaves"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LeylineBinding.java"
+  },
+  {
+   "name": "Static Prison",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "exile_until_leaves",
+    "energy",
+    "upkeep_sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StaticPrison.java"
+  },
+  {
+   "name": "Phelia, Exuberant Shepherd",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dog"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-esper-control",
+    "legacy-azorius-tempo",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card",
+    "legacy-azorius-control",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "attack_trigger",
+    "flicker",
+    "delayed_trigger",
+    "add_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PheliaExuberantShepherd.java"
+  },
+  {
+   "name": "Quantum Riddler",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Sphinx"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-esper-control",
+    "legacy-azorius-tempo",
+    "legacy-azorius-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "etb_trigger",
+    "draw_card",
+    "draw_replacement",
+    "warp"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/q/QuantumRiddler.java"
+  },
+  {
+   "name": "Guide of Souls",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-mardu-energy",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "creature_enters_trigger",
+    "life_gain",
+    "energy",
+    "attack_trigger",
+    "add_counters",
+    "flying_counter"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GuideOfSouls.java"
+  },
+  {
+   "name": "Ocelot Pride",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Cat"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-mardu-energy",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "first_strike",
+    "lifelink",
+    "ascend",
+    "end_step_trigger",
+    "token_creation",
+    "token_copy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OcelotPride.java"
+  },
+  {
+   "name": "Ajani, Nacatl Pariah",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Cat",
+    "Warrior"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-mardu-energy",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "token_creation",
+    "death_trigger",
+    "transform",
+    "planeswalker",
+    "loyalty_abilities"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AjaniNacatlPariah.java",
+   "starting_loyalty": 3
+  },
+  {
+   "name": "Amped Raptor",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dinosaur"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-mardu-energy"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "first_strike",
+    "etb_trigger",
+    "energy",
+    "cast_from_exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AmpedRaptor.java"
+  },
+  {
+   "name": "Phlage, Titan of Fire's Fury",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}{W}",
+   "mana_value": 3,
+   "colors": [
+    "R",
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elder",
+    "Giant"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 6,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "attack_trigger",
+    "damage",
+    "life_gain",
+    "escape"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhlageTitanOfFiresFury.java"
+  },
+  {
+   "name": "Sand Scout",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Scout"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "library_search",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SandScout.java"
+  },
+  {
+   "name": "Voice of Victory",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Bard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-mardu-energy",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mobilize",
+    "attack_trigger",
+    "token_creation",
+    "cast_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VoiceOfVictory.java"
+  },
+  {
+   "name": "Lazotep Quarry",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Desert"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-nic-fit"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "any_color_mana",
+    "activated_ability",
+    "token_copy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LazotepQuarry.java"
+  },
+  {
+   "name": "Thought-Knot Seer",
+   "engine_capability": "full",
+   "mana_cost": "{3}{C}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Eldrazi"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-eldrazi",
+    "vintage-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "hand_disruption",
+    "leaves_trigger",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThoughtKnotSeer.java"
+  },
+  {
+   "name": "Reality Smasher",
+   "engine_capability": "full",
+   "mana_cost": "{4}{C}",
+   "mana_value": 5,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Eldrazi"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "trample",
+    "haste",
+    "target_trigger",
+    "counterspell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RealitySmasher.java"
+  },
+  {
+   "name": "It That Heralds the End",
+   "engine_capability": "full",
+   "mana_cost": "{1}{C}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Eldrazi",
+    "Drone"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_reduction",
+    "lord"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/ItThatHeraldsTheEnd.java"
+  },
+  {
+   "name": "Eldrazi Linebreaker",
+   "engine_capability": "full",
+   "mana_cost": "{1}{C}{R}",
+   "mana_value": 3,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Eldrazi"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-eldrazi",
+    "vintage-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "devoid",
+    "trample",
+    "combat_trigger",
+    "pump",
+    "haste_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EldraziLinebreaker.java"
+  },
+  {
+   "name": "Wastescape Battlemage",
+   "engine_capability": "full",
+   "mana_cost": "{1}{C}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Eldrazi",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-eldrazi",
+    "vintage-red-prison",
+    "vintage-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "kicker",
+    "cast_trigger",
+    "exile",
+    "bounce"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WastescapeBattlemage.java"
+  },
+  {
+   "name": "Eldrazi Temple",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-eldrazi",
+    "vintage-red-prison",
+    "vintage-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "restricted_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EldraziTemple.java"
+  },
+  {
+   "name": "Eye of Ugin",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-eldrazi",
+    "vintage-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "cost_reduction",
+    "activated_ability",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EyeOfUgin.java"
+  },
+  {
+   "name": "Abundant Countryside",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "restricted_mana",
+    "activated_ability",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AbundantCountryside.java"
+  },
+  {
+   "name": "Petrified Hamlet",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-tron",
+    "legacy-green-cloudpost",
+    "legacy-sultai-depths",
+    "legacy-blue-cloudpost",
+    "vintage-stiflenought",
+    "vintage-sphere-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "etb_trigger",
+    "name_a_card",
+    "ability_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PetrifiedHamlet.java"
+  },
+  {
+   "name": "Eldrazi Confluence",
+   "engine_capability": "full",
+   "mana_cost": "{2}{C}{C}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-eldrazi",
+    "legacy-tron",
+    "legacy-naya-initiative",
+    "legacy-green-cloudpost",
+    "legacy-blue-cloudpost"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "modal",
+    "pump",
+    "flicker",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EldraziConfluence.java"
+  },
+  {
+   "name": "Cat Warrior Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Cat",
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/CatWarriorToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Cat Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Cat"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/CatToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Warrior Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/WarriorToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Sand Warrior Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "R",
+    "G",
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Sand",
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/SandWarriorToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Shapeshifter Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Shapeshifter"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "changeling"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/ShapeshifterToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Eldrazi Scion Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Eldrazi",
+    "Scion"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "mana_ability",
+    "sacrifice_cost",
+    "colorless_mana"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/EldraziScionToken.java",
+   "is_token": true
   }
  ]
 }

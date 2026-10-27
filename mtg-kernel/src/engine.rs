@@ -4715,7 +4715,11 @@ fn activation_x_value(
     if cost.x_count == 0 {
         return Ok(0);
     }
-    if ability.target_spec != TargetSpec::NoncreatureArtifactPermanent {
+    // Lazotep Quarry's X is its graveyard target's mana value.
+    if ability.target_spec != TargetSpec::NoncreatureArtifactPermanent
+        && !(cfg!(feature = "eternal-fixtures")
+            && ability.target_spec == TargetSpec::CreatureCardInOwnGraveyard)
+    {
         return Err("variable activation cost is not bound to an artifact target".to_string());
     }
     let Some(Target::Object(target)) = targets.first().copied() else {
@@ -7144,6 +7148,10 @@ pub(crate) fn permanent_matches_filter(
                 || object_has_type(state, id, CardType::Creature)
         }
         PermanentFilter::Token => state.objects.get(id).v4.is_token,
+        PermanentFilter::DesertV1 => {
+            object_has_type(state, id, CardType::Land)
+                && has_effective_subtype(state, id, card_def::Subtype::Desert)
+        }
         PermanentFilter::Artifact => object_has_type(state, id, CardType::Artifact),
         PermanentFilter::Creature => object_has_type(state, id, CardType::Creature),
         PermanentFilter::Land => {
@@ -7576,7 +7584,7 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         PermanentFilter::ArtifactOrCreature
         | PermanentFilter::Token
         | PermanentFilter::Creature => CostKind::SacrificePermanents,
-        PermanentFilter::Land => CostKind::SacrificeLands,
+        PermanentFilter::Land | PermanentFilter::DesertV1 => CostKind::SacrificeLands,
     }
 }
 
@@ -9306,6 +9314,62 @@ fn rich_mana_ability_is_payable(
                 || creature_summoning_sick(state, source, def)
                 || mana_ability_cost_targets(player, source, state).is_empty())
         }
+        ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
+            !(object.tapped
+                || creature_summoning_sick(state, source, def)
+                || sacrificeable_mana_cost_creatures(player, state).is_empty())
+        }
+    }
+}
+
+/// The creatures `player` may sacrifice for "{T}, Sacrifice a creature"
+/// (Lazotep Quarry).
+fn sacrificeable_mana_cost_creatures(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .filter(|&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && object_has_type(state, candidate, CardType::Creature)
+        })
+        .collect()
+}
+
+/// The cost targets of the mana ability of `source` that adds `choice`:
+/// `mana_ability_cost_targets` for a primary ability, or the creatures to
+/// sacrifice for an additional "{T}, Sacrifice a creature" ability.
+pub(crate) fn mana_ability_cost_targets_for_choice(
+    player: PlayerId,
+    source: ObjectId,
+    choice: mana::ManaColor,
+    state: &GameState,
+) -> Vec<ObjectId> {
+    let primary = mana_ability_cost_targets(player, source, state);
+    if !primary.is_empty() {
+        return primary;
+    }
+    let Some(object) = state.objects.try_get(source) else {
+        return Vec::new();
+    };
+    let Some(definition) = card_def::CARD_DEFS.get(object.card_def as usize) else {
+        return Vec::new();
+    };
+    let sacrifices = definition.additional_mana_abilities.iter().any(|ability| {
+        ability.colors.contains(&choice)
+            && ability.ability.cost == ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
+    });
+    if sacrifices
+        && !definition
+            .primary_mana_ability_choices(object.v4.chosen_color)
+            .contains(&choice)
+    {
+        sacrificeable_mana_cost_creatures(player, state)
+    } else {
+        Vec::new()
     }
 }
 
@@ -9718,9 +9782,11 @@ fn activate_mana_ability_for_with_checkpoint(
         additional.map(|ability| ability.ability)
     };
     if let Some(rich) = rich {
-        let legal_cost_targets = mana_ability_cost_targets(player, source, state);
+        let legal_cost_targets =
+            mana_ability_cost_targets_for_choice(player, source, choice, state);
         match rich.cost {
-            ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
+            ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
+            | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
                 let target = cost_target.ok_or_else(|| {
                     format!("{source} requires another untapped controlled creature as a cost")
                 })?;
@@ -9859,6 +9925,10 @@ fn activate_mana_ability_for_with_checkpoint(
                     commit_discarded_card(state, card);
                 }
                 commit_sacrifice(state, &[source]);
+            }
+            ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
+                event::propose_and_commit(state, ProposedEvent::tap(source));
+                commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
             }
         }
         if let Some(colors) = bundle {
@@ -13136,7 +13206,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::ArtifactOrCreature | PermanentFilter::Token => {
                         CostKind::SacrificePermanents
                     }
-                    PermanentFilter::Land => CostKind::SacrificeLands,
+                    PermanentFilter::Land | PermanentFilter::DesertV1 => CostKind::SacrificeLands,
                 },
                 remaining,
                 candidates,
@@ -24691,6 +24761,10 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
             .0
             .remove(index);
     }
+    // Eldrazi Temple's mana a colorless Eldrazi spell left over stays
+    // restricted.
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_legacy_e5b_v1::restrict_temple_surplus(state, player, plan);
     #[cfg(feature = "standard-magezero-fixtures")]
     if plan.life_paid > 0 {
         event::propose_and_commit(state, ProposedEvent::life_payment(player, plan.life_paid));

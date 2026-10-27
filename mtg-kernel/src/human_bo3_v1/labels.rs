@@ -982,10 +982,18 @@ fn label_common(
                         ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
                             format!("Discard your hand and sacrifice {source_name}")
                         }
+                        ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
+                            format!(
+                                "Tap {source_name} and sacrifice {}",
+                                handles
+                                    .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
+                            )
+                        }
                     };
                     if !matches!(
                         ability.cost,
                         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
+                            | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
                     ) && cost_target.is_some()
                     {
                         return Err(Error::UnsupportedPrompt);

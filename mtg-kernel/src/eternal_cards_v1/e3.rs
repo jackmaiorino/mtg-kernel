@@ -261,6 +261,9 @@ pub enum E3ChoiceKindV1 {
     /// Mad Wizard's Lair: up to one of the `drawn` cards to cast without
     /// paying its mana cost.
     MadWizardV1 { drawn: Vec<EffectObjectBinding> },
+    /// A choice owned by the Legacy aggro, Eldrazi and control lists'
+    /// module (`eternal_legacy_e5b_v1`).
+    E5bV1(crate::eternal_legacy_e5b_v1::E5bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -282,6 +285,9 @@ impl E3ChoiceV1 {
     /// Whether the candidates are hidden from the other player (hand or
     /// library cards).
     pub(crate) fn chooser_private(&self) -> bool {
+        if let E3ChoiceKindV1::E5bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -302,7 +308,8 @@ impl E3ChoiceV1 {
     }
 
     pub(crate) fn public_purpose(&self) -> crate::rl::TargetSelectionPurposeV4 {
-        match self.kind {
+        match &self.kind {
+            E3ChoiceKindV1::E5bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
             | E3ChoiceKindV1::OracleV1 { .. }
@@ -346,6 +353,7 @@ impl E3ChoiceV1 {
                 out.extend(chosen.iter().copied());
             }
             E3ChoiceKindV1::MadWizardV1 { drawn } => out.extend(drawn.iter().copied()),
+            E3ChoiceKindV1::E5bV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -392,7 +400,7 @@ impl E3ChoiceV1 {
 }
 
 /// Stages `choice` as the continuation's pending choice.
-fn offer(continuation: &mut EffectContinuation, choice: E3ChoiceV1) {
+pub(crate) fn offer(continuation: &mut EffectContinuation, choice: E3ChoiceV1) {
     continuation.choice = Some(choice.prompt());
 }
 
@@ -538,6 +546,13 @@ pub(crate) fn finish_selection(
         | E3ChoiceKindV1::MadWizardV1 { .. } => {
             dungeons::finish(state, continuation, choice, bindings)
         }
+        E3ChoiceKindV1::E5bV1(kind) => crate::eternal_legacy_e5b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
         E3ChoiceKindV1::AtraxaV1 { revealed, picked } => {
             let mut picked = picked.clone();
             let done = bindings.is_empty();
@@ -1285,6 +1300,10 @@ pub(crate) fn cavern_permits(state: &GameState, cavern: ObjectId, spell_subtypes
 /// (Cavern of Souls' creature type, Soporific Springs' life payment), as a
 /// decision for the next one.
 pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::Decision> {
+    // Miracle: whether to reveal a card drawn as its owner's first.
+    if let Some(decision) = crate::eternal_legacy_e5b_v1::pending_decision(state) {
+        return Some(decision);
+    }
     if let Some(entering) = live_springs_entry(state) {
         let player = state.objects.get(entering.object).controller;
         // Option 1 pays 3 life, which a player with less cannot pay (119.4).
@@ -1337,6 +1356,10 @@ pub(crate) fn entry_choice_pending(state: &GameState) -> bool {
 
 /// Answers the pending as-enters choice.
 pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<(), String> {
+    if crate::eternal_legacy_e5b_v1::pending_decision(state).is_some() {
+        crate::eternal_legacy_e5b_v1::answer_pending_decision(state, option)?;
+        return Ok(());
+    }
     if let Some(entering) = live_springs_entry(state) {
         let player = state.objects.get(entering.object).controller;
         if option == 1 && state.players[player.index()].life < 3 {

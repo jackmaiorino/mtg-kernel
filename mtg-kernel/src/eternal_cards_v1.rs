@@ -271,16 +271,20 @@ pub enum EternalOpV1 {
 /// the one that left.
 pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> bool {
     cfg!(feature = "eternal-fixtures")
-        && matches!(
-            condition,
+        && match condition {
             crate::trigger::TriggerCondition::StandardV1(
-                crate::standard_cards_v1::StandardTriggerV1::EternalV1(
-                    EternalTriggerV1::EntersAfterCastV1
-                        | EternalTriggerV1::EntersIfTombNotCompletedV1
-                        | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1
-                )
-            )
-        )
+                crate::standard_cards_v1::StandardTriggerV1::EternalV1(condition),
+            ) => match condition {
+                EternalTriggerV1::EntersAfterCastV1
+                | EternalTriggerV1::EntersIfTombNotCompletedV1
+                | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 => true,
+                EternalTriggerV1::E5bV1(condition) => {
+                    crate::eternal_legacy_e5b_v1::arrival_condition(condition)
+                }
+                _ => false,
+            },
+            _ => false,
+        }
 }
 
 impl EternalOpV1 {
@@ -320,7 +324,7 @@ pub fn replicate_cost(name: &str) -> Option<Cost> {
             generic: 0,
             x_count: 0,
         }),
-        _ => None,
+        _ => crate::eternal_legacy_e5b_v1::replicate_cost(name),
     }
 }
 
@@ -1579,6 +1583,13 @@ pub(crate) fn trigger_matches(
 ) -> bool {
     if condition == EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 {
         return e3::trigger_matches(condition, events, index, source, state);
+    }
+    if let EternalTriggerV1::E5bV1(condition) = condition {
+        if crate::eternal_legacy_e5b_v1::functions_on_stack(condition) {
+            return crate::eternal_legacy_e5b_v1::trigger_matches(
+                condition, events, index, source, state,
+            );
+        }
     }
     let Some(name) = definition_name(state, source) else {
         return false;

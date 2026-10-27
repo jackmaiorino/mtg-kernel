@@ -75,6 +75,7 @@ reserved.
 | E3 | Legacy combo decks: Doomsday, Sneak and Show, Aluren, Omni-Tell (Show and Tell, Sneak Attack, Omniscience, Aluren, Doomsday, Thassa's Oracle, Jace, Emrakul, Atraxa, Acererak and the three Forgotten Realms dungeons, Chrome Mox, Lion's Eye Diamond, The One Ring, Cavern of Souls, Misdirection, Flusterstorm, Veil of Summer) | 27 and four tokens | Legacy 19.3% to 33.5% |
 | E4 | Vintage Jewel Shops and Mono-White Initiative: Power Nine (with Mana Crypt, Mana Vault and Sol Ring), Workshop, Academy, Strip Mine, Karakas, Urza's Saga, Time Vault, Tinker, Karn, Tezzeret, Phyrexian Metamorph, Coveted Jewel, Trinisphere, the Initiative creatures, Archon of Emeria, Clarion Conqueror, Chancellor of the Annex, Anointed Peacekeeper, Witch Enchanter; six shared cards come from E3 | 36 | Vintage 0% to 28.4% |
 | E4b | Vintage Lurrus lists (Esper and Dimir Lurrus Control, Lurrus PO, Lurrus Breach, Jeskai Lurrus, 4c Psychic Frog): companions, Lurrus of the Dream-Den, Demonic Tutor, Mana Drain, Force of Negation, Gush, Dig Through Time, Treasure Cruise, Snapcaster Mage, Underworld Breach, Brain Freeze, Psychic Frog, Hexing Squelcher, Null Rod, Pithing Needle, Mox Opal and the rest of the lists | 29 and two tokens | Vintage 28.4% to 62.3% |
+| E5b | Legacy Boros Energy, Beanstalk Control, Azorius and Jeskai Tempo, Esper Control, and the Eldrazi and Tron cards outside E5a: Plateau, Savannah, Scrubland, Snow-Covered Plains, Arid Mesa, Windswept Heath, Goblin Bombardment, Up the Beanstalk, Stifle, Consign to Memory, Galvanic Discharge, Wrath of the Skies, Terminus, Leyline Binding, Static Prison, Phelia, Quantum Riddler, Guide of Souls, Ocelot Pride, Ajani, Amped Raptor, Phlage, Sand Scout, Voice of Victory, Lazotep Quarry, Thought-Knot Seer, Reality Smasher, It That Heralds the End, Eldrazi Linebreaker, Wastescape Battlemage, Eldrazi Temple, Eye of Ugin, Abundant Countryside, Petrified Hamlet, Eldrazi Confluence | 35 and six tokens | Legacy 33.5% to 49.4% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -156,6 +157,23 @@ New, each built once in the first wave that needs it:
   Hexing Squelcher grants "Ward--Pay 2 life" and makes its controller's spells
   uncounterable; Null Rod and Pithing Needle prohibit activations (the Needle names a
   card visible to its controller); Mox Opal's metalcraft gates its mana ability.
+- E5b, built in `src/eternal_legacy_e5b_v1.rs` and `build_eternal_e5b_v1.rs`: casting
+  during resolution with a cost (miracle, Amped Raptor) pays the mana or energy first,
+  then casts through a typed selection; a miracle card's first draw offers its owner a
+  reveal decision before its trigger is queued. Eldrazi Temple's second mana is a
+  restricted unit only colorless Eldrazi spells spend
+  (`ManaSpendRestrictionDef::ColorlessEldraziSpellV1`); sacrificing a creature is a mana
+  ability cost (`ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1`, Lazotep
+  Quarry), and an activation's X can read a graveyard card's mana value. Lazotep's
+  copies and Guide of Souls' flying counter use the creature upgrade layer. Thought-Knot
+  Seer reuses the linked hand exile; Leyline Binding and Static Prison reuse exile until
+  the source leaves. New target shapes: up to one other nonland permanent, a triggered
+  ability or colorless spell (Consign to Memory), and creatures then nonland permanents
+  (Eldrazi Confluence). Reality Smasher's "becomes the target" trigger, Quantum Riddler's
+  draw replacement, Voice of Victory's cast prohibition, Petrified Hamlet's named land
+  (abilities off, taps for colorless), Static Prison's upkeep payment and Ocelot Pride's
+  city's blessing are engine hooks. Wastescape Battlemage's {1}{U} kicker is modeled as
+  an alternative cost of {2}{C}{U}, so a free cast cannot add only that kicker.
 
 ## Card contract and verification
 
