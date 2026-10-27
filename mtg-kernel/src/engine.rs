@@ -3349,6 +3349,46 @@ fn targeting_source_is_monocolored(source: TargetingSource) -> bool {
         .is_some_and(|def| (card_def::mana_colors_mask(def.colors) & 0x1f).count_ones() == 1)
 }
 
+/// `{X}{X}` costs (Chalice of the Void) are announced like single-X costs
+/// in eternal builds; every other build keeps the single-X contract.
+const fn max_supported_x_symbols() -> u8 {
+    if cfg!(feature = "eternal-fixtures") {
+        2
+    } else {
+        1
+    }
+}
+
+/// A targeted "when you cast" trigger keeps its producing spell's contract
+/// instead of an ability-source contract (Ugin, Eye of the Storms). Only
+/// eternal builds stage such triggers.
+fn spell_sourced_trigger_targeting_source(item: &StackItem) -> Option<TargetingSource> {
+    let e5a_effect = matches!(
+        item.inline_effect,
+        Some(EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::EternalV1(
+                crate::eternal_cards_v1::EternalOpV1::E5aV1(_)
+            )
+        ))
+    );
+    if !cfg!(feature = "eternal-fixtures")
+        || !e5a_effect
+        || item.v4.ability_source_contract.is_some()
+    {
+        return None;
+    }
+    let spell = item.v4.source_contract?;
+    (spell.zone == Zone::Stack && spell.source == item.source).then_some(TargetingSource {
+        types_override: None,
+        object: item.source,
+        card_def: spell.card_def,
+        zone: spell.zone,
+        zone_change_count: spell.zone_change_count,
+        other_than: None,
+        original_source_incarnation_only: false,
+    })
+}
+
 /// The source a triggered ability targets from. An Initiative or Undercity
 /// trigger records Avenging Hunter's contract only as the designation's
 /// provenance: the initiative's own triggers have no source, and a room
@@ -12443,7 +12483,7 @@ pub(crate) fn validate_pending_cast(
             if pending.x_value != Some(0) {
                 return Err("non-X cast carries a noncanonical X stage".to_string());
             }
-        } else if cost.x_count > 1 || (replicate && cost.x_count != 0) {
+        } else if cost.x_count > max_supported_x_symbols() || (replicate && cost.x_count != 0) {
             return Err("pending cast has an unsupported number of X symbols".to_string());
         } else if let Some(x_value) = pending.x_value {
             let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
@@ -15957,6 +15997,11 @@ pub(crate) fn stack_targets_still_legal(
                             other_than: None,
                             original_source_incarnation_only: false,
                         }),
+                        StackItemKind::TriggeredAbility
+                            if spell_sourced_trigger_targeting_source(item).is_some() =>
+                        {
+                            spell_sourced_trigger_targeting_source(item)
+                        }
                         StackItemKind::TriggeredAbility => {
                             let effect = item
                                 .inline_effect
