@@ -98,9 +98,18 @@ struct Boundary {
     refs: Vec<FlatActionRefV2>,
     objects: Vec<FlatActionObjectV2>,
 }
+#[cfg(test)]
+fn boundary(
+    s: &FastActorSessionV1,
+    d: FastActorDecisionV1,
+    mode: V4SearchSampleMode,
+) -> Result<Boundary, BoundaryFailure> {
+    encode_boundary(s, d, mode, false)
+}
+
 /// `diagnose`: on a decision-input failure, also name the failing check
 /// (recording only; costs a repeat of the checks, so only on request).
-fn boundary(
+fn encode_boundary(
     s: &FastActorSessionV1,
     d: FastActorDecisionV1,
     mode: V4SearchSampleMode,
@@ -300,7 +309,7 @@ impl FastActorSessionV1 {
         let FastActorResponseV1::Decision(d) = self.current_response() else {
             return Err(Error::NoLiveDecision);
         };
-        let before = boundary(self, d, mode, false).map_err(|f| f.error)?;
+        let before = encode_boundary(self, d, mode, false).map_err(|f| f.error)?;
         let actor = self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
         let plan = if mode == V4SearchSampleMode::FutureChanceV3 {
             crate::effect::library_choice_search_v2::plan_future_v3(&self.state, actor)
@@ -392,7 +401,7 @@ impl FastActorSessionV1 {
         copy.flat_action_cache_spare = None;
         copy.flat_action_cache_spare_v2 = None;
         copy.current = Some(current);
-        let after = match boundary(&copy, d, mode, encoding_failure.is_some()) {
+        let after = match encode_boundary(&copy, d, mode, encoding_failure.is_some()) {
             Ok(after) => after,
             Err(failure) => {
                 // Recording only (mtg-kernel#380): keep the inner error that
