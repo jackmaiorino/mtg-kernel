@@ -1839,17 +1839,15 @@ fn d2_terms_dims_v1<D: NetDimsV1>(
 /// index)`, W2 being every witness above 4 r_n of this cell.
 fn d2_witnesses_v1(report: &FdReportV1, r_n: f64, wide: bool) -> Vec<(String, usize, usize)> {
     let mut witnesses: Vec<(String, usize, usize)> = Vec::new();
-    let mut add = |set: &str, tensor: usize, index: usize| {
-        match witnesses
-            .iter_mut()
-            .find(|(_, t, i)| (*t, *i) == (tensor, index))
-        {
-            Some((sets, _, _)) => {
-                sets.push('+');
-                sets.push_str(set);
-            }
-            None => witnesses.push((set.to_string(), tensor, index)),
+    let mut add = |set: &str, tensor: usize, index: usize| match witnesses
+        .iter_mut()
+        .find(|(_, t, i)| (*t, *i) == (tensor, index))
+    {
+        Some((sets, _, _)) => {
+            sets.push('+');
+            sets.push_str(set);
         }
+        None => witnesses.push((set.to_string(), tensor, index)),
     };
     if wide {
         add("W1", D2_W1_V1.0, D2_W1_V1.1);
@@ -1901,10 +1899,7 @@ fn d2_gradients_dims_v1<D: NetDimsV1>(
     };
     let numerical =
         (loss(original + FD_STEP_V1) - loss(original - FD_STEP_V1)) / (2.0 * FD_STEP_V1);
-    (
-        f64::from(report.gradients[tensor].values[index]),
-        numerical,
-    )
+    (f64::from(report.gradients[tensor].values[index]), numerical)
 }
 
 /// `gamma_m = m u / (1 - m u)`.
@@ -2003,10 +1998,7 @@ fn backward_local_bounds_v1(call: &LinearBackwardCaptureV1, maxima: &mut LocalMa
 /// first layer's upstream gradient against the f64 product of the second
 /// layer's input gradient and `1 - h^2` at the captured activation, with a
 /// 2 ulp allowance.
-fn tanh_gradient_local_bounds_v1(
-    substep: &[LinearBackwardCaptureV1],
-    maxima: &mut LocalMaximaV1,
-) {
+fn tanh_gradient_local_bounds_v1(substep: &[LinearBackwardCaptureV1], maxima: &mut LocalMaximaV1) {
     for &second_weight in &SECOND_LAYER_WEIGHTS_V1 {
         let second = substep
             .iter()
@@ -2097,26 +2089,38 @@ fn stack_input_v1<'a>(
 
 /// The tape span a backward call of `weight` reads as its input.
 fn tape_input_v1(tape: &DecisionTapeV1, weight: usize) -> Option<&[f32]> {
-    stack_input_v1(tape, Some(&tape.object_encoder), OBJECT_FIRST_WEIGHT, weight)
-        .or_else(|| stack_input_v1(tape, tape.edge_encoder.as_ref(), EDGE_FIRST_WEIGHT, weight))
-        .or_else(|| stack_input_v1(tape, Some(&tape.node_update), NODE_FIRST_WEIGHT, weight))
-        .or_else(|| stack_input_v1(tape, Some(&tape.state_encoder), STATE_FIRST_WEIGHT, weight))
-        .or_else(|| {
-            stack_input_v1(
-                tape,
-                tape.action_ref_encoder.as_ref(),
-                ACTION_REF_FIRST_WEIGHT,
-                weight,
-            )
-        })
-        .or_else(|| stack_input_v1(tape, Some(&tape.action_encoder), ACTION_FIRST_WEIGHT, weight))
-        .or_else(|| match weight {
-            SCORER_FIRST_WEIGHT => Some(tape.f32_values_v1(tape.scorer_input)),
-            SCORER_SECOND_WEIGHT => Some(tape.f32_values_v1(tape.scorer_hidden)),
-            VALUE_FIRST_WEIGHT => Some(tape.f32_values_v1(tape.state_encoder.second_output)),
-            VALUE_SECOND_WEIGHT => Some(tape.f32_values_v1(tape.value_hidden)),
-            _ => None,
-        })
+    stack_input_v1(
+        tape,
+        Some(&tape.object_encoder),
+        OBJECT_FIRST_WEIGHT,
+        weight,
+    )
+    .or_else(|| stack_input_v1(tape, tape.edge_encoder.as_ref(), EDGE_FIRST_WEIGHT, weight))
+    .or_else(|| stack_input_v1(tape, Some(&tape.node_update), NODE_FIRST_WEIGHT, weight))
+    .or_else(|| stack_input_v1(tape, Some(&tape.state_encoder), STATE_FIRST_WEIGHT, weight))
+    .or_else(|| {
+        stack_input_v1(
+            tape,
+            tape.action_ref_encoder.as_ref(),
+            ACTION_REF_FIRST_WEIGHT,
+            weight,
+        )
+    })
+    .or_else(|| {
+        stack_input_v1(
+            tape,
+            Some(&tape.action_encoder),
+            ACTION_FIRST_WEIGHT,
+            weight,
+        )
+    })
+    .or_else(|| match weight {
+        SCORER_FIRST_WEIGHT => Some(tape.f32_values_v1(tape.scorer_input)),
+        SCORER_SECOND_WEIGHT => Some(tape.f32_values_v1(tape.scorer_hidden)),
+        VALUE_FIRST_WEIGHT => Some(tape.f32_values_v1(tape.state_encoder.second_output)),
+        VALUE_SECOND_WEIGHT => Some(tape.f32_values_v1(tape.value_hidden)),
+        _ => None,
+    })
 }
 
 /// Forward local bounds over every layer application of each decision's
@@ -2148,10 +2152,10 @@ where
         for call in &captures[substep] {
             let span = tape_input_v1(&tapes[decision], call.weight_index)
                 .expect("every backward layer reads a tape span");
-            matches &= span.iter().map(|value| value.to_bits()).eq(call
-                .input
+            matches &= span
                 .iter()
-                .map(|value| value.to_bits()));
+                .map(|value| value.to_bits())
+                .eq(call.input.iter().map(|value| value.to_bits()));
         }
     }
     for tape in &tapes {
@@ -2353,9 +2357,8 @@ fn d2_dims_v1<D: NetDimsV1>(
 fn d2_receipt_v1(objective: ObjectiveV1) {
     let narrow = perturbed_dims_v1::<Net8DimsV1>(narrow_model_v1(), 0xA11C_E5ED);
     let wide = perturbed_dims_v1::<Net8W128DimsV1>(wide_model_v1(), 0xA11C_E5ED);
-    let (narrow_report, narrow_captures) = capture_linear_backward_for_test_v1(|| {
-        fd_check_dims_v1::<Net8DimsV1>(&narrow, objective)
-    });
+    let (narrow_report, narrow_captures) =
+        capture_linear_backward_for_test_v1(|| fd_check_dims_v1::<Net8DimsV1>(&narrow, objective));
     let (wide_report, wide_captures) = capture_linear_backward_for_test_v1(|| {
         fd_check_dims_v1::<Net8W128DimsV1>(&wide, objective)
     });
