@@ -907,6 +907,7 @@ fn abjure_sacrifices_a_blue_permanent_to_counter_a_spell() {
     let abjure = put(&mut state, P0, "Abjure", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R, ManaColor::U], 0);
     cast(&mut state, bolt, &[Target::Player(P1)]);
+    assert!(castable(&mut state, abjure));
     act(&mut state, Action::CastSpell(abjure));
     settle_with(&mut state, |_, decision| match decision {
         Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(bolt)),
@@ -1300,15 +1301,20 @@ fn union_of_the_third_path_draws_then_gains_life_per_card_in_hand() {
 fn ephemerate_that_does_not_resolve_does_not_rebound() {
     let mut state = islands();
     let mulldrifter = put(&mut state, P0, "Mulldrifter", Zone::Battlefield);
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
     let ephemerate = put(&mut state, P0, "Ephemerate", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::W], 0);
+    let flicker = put(&mut state, P0, "Ghostly Flicker", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::U], 2);
     cast(&mut state, ephemerate, &[Target::Object(mulldrifter)]);
-    // Countered on resolution for an illegal target: no rebound.
-    event::propose_and_commit(
+    // Ghostly Flicker resolves first: Ephemerate's target becomes a new
+    // object, so Ephemerate is countered on resolution and does not rebound.
+    cast(
         &mut state,
-        ProposedEvent::zone_change(mulldrifter, Zone::Graveyard),
+        flicker,
+        &[Target::Object(mulldrifter), Target::Object(island)],
     );
     settle_first(&mut state);
+    assert_eq!(state.objects.get(mulldrifter).zone_change_count, 2);
     assert_eq!(zone(&state, ephemerate), Zone::Graveyard);
     assert!(state
         .stack

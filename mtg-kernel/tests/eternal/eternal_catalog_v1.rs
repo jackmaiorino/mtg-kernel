@@ -268,9 +268,22 @@ fn is_companion_action(action: &Value) -> bool {
 /// Dead, and every nonland card under Underworld Breach) and once an extra
 /// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
 /// Time Vault's ability), so these games never begin either; the engine
-/// paths are covered by the rules tests. Every other action is admitted.
+/// paths are covered by the rules tests. A resolution cast of an X spell from
+/// the graveyard (Bilbo, Thief in the Night choosing Prismatic Ending) halts
+/// the engine, so Bilbo's choice skips X spells. Every other action is
+/// admitted.
 fn session_can_follow(action: &Value, decision: &Value) -> bool {
     let s = &action["semantic"];
+    if s["action_kind"] == "choose_effect_target"
+        && s["source"]["card_db_id"]
+            .as_u64()
+            .is_some_and(|id| CARD_DEFS[id as usize].name == "Bilbo, Thief in the Night")
+        && s["target"]["object"]["card_db_id"]
+            .as_u64()
+            .is_some_and(|id| CARD_DEFS[id as usize].cost.x_count > 0)
+    {
+        return false;
+    }
     if !matches!(
         s["action_kind"].as_str(),
         Some("cast_spell" | "activate_ability")
