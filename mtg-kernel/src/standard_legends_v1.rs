@@ -294,6 +294,21 @@ pub(crate) fn katilda_mana_colors(
     object: ObjectId,
 ) -> Vec<crate::mana::ManaColor> {
     use crate::mana::ManaColor;
+    // Chrome Mox's "add one mana of any of the exiled card's colors" uses
+    // the same granted-color activation (tap, add one).
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        let colors = crate::eternal_cards_v1::e3::imprint_mana_colors(state, object);
+        if !colors.is_empty() {
+            return colors;
+        }
+        // Petrified Hamlet: 'Lands with the chosen name have "{T}: Add
+        // {C}."'
+        let colors = crate::eternal_legacy_e5b_v1::granted_mana_colors(state, object);
+        if !colors.is_empty() {
+            return colors;
+        }
+    }
     let Some(live) = state.objects.try_get(object) else {
         return Vec::new();
     };

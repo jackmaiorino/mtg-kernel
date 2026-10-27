@@ -71,7 +71,12 @@ pub(super) fn free_cast_for(state: &GameState, source: ObjectId, controller: Pla
                 })
         }
         Zone::Stack => object.v4.spell_cast_origin.is_some_and(|origin| {
-            origin.origin_zone == Zone::Exile
+            // Mad Wizard's Lair casts a hand card for free during a
+            // resolution.
+            (origin.origin_zone == Zone::Exile
+                || (cfg!(feature = "eternal-fixtures")
+                    && origin.origin_zone == Zone::Hand
+                    && matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })))
                 && origin.origin_zone_change_count.checked_add(1) == Some(object.zone_change_count)
                 && match origin.route {
                     SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => holder == controller,
@@ -98,11 +103,72 @@ pub(super) fn timing_override(state: &GameState, source: ObjectId) -> bool {
     })
 }
 fn live(state: &GameState, binding: EffectObjectBinding) -> bool {
-    binding.expected_zone == Zone::Exile
-        && state.exile.contains(&binding.object)
+    let indexed = match binding.expected_zone {
+        Zone::Exile => state.exile.contains(&binding.object),
+        // A free hand cast (Mad Wizard's Lair).
+        Zone::Hand if cfg!(feature = "eternal-fixtures") => {
+            state.objects.try_get(binding.object).is_some_and(|o| {
+                state.players[o.owner.index()]
+                    .hand
+                    .contains(&binding.object)
+            })
+        }
+        // A paid graveyard cast (Bilbo, Thief in the Night).
+        Zone::Graveyard if cfg!(feature = "eternal-fixtures") => {
+            state.objects.try_get(binding.object).is_some_and(|o| {
+                state.players[o.owner.index()]
+                    .graveyard
+                    .contains(&binding.object)
+            })
+        }
+        _ => false,
+    };
+    indexed
         && state.objects.try_get(binding.object).is_some_and(|o| {
-            o.zone == Zone::Exile && o.zone_change_count == binding.expected_zone_change_count
+            o.zone == binding.expected_zone
+                && o.zone_change_count == binding.expected_zone_change_count
         })
+}
+
+/// Whether `source` is being cast, or announced, from its owner's graveyard
+/// under a resolving instruction that pays its costs (Bilbo).
+pub(super) fn graveyard_resolution_cast(state: &GameState, source: ObjectId) -> bool {
+    let Some(object) = state.objects.try_get(source) else {
+        return false;
+    };
+    match object.zone {
+        Zone::Stack => object.v4.spell_cast_origin.is_some_and(|origin| {
+            origin.origin_zone == Zone::Graveyard
+                && matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })
+        }),
+        Zone::Graveyard => {
+            permit(state, source).is_some_and(|p| p.card.expected_zone == Zone::Graveyard)
+        }
+        _ => false,
+    }
+}
+
+/// Bilbo's cast is "an artifact, instant, or sorcery spell": only forms with
+/// one of those types may be chosen.
+fn graveyard_form_allowed(state: &GameState, source: ObjectId, method: CastMethodV4) -> bool {
+    let def = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+    let types = match method {
+        CastMethodV4::Normal | CastMethodV4::Alternative => def.types,
+        CastMethodV4::Omen => match supported_adventure(def)
+            .map(|a| a.types)
+            .or_else(|| supported_omen(def).map(|o| o.types))
+        {
+            Some(types) => types,
+            None => return false,
+        },
+        _ => return false,
+    };
+    types.iter().any(|t| {
+        matches!(
+            t,
+            CardType::Artifact | CardType::Instant | CardType::Sorcery
+        )
+    })
 }
 pub(super) fn form_allowed(state: &GameState, source: ObjectId, method: CastMethodV4) -> bool {
     let Some(o) = state.objects.try_get(source) else {
@@ -125,6 +191,9 @@ pub(super) fn form_allowed_for(
     method: CastMethodV4,
     controller: PlayerId,
 ) -> bool {
+    if graveyard_resolution_cast(state, source) {
+        return graveyard_form_allowed(state, source, method);
+    }
     if !free_cast_for(state, source, controller) {
         return true;
     }
@@ -243,7 +312,8 @@ pub(crate) fn can_cast_exiled_without_mana(
     card: EffectObjectBinding,
     maximum_mana_value: Option<u16>,
 ) -> bool {
-    if !live(state, card) {
+    let hand = cfg!(feature = "eternal-fixtures") && card.expected_zone == Zone::Hand;
+    if !(card.expected_zone == Zone::Exile || hand) || !live(state, card) {
         return false;
     }
     let def = &card_def::CARD_DEFS[state.objects.get(card.object).card_def as usize];
@@ -293,6 +363,69 @@ pub(crate) fn can_cast_exiled_without_mana(
     false
 }
 
+/// Whether `controller` can cast `card` from their graveyard right now as an
+/// artifact, instant or sorcery spell, paying its costs (Bilbo, Thief in the
+/// Night's attack trigger).
+pub(crate) fn can_cast_from_graveyard_v1(
+    state: &GameState,
+    controller: PlayerId,
+    card: EffectObjectBinding,
+) -> bool {
+    if card.expected_zone != Zone::Graveyard || !live(state, card) {
+        return false;
+    }
+    let object = state.objects.get(card.object);
+    let def = &card_def::CARD_DEFS[object.card_def as usize];
+    if object.owner != controller
+        || !def.is_executable()
+        || !def.is_castable()
+        || def.has_type(CardType::Land)
+    {
+        return false;
+    }
+    let mut projected = state.clone();
+    projected.engine.pending_effect = None;
+    projected.engine.pending_cast = None;
+    projected.engine.pending_triggers.clear();
+    projected
+        .standard_v1
+        .get_or_insert_with(Default::default)
+        .resolution_play = Some(ResolutionPlayV1 {
+        parent: StackItemId(0),
+        parent_index: projected.stack.len(),
+        suspended: None,
+        permission: Some(ResolutionPermissionV1 {
+            card,
+            controller,
+            maximum_mana_value: None,
+            land: false,
+        }),
+        deferred_triggers: Vec::new(),
+        kicked_source: None,
+        authorization: None,
+    });
+    begin_cast_ex(
+        &mut projected,
+        controller,
+        card.object,
+        Some(CastMethodV4::Normal),
+    );
+    let Some(pending) = projected.engine.pending_cast.as_ref() else {
+        return false;
+    };
+    for kicked in [false, true] {
+        if kicked && def.kicker_cost.is_none() {
+            continue;
+        }
+        for form in 0..printed_spell_form_count(def) {
+            if form_completable(&projected, pending, form, kicked) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub(crate) fn stage(
     state: &mut GameState,
     continuation: effect::EffectContinuation,
@@ -309,6 +442,10 @@ pub(crate) fn stage(
     if land {
         if !can_play_exiled_land(state, controller, card) {
             return Err("resolution land play has no remaining legal land drop".into());
+        }
+    } else if card.expected_zone == Zone::Graveyard {
+        if maximum_mana_value.is_some() || !can_cast_from_graveyard_v1(state, controller, card) {
+            return Err("resolution graveyard cast has no payable legal form".into());
         }
     } else if !can_cast_exiled_without_mana(state, controller, card, maximum_mana_value) {
         return Err("resolution cast has no payable legal form".into());
@@ -378,7 +515,8 @@ pub(crate) fn can_play_exiled_land(
     controller: PlayerId,
     card: EffectObjectBinding,
 ) -> bool {
-    live(state, card)
+    card.expected_zone == Zone::Exile
+        && live(state, card)
         && state.active_player == controller
         && state.players[controller.index()].lands_played_this_turn == 0
         && card_def::CARD_DEFS[state.objects.get(card.object).card_def as usize].is_playable_land()
@@ -435,7 +573,11 @@ pub(super) fn validate_child(
         || permission.controller != controller
         || permission.land != land
         || permission.card.object != source
-        || permission.card.expected_zone != Zone::Exile
+        || !(permission.card.expected_zone == Zone::Exile
+            || (cfg!(feature = "eternal-fixtures")
+                && matches!(permission.card.expected_zone, Zone::Graveyard | Zone::Hand)
+                && !land
+                && permission.maximum_mana_value.is_none()))
         || state.engine.pending_effect.is_some()
     {
         return Err("resolution child parent or permission changed".into());
@@ -446,7 +588,7 @@ pub(super) fn validate_child(
         }
     } else if object.zone != Zone::Stack
         || resolving_origin.is_none_or(|origin| {
-            origin.origin_zone != Zone::Exile
+            origin.origin_zone != permission.card.expected_zone
                 || origin.origin_zone_change_count != permission.card.expected_zone_change_count
                 || origin.route
                     != (SpellCastRouteV4::ResolvingEffectV1 {
@@ -458,7 +600,7 @@ pub(super) fn validate_child(
         return Err("resolution spell permission changed".into());
     }
     let original = &authorization.exiled_card;
-    if original.zone != Zone::Exile
+    if original.zone != permission.card.expected_zone
         || original.zone_change_count != permission.card.expected_zone_change_count
         || original.card_def != object.card_def
         || original.owner != object.owner
@@ -501,7 +643,15 @@ pub(super) fn validate_child(
         projected
             .stack
             .retain(|item| !(item.kind == StackItemKind::Spell && item.source == source));
-        projected.exile.push(source);
+        if permission.card.expected_zone == Zone::Graveyard {
+            projected.players[original.owner.index()]
+                .graveyard
+                .push(source);
+        } else if permission.card.expected_zone == Zone::Hand {
+            projected.players[original.owner.index()].hand.push(source);
+        } else {
+            projected.exile.push(source);
+        }
     }
     *projected.objects.get_mut(source) = original.clone();
     effect::validate_resolution_play_authorization(

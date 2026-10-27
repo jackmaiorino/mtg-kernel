@@ -1757,6 +1757,43 @@ mod paid {
     }
 
     #[test]
+    fn squire_counter_entry_and_live_flying_knight_threshold_refuse_changed_printings() {
+        let id = crate::card_def::card_id_by_name("Skyknight Squire").unwrap();
+        let value = roots::baseline_recipe(id, &ordinary_recipe(id)).unwrap();
+        let p = &value["observer_trigger_printing"];
+        assert_eq!(p["ordered_triggers"][0]["event"]["tokens_count"], true);
+        assert_eq!(
+            p["ordered_triggers"][0]["ordered_resolution"][0]["count"],
+            1
+        );
+        assert_eq!(
+            p["ordered_static_roots"][0]["condition"]["count_at_least"],
+            3
+        );
+        assert_eq!(
+            p["ordered_static_roots"][0]["preserves_other_current_subtypes"],
+            true
+        );
+        for field in 0..6 {
+            let mut d = ordinary_recipe(id);
+            match field {
+                0 => d.cost = crate::mana::Cost::zero(),
+                1 => d.keywords = crate::card_def::Keywords::FLYING,
+                2 => d.mana_value = 3,
+                3 => d.power = Some(2),
+                4 => {
+                    d.subtypes = &[
+                        crate::card_def::Subtype::Cat,
+                        crate::card_def::Subtype::Knight,
+                    ]
+                }
+                _ => d.spell_effect = || None,
+            }
+            assert!(roots::baseline_recipe(id, &d).is_err());
+        }
+    }
+
+    #[test]
     fn ward_discount_creature_exact_characteristics_payments_and_reductions_refuse_changes() {
         use crate::card_def::{DynamicCountDef, GenericCostReductionDef, WardCostDef};
         for name in [

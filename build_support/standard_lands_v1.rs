@@ -199,6 +199,17 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
             fields.additional_mana_ability_conditions =
                 "&[Some(ManaAbilityConditionDef::SourceEnteredThisTurn)]".to_string();
         }
+        // Eternal catalog: "{T}: Add one mana of any color. Spend this mana
+        // only to cast a creature spell of the chosen type, and that spell
+        // can't be countered."
+        "Cavern of Souls" => {
+            fields.restricted_mana_abilities = format!("&[RestrictedManaAbilityDef {{ colors: {ANY_COLOR}, restriction: ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1 }}]");
+        }
+        // Eternal catalog: "{T}: Add one mana of any color. Spend this mana
+        // only to cast a creature spell."
+        "Abundant Countryside" => {
+            fields.restricted_mana_abilities = format!("&[RestrictedManaAbilityDef {{ colors: {ANY_COLOR}, restriction: ManaSpendRestrictionDef::CreatureSpell }}]");
+        }
         "Lupinflower Village" => {
             fields.restricted_mana_abilities = "&[RestrictedManaAbilityDef { colors: &[ManaColor::W], restriction: ManaSpendRestrictionDef::CreatureSpell }]".to_string();
         }

@@ -153,8 +153,15 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) component_groups: Vec<&'static [CostComponent]>,
     pub(super) types: &'static [CardType],
     pub(super) own_generic_reduction: u32,
+    /// Generic increase for this spell alone (Anointed Peacekeeper).
+    pub(super) own_generic_increase: u32,
     pub(super) delve: bool,
     pub(super) convoke: bool,
+    /// Replicate's cost, paid once for each unit of the announced X.
+    pub(super) replicate: Option<Cost>,
+    /// Whether this is a colorless Eldrazi spell, for Eldrazi Temple's
+    /// restricted mana.
+    pub(super) colorless_eldrazi: bool,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -172,8 +179,8 @@ impl SelectedSpellManaCostsV1 {
         let base = match method {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
             CastMethodV4::Flashback if self.granted_flashback_v1 => Some(&[][..]),
-            CastMethodV4::Flashback => Some(definition.flashback.as_ref()?.cost),
-            CastMethodV4::Escape => Some(definition.escape.as_ref()?.cost),
+            CastMethodV4::Flashback => Some(flashback_cost_v1(definition)?),
+            CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
             _ => None,
         };
         let original_groups = base
@@ -282,7 +289,11 @@ impl SelectedSpellManaCostsV1 {
                 return None;
             }
             if components.iter().any(|component| {
-                matches!(component, CostComponent::ExileOtherCardsFromOwnGraveyard(_))
+                matches!(
+                    component,
+                    CostComponent::ExileOtherCardsFromOwnGraveyard(_)
+                        | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+                )
             }) {
                 if chosen.iter().any(|object| reserved.contains(object)) {
                     return None;
@@ -313,18 +324,33 @@ impl SelectedSpellManaCostsV1 {
         if self.convoke && self.delve {
             return None;
         }
+        let replicated = self
+            .replicate
+            .iter()
+            .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)));
         let pips = self
             .costs
             .iter()
+            .copied()
+            .chain(replicated.clone())
             .flat_map(|cost| cost.pips.iter().copied())
             .collect::<Vec<_>>();
         let generic = self
             .costs
             .iter()
             .map(|cost| u32::from(cost.generic) + u32::from(cost.x_count) * u32::from(x))
+            .chain(replicated.map(|cost| u32::from(cost.generic)))
             .sum::<u32>()
             .saturating_add(increase)
+            .saturating_add(self.own_generic_increase)
             .saturating_sub(reduction.saturating_add(self.own_generic_reduction));
+        // Trinisphere raises a total below three mana to three.
+        #[cfg(feature = "eternal-fixtures")]
+        let generic = generic.saturating_add(crate::eternal_vintage_v1::trinisphere_increase(
+            state,
+            pips.len(),
+            generic,
+        ));
         let additional_life = self
             .component_groups
             .iter()
@@ -348,6 +374,8 @@ impl SelectedSpellManaCostsV1 {
                     &self.spell_subtypes,
                     self.all_creature_types_v60,
                     self.tinybones_mana_v72.as_ref(),
+                    self.types.contains(&CardType::Artifact),
+                    self.colorless_eldrazi,
                 )?;
             return Some(SpellManaPaymentV1 {
                 mana,
@@ -380,6 +408,8 @@ impl SelectedSpellManaCostsV1 {
                 &self.spell_subtypes,
                 self.all_creature_types_v60,
                 self.tinybones_mana_v72.as_ref(),
+                self.types.contains(&CardType::Artifact),
+                self.colorless_eldrazi,
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -466,8 +496,12 @@ pub(super) fn selected_spell_mana_costs_v1(
         component_groups: Vec::new(),
         types: definition.types,
         own_generic_reduction: 0,
+        own_generic_increase: 0,
         delve: false,
         convoke: false,
+        replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
+        colorless_eldrazi: definition.colors.is_empty()
+            && definition.subtypes.contains(&card_def::Subtype::Eldrazi),
     };
     match method {
         CastMethodV4::Normal => {
@@ -480,8 +514,8 @@ pub(super) fn selected_spell_mana_costs_v1(
             }
         }
         CastMethodV4::Alternative => selected.components(definition.alt_cost?.components),
-        CastMethodV4::Flashback => selected.components(definition.flashback.as_ref()?.cost),
-        CastMethodV4::Escape => selected.components(definition.escape.as_ref()?.cost),
+        CastMethodV4::Flashback => selected.components(flashback_cost_v1(definition)?),
+        CastMethodV4::Escape => selected.components(escape_cost_v1(definition)?),
         CastMethodV4::Madness => selected.costs.push(definition.madness_cost?),
         CastMethodV4::Plotted => {
             definition.plot_cost?;
@@ -564,6 +598,28 @@ pub(super) fn selected_spell_mana_costs_v1(
     Some(selected)
 }
 
+/// A definition's flashback cost: printed, or the mana-cost flashback
+/// Snapcaster Mage grants an instant or sorcery card. Whether a card has a
+/// granted flashback is checked where the cast is offered.
+fn flashback_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostComponent]> {
+    definition
+        .flashback
+        .as_ref()
+        .map(|flashback| flashback.cost)
+        .or_else(|| crate::eternal_lurrus_v1::granted_flashback_cost(definition))
+}
+
+/// A definition's escape cost: printed, or the one Underworld Breach grants
+/// a nonland card. Whether a card has a granted escape is checked where the
+/// cast is offered.
+fn escape_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostComponent]> {
+    definition
+        .escape
+        .as_ref()
+        .map(|escape| escape.cost)
+        .or_else(|| crate::eternal_lurrus_v1::granted_escape_cost(definition))
+}
+
 // Keep selected form, payment and source inputs explicit at this shared quote boundary.
 pub(super) fn selected_spell_mana_costs_for_source_v1(
     source: ObjectId,
@@ -622,6 +678,21 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         state,
     )?;
     selected.tinybones_mana_v72 = super::tinybones_v72::mana_grant(state, source, player);
+    // Bilbo, Thief in the Night: "Spells you cast from anywhere other than
+    // your hand cost {1} less to cast."
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_cards_v1::outside_hand_cast_reduction(state, source, player),
+        );
+        // Anointed Peacekeeper: spells with the chosen name cost {2} more.
+        selected.own_generic_increase =
+            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player);
+        // Eye of Ugin, It That Heralds the End, Leyline Binding's domain.
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_legacy_e5b_v1::spell_cost_reduction(state, definition, player),
+        );
+    }
     if granted {
         selected.component_groups.insert(0, &[]);
         selected.granted_flashback_v1 = true;
@@ -630,6 +701,15 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {
             return None;
         }
+        selected.costs.remove(0);
+    } else if cfg!(feature = "eternal-fixtures")
+        && method == CastMethodV4::Normal
+        && (crate::eternal_cards_v1::e3::free_hand_cast_selected(state, source, player, mode)
+            || crate::eternal_e5a_v1::permissions::citadel_cast(state, source, player))
+    {
+        // Omniscience, Aluren: "without paying its mana cost". Bolas's
+        // Citadel: "pay life equal to its mana value rather than pay its
+        // mana cost", paid as the cast completes.
         selected.costs.remove(0);
     }
     Some(selected)
@@ -850,7 +930,14 @@ fn selected_spell_quote_branch_grant_v1(
     forced_branch: Option<bool>,
     grant: Option<u64>,
 ) -> Option<SpellManaPaymentV1> {
-    if x != 0 && super::resolution_cast_v1::free_cast_for(state, source, player) {
+    if x != 0
+        && (super::resolution_cast_v1::free_cast_for(state, source, player)
+            || (cfg!(feature = "eternal-fixtures")
+                && method == CastMethodV4::Normal
+                && (crate::eternal_cards_v1::e3::free_hand_cast_selected(
+                    state, source, player, mode,
+                ) || crate::eternal_e5a_v1::permissions::citadel_cast(state, source, player))))
+    {
         return None;
     }
     if method == CastMethodV4::Alternative
@@ -861,6 +948,17 @@ fn selected_spell_quote_branch_grant_v1(
             state,
         )
     {
+        return None;
+    }
+    // Foretell: a foretold card is cast only for its foretell cost.
+    #[cfg(feature = "eternal-fixtures")]
+    if !crate::eternal_pauper_e6a_v1::foretell_quote_allowed(
+        state,
+        definition,
+        source,
+        origin_zone,
+        method,
+    ) {
         return None;
     }
     let mut selected = selected_spell_mana_costs_for_source_grant_v1(
@@ -886,6 +984,7 @@ fn selected_spell_quote_branch_grant_v1(
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     let mut family = None;
+    let mut graveyard_types_needed = None;
     let mut discard_count = 0usize;
     let mut needs_creature = false;
     let mut reveals_hand = false;
@@ -915,6 +1014,31 @@ fn selected_spell_quote_branch_grant_v1(
                 1,
                 super::tap_permanent_cost_candidates(player, state, *filter, &[]),
             )),
+            CostComponent::ReturnControlledPermanentToOwnersHand(filter) => Some((
+                1,
+                super::return_permanent_cost_candidates(player, state, *filter, &[])
+                    .into_iter()
+                    .map(|binding| binding.object)
+                    .collect(),
+            )),
+            CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => Some((
+                usize::from(*count),
+                super::return_permanent_cost_candidates(player, state, *filter, &[])
+                    .into_iter()
+                    .map(|binding| binding.object)
+                    .collect(),
+            )),
+            CostComponent::ExileCardFromHandWithColorV1(color) => Some((
+                1,
+                super::hand_exile_cost_candidates(player, source, *color, state),
+            )),
+            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
+                graveyard_types_needed = Some(*minimum);
+                Some((
+                    0,
+                    super::checked_graveyard_exile_candidates(player, source, state, &[])?,
+                ))
+            }
             CostComponent::DiscardCards(count) => {
                 discard_count += usize::from(*count);
                 None
@@ -995,6 +1119,31 @@ fn selected_spell_quote_branch_grant_v1(
     let Some((needed, candidates)) = family else {
         return chosen_prefix.is_empty().then(|| quote(&[])).flatten();
     };
+    if let Some(minimum) = graveyard_types_needed {
+        // Any number of cards covering `minimum` card types: complete the
+        // chosen prefix with cards that add a new card type. Which cards
+        // pay never changes the mana payment.
+        if chosen_prefix.iter().enumerate().any(|(index, object)| {
+            !candidates.contains(object) || chosen_prefix[..index].contains(object)
+        }) {
+            return None;
+        }
+        let mut chosen = chosen_prefix.to_vec();
+        for object in candidates {
+            if crate::eternal_cards_v1::card_type_count(state, &chosen) >= usize::from(minimum) {
+                break;
+            }
+            if chosen.contains(&object) {
+                continue;
+            }
+            let before = crate::eternal_cards_v1::card_type_count(state, &chosen);
+            chosen.push(object);
+            if crate::eternal_cards_v1::card_type_count(state, &chosen) == before {
+                chosen.pop();
+            }
+        }
+        return quote(&chosen);
+    }
     if chosen_prefix.len() > needed
         || chosen_prefix.iter().enumerate().any(|(index, object)| {
             !candidates.contains(object) || chosen_prefix[..index].contains(object)
@@ -1067,6 +1216,63 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    /// The graveyard cards Delve will exile, in exile order.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn delve_exiled(&self) -> &[ObjectId] {
+        &self.mana.delve_exiled
+    }
+
+    /// The mana sources this payment taps and the color each adds.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn mana_taps(&self) -> &[(ObjectId, crate::mana::ManaColor)] {
+        &self.mana.mana.taps
+    }
+
+    /// Whether this payment spends colored mana (Void Mirror): a source
+    /// tapped for a color, or colored mana from the pool.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn spends_colored_mana(&self, state: &GameState, player: PlayerId) -> bool {
+        let plan = &self.mana.mana;
+        plan.taps
+            .iter()
+            .any(|(_, color)| *color != mana::ManaColor::C)
+            || plan.pool_used[..5].iter().any(|&amount| amount > 0)
+            || plan.restricted_pool_used.iter().any(|&index| {
+                state.players[player.index()]
+                    .restricted_mana_pool
+                    .0
+                    .get(index)
+                    .is_some_and(|unit| unit.color != mana::ManaColor::C)
+            })
+    }
+
+    /// How many colors of mana this payment spends (converge): the colors
+    /// sources were tapped for and the colored mana taken from the pool.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn colors_spent(&self, state: &GameState, player: PlayerId) -> u8 {
+        let plan = &self.mana.mana;
+        [
+            mana::ManaColor::W,
+            mana::ManaColor::U,
+            mana::ManaColor::B,
+            mana::ManaColor::R,
+            mana::ManaColor::G,
+        ]
+        .into_iter()
+        .filter(|color| {
+            plan.taps.iter().any(|(_, tapped)| tapped == color)
+                || plan.pool_used[color.pool_index()] > 0
+                || plan.restricted_pool_used.iter().any(|&index| {
+                    state.players[player.index()]
+                        .restricted_mana_pool
+                        .0
+                        .get(index)
+                        .is_some_and(|unit| unit.color == *color)
+                })
+        })
+        .count() as u8
+    }
+
     fn commit_optional(&self, state: &mut GameState) {
         match self.optional_kind {
             Some(super::OptionalAdditionalCostDef::CollectEvidence { .. }) => {

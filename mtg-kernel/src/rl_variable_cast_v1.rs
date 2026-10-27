@@ -596,7 +596,9 @@ fn candidates_current_scope_inner_v68(
                 for &id in mana_abilities {
                     let choices = engine::available_mana_ability_choices(*player, id, state);
                     for &choice in &choices {
-                        let cost_targets = engine::mana_ability_cost_targets(*player, id, state);
+                        let cost_targets = engine::mana_ability_cost_targets_for_choice(
+                            *player, id, choice, state,
+                        );
                         if cost_targets.is_empty() {
                             predecessor(
                                 &mut raw,

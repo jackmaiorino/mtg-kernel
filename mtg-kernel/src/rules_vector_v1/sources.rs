@@ -285,6 +285,31 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             out.cost(CostAtom::PayLife(life));
         }
         ManaAbilityCostDef::None => {}
+        ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
+            out.cost(CostAtom::Tap);
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Battlefield,
+                to: ZoneF::Graveyard,
+                obj: ObjF::Typed(CardTypeF::Creature),
+                amount: AmtF::Unit,
+            });
+        }
+        ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Hand,
+                to: ZoneF::Graveyard,
+                obj: ObjF::AnyCard,
+                amount: AmtF::Dynamic,
+            });
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Battlefield,
+                to: ZoneF::Graveyard,
+                obj: ObjF::ThisObject,
+                amount: AmtF::Unit,
+            });
+            // "Activate only as an instant" has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
     }
     let amount = match amount {
         ManaAbilityAmountDef::Fixed(n) => AmtF::fixed(i64::from(n)),
@@ -302,6 +327,11 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             // The frozen vocabulary cannot express a simultaneous color set.
             out.atoms.push(Atom::Opaque);
             AmtF::Dynamic
+        }
+        ManaAbilityAmountDef::FixedColorsV1(colors) => {
+            // A fixed simultaneous color set has no color facet either.
+            out.atoms.push(Atom::Opaque);
+            AmtF::fixed(colors.len() as i64)
         }
     };
     out.effect(
@@ -894,7 +924,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 crate::card_def::ManaSpendRestrictionDef::Unrestricted => {}
                 crate::card_def::ManaSpendRestrictionDef::CreatureSpell
                 | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
-                | crate::card_def::ManaSpendRestrictionDef::LegendarySpell => {
+                | crate::card_def::ManaSpendRestrictionDef::LegendarySpell
+                | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1
+                | crate::card_def::ManaSpendRestrictionDef::ArtifactSpellV1
+                | crate::card_def::ManaSpendRestrictionDef::ColorlessEldraziSpellV1 => {
                     out.control(ControlF::Conditional)
                 }
             }

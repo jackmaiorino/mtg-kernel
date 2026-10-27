@@ -1211,6 +1211,7 @@ fn flat_cost_kind_v1(kind: CostKind) -> u8 {
         CostKind::PutCounters => 11,
         CostKind::ChooseCreatureOrRevealCreature => 12,
         CostKind::ExileCraftMaterial => 13,
+        CostKind::ExileFromHandV1 => 14,
     }
 }
 
@@ -2622,18 +2623,16 @@ fn flat_validate_origin_decision_common_scoped_v42(
                 if choices.is_empty() {
                     return Err(invalid());
                 }
-                let cost_target_count =
-                    crate::engine::mana_ability_cost_targets(*player, *object, state)
-                        .len()
-                        .max(1);
-                mana_action_count = mana_action_count
-                    .checked_add(
-                        choices
-                            .len()
-                            .checked_mul(cost_target_count)
-                            .ok_or_else(invalid)?,
+                for &choice in choices.as_slice() {
+                    let cost_target_count = crate::engine::mana_ability_cost_targets_for_choice(
+                        *player, *object, choice, state,
                     )
-                    .ok_or_else(invalid)?;
+                    .len()
+                    .max(1);
+                    mana_action_count = mana_action_count
+                        .checked_add(cost_target_count)
+                        .ok_or_else(invalid)?;
+                }
             }
             let expected_count = castable_spells
                 .len()
@@ -2673,8 +2672,9 @@ fn flat_validate_origin_decision_common_scoped_v42(
                     return Err(invalid());
                 }
                 for &choice in choices.as_slice() {
-                    let cost_targets =
-                        crate::engine::mana_ability_cost_targets(*player, *object, state);
+                    let cost_targets = crate::engine::mana_ability_cost_targets_for_choice(
+                        *player, *object, choice, state,
+                    );
                     if cost_targets.is_empty() {
                         let candidate = &candidates[cursor];
                         let valid = match (&candidate.semantic, &candidate.policy_action) {
@@ -5616,6 +5616,35 @@ impl RlEpisodeSessionV1 {
         foundations_combat: bool,
         london_mulligans: bool,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_custom_decks_companions_and_london_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            card_ids,
+            [None, None],
+            priority_mode,
+            foundations_combat,
+            london_mulligans,
+        )
+    }
+
+    /// `reset_with_custom_decks_and_london_v1` with each seat's companion,
+    /// put face up in exile before the game begins.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_with_custom_decks_companions_and_london_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        card_ids: [&[u16]; 2],
+        companions: [Option<u16>; 2],
+        priority_mode: crate::surface_v2::PriorityModeV1,
+        foundations_combat: bool,
+        london_mulligans: bool,
+    ) -> Result<Self, RlSessionError> {
         for cards in card_ids {
             crate::card_def::preflight_fully_supported_deck(cards).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
@@ -5639,6 +5668,11 @@ impl RlEpisodeSessionV1 {
         if london_mulligans {
             crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
                 .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        }
+        // Companions join exile after the opening deal is bound, which
+        // requires an empty exile.
+        if companions.iter().any(Option::is_some) {
+            crate::eternal_lurrus_v1::add_companions(&mut state, companions);
         }
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));

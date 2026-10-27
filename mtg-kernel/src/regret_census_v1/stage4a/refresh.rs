@@ -23,7 +23,7 @@
 //! anchor, never refreshed) is the parity arm that must reproduce the bank's
 //! S guide.
 
-use super::arms::{Limits, Roles};
+use super::arms::{Limits, Roles, Selection};
 use super::bank::{
     act_plain, bank_roles, err, guide_ctx, guide_record, outcome, plain_logged, source_session,
     walk, BankShared, SourceSpec,
@@ -169,13 +169,70 @@ impl GuideRun {
 
 /// Opt-in settings of a searched budget game (collab
 /// LANES/teacher-price-20261019): a per-decision allocation other than the
-/// formal 128k initial and 64k refresh, and passive node statistics. The
-/// default leaves the game and its row byte-identical.
+/// formal 128k initial and 64k refresh, passive node statistics, and the
+/// rollout opponent (`S4A_ROLLOUT_OPPONENT`). The default leaves the game and
+/// its row byte-identical.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct BudgetExtras {
     /// (initial, refresh) transitions; None keeps ANCHOR_BUDGET and REFRESH_BUDGET.
     pub(super) per_decision: Option<(u64, u64)>,
     pub(super) node_stats: bool,
+    /// Index in `BankShared::labels` of the policy that plays the opponent
+    /// inside searches (rollouts and evaluation worlds); None keeps the
+    /// case's scheduled opponent. The live opponent is always the scheduled
+    /// one. Set by the runner after parsing (`parse` leaves it None).
+    pub(super) rollout: Option<usize>,
+}
+
+/// Row field naming the rollout opponent's label, present only when
+/// `S4A_ROLLOUT_OPPONENT` was set, so unset rows stay byte-identical.
+pub(super) const ROLLOUT_FIELD: &str = "rollout_opponent";
+
+/// Strict runner-boundary parsing of `S4A_ROLLOUT_OPPONENT=<label>`: unset
+/// is None; a label must name one of the loaded OPPONENTS labels.
+pub(super) fn parse_rollout_opponent(
+    value: Result<String, std::env::VarError>,
+    labels: &[String],
+) -> Result<Option<usize>, String> {
+    match value {
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Ok(label) => labels
+            .iter()
+            .position(|l| *l == label)
+            .map(Some)
+            .ok_or_else(|| {
+                format!(
+                    "S4A_ROLLOUT_OPPONENT={label} names no OPPONENTS label (loaded: {})",
+                    labels.join(",")
+                )
+            }),
+        Err(error) => Err(format!("invalid S4A_ROLLOUT_OPPONENT: {error}")),
+    }
+}
+
+/// A recorded budget row's rollout opponent must equal the consuming run's
+/// (`expected`, None when `S4A_ROLLOUT_OPPONENT` is unset): replay and
+/// root-rebuild paths use the same rollout model as the run they check, or
+/// refuse the record.
+pub(super) fn check_rollout(row: &Value, expected: Option<&str>) -> Result<(), String> {
+    let recorded = match row.get(ROLLOUT_FIELD) {
+        None => None,
+        Some(Value::String(label)) => Some(label.as_str()),
+        Some(other) => {
+            return Err(format!(
+                "the record's {ROLLOUT_FIELD} {other} is not a label"
+            ))
+        }
+    };
+    if recorded != expected {
+        let show = |x: Option<&str>| x.map_or("unset (scheduled)".to_owned(), str::to_owned);
+        return Err(format!(
+            "the record's rollout opponent {} differs from this run's {}",
+            show(recorded),
+            show(expected)
+        ));
+    }
+    Ok(())
 }
 
 impl BudgetExtras {
@@ -213,6 +270,7 @@ impl BudgetExtras {
         Ok(Self {
             per_decision,
             node_stats,
+            rollout: None,
         })
     }
 
@@ -454,6 +512,9 @@ impl Searches<'_> {
             "transitions":sel.transitions,"completed_natural":sel.completed,"attempted":sel.attempted,
             "nonnatural":sel.nonnatural,"incomplete":sel.incomplete,"faults":sel.faults,
             "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()}));
+        if let Some(r) = self.records.last_mut() {
+            add_rejections(r, &sel);
+        }
         if !diag.key_memo.is_null() {
             if let Some(r) = self.records.last_mut() {
                 r["key_memo"] = diag.key_memo;
@@ -475,6 +536,14 @@ impl Searches<'_> {
         }
         Ok((!failed).then_some(tree))
     }
+}
+
+/// Recording only (mtg-kernel#380): the search's sampler counts with their
+/// rejection kinds, and its longest run of consecutive rejections (the
+/// `MAX_CONSECUTIVE_REJECTIONS` stop fires when a run reaches that limit).
+fn add_rejections(record: &mut Value, sel: &Selection) {
+    record["sampler"] = sel.sampler.json();
+    record["longest_rejection_run"] = json!(sel.rejection_run.longest);
 }
 
 /// One arm's guide from the anchor. Returns the arm record.
@@ -984,6 +1053,13 @@ pub(super) fn budget_case_with_executor(
     let mut roles = bank_roles(policy, &sh.opponents)?;
     let mut live_focal = policy.fork_for_collection_v3()?;
     let mut live_opp = sh.opponents[opp].fork_for_collection_v3()?;
+    // The live opponent stays the scheduled one; only searches (rollouts and
+    // evaluation worlds) use the rollout opponent when one is set.
+    let search_opp = match extras.rollout {
+        None => opp,
+        Some(r) if r < sh.opponents.len() && r < sh.labels.len() => r,
+        Some(r) => return Err(format!("rollout opponent index {r} is out of range")),
+    };
     let opening = source_session(&sh.spec, src)?;
     let allocation = extras.allocation(total);
     let (rec, _) = guide(
@@ -993,7 +1069,7 @@ pub(super) fn budget_case_with_executor(
         &mut live_opp,
         &opening,
         src,
-        opp,
+        search_opp,
         allocation,
         None,
         GuideRun {
@@ -1013,6 +1089,10 @@ pub(super) fn budget_case_with_executor(
         "allocation":{"initial":allocation.anchor,"refresh":allocation.refresh,"total":allocation.total},
         "game":rec,"wall":started.elapsed().as_secs_f64()});
     executor.annotate_row(&mut row);
+    // Present only when set, so default rows are unchanged.
+    if extras.rollout.is_some() {
+        row[ROLLOUT_FIELD] = json!(sh.labels[search_opp]);
+    }
     // Present only when merging was on, so default rows are unchanged.
     if interchange {
         row["interchange"] = json!(INTERCHANGE_RULE);
@@ -1252,6 +1332,49 @@ pub(super) fn source_arms(
 pub(super) mod tests {
     use super::super::tree::canon;
     use super::*;
+
+    #[test]
+    fn search_records_carry_rejection_kinds_and_longest_run() {
+        let mut sel = Selection::default();
+        for (ok, kind) in [
+            (false, "SampleBoundaryChanged"),
+            (false, "SampleBoundaryChanged"),
+            (true, ""),
+            (false, "DeckPrior"),
+            (false, "SampleBoundaryChanged"),
+            (false, "SampleBoundaryChanged"),
+            (true, ""),
+        ] {
+            if ok {
+                sel.sampler.ok += 1;
+                sel.rejection_run.accept();
+            } else {
+                sel.sampler.rejected += 1;
+                *sel.sampler.kinds.entry(kind.into()).or_default() += 1;
+                sel.rejection_run.reject();
+            }
+        }
+        assert_eq!(sel.rejection_run.current, 0);
+        assert_eq!(sel.rejection_run.longest, 3);
+        let before = json!({"search":2,"step":49,"attempted":7});
+        let mut record = before.clone();
+        add_rejections(&mut record, &sel);
+        assert_eq!(
+            record["sampler"],
+            json!({"ok":2,"rejected":5,"kinds":{"DeckPrior":1,"SampleBoundaryChanged":4}})
+        );
+        assert_eq!(record["longest_rejection_run"], 3);
+        // Only the two fields are added.
+        let fields = record.as_object_mut().unwrap();
+        fields.remove("sampler");
+        fields.remove("longest_rejection_run");
+        assert_eq!(record, before);
+        // A search with no rejections records an empty run.
+        let mut clean = json!({});
+        add_rejections(&mut clean, &Selection::default());
+        assert_eq!(clean["longest_rejection_run"], 0);
+        assert_eq!(clean["sampler"], json!({"ok":0,"rejected":0,"kinds":{}}));
+    }
 
     #[test]
     fn supported_actions_execute_without_refresh() {
@@ -1838,7 +1961,7 @@ pub(super) mod tests {
                         "fixture",
                     )
                     .unwrap();
-                    let rebuilt = super::super::root_rebuild::game(&sh.spec, &row, None);
+                    let rebuilt = super::super::root_rebuild::game(&sh.spec, &row, None, None);
                     (row, rebuilt)
                 })
                 .unwrap()
@@ -1943,6 +2066,7 @@ pub(super) mod tests {
                 BudgetExtras {
                     per_decision,
                     node_stats,
+                    rollout: None,
                 },
             )
             .unwrap()
@@ -1953,7 +2077,7 @@ pub(super) mod tests {
                 .spawn_scoped(scope, || {
                     let plain_row = play(false);
                     let row = play(true);
-                    let rebuilt = super::super::root_rebuild::game(&sh.spec, &row, None);
+                    let rebuilt = super::super::root_rebuild::game(&sh.spec, &row, None, None);
                     (plain_row, row, rebuilt)
                 })
                 .unwrap()
@@ -2565,5 +2689,180 @@ pub(super) mod tests {
                 reference.select_fast_session_v1(&state).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn rollout_opponent_parse_and_record_checks_are_strict() {
+        use std::env::VarError::NotPresent;
+        let labels = vec!["T1".to_owned(), "SELF".to_owned()];
+        assert_eq!(parse_rollout_opponent(Err(NotPresent), &labels), Ok(None));
+        assert_eq!(
+            parse_rollout_opponent(Ok("T1".into()), &labels),
+            Ok(Some(0))
+        );
+        assert_eq!(
+            parse_rollout_opponent(Ok("SELF".into()), &labels),
+            Ok(Some(1))
+        );
+        let missing = parse_rollout_opponent(Ok("NOPE".into()), &labels).unwrap_err();
+        assert!(
+            missing.contains("NOPE") && missing.contains("T1,SELF"),
+            "{missing}"
+        );
+        assert!(parse_rollout_opponent(Ok(String::new()), &labels).is_err());
+        assert_eq!(
+            BudgetExtras::parse(Err(NotPresent), Err(NotPresent))
+                .unwrap()
+                .rollout,
+            None
+        );
+        let unset = json!({"id":"x"});
+        let set = json!({"id":"x","rollout_opponent":"SELF"});
+        assert!(check_rollout(&unset, None).is_ok());
+        assert!(check_rollout(&set, Some("SELF")).is_ok());
+        for (row, expected) in [(&unset, Some("SELF")), (&set, None), (&set, Some("T1"))] {
+            let refused = check_rollout(row, expected).unwrap_err();
+            assert!(refused.contains("rollout opponent"), "{refused}");
+        }
+        assert!(check_rollout(&json!({"rollout_opponent":1}), Some("1")).is_err());
+        assert!(check_rollout(&json!({"rollout_opponent":null}), None).is_err());
+    }
+
+    /// A rollout label need not be any case's opponent: the bank's label
+    /// checks accept it, and it is bound because OPPONENTS is.
+    #[test]
+    fn bank_accepts_an_extra_rollout_label_and_binds_it() {
+        use super::super::bank::bank_binding_with_build;
+        let (policy, mut sh, _) = plain_control_fixture(0, 0, 12, 40);
+        let before = bank_binding_with_build(&policy, &sh, "g", "t").unwrap();
+        sh.labels.push("SELF".into());
+        sh.opponents.push(policy.fork_for_collection_v3().unwrap());
+        let after = bank_binding_with_build(&policy, &sh, "g", "t").unwrap();
+        assert_ne!(before, after);
+        assert_eq!(
+            after,
+            bank_binding_with_build(&policy, &sh, "g", "t").unwrap()
+        );
+        sh.labels[1] = "fixture".into();
+        assert!(bank_binding_with_build(&policy, &sh, "g", "t").is_err());
+    }
+
+    /// `S4A_ROLLOUT_OPPONENT` changes only the searches' opponent: set to the
+    /// scheduled label the row equals the unset row except the recorded
+    /// label; set to a different policy the searches change, the label is
+    /// recorded, and the root rebuild keeps the game only under the same
+    /// rollout model.
+    #[test]
+    #[ignore = "native qualification: three complete fixture games with small searches; run with cargo test --release"]
+    fn rollout_opponent_changes_only_searches_and_is_recorded() {
+        let (policy, mut sh, mut src) = plain_control_fixture(0, 0, 100_000, 200_000);
+        src.id = "rollout-opponent-s0-p0".into();
+        src.search_root = "rollout-opponent".into();
+        let mut other = policy.fork_for_collection_v3().unwrap();
+        let mut parameters = other.training_parameters_v3();
+        // The card embedding's padding row must stay zero; perturb the rest.
+        for p in parameters
+            .iter_mut()
+            .filter(|p| p.name != "card_embedding.weight")
+        {
+            for (i, v) in p.values.iter_mut().enumerate() {
+                *v += 0.25 * ((i % 7) as f32 - 3.0);
+            }
+        }
+        other.replace_training_parameters_v3(&parameters).unwrap();
+        sh.labels.push("other".into());
+        sh.opponents.push(other);
+        let play = |rollout: Option<usize>| {
+            budget_case_with_executor(
+                &sh,
+                &policy,
+                &src,
+                40_000,
+                KeyMode::Repaired,
+                false,
+                None,
+                Recording::Disabled,
+                "fixture",
+                ExecutionMode::Persistent,
+                BudgetExtras {
+                    per_decision: Some((8_000, 4_000)),
+                    node_stats: false,
+                    rollout,
+                },
+            )
+            .unwrap()
+        };
+        fn scientific(mut row: Value) -> Value {
+            fn strip(row: &mut Value) {
+                match row {
+                    Value::Object(object) => {
+                        for key in ["wall", "keying_seconds"] {
+                            object.remove(key);
+                        }
+                        object.values_mut().for_each(strip);
+                    }
+                    Value::Array(array) => array.iter_mut().for_each(strip),
+                    _ => {}
+                }
+            }
+            strip(&mut row);
+            row
+        }
+        let (unset, scheduled, changed, rebuilt) = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(256 << 20)
+                .spawn_scoped(scope, || {
+                    let unset = play(None);
+                    let scheduled = play(Some(0));
+                    let changed = play(Some(1));
+                    let rebuilt = [None, Some("other"), Some("fixture")]
+                        .map(|r| super::super::root_rebuild::game(&sh.spec, &changed, None, r));
+                    (unset, scheduled, changed, rebuilt)
+                })
+                .unwrap()
+                .join()
+                .unwrap()
+        });
+        assert_eq!(
+            unset["game"]["valid"], true,
+            "{}",
+            unset["game"]["invalid_reason"]
+        );
+        assert!(unset.get(ROLLOUT_FIELD).is_none());
+        assert_eq!(scheduled[ROLLOUT_FIELD], "fixture");
+        let mut stripped = scheduled.clone();
+        stripped.as_object_mut().unwrap().remove(ROLLOUT_FIELD);
+        assert_eq!(scientific(stripped), scientific(unset.clone()));
+
+        assert_eq!(changed[ROLLOUT_FIELD], "other");
+        assert_eq!(changed["opp"], "fixture");
+        assert_eq!(
+            changed["game"]["valid"], true,
+            "{}",
+            changed["game"]["invalid_reason"]
+        );
+        let (a, b) = (
+            &unset["game"]["searches"][0],
+            &changed["game"]["searches"][0],
+        );
+        assert_eq!(
+            a["root"], b["root"],
+            "the first search root is reached by live play"
+        );
+        assert_ne!(
+            a["tree"], b["tree"],
+            "the rollout opponent changes the search"
+        );
+
+        assert!(rebuilt[0]["void"]
+            .as_str()
+            .unwrap()
+            .contains("rollout opponent"));
+        assert!(rebuilt[1]["void"].is_null(), "{}", rebuilt[1]["void"]);
+        assert_eq!(rebuilt[1][ROLLOUT_FIELD], "other");
+        assert!(rebuilt[2]["void"]
+            .as_str()
+            .unwrap()
+            .contains("rollout opponent"));
     }
 }

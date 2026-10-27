@@ -119,9 +119,11 @@ for 40 Forest against 40 Island. Both checks are read-only, so a trusted interna
 self-play and search rollouts could skip them without changing play. That is filed as separate
 engineering because it reshapes the shared step path.
 
-One natural fair-search game (seed 11, pair 0, leg 0) ends in the engine refusal
-`fail_closed:ravenous_v51_required:Phoenix public roster incomplete`. The game is replayed
-exactly, so it reproduces; error rows name the refused action for the card-coverage owner.
+One natural fair-search game (seed 11, pair 0, leg 0, turn 16) halts with the fail-closed
+terminal `fail_closed:ravenous_v51_required:Phoenix public roster incomplete`, and about 0.1% of
+that match's search simulations end the same way. Games replay exactly, so it reproduces. A
+refused step's error row names the action being applied; a halted game's row carries the
+engine's reason with its turn and decision count.
 
 Not covered yet: gorge's training records (`-record-features`, `dzgorge pack`) and its position
 encoding, which DraftZero's networks consume, have no mtg-kernel counterpart. Networks trained on

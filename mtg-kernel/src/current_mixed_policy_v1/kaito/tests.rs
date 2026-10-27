@@ -59,6 +59,7 @@ mod seekers_folly;
 mod self_reflection;
 mod shivan;
 mod simple_triggers;
+mod skyknight;
 mod skyship;
 mod solemn;
 mod stroke_midnight;

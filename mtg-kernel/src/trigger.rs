@@ -3857,7 +3857,13 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Harrier Strix" => &HARRIER_STRIX_TRIGGERS,
         "Bojuka Bog" => &BOJUKA_BOG_TRIGGERS,
         "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
-        "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => &CONDUIT_PYLONS_TRIGGERS,
+        "Elegant Parlor"
+        | "Lush Portico"
+        | "Underground Mortuary"
+        | "Undercity Sewers"
+        | "Meticulous Archive"
+        | "Hedge Maze"
+        | "Thundering Falls" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
         "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
@@ -4428,10 +4434,20 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    if crate::eternal_cards_v1::replicate_cost(card.name).is_some()
+        && crate::engine::own_spell_copy_snapshot(effect).is_some()
+    {
+        return true;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cards_v1::delayed_effect_matches(card.name, effect) {
+        return true;
+    }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
-    if card.name == "Avenging Hunter" && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+    if crate::eternal_vintage_v1::initiative_granter(card.name)
+        && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
     {
         return true;
     }
@@ -4669,7 +4685,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
         {
             spec
-        } else if card.name == "Avenging Hunter" {
+        } else if crate::eternal_vintage_v1::initiative_granter(card.name) {
             match effect {
                 EffectOp::ResolveInitiativeTrigger { binding } => match binding.kind {
                     InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::Forge)
@@ -5062,9 +5078,12 @@ fn sba_fixed_point_with_protected_triggers(
         let leaving: Vec<ObjectId> = state
             .objects
             .iter()
-            .filter(|(_, obj)| {
+            .filter(|(id, obj)| {
                 obj.zone != Zone::Battlefield
                     && (token_defs[obj.card_def as usize] || obj.v4.is_token)
+                    // A phased-out token still exists (702.26).
+                    && !(cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_e5a_v1::phasing::phased_out(state, *id))
             })
             .map(|(id, _)| id)
             .collect();
@@ -6050,11 +6069,16 @@ fn triggers_from_events(
                             CommittedEvent::ZoneChange {
                                 object,
                                 from,
+                                to,
                                 controller_before,
                                 ..
                             } if *object == id
                                 && uses_leave_lki
-                                && def.condition != TriggerCondition::DiesIfWasCreature =>
+                                && def.condition != TriggerCondition::DiesIfWasCreature
+                                && !(*to == obj.zone
+                                    && crate::eternal_cards_v1::arrival_condition(
+                                        def.condition,
+                                    )) =>
                             {
                                 let Some(zone_change_count) = obj.zone_change_count.checked_sub(1)
                                 else {
@@ -6242,6 +6266,56 @@ fn triggers_from_events(
         }
     }
 
+    // Hexing Squelcher: 'Other creatures you control have "Ward--Pay 2
+    // life."' The warded creature's own ability, one trigger per grant.
+    #[cfg(feature = "eternal-fixtures")]
+    for event in events {
+        let CommittedEvent::Targeted {
+            target,
+            target_zone_change_count,
+            targeting_stack_item,
+            targeting_controller,
+        } = event
+        else {
+            continue;
+        };
+        let Some(live) = state.objects.try_get(*target) else {
+            continue;
+        };
+        if live.zone != Zone::Battlefield
+            || live.zone_change_count != *target_zone_change_count
+            || *targeting_controller == live.controller
+        {
+            continue;
+        }
+        let controller = live.controller;
+        for _ in 0..crate::eternal_lurrus_v1::granted_life_wards(state, *target) {
+            let ward_target = crate::state::StackTargetContractV4::capture(
+                state,
+                crate::state::Target::Object(*target),
+            );
+            new_triggers.push(PendingTrigger {
+                controller,
+                source: *target,
+                granted_by: None,
+                effect: EffectOp::CounterUnlessPaysLifeWithChoice {
+                    ward_target,
+                    targeting_stack_item: *targeting_stack_item,
+                    life: 2,
+                },
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(AbilitySourceContractV4::capture(state, *target)),
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
+        }
+    }
+
     // Attachment-granted abilities belong to the equipped creature. Each
     // Equipment grants a separate trigger, and its exact incarnation is
     // carried independently as provenance.
@@ -6358,6 +6432,8 @@ fn triggers_from_events(
     new_triggers.extend(crate::standard_cards_v1::end_step_delayed_triggers(
         state, events,
     ));
+    #[cfg(feature = "eternal-fixtures")]
+    new_triggers.extend(crate::eternal_cards_v1::delayed_triggers(state, events));
 
     uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
     state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);

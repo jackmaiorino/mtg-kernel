@@ -334,6 +334,18 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::UrzasLandsIfMetalcraftV1 => {
+            // One, or with three artifacts the controller's Urza's lands.
+            // Vocabulary gap: no conditional count or subtype class.
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Count,
+            );
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicValueDef::ControllerLifeTotal => {
             // Frozen count/read vocabulary cannot encode a player's signed life
             // total as a token quantity. The precise Ajani successor owns it.
@@ -582,7 +594,40 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
         LibraryCardFilter::AnyLand | LibraryCardFilter::LandWithBasicLandType => {
             ObjF::Typed(CardTypeF::Land)
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => {
+            // Land subtypes occur only on lands. Vocabulary gap: ObjF has no
+            // subtype class.
+            let _ = subtypes;
+            ObjF::Typed(CardTypeF::Land)
+        }
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
+        LibraryCardFilter::CardWithTypeV1(card_type) => ObjF::Typed(card_type.into()),
+        LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
+            // The frozen vocabulary has no library mana-value bound.
+            let _ = maximum;
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Artifact)
+        }
+        LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => {
+            // A mana-cost shape, not a mana value: opaque to the vocabulary.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Artifact)
+        }
+        LibraryCardFilter::BlueInstantV1 => {
+            // The color refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Instant)
+        }
+        LibraryCardFilter::ColorlessCreatureV1 => {
+            // The colorless refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Creature)
+        }
+        LibraryCardFilter::InstantOrFlashV1 => {
+            // The flash alternative has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Instant)
+        }
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(_) => ObjF::Permanent,
         LibraryCardFilter::ArtifactWithManaValue(_) => {
             // The frozen vocabulary lacks an exact mana-value read predicate.
@@ -621,6 +666,15 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
         PermanentFilter::Token => (ObjF::Token, None),
         PermanentFilter::AnotherWithSubtype(_) => (ObjF::Permanent, None),
+        PermanentFilter::DesertV1 => {
+            // Vocabulary gap: ObjF has no subtype class.
+            (ObjF::Typed(CardTypeF::Land), None)
+        }
+        PermanentFilter::BlueV1 => {
+            // Vocabulary gap: ObjF has no color class.
+            (ObjF::Permanent, None)
+        }
+        PermanentFilter::NonlandV1 => (ObjF::NonlandPermanent, None),
     }
 }
 

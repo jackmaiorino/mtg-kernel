@@ -38,9 +38,16 @@ pub struct CustomCardCountV1 {
 #[serde(deny_unknown_fields)]
 pub struct CustomDeckV1 {
     pub cards: Vec<CustomCardCountV1>,
+    /// The deck's companion (702.139), outside the mainboard. Absent from
+    /// the wire, the deck identity and every hash when the deck has none.
+    /// Only this JSONL session's reset accepts one; every other consumer of
+    /// a custom deck rejects a companion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub companion: Option<String>,
 }
 
 impl CustomDeckV1 {
+    /// The mainboard, for a deck without a companion.
     pub fn resolve(&self) -> Result<Vec<u16>, String> {
         self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::ExistingV40)
     }
@@ -80,6 +87,36 @@ impl CustomDeckV1 {
     }
 
     fn resolve_for_scope(
+        &self,
+        scope: crate::rl::CommonProjectionScopeV42,
+    ) -> Result<Vec<u16>, String> {
+        if let Some(companion) = &self.companion {
+            return Err(format!(
+                "companion {companion:?} is supported only by the Limited JSONL reset"
+            ));
+        }
+        self.resolve_mainboard(scope)
+    }
+
+    /// The mainboard and the companion's definition id, if any. A companion
+    /// must be a fully supported companion card whose deck condition the
+    /// mainboard meets.
+    pub fn resolve_with_companion(&self) -> Result<(Vec<u16>, Option<u16>), String> {
+        let ids = self.resolve_mainboard(crate::rl::CommonProjectionScopeV42::ExistingV40)?;
+        let Some(name) = &self.companion else {
+            return Ok((ids, None));
+        };
+        let id = card_id_by_name(name).ok_or_else(|| format!("unknown companion {name:?}"))?;
+        match crate::eternal_lurrus_v1::companion_condition_met(id, &ids) {
+            Some(true) => Ok((ids, Some(id))),
+            Some(false) => Err(format!(
+                "the mainboard does not meet companion {name:?}'s deck condition"
+            )),
+            None => Err(format!("card {name:?} is not a supported companion")),
+        }
+    }
+
+    fn resolve_mainboard(
         &self,
         scope: crate::rl::CommonProjectionScopeV42,
     ) -> Result<Vec<u16>, String> {
@@ -134,6 +171,24 @@ fn content_identity(ids: &[u16]) -> String {
     for id in ids {
         hash.update(id.to_le_bytes());
     }
+    format!("custom-v1:{:x}", hash.finalize())
+}
+
+/// A deck's identity, with its companion's id after the mainboard when it
+/// has one. A deck without a companion keeps `content_identity`.
+fn content_identity_with_companion(ids: &[u16], companion: Option<u16>) -> String {
+    let Some(companion) = companion else {
+        return content_identity(ids);
+    };
+    let mut hash = Sha256::new();
+    hash.update(b"kernel_custom_deck/v1\0");
+    hash.update(KERNEL_CARDDB_HASH.to_le_bytes());
+    hash.update((ids.len() as u64).to_le_bytes());
+    for id in ids {
+        hash.update(id.to_le_bytes());
+    }
+    hash.update(b"companion/v1\0");
+    hash.update(companion.to_le_bytes());
     format!("custom-v1:{:x}", hash.finalize())
 }
 
@@ -385,9 +440,13 @@ impl LimitedJsonlServerV1 {
                 ..
             } => {
                 let mut ids = [Vec::new(), Vec::new()];
+                let mut companions = [None, None];
                 for (seat, deck) in decks.iter().enumerate() {
-                    match deck.resolve() {
-                        Ok(resolved) => ids[seat] = resolved,
+                    match deck.resolve_with_companion() {
+                        Ok((resolved, companion)) => {
+                            ids[seat] = resolved;
+                            companions[seat] = companion;
+                        }
                         Err(error) => {
                             return LimitedReplyV1::error(
                                 Some(request_id),
@@ -397,19 +456,27 @@ impl LimitedJsonlServerV1 {
                         }
                     }
                 }
-                let deck_ids = [&ids[0], &ids[1]].map(|deck| content_identity(deck));
+                let deck_ids = [0, 1]
+                    .map(|seat| content_identity_with_companion(&ids[seat], companions[seat]));
                 let session = if self.london_mulligans {
-                    RlEpisodeSessionV1::reset_with_custom_decks_and_london_v1(
+                    RlEpisodeSessionV1::reset_with_custom_decks_companions_and_london_v1(
                         *episode_id,
                         *env_seed,
                         *max_physical_decisions,
                         *max_policy_steps,
                         deck_ids,
                         [&ids[0], &ids[1]],
+                        companions,
                         self.priority_mode,
                         self.foundations_combat,
                         true,
                     )
+                } else if companions.iter().any(Option::is_some) {
+                    return LimitedReplyV1::error(
+                        Some(request_id),
+                        "unsupported_deck",
+                        "companions need the London mulligan schema",
+                    );
                 } else {
                     RlEpisodeSessionV1::reset_with_custom_decks_v1(
                         *episode_id,
@@ -497,6 +564,7 @@ mod tests {
                     name: name.into(),
                     count: 40,
                 }],
+                companion: None,
             };
             if next_five {
                 let resolved = deck.resolve_full().unwrap();
@@ -520,6 +588,7 @@ mod tests {
                 name: "Forest".into(),
                 count: 40,
             }],
+            companion: None,
         };
         assert_eq!(
             basics.resolve().unwrap(),
@@ -534,6 +603,7 @@ mod tests {
                 name: "Alesha, Who Laughs at Fate".into(),
                 count: 0,
             }],
+            companion: None,
         };
         assert_eq!(
             zero.resolve().unwrap_err(),

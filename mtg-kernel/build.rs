@@ -21,6 +21,12 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+mod build_eternal_e5a_v1;
+mod build_eternal_e5b_v1;
+mod build_eternal_e6a_v1;
+mod build_eternal_lurrus_v1;
+mod build_eternal_v1;
+mod build_eternal_vintage_v1;
 mod build_standard_v1;
 #[allow(dead_code)]
 #[path = "../build_support/native_store_build_capture_v1.rs"]
@@ -1910,6 +1916,12 @@ fn standard_magezero_fixtures() -> bool {
     env::var_os("CARGO_FEATURE_STANDARD_MAGEZERO_FIXTURES").is_some()
 }
 
+/// True for `eternal-fixtures` builds, which also enable the Standard feature
+/// and append `data/eternal_v1/cards_v1.json` after the Standard registry.
+fn eternal_fixtures() -> bool {
+    env::var_os("CARGO_FEATURE_ETERNAL_FIXTURES").is_some()
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let repo_root = Path::new(&manifest_dir).join("..");
@@ -1949,6 +1961,8 @@ fn main() {
     println!("cargo:rerun-if-changed={}", fdn_path.display());
     let standard_path = repo_root.join("data/standard/magezero_v1/cards_v1.json");
     println!("cargo:rerun-if-changed={}", standard_path.display());
+    let eternal_path = repo_root.join("data/eternal_v1/cards_v1.json");
+    println!("cargo:rerun-if-changed={}", eternal_path.display());
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         assert_eq!(
             data.cards.len(),
@@ -1972,6 +1986,17 @@ fn main() {
             "extension registry schema mismatch"
         );
         data.cards.extend(extension.cards);
+        if eternal_fixtures() {
+            let eternal_text = fs::read_to_string(&eternal_path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", eternal_path.display()));
+            let eternal: CardsFile = serde_json::from_str(&eternal_text)
+                .unwrap_or_else(|e| panic!("failed to parse {}: {e}", eternal_path.display()));
+            assert_eq!(
+                eternal.version, EXPECTED_SCHEMA_VERSION,
+                "eternal registry schema mismatch"
+            );
+            data.cards.extend(eternal.cards);
+        }
     }
 
     let mut seen_names = HashSet::new();
@@ -2822,6 +2847,8 @@ enum StackSpellFilter {
     Noncreature,
     Artifact,
     Creature,
+    /// "Target spell with mana value 1" (Mental Misstep).
+    ManaValueOneV1,
 }
 
 impl MillPlayer {
@@ -2843,6 +2870,7 @@ impl StackSpellFilter {
             StackSpellFilter::Noncreature => "noncreature",
             StackSpellFilter::Artifact => "artifact",
             StackSpellFilter::Creature => "creature",
+            StackSpellFilter::ManaValueOneV1 => "mana_value_1",
         }
     }
 
@@ -2857,6 +2885,7 @@ impl StackSpellFilter {
             StackSpellFilter::Noncreature => "TargetSpec::NoncreatureSpellOnStack",
             StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
             StackSpellFilter::Creature => "TargetSpec::CreatureSpellOnStack",
+            StackSpellFilter::ManaValueOneV1 => "TargetSpec::SpellWithManaValueV1(1)",
         }
     }
 }
@@ -3135,6 +3164,11 @@ enum AbilityCostRecipe {
     RemoveNetCounterFromSelf,
     RemoveChargeCounterFromSelf,
     RemoveSourceIncubationCounters(u16),
+    /// "Pay {E}..." (`CostComponent::PayEnergyV1`).
+    PayEnergy(u8),
+    /// "Exile N cards from your graveyard"
+    /// (`CostComponent::ExileOtherCardsFromOwnGraveyard`).
+    ExileGraveyardCards(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3270,6 +3304,12 @@ enum PermanentFilterRecipe {
     AnotherArtifact,
     Creature,
     AnotherElf,
+    /// A controlled land (Edge of Autumn's "Cycling--Sacrifice a land").
+    Land,
+    /// A controlled Desert (Lazotep Quarry's "Sacrifice a Desert").
+    Desert,
+    /// A controlled nonland permanent (Bolas's Citadel).
+    Nonland,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3509,6 +3549,7 @@ fn special_for(name: &str) -> Special {
         _ => fdn_program_for(name)
             .or_else(|| standard_program_for(name))
             .or_else(|| build_standard_v1::special_for(name))
+            .or_else(|| build_eternal_v1::special_for(name))
             .unwrap_or(Special::None),
     }
 }
@@ -4476,6 +4517,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::TOXIC_1");
     }
     keywords.extend(build_standard_v1::keywords_for(&card.name));
+    keywords.extend(build_eternal_v1::keywords_for(&card.name));
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -4546,6 +4588,8 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         "Citadel Gate" => vec!["W"],
         "Sea Gate" => vec!["U"],
         "Heap Gate" => vec!["C"],
+        // Planar Nexus and Talon Gates of Madara: Heap Gate's shape.
+        "Planar Nexus" | "Talon Gates of Madara" => vec!["C"],
         // Conduit Pylons' free printed ability is colorless-only; its paid
         // any-color ability is the additional rich definition below, same
         // shape as Heap Gate.
@@ -4557,6 +4601,12 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         // mana ability the automatic payment planner must never assume is
         // always available.
         "Barrels of Blasting Jelly" => vec![],
+        // Giant's Boulder's only mana ability is its paid any-color one
+        // below, never an automatic payment source. The same holds for
+        // Prophetic Prism and Energy Refractor.
+        "Giant's Boulder" | "Prophetic Prism" | "Energy Refractor" => vec![],
+        // Dimir Aqueduct's one action identifies the whole {U}{B} bundle.
+        "Dimir Aqueduct" => vec!["U"],
         _ if standard_lands::overrides_primary_mana(&card.name) => {
             standard_lands::primary_mana_ability_colors(&card.name)
         }
@@ -4642,12 +4692,15 @@ fn additional_mana_abilities_for(name: &str) -> String {
         // Conduit Pylons' "{1}, {T}: Add one mana of any color" is Heap
         // Gate's paid any-color ability verbatim.
         "Conduit Pylons" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
+        // Giant's Boulder's "{1}, {T}: Add one mana of any color."
+        "Giant's Boulder" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
         // Barrels of Blasting Jelly's "{1}: Add one mana of any color.
         // Activate only once each turn." has no tap symbol at all
         // (`ManaAbilityCostDef::None`); the per-turn cap reuses Wall of
         // Roots' existing `max_activations_per_turn` enforcement.
         "Barrels of Blasting Jelly" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::None, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) } }]",
-        _ => "&[]",
+        _ => build_eternal_e5a_v1::additional_mana_abilities_for(name)
+            .unwrap_or_else(|| build_eternal_e5b_v1::additional_mana_abilities_for(name)),
     }
     .to_string()
 }
@@ -4668,7 +4721,9 @@ fn object_name_for(name: &str) -> &str {
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
         "Knight Vigilance Token" => "Knight Token",
-        _ => build_standard_v1::object_name_for(name).unwrap_or(name),
+        _ => build_standard_v1::object_name_for(name)
+            .or_else(|| build_eternal_lurrus_v1::object_name_for(name))
+            .unwrap_or(name),
     }
 }
 
@@ -4679,7 +4734,10 @@ fn transform_face_for(name: &str) -> &'static str {
         "Graveyard Trespasser" => "Some(TransformFaceDef { name: \"Graveyard Glutton\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::B], power: Some(4), toughness: Some(4), keywords: Keywords::NONE })",
         "Brutal Cathar" => "Some(TransformFaceDef { name: \"Moonrage Brute\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::R], power: Some(3), toughness: Some(3), keywords: Keywords::FIRST_STRIKE })",
         "Incubator Token" => "Some(TransformFaceDef { name: \"Phyrexian Token\", types: &[CardType::Artifact, CardType::Creature], subtypes: &[Subtype::Phyrexian], colors: &[], power: Some(0), toughness: Some(0), keywords: Keywords::NONE })",
-        _ => build_standard_v1::transform_face_for(name),
+        _ => match build_standard_v1::transform_face_for(name) {
+            "None" => build_eternal_v1::transform_face_for(name),
+            face => face,
+        },
     }
 }
 
@@ -4695,14 +4753,18 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Incubator Token" => Some("Phyrexian Token"),
         "Brutal Cathar" => Some("Moonrage Brute"),
         "Graveyard Trespasser" => Some("Graveyard Glutton"),
-        _ => build_standard_v1::transform_face_name_for(name),
+        _ => build_standard_v1::transform_face_name_for(name)
+            .or_else(|| build_eternal_v1::transform_face_name_for(name)),
     }
 }
 
 fn saga_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(SagaDef { chapter_effects: &[saga_chapter_modern_age_loot, saga_chapter_modern_age_loot, saga_chapter_modern_age_transform] })",
-        _ => build_standard_v1::saga_for(name),
+        _ => match build_standard_v1::saga_for(name) {
+            "None" => build_eternal_vintage_v1::saga_for(name),
+            saga => saga,
+        },
     }
 }
 
@@ -4719,7 +4781,7 @@ fn conditional_tap_yield_for(name: &str) -> &'static str {
         "Urza's Tower" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Mine }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::PowerPlant }], amount_when_met: 3, amount_otherwise: 1 })",
         "Urza's Mine" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Tower }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::PowerPlant }], amount_when_met: 2, amount_otherwise: 1 })",
         "Urza's Power Plant" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Mine }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Tower }], amount_when_met: 2, amount_otherwise: 1 })",
-        _ => "None",
+        _ => build_eternal_vintage_v1::conditional_tap_yield_for(name),
     }
 }
 
@@ -4732,7 +4794,7 @@ fn conditional_tap_yield_program_for(name: &str) -> Option<&'static str> {
         "Urza's Tower" => Some("mana_ability_add_urzas_tower"),
         "Urza's Mine" => Some("mana_ability_add_urzas_mine"),
         "Urza's Power Plant" => Some("mana_ability_add_urzas_power_plant"),
-        _ => None,
+        _ => build_eternal_vintage_v1::conditional_tap_yield_program_for(name),
     }
 }
 
@@ -4752,7 +4814,7 @@ fn mana_ability_def_for(name: &str) -> &'static str {
         "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
         "Treasure Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapAndSacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Eldrazi Spawn Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => build_eternal_v1::mana_ability_def_for(name),
     }
 }
 
@@ -4787,7 +4849,8 @@ fn kicker_cost_for(name: &str) -> String {
         "Tear Asunder" => cost_src("{1}{B}"),
         "Grow from the Ashes" => cost_src("{2}"),
         "Gatekeeper of Malakir" => cost_src("{B}"),
-        _ => "None".to_string(),
+        _ => build_eternal_lurrus_v1::kicker_cost_for(name)
+            .map_or_else(|| "None".to_string(), cost_src),
     }
 }
 
@@ -4845,7 +4908,10 @@ fn alt_cost_for(name: &str) -> &'static str {
         "Knight-Errant of Eos" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 })], condition: AltCostCondition::Always })",
         "Overlord of the Mistmoors" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::W)], generic: 2, x_count: 0 })], condition: AltCostCondition::ImpendingFromHand { time_counters: 4 } })",
         "Nova Hellkite" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
-        _ => build_standard_v1::alt_cost_for(name),
+        _ => match build_standard_v1::alt_cost_for(name) {
+            "None" => build_eternal_v1::alt_cost_for(name),
+            alt => alt,
+        },
     }
 }
 
@@ -4866,7 +4932,10 @@ fn additional_cost_for(name: &str) -> &'static str {
         "Raze" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Land }])"
         }
-        _ => build_standard_v1::additional_cost_for(name),
+        _ => match build_standard_v1::additional_cost_for(name) {
+            "None" => build_eternal_vintage_v1::additional_cost_for(name),
+            cost => cost,
+        },
     }
 }
 
@@ -4954,6 +5023,7 @@ fn flashback_for(name: &str) -> String {
             )
         }
         "Dread Return" => "Some(FlashbackDef { cost: &[CostComponent::SacrificeControlled { count: 3, filter: PermanentFilter::Creature }] })".to_string(),
+        "Plunder the Trollshaws" => build_eternal_v1::flashback_for(name),
         "Flaring Pain" => {
             let (pips, generic, x_count) = parse_cost("{R}");
             format!(
@@ -4983,7 +5053,7 @@ fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => build_eternal_e6a_v1::flashback_for(name),
     }
 }
 
@@ -5000,7 +5070,7 @@ fn escape_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => build_eternal_v1::escape_for(name),
     }
 }
 
@@ -6302,7 +6372,10 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
-        _ => build_standard_v1::activated_ability_recipes_for(name),
+        _ => match build_standard_v1::activated_ability_recipes_for(name) {
+            [] => build_eternal_v1::activated_ability_recipes_for(name),
+            recipes => recipes,
+        },
     }
 }
 
@@ -6369,6 +6442,10 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::RemoveNetCounterFromSelf => {
             "CostComponent::RemoveNetCounterFromSelf".to_string()
         }
+        AbilityCostRecipe::PayEnergy(amount) => format!("CostComponent::PayEnergyV1({amount})"),
+        AbilityCostRecipe::ExileGraveyardCards(count) => {
+            format!("CostComponent::ExileOtherCardsFromOwnGraveyard({count})")
+        }
     }
 }
 
@@ -6422,6 +6499,8 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
             "exile_craft_artifact_material".to_string()
         }
         AbilityCostRecipe::RemoveNetCounterFromSelf => "remove_net_counter_from_self".to_string(),
+        AbilityCostRecipe::PayEnergy(amount) => format!("pay_energy:{amount}"),
+        AbilityCostRecipe::ExileGraveyardCards(count) => format!("exile_graveyard_cards:{count}"),
     }
 }
 
@@ -6433,6 +6512,9 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
         PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
         PermanentFilterRecipe::Creature => "PermanentFilter::Creature",
+        PermanentFilterRecipe::Land => "PermanentFilter::Land",
+        PermanentFilterRecipe::Desert => "PermanentFilter::DesertV1",
+        PermanentFilterRecipe::Nonland => "PermanentFilter::NonlandV1",
     }
 }
 
@@ -6444,6 +6526,9 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
         PermanentFilterRecipe::AnotherArtifact => "another_artifact",
         PermanentFilterRecipe::Creature => "creature",
+        PermanentFilterRecipe::Land => "land",
+        PermanentFilterRecipe::Desert => "desert",
+        PermanentFilterRecipe::Nonland => "nonland",
     }
 }
 
@@ -6830,6 +6915,7 @@ fn signed_fn_token(value: i8) -> String {
 
 fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
     build_standard_v1::activated_ability_face_for(name, index)
+        .or_else(|| build_eternal_v1::activated_ability_face_for(name, index))
 }
 
 /// Rust source for a card's activated abilities. `canonical` omits the
@@ -6982,7 +7068,7 @@ fn mode2_for(name: &str) -> String {
             program_target_spec_src(mode.target),
             program_function_suffix(name)
         ),
-        _ => "None".to_string(),
+        _ => build_eternal_v1::mode2_for(name).to_string(),
     }
 }
 
@@ -7002,7 +7088,7 @@ fn mode3_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::AnyPlayer, effect: mode3_effect_piracy_charm_discard })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::UpToTwoPlayers, effect: mode3_effect_thraben_charm_exile_graveyards })".to_string(),
         Special::PhantomInterference => "Some(ModeDef { target_spec: TargetSpec::AnySpellOnStack, effect: mode2_effect_phantom_interference_counter })".to_string(),
-        _ => "None".to_string(),
+        _ => build_eternal_v1::mode3_for(name).to_string(),
     }
 }
 
@@ -7045,7 +7131,7 @@ fn adventure_for(name: &str) -> String {
         "Fang Dragon" => {
             "Some(AdventureDef { name: \"Forktail Sweep\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_damage_all_creatures_opponent_controlled_1 })".to_string()
         }
-        _ => "None".to_string(),
+        _ => build_eternal_v1::adventure_for(name).to_string(),
     }
 }
 
@@ -7068,7 +7154,7 @@ fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
             amount: 1,
             filter: CreatureEffectFilterRecipe::OpponentControlled,
         }),
-        _ => None,
+        _ => build_eternal_v1::adventure_effect_recipe_for(name),
     }
 }
 
@@ -7082,7 +7168,7 @@ fn adventure_face_name_for(name: &str) -> Option<&'static str> {
         "Imodane's Recruiter" => Some("Train Troops"),
         "Virtue of Loyalty" => Some("Ardenvale Fealty"),
         "Fang Dragon" => Some("Forktail Sweep"),
-        _ => None,
+        _ => build_eternal_v1::adventure_face_name_for(name),
     }
 }
 
@@ -7130,7 +7216,11 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         "Luminous Rebuke" => {
             "Some(GenericCostReductionDef { generic_per_count: 3, count: DynamicCountDef::SpellTargetsTappedCreature })"
         }
-        "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" => {
+        "Myr Enforcer"
+        | "Thoughtcast"
+        | "Refurbished Familiar"
+        | "Utrom Monitor"
+        | "Gearseeker Serpent" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
         "Cryptic Serpent" | "Tolarian Terror" => {
@@ -7168,7 +7258,10 @@ fn ward_cost_for(name: &str) -> &'static str {
         "Sire of Seven Deaths" => "Some(WardCostDef::PayLife(7))",
         "Zul Ashur, Lich Lord" => "Some(WardCostDef::PayLife(2))",
         "Graveyard Trespasser" => "Some(WardCostDef::DiscardCard)",
-        _ => build_standard_v1::ward_cost_for(name),
+        _ => match build_standard_v1::ward_cost_for(name) {
+            "None" => build_eternal_lurrus_v1::ward_cost_for(name),
+            ward => ward,
+        },
     }
 }
 
@@ -7201,7 +7294,10 @@ fn equipment_for(name: &str) -> &'static str {
         "Cori-Steel Cutter" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
         "Fishing Pole" => "Some(crate::fishing_pole_v39::profile())",
-        _ => build_standard_v1::equipment_for(name),
+        _ => match build_standard_v1::equipment_for(name) {
+            "None" => build_eternal_v1::equipment_for(name),
+            profile => profile,
+        },
     }
 }
 
@@ -7214,7 +7310,7 @@ fn attachment_for(name: &str) -> &'static str {
         "Monster Role Token" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::TRAMPLE, per_controlled_subtype: None }))",
         "Zoetic Glyph" => "Some(AttachmentDef::AuraArtifactAnimation(AnimationDef { power:5, toughness:4, artifact:false, colors:&[], subtypes:&[Subtype::Golem], keywords:Keywords::NONE, until_end_of_turn:false }))",
         "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
-        _ => "None",
+        _ => build_eternal_e6a_v1::attachment_for(name),
     }
 }
 
@@ -7225,17 +7321,19 @@ fn optional_additional_cost_for(name: &str) -> &'static str {
         }
         "Troublemaker Ouphe" => "Some(OptionalAdditionalCostDef::Bargain)",
         "Make Disappear" => "Some(OptionalAdditionalCostDef::Casualty(1))",
-        _ => "None",
+        _ => build_eternal_e5a_v1::optional_additional_cost_for(name),
     }
 }
 
 fn changeling_for(name: &str) -> bool {
-    name == "Masked Vandal" || name == "Webweaver Changeling"
+    name == "Masked Vandal"
+        || name == "Webweaver Changeling"
+        || build_eternal_e5b_v1::changeling_for(name)
 }
 
 /// True iff this card has Delve (702.65) -- see `CardDef::delve`'s doc.
 fn delve_for(name: &str) -> bool {
-    name == "Gurmag Angler"
+    name == "Gurmag Angler" || build_eternal_v1::delve_for(name)
 }
 
 /// Stable semantic binding for definition-owned triggered abilities. Runtime
@@ -7305,11 +7403,11 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Cat Collector" => "etb:create_food:1;controller_first_positive_life_gain_own_turn:anchored_history:event_time_source_controller_incarnation_capture:unprocessed_positive_gain_suffix:after_resolution_apnap:create_white_1_1_cat:1",
         "Mischievous Mystic" => "controller_draws_nth_card_this_turn:2:create_faerie_token:1",
         "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:copy_source_current_copiable_values_or_original_battlefield_departure_lki:captured_trigger_controller:replacement_batch",
-        "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4",
+        "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4:one_simultaneous_entry_batch",
         "Slumbering Cerberus" => "printed_active:does_not_untap_during_current_controller_untap_step:beginning_each_end_step:intervening_if_creature_died_this_turn:recheck_morbid:untap_captured_source_owner_battlefield_incarnation:stun_replacement:untargeted",
         "Cackling Prowler" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:plus_one_counter_on_bound_source:1",
         "Needletooth Pack" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:mandatory_controlled_creature_target:exact_incarnation:plus_one_counters:2",
-        "Hare Apparent" => "etb:captured_controller:resolution_count_other_controlled_creatures_effective_name:Hare Apparent:exclude_captured_source_incarnation:create_white_1_1_Rabbit_Token:snapshot_once:untargeted:any_number_in_limited_deck",
+        "Hare Apparent" => "etb:captured_controller:resolution_count_other_controlled_creatures_effective_name:Hare Apparent:exclude_captured_source_incarnation:create_white_1_1_Rabbit_Token:snapshot_once:one_simultaneous_entry_batch:untargeted:any_number_in_limited_deck",
         "Sylvan Scavenging" => "beginning_controller_end_step:mode_before_targets:controlled_creature_plus_one_counter:1|resolution_controls_creature_power_at_least:4:create_green_3_3_raccoon_token:1",
         "Kiora, the Rising Tide" => "etb:draw:2:then_discard:2;attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:optional_create_legendary_blue_8_8_octopus_scion:1",
         "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
@@ -7425,7 +7523,13 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Harrier Strix" => "etb:target_any_permanent:tap",
         "Bojuka Bog" => "etb:target_player:exile_graveyard",
         "Conduit Pylons" => "etb:surveil:1",
-        "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => "etb:surveil:1",
+        "Elegant Parlor"
+        | "Lush Portico"
+        | "Underground Mortuary"
+        | "Undercity Sewers"
+        | "Meticulous Archive"
+        | "Hedge Maze"
+        | "Thundering Falls" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
         "Banishing Light" => "self_etb:target_opponent_nonland_permanent:exile_until_exact_source_incarnation_leaves:no_exile_if_source_already_left:immediate_return_exact_exile_incarnation_under_owner:independent_of_removed_source_abilities",
@@ -7514,7 +7618,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Hullbreaker Horror" => {
             "cast_spell:mode_before_targets:spell_you_dont_control_to_owners_hand|nonland_permanent_to_owners_hand|no_mode"
         }
-        _ => build_standard_v1::trigger_recipe_for(name),
+        _ => match build_standard_v1::trigger_recipe_for(name) {
+            "none" => build_eternal_v1::trigger_recipe_for(name),
+            recipe => recipe,
+        },
     }
 }
 
@@ -10387,7 +10494,7 @@ fn codegen(cards: &[CardJson]) -> String {
         let extra_modes = if c.name == "Gix's Command" {
             "&[ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_3 }, ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_4 }, ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_5 }]"
         } else {
-            "&[]"
+            build_eternal_lurrus_v1::additional_modes_for(&c.name)
         };
         writeln!(out, "        additional_modes: {extra_modes},").unwrap();
         let kicked_target = if c.name == "Tear Asunder" {
@@ -10740,6 +10847,11 @@ fn codegen(cards: &[CardJson]) -> String {
         // `data/standard/magezero_v1/cards_v1.json`, versioned separately
         // from the FDN Limited catalog.
         canon = String::from("kernel_carddb_standard/v7\n");
+    }
+    if eternal_fixtures() {
+        // `eternal-fixtures` builds: the Standard catalog plus
+        // `data/eternal_v1/cards_v1.json`, versioned separately.
+        canon = String::from("kernel_carddb_eternal/v1\n");
     }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
@@ -11289,6 +11401,35 @@ fn subtype_variant(t: &str) -> &'static str {
         "Chandra" => "Subtype::Chandra",
         "Vehicle" => "Subtype::Vehicle",
         "Pilot" => "Subtype::Pilot",
+        "Utrom" => "Subtype::Utrom",
+        "Scientist" => "Subtype::Scientist",
+        "Robot" => "Subtype::Robot",
+        "Wraith" => "Subtype::Wraith",
+        "Army" => "Subtype::Army",
+        "Lhurgoyf" => "Subtype::Lhurgoyf",
+        "Halfling" => "Subtype::Halfling",
+        "Tamiyo" => "Subtype::Tamiyo",
+        "Mutant" => "Subtype::Mutant",
+        "Jace" => "Subtype::Jace",
+        "Archon" => "Subtype::Archon",
+        "Karn" => "Subtype::Karn",
+        "Tezzeret" => "Subtype::Tezzeret",
+        "Frog" => "Subtype::Frog",
+        "Sorcerer" => "Subtype::Sorcerer",
+        "Bard" => "Subtype::Bard",
+        "Sphinx" => "Subtype::Sphinx",
+        "Sand" => "Subtype::Sand",
+        "Scion" => "Subtype::Scion",
+        "Crab" => "Subtype::Crab",
+        "Kor" => "Subtype::Kor",
+        "Arcane" => "Subtype::Arcane",
+        "Oko" => "Subtype::Oko",
+        "Ugin" => "Subtype::Ugin",
+        "Cave" => "Subtype::Cave",
+        "Cloud" => "Subtype::Cloud",
+        "Lair" => "Subtype::Lair",
+        "Locus" => "Subtype::Locus",
+        "Planet" => "Subtype::Planet",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

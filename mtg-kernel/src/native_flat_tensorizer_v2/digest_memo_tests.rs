@@ -109,3 +109,39 @@ fn digest_memo_separates_namespaces() {
         .get(hash_state, STATE_HASH_NAMESPACE_V2, message)
         .is_some());
 }
+
+#[test]
+fn digest_memo_budget_honours_the_variable_then_the_program_default() {
+    const MIB: usize = 1 << 20;
+    // Unset: the program default (0 keeps it off).
+    assert_eq!(digest_memo_budget_from_v1(None, 0), 0);
+    assert_eq!(digest_memo_budget_from_v1(None, 64), 64 * MIB);
+    // Set: the variable wins, including 0 to turn a default off.
+    assert_eq!(digest_memo_budget_from_v1(Some("0".into()), 64), 0);
+    assert_eq!(digest_memo_budget_from_v1(Some("8".into()), 64), 8 * MIB);
+    // Unparsable means off, as before.
+    assert_eq!(digest_memo_budget_from_v1(Some("lots".into()), 64), 0);
+}
+
+/// A program default gives way while suppressed (CPU-limited searches); a
+/// budget the environment variable set does not; the guard restores.
+#[test]
+fn suppression_turns_off_only_a_program_default_digest_memo() {
+    const B: usize = 64 << 20;
+    assert_eq!(digest_memo_effective_v1(B, false, false), B);
+    assert_eq!(digest_memo_effective_v1(B, false, true), 0);
+    assert_eq!(digest_memo_effective_v1(B, true, true), B);
+    assert_eq!(digest_memo_effective_v1(B, true, false), B);
+    let suppressed = || DIGEST_MEMO_DEFAULT_SUPPRESSED_V1.with(std::cell::Cell::get);
+    assert!(!suppressed());
+    {
+        let _outer = suppress_default_digest_memo_v1();
+        assert!(suppressed());
+        {
+            let _inner = suppress_default_digest_memo_v1();
+            assert!(suppressed());
+        }
+        assert!(suppressed());
+    }
+    assert!(!suppressed());
+}

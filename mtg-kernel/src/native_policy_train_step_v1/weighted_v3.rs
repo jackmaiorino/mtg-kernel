@@ -177,6 +177,7 @@ impl NativePolicyValueTrainStateV1 {
         input_config: NativePolicyValueModelConfigV1,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("weighted loss")?;
+        self.require_no_input_contract_v1("weighted loss")?;
         validate_weighted_inputs_v3(groups, group_weights)?;
         if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
@@ -376,6 +377,7 @@ impl NativePolicyValueTrainStateV1 {
                     zero_gradients(&parameters),
                     &execution_context,
                     TrainingMathV1::PlatformLibm,
+                    ThreadMxcsrCheckV1::Off,
                 )?;
                 (gradients, gauge_accumulator)
             }

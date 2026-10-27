@@ -293,6 +293,8 @@ fn spell_floating_pool(
     legendary_spell: bool,
     spell_subtypes: &[u16],
     all_creature_types: bool,
+    artifact_spell: bool,
+    colorless_eldrazi_spell: bool,
 ) -> [u8; 6] {
     let mut pool = state.players[player.index()].mana_pool;
     for unit in &state.players[player.index()].restricted_mana_pool.0 {
@@ -303,6 +305,8 @@ fn spell_floating_pool(
                 legendary_spell,
                 spell_subtypes,
                 all_creature_types,
+                artifact_spell,
+                colorless_eldrazi_spell,
             )
         {
             pool[unit.color.pool_index()] = pool[unit.color.pool_index()].saturating_add(1);
@@ -319,6 +323,8 @@ fn separate_restricted_spending(
     legendary_spell: bool,
     spell_subtypes: &[u16],
     all_creature_types: bool,
+    artifact_spell: bool,
+    colorless_eldrazi_spell: bool,
 ) {
     {
         for (index, unit) in state.players[player.index()]
@@ -334,6 +340,8 @@ fn separate_restricted_spending(
                     legendary_spell,
                     spell_subtypes,
                     all_creature_types,
+                    artifact_spell,
+                    colorless_eldrazi_spell,
                 )
             {
                 continue;
@@ -406,11 +414,11 @@ pub fn can_pay_spell(
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = spell_floating_pool(state, player, creature_spell, false, &[], false);
+    let pool = spell_floating_pool(state, player, creature_spell, false, &[], false, false, false);
     let mut plan = solve(cost, x_value, pool, &sources).filter(|plan| {
         life_payment_affordable(plan.life_paid, state.players[player.index()].life)
     })?;
-    separate_restricted_spending(&mut plan, state, player, creature_spell, false, &[], false);
+    separate_restricted_spending(&mut plan, state, player, creature_spell, false, &[], false, false, false);
     Some(plan)
 }
 
@@ -436,7 +444,7 @@ pub(crate) fn can_pay_owned_from_sources(
     state: &GameState,
     sources: &[ManaSource],
 ) -> Option<PaymentPlan> {
-    let pool = spell_floating_pool(state, player, false, false, &[], false);
+    let pool = spell_floating_pool(state, player, false, false, &[], false, false, false);
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
@@ -451,7 +459,7 @@ pub(crate) fn can_pay_owned_from_sources(
     {
         return None;
     }
-    separate_restricted_spending(&mut plan, state, player, false, false, &[], false);
+    separate_restricted_spending(&mut plan, state, player, false, false, &[], false, false, false);
     life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
@@ -596,6 +604,8 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1_typed_v60(
         spell_subtypes,
         all_creature_types,
         None,
+        false,
+        false,
     )
 }
 
@@ -612,6 +622,8 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
     spell_subtypes: &[u16],
     all_creature_types: bool,
     grant: Option<&crate::engine::tinybones_v72::ManaGrantV72>,
+    artifact_spell: bool,
+    colorless_eldrazi_spell: bool,
 ) -> Option<PaymentPlan> {
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
@@ -625,6 +637,8 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
         legendary_spell,
         spell_subtypes,
         all_creature_types,
+        artifact_spell,
+        colorless_eldrazi_spell,
     )
     .into_iter()
     .filter(|source| !excluded.contains(&source.id))
@@ -636,6 +650,8 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
         legendary_spell,
         spell_subtypes,
         all_creature_types,
+        artifact_spell,
+        colorless_eldrazi_spell,
     );
 
     let mut plan = PaymentPlan::default();
@@ -663,6 +679,8 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
         legendary_spell,
         spell_subtypes,
         all_creature_types,
+        artifact_spell,
+        colorless_eldrazi_spell,
     );
     let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
     (total_life == 0 || total_life <= i64::from(state.players[player.index()].life)).then_some(plan)
@@ -761,6 +779,8 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
         spell_subtypes,
         all_creature_types,
         None,
+        false,
+        false,
     )
 }
 
@@ -777,6 +797,8 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
     spell_subtypes: &[u16],
     all_creature_types: bool,
     grant: Option<&crate::engine::tinybones_v72::ManaGrantV72>,
+    artifact_spell: bool,
+    colorless_eldrazi_spell: bool,
 ) -> Option<(PaymentPlan, Vec<ObjectId>)> {
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
@@ -831,6 +853,8 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
         legendary_spell,
         spell_subtypes,
         all_creature_types,
+        artifact_spell,
+        colorless_eldrazi_spell,
     ) {
         if excluded.contains(&source.id) {
             continue;
@@ -850,6 +874,8 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
         legendary_spell,
         spell_subtypes,
         all_creature_types,
+        artifact_spell,
+        colorless_eldrazi_spell,
     );
     let mut used = vec![false; sources.len()];
     if !solve_pips_with_mana_policy_v72(
@@ -885,6 +911,8 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
         legendary_spell,
         spell_subtypes,
         all_creature_types,
+        artifact_spell,
+        colorless_eldrazi_spell,
     );
     Some((plan, convoked))
 }
@@ -977,7 +1005,7 @@ pub fn gather_sources_for_spell(
     state: &GameState,
     creature_spell: bool,
 ) -> Vec<ManaSource> {
-    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false, &[], false)
+    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false, &[], false, false, false)
 }
 
 fn restriction_permits(
@@ -986,6 +1014,8 @@ fn restriction_permits(
     legendary_spell: bool,
     spell_subtypes: &[u16],
     all_creature_types: bool,
+    artifact_spell: bool,
+    colorless_eldrazi_spell: bool,
 ) -> bool {
     match restriction {
         crate::card_def::ManaSpendRestrictionDef::Unrestricted => true,
@@ -1007,6 +1037,12 @@ fn restriction_permits(
                     }))
         }
         crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(None) => false,
+        // Offered only while paying a spell of the chosen type; never floats.
+        crate::card_def::ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1 => false,
+        crate::card_def::ManaSpendRestrictionDef::ArtifactSpellV1 => artifact_spell,
+        crate::card_def::ManaSpendRestrictionDef::ColorlessEldraziSpellV1 => {
+            colorless_eldrazi_spell
+        }
     }
 }
 
@@ -1017,6 +1053,8 @@ fn gather_sources_for_spell_restrictions_v1(
     legendary_spell: bool,
     spell_subtypes: &[u16],
     all_creature_types: bool,
+    artifact_spell: bool,
+    colorless_eldrazi_spell: bool,
 ) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
@@ -1056,6 +1094,14 @@ fn gather_sources_for_spell_restrictions_v1(
         {
             continue;
         }
+        // Tolarian Academy adds nothing while its controller controls no
+        // artifact; the planner's yield floor of one must not apply to it.
+        #[cfg(feature = "eternal-fixtures")]
+        if def.conditional_tap_yield.is_some_and(|value| {
+            crate::engine::evaluate_dynamic_value(state, value, obj.controller) <= 0
+        }) {
+            continue;
+        }
         let mut choices = if def.is_automatic_payment_mana_source() {
             def.primary_mana_ability_choices(obj.v4.chosen_color)
         } else {
@@ -1073,13 +1119,24 @@ fn gather_sources_for_spell_restrictions_v1(
                 else {
                     continue;
                 };
-                if !restriction_permits(
-                    restriction,
-                    creature_spell,
-                    legendary_spell,
-                    spell_subtypes,
-                    all_creature_types,
-                ) {
+                let permitted = if restriction
+                    == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1
+                {
+                    // Cavern of Souls: a creature spell of the chosen type.
+                    creature_spell
+                        && crate::eternal_cards_v1::e3::cavern_permits(state, id, spell_subtypes)
+                } else {
+                    restriction_permits(
+                        restriction,
+                        creature_spell,
+                        legendary_spell,
+                        spell_subtypes,
+                        all_creature_types,
+                        artifact_spell,
+                        colorless_eldrazi_spell,
+                    )
+                };
+                if !permitted {
                     continue;
                 }
                 for &color in restricted.colors {
@@ -1090,10 +1147,19 @@ fn gather_sources_for_spell_restrictions_v1(
             }
         }
         if !choices.is_empty() {
+            let yield_per_tap = conditional_tap_yield(def, obj.controller, state);
+            // Eldrazi Temple's "{T}: Add {C}{C}" for a colorless Eldrazi spell.
+            #[cfg(feature = "eternal-fixtures")]
+            let yield_per_tap = crate::eternal_legacy_e5b_v1::eldrazi_spell_yield(
+                state,
+                id,
+                colorless_eldrazi_spell,
+            )
+            .unwrap_or(yield_per_tap);
             sources.push(ManaSource {
                 id,
                 choices,
-                yield_per_tap: conditional_tap_yield(def, obj.controller, state),
+                yield_per_tap,
             });
         }
     }
@@ -1117,11 +1183,11 @@ pub fn can_pay_excluding_sources(
     let mut plan = solve(
         cost,
         x_value,
-        spell_floating_pool(state, player, false, false, &[], false),
+        spell_floating_pool(state, player, false, false, &[], false, false, false),
         &sources,
     )
     .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))?;
-    separate_restricted_spending(&mut plan, state, player, false, false, &[], false);
+    separate_restricted_spending(&mut plan, state, player, false, false, &[], false, false, false);
     Some(plan)
 }
 
@@ -1625,11 +1691,11 @@ pub(crate) fn plan_activation_mana_v1(
     let mut plan = solve(
         cost,
         x,
-        spell_floating_pool(&projected, player, false, false, &[], false),
+        spell_floating_pool(&projected, player, false, false, &[], false, false, false),
         &sources,
     )
     .filter(|p| life_payment_affordable(p.life_paid, projected.players[player.index()].life))?;
-    separate_restricted_spending(&mut plan, &projected, player, false, false, &[], false);
+    separate_restricted_spending(&mut plan, &projected, player, false, false, &[], false, false, false);
     for (index, color) in allowed {
         let used = &mut plan.pool_used[color.pool_index()];
         if *used > 0 {

@@ -3,6 +3,18 @@
 No provider action on import. DELETE is confined to the exact runtime Pod ID.
 This is not a provider-enforced TTL: failed container boot, host failure and
 unreachable provider control plane require an independent external guard.
+
+Release rules:
+- a missing or malformed costPerHr/adjustedCostPerHr, or max(costPerHr,
+  adjustedCostPerHr) above the lease ceiling, is an invalid allocation and is
+  released at once (pod_rate, verify_pod);
+- from DELETE_MARGIN_SECONDS before the deadline, and after any latched release
+  or guard failure, every loop DELETEs the runtime ID first; DELETE is never
+  gated on a GET, an identity match or a receipt write (release_after_failure);
+- receipts are best-effort and can never skip a DELETE;
+- release completes only after two absent observations at least
+  ABSENT_CONFIRM_SECONDS apart (AbsenceConfirmer); a failed GET is never absence;
+- the expected allocation size is lease['vcpu_count'] (default 32).
 """
 from __future__ import annotations
 import argparse
@@ -43,7 +55,51 @@ def validate(lease):
     require(lease['startup_idle_seconds'] > 0 and 0 < lease['work_idle_seconds'] <= 300 and
             lease['recovery_seconds'] >= 30 and lease['poll_seconds'] in range(1, 61),
             'invalid guard intervals')
+    # The expected allocation size is part of the lease (32 or 64 vCPU, default 32).
+    require(lease.get('vcpu_count', 32) in (32, 64), 'unsupported vCPU count')
     return projected
+
+
+ABSENT_CONFIRM_SECONDS = 30
+DELETE_MARGIN_SECONDS = 600       # the resident guard starts deleting 10 min before the deadline
+
+
+def pod_rate(pod):
+    """max(costPerHr, adjustedCostPerHr) as a finite positive number, else ValueError.
+
+    A missing or malformed costPerHr, or a malformed adjustedCostPerHr, is a guard
+    failure (the caller releases at once); it never blocks deadline handling.
+    """
+    def parse(value, required):
+        if value is None and not required:
+            return 0.0
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError('provider rate malformed')
+        rate = float(value)
+        if not math.isfinite(rate) or rate < 0:
+            raise ValueError('provider rate malformed')
+        return rate
+    rate = max(parse(pod.get('costPerHr'), True), parse(pod.get('adjustedCostPerHr'), False))
+    if rate <= 0:
+        raise ValueError('provider rate unavailable')
+    return rate
+
+
+class AbsenceConfirmer:
+    """Two absent observations at least ABSENT_CONFIRM_SECONDS apart, with no presence between."""
+
+    def __init__(self, clock=None):
+        self.clock = clock; self.first = None
+
+    def observe(self, absent):
+        now = self.clock() if self.clock else time.time()
+        if not absent:
+            self.first = None
+            return False
+        if self.first is None:
+            self.first = now
+            return False
+        return now - self.first >= ABSENT_CONFIRM_SECONDS
 
 
 def decision(lease, now, highest_rate, progress=None):
@@ -86,7 +142,7 @@ class Provider:
         try:
             with urllib.request.urlopen(req, timeout=15) as response:
                 body = response.read()
-                return json.loads(body) if body else {}
+                value = json.loads(body) if body else {}
         except urllib.error.HTTPError as error:
             code=error.code;error.close()
             if code == 404:
@@ -94,6 +150,11 @@ class Provider:
             raise RuntimeError('provider HTTP ' + str(code)) from None
         except (OSError, ValueError):
             raise RuntimeError('provider request unavailable') from None
+        # None is reserved for HTTP 404. A successful GET must carry a Pod object:
+        # JSON null, a list, a scalar or an empty body is malformed, never absence.
+        if method == 'GET' and (not body or not isinstance(value, dict)):
+            raise RuntimeError('provider response malformed')
+        return value
 
     def funds(self):
         # Explicit read-only GraphQL query, matching the established local helper.
@@ -150,12 +211,13 @@ def verify_pod_identity(pod, lease, runtime_id):
 
 def verify_pod(pod, lease, runtime_id):
     verify_pod_identity(pod,lease,runtime_id)
-    require(pod.get('cpuFlavorId') == 'cpu3c' and pod.get('vcpuCount') == 32,
+    require(pod.get('cpuFlavorId') == 'cpu3c' and pod.get('vcpuCount') == lease.get('vcpu_count', 32),
             'CPU allocation differs')
     volume_id = pod.get('networkVolumeId') or (pod.get('networkVolume') or {}).get('id')
     require(volume_id == lease['network_volume_id'], 'network volume differs')
-    rate = max(float(pod['costPerHr']), float(pod.get('adjustedCostPerHr') or 0))
-    require(math.isfinite(rate) and rate > 0, 'provider rate unavailable')
+    rate = pod_rate(pod)
+    # Explicit ceiling: an allocation priced above the lease's ceiling is invalid (released at once).
+    require(rate <= lease['rate_ceiling_usd_hour'], 'provider rate above ceiling')
     return rate
 
 
@@ -172,31 +234,38 @@ def best_effort_receipt(path,value):
 def release_after_failure(api,identity,pod_id,state,reason):
     """Keep retrying own-Pod release even when local state is unwritable.
 
-    Each DELETE requires a fresh exact identity match. A healthy provider gets
-    an immediate request; retries are five seconds apart and requests time out
-    after fifteen seconds. Provider outages and host/process death still require
-    external observation. Never replace unavailable identity with a guessed Pod.
+    Every loop DELETEs the runtime Pod ID first, then GETs for the two spaced
+    absence observations, then writes best-effort receipts; retries are five
+    seconds apart and requests time out after fifteen seconds. The ID is only
+    ever this container's RUNPOD_POD_ID, never a file-supplied or guessed one.
+    `identity` is kept for the call signature and receipts.
     """
-    require(isinstance(identity,dict) and isinstance(identity.get('name'),str) and
-            re.fullmatch('[a-zA-Z0-9-]+',identity['name']) and
-            isinstance(pod_id,str) and re.fullmatch('[A-Za-z0-9]+',pod_id),
-            'exact prepared Pod identity unavailable for failure recovery')
-    state=Path(state)
+    try:
+        state=Path(state)
+    except Exception:  # noqa: BLE001
+        state=Path('/tmp')
+    if not (isinstance(pod_id,str) and re.fullmatch('[A-Za-z0-9]+',pod_id)):
+        # Without the runtime ID there is nothing safe to delete; the workstation guards cover this.
+        raise SystemExit('runtime Pod ID unavailable for failure recovery')
+    absence=AbsenceConfirmer()
     while True:
+        # DELETE of the runtime ID (RUNPOD_POD_ID, this container's own Pod) comes first in
+        # every loop and is never gated on a GET, an identity match or a receipt write.
+        deleted=False
+        try:
+            api.call('DELETE'); deleted=True
+        except Exception:  # noqa: BLE001 - retried next loop
+            pass
         try:
             pod=api.call('GET')
-            if pod is None:
+            if absence.observe(pod is None):
                 best_effort_receipt(state/'released.json',{'pod_id':pod_id,'epoch':time.time(),
-                    'provider_absent':True,'failure_recovery_reason':reason})
+                    'provider_absent':True,'absent_confirmations':2,'failure_recovery_reason':reason})
                 return
-            verify_pod_identity(pod,identity,pod_id)
-            api.call('DELETE')
-            best_effort_receipt(state/'release-requested.json',{'pod_id':pod_id,'epoch':time.time(),
-                'provider_absent':False,'reason':reason})
-        except (OSError,RuntimeError,ValueError,KeyError,TypeError):
-            # Failed GET, mismatched identity and ambiguous DELETE all retry.
-            # Identity mismatch never reaches DELETE. Receipt writes cannot exit.
-            pass
+        except Exception:  # noqa: BLE001 - a failed GET is never absence
+            absence.observe(False)
+        best_effort_receipt(state/'release-requested.json',{'pod_id':pod_id,'epoch':time.time(),
+            'delete_accepted':deleted,'reason':reason})
         time.sleep(5)
 
 
@@ -231,14 +300,21 @@ def run_loop(lease, state, pod_id, api):
                 'existing guard belongs to another Pod')
     highest = lease['rate_ceiling_usd_hour']; verified = False; latched = None
     recovery_until = None; consecutive_errors = 0; funds=None;last_funds_attempt=None
+    absence = AbsenceConfirmer()
+    hard_stop = lease['deadline_epoch'] - DELETE_MARGIN_SECONDS
     while True:
         stamp = time.time(); provider_ok = False; ownership_verified=False
+        if stamp >= hard_stop:
+            # From (deadline - margin) on, DELETE first in every loop, never gated on GET or receipts.
+            return release_after_failure(api,lease,pod_id,state,'deadline_margin')
         try:
             pod = api.call('GET')
-            if pod is None:
-                write(state / 'released.json', {'pod_id': pod_id, 'epoch': stamp,
-                    'provider_absent': True}, replace=True)
+            if absence.observe(pod is None):
+                best_effort_receipt(state / 'released.json', {'pod_id': pod_id, 'epoch': stamp,
+                    'provider_absent': True, 'absent_confirmations': 2})
                 return
+            if pod is None:
+                time.sleep(lease['poll_seconds']); continue
             verify_pod_identity(pod,lease,pod_id)
             ownership_verified=True
             try:
@@ -275,28 +351,23 @@ def run_loop(lease, state, pod_id, api):
         elif not funding['recovery_funding_available']:
             latched=latched or 'recovery_funds_insufficient'
         if funding['funding_alert']:
-            write(state/'funding-alert.json',{'pod_id':pod_id,'epoch':stamp,**funding},replace=True)
+            best_effort_receipt(state/'funding-alert.json',{'pod_id':pod_id,'epoch':stamp,**funding})
         if highest > lease['rate_ceiling_usd_hour']:
             latched = latched or 'rate_above_ceiling'
         latched = latched or status['reason']
+        # Deletion starts DELETE_MARGIN_SECONDS before the deadline at the latest, whatever latched;
+        # receipts are best-effort and can never skip a DELETE.
         if latched and recovery_until is None:
-            recovery_until = min(stamp + lease['recovery_seconds'], lease['deadline_epoch'])
-            write(state / 'stop-request.json', {'pod_id': pod_id, 'reason': latched,
-                'epoch': stamp, 'release_epoch': recovery_until}, replace=True)
-        write(state / 'guard.json', {**status, **funding, 'pod_id': pod_id, 'name': lease['name'],
+            recovery_until = min(stamp + lease['recovery_seconds'], hard_stop)
+            best_effort_receipt(state / 'stop-request.json', {'pod_id': pod_id, 'reason': latched,
+                'epoch': stamp, 'release_epoch': recovery_until})
+        best_effort_receipt(state / 'guard.json', {**status, **funding, 'pod_id': pod_id, 'name': lease['name'],
             'epoch': stamp, 'pid': os.getpid(), 'provider_verified': verified,
             'provider_ok': provider_ok, 'highest_rate_usd_hour': highest,
-            'latched': latched, 'release_epoch': recovery_until}, replace=True)
-        if latched and ownership_verified and (stamp >= recovery_until or (state / 'recovery-complete.json').exists()):
-            # Runtime ID comes from RUNPOD_POD_ID, never a file-supplied arbitrary ID.
-            # Retry until the provider confirms absence. Do not claim deletion from
-            # a failed or ambiguous request. Abrupt termination can prevent a local receipt.
-            try:
-                api.call('DELETE')
-                write(state / 'release-requested.json', {'pod_id': pod_id, 'epoch': stamp,
-                    'reason': latched, 'provider_absent': False}, replace=True)
-            except RuntimeError:
-                pass
+            'latched': latched, 'release_epoch': recovery_until})
+        if latched and (stamp >= recovery_until or (state / 'recovery-complete.json').exists()):
+            # The release decision hands over to the DELETE-first loop (never gated on GET).
+            return release_after_failure(api,lease,pod_id,state,'latched_'+str(latched))
         time.sleep(lease['poll_seconds'])
 
 

@@ -43,6 +43,7 @@ pub(crate) fn rows(family: FamilyV59) -> Vec<crate::limited_session_v1::CustomCa
 pub(crate) fn boards(family: FamilyV59) -> [Vec<u16>; 2] {
     let deck = crate::limited_session_v1::CustomDeckV1 {
         cards: rows(family),
+        companion: None,
     }
     .resolve_next_five_v59()
     .unwrap();
