@@ -3223,6 +3223,7 @@ fn commit_with_entry_batch_and_source_color(
             if from == Zone::Battlefield {
                 crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                 crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
             }
             commit_zone_change(
                 state,

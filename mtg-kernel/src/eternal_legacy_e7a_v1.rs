@@ -1776,6 +1776,42 @@ pub(crate) fn end_copy_before_departure(state: &mut GameState, object: ObjectId)
     live.v4.face_index = record.face_index;
 }
 
+/// Agatha's Soul Cauldron marks the cards it exiles without a linked-exile
+/// record. Once that Cauldron leaves the battlefield (sacrificed to Goblin
+/// Engineer, swapped by Goblin Welder), the mark points at a past
+/// incarnation that nothing reads, so it is dropped.
+pub(crate) fn release_unlinked_exiles(state: &mut GameState, departing: ObjectId) {
+    let Some(live) = state.objects.try_get(departing) else {
+        return;
+    };
+    if CARD_DEFS
+        .get(usize::from(live.card_def))
+        .is_none_or(|def| def.name != "Agatha's Soul Cauldron")
+    {
+        return;
+    }
+    let link = ObjectLinkV4 {
+        object: departing,
+        zone_change_count: live.zone_change_count,
+    };
+    let marked = state
+        .exile
+        .iter()
+        .copied()
+        .filter(|&card| {
+            state.objects.get(card).v4.exiled_by == Some(link)
+                && !state.engine.linked_exile_records.iter().any(|record| {
+                    record.exiled == card
+                        && record.source.source == departing
+                        && record.source.zone_change_count == link.zone_change_count
+                })
+        })
+        .collect::<Vec<_>>();
+    for card in marked {
+        state.objects.get_mut(card).v4.exiled_by = None;
+    }
+}
+
 /// The definition a battlefield permanent has as its own card: its copy
 /// record's, or its live one.
 fn own_definition(state: &GameState, object: ObjectId) -> Option<u16> {

@@ -24957,6 +24957,15 @@ fn freeze_activation_source(
             .first()
             .expect("validated named Pole cost has its exact selected grant");
         Some(AbilitySourceContractV4::capture(state, chosen.object))
+    } else if cfg!(feature = "eternal-fixtures")
+        && pending.ability_index as usize
+            == card_def::CARD_DEFS[source.card_def as usize]
+                .activated_abilities
+                .len()
+        && crate::eternal_legacy_e7a_v1::retained_stage_ability(state, pending.source).is_some()
+    {
+        // Thespian's Stage's own ability, kept while it is a copy.
+        None
     } else if pending.ability_index as usize
         == card_def::CARD_DEFS[source.card_def as usize]
             .activated_abilities

@@ -2426,11 +2426,19 @@ fn shuffle_graveyard_into_library() -> EffectOp {
 pub(crate) fn protected_from_spell(state: &GameState, object: ObjectId, source: ObjectId) -> bool {
     printed_battlefield_source(state, object, EMRAKUL)
         && state.objects.try_get(source).is_some_and(|live| {
-            live.zone == Zone::Stack
+            (live.zone == Zone::Stack
                 && state
                     .stack
                     .iter()
-                    .any(|item| item.kind == StackItemKind::Spell && item.source == source)
+                    .any(|item| item.kind == StackItemKind::Spell && item.source == source))
+                // A nonland card about to be cast: its targets are checked
+                // before it becomes a spell (castability).
+                || (matches!(
+                    live.zone,
+                    Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Library
+                ) && crate::card_def::CARD_DEFS
+                    .get(usize::from(live.card_def))
+                    .is_some_and(|def| !def.is_land))
         })
         && crate::engine::object_color_mask(state, source) != 0
 }
