@@ -27,13 +27,9 @@ from typing import Any
 import torch
 
 
-TORCH_NUM_THREADS = 1
-TORCH_NUM_INTEROP_THREADS = 1
-if torch.get_num_threads() != TORCH_NUM_THREADS:
-    torch.set_num_threads(TORCH_NUM_THREADS)
-if torch.get_num_interop_threads() != TORCH_NUM_INTEROP_THREADS:
-    torch.set_num_interop_threads(TORCH_NUM_INTEROP_THREADS)
-torch.use_deterministic_algorithms(True)
+# Thread topology (one intraop, one interop thread) and deterministic
+# algorithms are set by the narrow generator's module body on import below;
+# Torch refuses a second set_num_interop_threads call, so none is made here.
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -72,9 +68,10 @@ EXPECTED_NARROW_GENERATOR_SHA256 = (
 EXPECTED_FORWARD_FIXTURE_SHA256 = (
     "f665f144ff4dcc084d718b68b960e745550b9517615cf172cf04515ce7032cb3"
 )
-# Pinned from the first generation on the authority tuple; until then the
-# portable check reports the fixture as awaiting generation.
-EXPECTED_OUTPUT_SHA256: str | None = None
+# Pinned from the first generation on the authority tuple (2026-10-27).
+EXPECTED_OUTPUT_SHA256: str | None = (
+    "ec103c2e87bb1a9f6180d983da7e0f8695be346491e84018c5254b109c5e6a01"
+)
 
 
 def _validate_authorities() -> dict[str, str]:

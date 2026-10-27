@@ -1215,10 +1215,11 @@ static TERMINAL_CLAUSE_2_WAIVER_V1: Option<Clause2WaiverV1> = Some(Clause2Waiver
 #[cfg(not(all(windows, target_env = "msvc")))]
 static TERMINAL_CLAUSE_2_WAIVER_V1: Option<Clause2WaiverV1> = None;
 
-/// Amendment 5.1-A1 3.4 and 4.5: the waiver path stays off until the
-/// amendment is agreed; the gate then holds every cell to clause 2 as frozen
-/// and never reaches D2.
-const WAIVER_5_1_A1_ACTIVE: bool = false;
+/// Amendment 5.1-A1 3.4 and 4.5 (v5.1, frozen): the waiver path is on; in
+/// the waived cell the gate requires the pinned r_n bits, witness list and
+/// gradient hash, then D2 over its own FD call, before it may honour the
+/// waiver.
+const WAIVER_5_1_A1_ACTIVE: bool = true;
 
 fn clause_2_waiver_v1(objective: ObjectiveV1) -> Option<&'static Clause2WaiverV1> {
     if !WAIVER_5_1_A1_ACTIVE {
@@ -1567,9 +1568,10 @@ fn wide_fd_roundoff_diagnostic_receipt() {
 }
 
 // ---------------------------------------------------------------------------
-// Amendment 5.1-A1 receipts (v5 section 3). The rho receipt prints only; D2
-// asserts its pass rule and stays ignored until the reviewers agree. Neither
-// changes the train step, the oracle, the fixture or the witness draw.
+// Amendment 5.1-A1 receipts (v5.1 section 3, frozen). The rho receipt prints
+// only; D2 asserts its pass rule in 8 cells (2 widths, 2 objectives, 2 CI
+// targets). Neither changes the train step, the oracle, the fixture or the
+// witness draw.
 // ---------------------------------------------------------------------------
 
 /// f32 unit roundoff, 2^-24.
@@ -2027,7 +2029,14 @@ fn bind_captures_dims_v1<'c, D: NetDimsV1>(
     let actual_forward: Vec<ApplicationV1> = capture
         .forward
         .iter()
-        .map(|call| (call.weight_index, call.rows, call.input_dim, call.output_dim))
+        .map(|call| {
+            (
+                call.weight_index,
+                call.rows,
+                call.input_dim,
+                call.output_dim,
+            )
+        })
         .collect();
     let forward_bound = actual_forward == expected_forward
         && capture
@@ -3410,7 +3419,6 @@ fn d2_wide_v1() -> NativePolicyValueNetWideV1 {
 
 /// Amendment 5.1-A1 D2 cell: net-8, GAE.
 #[test]
-#[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
 fn wide_fd_d2_net8_gae() {
     assert!(d2_cell_dims_v1::<Net8DimsV1>(
         "net-8",
@@ -3421,7 +3429,6 @@ fn wide_fd_d2_net8_gae() {
 
 /// Amendment 5.1-A1 D2 cell: net-8, terminal.
 #[test]
-#[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
 fn wide_fd_d2_net8_terminal() {
     assert!(d2_cell_dims_v1::<Net8DimsV1>(
         "net-8",
@@ -3432,7 +3439,6 @@ fn wide_fd_d2_net8_terminal() {
 
 /// Amendment 5.1-A1 D2 cell: net-8w128, GAE.
 #[test]
-#[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
 fn wide_fd_d2_net8w128_gae() {
     assert!(d2_cell_dims_v1::<Net8W128DimsV1>(
         "net-8w128",
@@ -3443,7 +3449,6 @@ fn wide_fd_d2_net8w128_gae() {
 
 /// Amendment 5.1-A1 D2 cell: net-8w128, terminal.
 #[test]
-#[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
 fn wide_fd_d2_net8w128_terminal() {
     assert!(d2_cell_dims_v1::<Net8W128DimsV1>(
         "net-8w128",
@@ -3956,11 +3961,10 @@ fn timing_probe_gae_update_wide_v1() {
 /// The wide twin of the narrow Torch authority train golden, with the narrow
 /// fixture's declared tolerances. Its fixture is generated only on the
 /// authority tuple (Windows/AMD64, Python 3.13.14, Torch 2.13.0+cpu, one
-/// thread) by `python/tools/generate_native_policy_train_step_wide_v1_goldens.py`;
-/// until it lands this test is ignored, and no wide fit or training result
-/// may be read before it passes.
+/// thread) by `python/tools/generate_native_policy_train_step_wide_v1_goldens.py`
+/// (pinned there by SHA-256); no wide fit or training result may be read
+/// before it passes.
 #[test]
-#[ignore = "awaits data/native_policy_train_step_wide_v1 from the Torch authority tuple"]
 fn wide_torch_authority_grouped_loss_backward_and_multistep_adam_match_declared_witnesses() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
         "../data/native_policy_train_step_wide_v1/runner_fixed_train_step_goldens_wide_v1.json",
