@@ -11721,7 +11721,17 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
     let historical = state.objects.try_get(item.source).ok_or_else(|| {
         RlContractError("ability stack source references an unknown arena object".to_string())
     })?;
-    if historical.card_def != card_def || historical.owner != owner {
+    // A copy that left the battlefield (Phyrexian Metamorph) is its own
+    // card again; its copied definition stays recorded for the incarnation.
+    let same_card = historical.card_def == card_def
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::standard_cards_v1::had_card_def(
+                state,
+                item.source,
+                zone_change_count,
+                card_def,
+            ));
+    if !same_card || historical.owner != owner {
         return Err(RlContractError(
             "ability stack source changed stable arena identity".to_string(),
         ));
@@ -11781,7 +11791,15 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
                             "stack target contract references an unknown arena object".to_string(),
                         )
                     })?;
-                    if historical.card_def != card_def || historical.owner != owner {
+                    let same_card = historical.card_def == card_def
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::standard_cards_v1::had_card_def(
+                                state,
+                                object,
+                                zone_change_count,
+                                card_def,
+                            ));
+                    if !same_card || historical.owner != owner {
                         return Err(RlContractError(
                             "stack target contract changed stable arena identity".to_string(),
                         ));

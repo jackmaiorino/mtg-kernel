@@ -621,9 +621,12 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
         selected.costs.remove(0);
     } else if cfg!(feature = "eternal-fixtures")
         && method == CastMethodV4::Normal
-        && crate::eternal_cards_v1::e3::free_hand_cast_selected(state, source, player, mode)
+        && (crate::eternal_cards_v1::e3::free_hand_cast_selected(state, source, player, mode)
+            || crate::eternal_e5a_v1::permissions::citadel_cast(state, source, player))
     {
-        // Omniscience, Aluren: "without paying its mana cost".
+        // Omniscience, Aluren: "without paying its mana cost". Bolas's
+        // Citadel: "pay life equal to its mana value rather than pay its
+        // mana cost", paid as the cast completes.
         selected.costs.remove(0);
     }
     Some(selected)
@@ -714,9 +717,9 @@ pub(super) fn selected_spell_quote_branch_v1(
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
             || (cfg!(feature = "eternal-fixtures")
                 && method == CastMethodV4::Normal
-                && crate::eternal_cards_v1::e3::free_hand_cast_selected(
+                && (crate::eternal_cards_v1::e3::free_hand_cast_selected(
                     state, source, player, mode,
-                )))
+                ) || crate::eternal_e5a_v1::permissions::citadel_cast(state, source, player))))
     {
         return None;
     }

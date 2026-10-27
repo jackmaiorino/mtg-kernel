@@ -714,6 +714,10 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::TriggeredAbilityOrColorlessSpellV1 => ObjF::Spell,
         S::CreaturesThenNonlandPermanentsV1 { .. } => ObjF::Permanent,
         S::TwoControlledArtifactsCreaturesOrLandsV1 => ObjF::Permanent,
+        S::PlayerThenPlayerV1 => ObjF::PlayerOrPermanent,
+        S::PlayerThenGraveyardCardsV1 | S::CreatureThenGraveyardCardsV1 => ObjF::AnyCard,
+        S::UpToOneColoredPermanentV1 => ObjF::Permanent,
+        S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => ObjF::Permanent,
     }
 }
 
@@ -723,7 +727,7 @@ pub(super) fn standard_target_origin(
     use crate::standard_cards_v1::StandardTargetV1 as S;
     match filter {
         S::InstantOrSorceryCardInOwnGraveyard => (Some(ZoneF::Graveyard), Some(RelF::You)),
-        S::CardInAGraveyard => (Some(ZoneF::Graveyard), None),
+        S::CardInAGraveyard | S::PlayerThenGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
         | S::AttackingClericRogueWarriorOrWizardV1
@@ -752,6 +756,10 @@ pub(super) fn standard_target_origin(
         | S::ArtifactThenCreatureV1
         | S::UpToOneOtherNonlandPermanentV1
         | S::CreaturesThenNonlandPermanentsV1 { .. }
+        | S::PlayerThenPlayerV1
+        | S::CreatureThenGraveyardCardsV1
+        | S::UpToOneColoredPermanentV1
+        | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -900,6 +908,45 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             object(out, typed(CardType::Land), relation, zone);
             out.target(TargetAtom::MultipleTargets);
+            out.atoms.push(Atom::Opaque);
+        }
+        S::PlayerThenPlayerV1 => {
+            out.target(TargetAtom::PlayerYou);
+            out.target(TargetAtom::PlayerOpponent);
+            out.target(TargetAtom::MultipleTargets);
+            // Both target words may name one player.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::PlayerThenGraveyardCardsV1 => {
+            out.target(TargetAtom::PlayerYou);
+            out.target(TargetAtom::PlayerOpponent);
+            object(out, ObjF::AnyCard, None, ZoneF::Graveyard);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+            // Which slot takes which kind has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::CreatureThenGraveyardCardsV1 => {
+            object(out, creature(), None, zone);
+            object(out, ObjF::AnyCard, None, ZoneF::Graveyard);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+            // The X bounds on mana value and card count have no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOneColoredPermanentV1 => {
+            object(out, ObjF::Permanent, relation, zone);
+            out.target(TargetAtom::UpTo);
+            // "One or more colors" has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => {
+            object(out, typed(CardType::Artifact), Some(RelF::You), zone);
+            object(out, creature(), Some(RelF::You), zone);
+            object(out, creature(), Some(RelF::Opponent), zone);
+            out.target(TargetAtom::MultipleTargets);
+            // The power bound has no facet.
+            out.atoms.push(Atom::Opaque);
         }
     }
 }

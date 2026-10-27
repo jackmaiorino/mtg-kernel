@@ -77,6 +77,7 @@ reserved.
 | E4b | Vintage Lurrus lists (Esper and Dimir Lurrus Control, Lurrus PO, Lurrus Breach, Jeskai Lurrus, 4c Psychic Frog): companions, Lurrus of the Dream-Den, Demonic Tutor, Mana Drain, Force of Negation, Gush, Dig Through Time, Treasure Cruise, Snapcaster Mage, Underworld Breach, Brain Freeze, Psychic Frog, Hexing Squelcher, Null Rod, Pithing Needle, Mox Opal and the rest of the lists | 29 and two tokens | Vintage 28.4% to 62.3% |
 | E5b | Legacy Boros Energy, Beanstalk Control, Azorius and Jeskai Tempo, Esper Control, and the Eldrazi and Tron cards outside E5a: Plateau, Savannah, Scrubland, Snow-Covered Plains, Arid Mesa, Windswept Heath, Goblin Bombardment, Up the Beanstalk, Stifle, Consign to Memory, Galvanic Discharge, Wrath of the Skies, Terminus, Leyline Binding, Static Prison, Phelia, Quantum Riddler, Guide of Souls, Ocelot Pride, Ajani, Amped Raptor, Phlage, Sand Scout, Voice of Victory, Lazotep Quarry, Thought-Knot Seer, Reality Smasher, It That Heralds the End, Eldrazi Linebreaker, Wastescape Battlemage, Eldrazi Temple, Eye of Ugin, Abundant Countryside, Petrified Hamlet, Eldrazi Confluence | 35 and six tokens | Legacy 33.5% to 49.4% |
 | E6a | Pauper Tron, Esper, Dimir and 4c Affinity, Esper Ephemerate, Mono-Blue Faeries, Mardu Synthesizer (and Azorius Gates): Abjure, Ancient Den, Archaeomancer, Behold the Multiverse, Bender's Waterskin, Bramble Wurm, Brinebarrow Intruder, Crop Rotation, Cryoshatter, Dispatch, Energy Refractor, Ephemerate, Ethereal Haze, Gearseeker Serpent, Ghostly Flicker, Glacial Floodplain, Grim Bauble, Hard Evidence, Kor Skyfisher, Moment's Peace, Mulldrifter, Mystical Teachings, Omen of the Dead, Prohibit, Prophetic Prism, Razortide Bridge, Remote Isle, Rustvale Bridge, Sewer-veillance Cam, Shattered Landscape, Stream of Thought, Tangle, Tangled Islet, Tithing Blade, Union of the Third Path | 35 and a token | Pauper 53.5% to 69.0% |
+| E5a | Vintage Raker Shops, Oath of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy Mystic Forge, and with E5b's cards Legacy Eldrazi and Tron: Mystic Forge, Bolas's Citadel, Yawgmoth's Will, Chalice of the Void, Sensei's Divining Top, Oath of Druids, Oko, Ugin, Kozilek's Command, Talon Gates of Madara and the rest of the lists | 28 and a token | Vintage 62.3% to 80.0%, Legacy 49.4% to 59.6% (after E5b) |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -194,6 +195,30 @@ New, each built once in the first wave that needs it:
   shapes: sacrificing a blue permanent (`PermanentFilter::BlueV1`), an instant-or-flash
   library search (`LibraryCardFilter::InstantOrFlashV1`) and Stream of Thought's choice
   of up to four graveyard cards to shuffle back (`E3ChoiceKindV1::E6aV1`).
+- E5a, built in `src/eternal_e5a_v1.rs` (with `choices`, `permissions`, `phasing`,
+  `statics` and `triggers` submodules) and `build_eternal_e5a_v1.rs`: casting the top
+  card of the library is a new cast route (`SpellCastRouteV4::LibraryPermissionV1`,
+  recorded per library incarnation so a spell keeps it on the stack); Mystic Forge
+  allows artifact and colorless spells, Bolas's Citadel any spell for life equal to its
+  mana value (the mana cost is waived like Omniscience's, X is 0) and land plays from
+  the top. Yawgmoth's Will joins the graveyard cast grants, adds graveyard land plays
+  and exiles cards headed to its controller's graveyard through the zone-change
+  replacement hook Suplex's "exile it instead" also uses. Phasing moves a permanent and
+  its attachments out of every zone list under the command-zone marker, keeping its
+  incarnation, until its controller's next untap step. Serra's Emissary's protection
+  from a card type covers targeting, damage and blocking for its controller and their
+  creatures. Oko's Elks lose their abilities through the removal timestamp, become
+  creatures only, green Elks and base 3/3. Chalice of the Void enters with X charge
+  counters and reuses Vexing Bauble's "counter that spell" binding. Kozilek's Command's
+  six pairs of modes use per-slot targets, and X may not be less than the targeted
+  creature's mana value or the number of graveyard targets (X is announced after
+  targets here). The E3 choice framework carries this wave's resolution choices
+  (Beseech the Mirror's search and free cast from the hand, Flash, Vampiric Tutor,
+  Ugin's search). Oath of Druids and Forbidden Orchard are hook-queued triggers;
+  Urza's Workshop's two colorless abilities are one with the larger yield.
+  Extrapolate the Impossible, like Karn's wish, finds nothing outside the game in a
+  best-of-one mainboard game. Kozilek's Command is an Eldrazi instant; the Kindred card
+  type is not modeled.
 
 ## Card contract and verification
 

@@ -276,7 +276,7 @@ pub(super) fn conditional_tap_yield_for(name: &str) -> &'static str {
         "Tolarian Academy" => {
             "Some(DynamicValueDef::ControlledPermanentsWithType(CardType::Artifact))"
         }
-        _ => "None",
+        _ => super::build_eternal_e5a_v1::conditional_tap_yield_for(name),
     }
 }
 
@@ -286,7 +286,7 @@ pub(super) fn conditional_tap_yield_program_for(name: &str) -> Option<&'static s
         "Mana Crypt" => Some("mana_ability_add_mana_crypt"),
         "Mana Vault" => Some("mana_ability_add_mana_vault"),
         "Tolarian Academy" => Some("mana_ability_add_tolarian_academy"),
-        _ => None,
+        _ => super::build_eternal_e5a_v1::conditional_tap_yield_program_for(name),
     }
 }
 

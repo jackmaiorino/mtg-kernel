@@ -334,6 +334,18 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::UrzasLandsIfMetalcraftV1 => {
+            // One, or with three artifacts the controller's Urza's lands.
+            // Vocabulary gap: no conditional count or subtype class.
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Count,
+            );
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicValueDef::ControllerLifeTotal => {
             // Frozen count/read vocabulary cannot encode a player's signed life
             // total as a token quantity. The precise Ajani successor owns it.
@@ -644,6 +656,7 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
             // Vocabulary gap: ObjF has no color class.
             (ObjF::Permanent, None)
         }
+        PermanentFilter::NonlandV1 => (ObjF::NonlandPermanent, None),
     }
 }
 

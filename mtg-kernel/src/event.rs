@@ -3134,6 +3134,9 @@ fn commit_with_entry_batch_and_source_color(
         ProposedEvent::ZoneChange(mut z) => {
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
+            // Yawgmoth's Will and Suplex exile instead.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
@@ -4432,7 +4435,18 @@ pub fn log_monarch_trigger(
         .objects
         .try_get(source.source)
         .ok_or("Monarch designation source no longer exists")?;
-    if live.card_def != source.card_def
+    // A copy (Phyrexian Metamorph as Thorn of the Black Rose) that later
+    // left the battlefield is its own card again; the copied definition it
+    // had stays recorded for that incarnation.
+    let card_def_matches = live.card_def == source.card_def
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::standard_cards_v1::had_card_def(
+                state,
+                source.source,
+                source.zone_change_count,
+                source.card_def,
+            ));
+    if !card_def_matches
         || live.owner != source.owner
         || live.zone_change_count < source.zone_change_count
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
