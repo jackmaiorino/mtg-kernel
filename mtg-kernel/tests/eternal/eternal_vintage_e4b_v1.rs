@@ -941,12 +941,18 @@ fn mana_drain_counters_and_adds_colorless_at_the_next_main_phase() {
     assert_eq!(zone(&state, bolt), Zone::Graveyard);
     assert_eq!(state.players[0].life, 20);
     assert_eq!(mana(&state, P0, ManaColor::C), 0, "not yet");
+    // A castable card keeps P0's priority windows open.
+    put(&mut state, P0, "Mox Pearl", Zone::Hand);
     // P0's next main phase is this turn's second one.
-    pass_until(&mut state, |state| {
-        state.players[0].mana_pool[ManaColor::C.pool_index()] == 1
-    });
+    pass_until(&mut state, |state| state.step == Step::Main2);
+    settled(&mut state);
     assert_eq!(state.step, Step::Main2);
     assert_eq!(state.active_player, P0);
+    assert_eq!(
+        mana(&state, P0, ManaColor::C),
+        1,
+        "Lightning Bolt's mana value"
+    );
 }
 
 #[test]
