@@ -846,5 +846,84 @@ class ProviderBoundaryTests(unittest.TestCase):
         self.assertEqual(world.calls, 0)
 
 
+class InterruptTests(unittest.TestCase):
+    """Round 7: an interrupt (KeyboardInterrupt) during a handoff never abandons an owned ID. Every ID is
+    an obligation before any handoff I/O; the client's exit deletes and verifies each one, or writes an
+    ALERT naming all of them, and then re-raises the interrupt. Later censuses omit the IDs."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.folder = self.root / 'lease/known-pods'
+
+    def interrupting(self, ids):
+        real = eg.handoff_in; fired = []
+
+        def handoff(folder, pod_id, role, epoch):
+            if pod_id in ids and not fired:
+                fired.append(pod_id)
+                raise KeyboardInterrupt()
+            return real(folder, pod_id, role, epoch)
+        return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
+
+    @staticmethod
+    def first_census_only(world):
+        calls = [0]
+
+        def census(current):
+            calls[0] += 1
+            return current if calls[0] == 1 else []
+        world.census = census
+
+    def client(self, world, clock):
+        return eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock, clock.sleep,
+                              self.root / 'ALERT-pod-not-released.json')
+
+    def test_single_id_interrupted_handoff_is_released_before_the_interrupt_propagates(self):
+        world = World([pod('B')]); self.first_census_only(world); clock = FakeClock(1000.)
+        with self.assertRaises(KeyboardInterrupt), no_network(), self.interrupting({'B'}),                 self.client(world, clock) as client:
+            client.census()
+        self.assertIn('B', world.deletes)
+        self.assertEqual(world.pods, {})
+        self.assertGreaterEqual(clock.t - 1000., 30)                 # absence verified
+        self.assertFalse((self.root / 'ALERT-pod-not-released.json').exists())
+
+    def test_multi_id_interrupt_releases_the_later_ids_too(self):
+        world = World([pod('B'), pod('C'), pod('D')]); self.first_census_only(world); clock = FakeClock(1000.)
+        with self.assertRaises(KeyboardInterrupt), no_network(), self.interrupting({'B', 'C', 'D'}),                 self.client(world, clock) as client:
+            client.census()
+        self.assertEqual(sorted(set(world.deletes)), ['B', 'C', 'D'])
+        self.assertEqual(world.pods, {})
+
+    def test_interrupt_that_cannot_release_writes_an_alert_naming_every_id(self):
+        world = World([pod('B'), pod('C'), pod('D')]); world.delete_failures = -1
+        self.first_census_only(world); clock = FakeClock(1000.)
+        with self.assertRaises(KeyboardInterrupt), no_network(), self.interrupting({'B', 'C', 'D'}),                 self.client(world, clock) as client:
+            client.census()
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['B', 'C', 'D'])
+
+    def test_interrupted_post_handoff_is_released(self):
+        world = World(); self.first_census_only(world); clock = FakeClock(1000.)
+
+        def poster(body):
+            world.pods['A'] = pod('A'); return pod('A')
+        with self.assertRaises(KeyboardInterrupt), no_network(), self.interrupting({'A'}),                 self.client(world, clock) as client:
+            client.post({'name': NAME}, poster=poster)
+        self.assertIn('A', world.deletes)
+        self.assertEqual(world.pods, {})
+
+    def test_interrupted_guard_pass_releases_the_new_duplicate_and_keeps_the_receipted_pod(self):
+        write(self.root / 'lease/lease.json', lease())
+        write(self.root / 'lease/created-pod.json', {'id': 'pod1', 'name': NAME})
+        write(self.root / 'worker-started.json', {})
+        world = World([pod('pod1'), pod('dup2')]); clock = FakeClock(1100.)
+        world.census = lambda current: current if not world.deletes else [p for p in current if p['id'] != 'dup2']
+        with self.assertRaises(KeyboardInterrupt), no_network(), self.interrupting({'dup2'}):
+            eg.run(self.root, 'k', pods=world.list, provider=world.provider, clock=clock, sleep=clock.sleep,
+                   once=True)
+        self.assertNotIn('dup2', world.pods)
+        self.assertIn('pod1', world.pods)
+
+
 if __name__ == '__main__':
     unittest.main()

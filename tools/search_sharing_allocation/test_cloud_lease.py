@@ -684,5 +684,31 @@ class StatusCommandTests(Base):
         self.assertNotIn("B", world.pods)
 
 
+class CreateInterruptTests(Base):
+    """Round 7: an interrupt during the POST ID's handoff releases the Pod before propagating."""
+
+    def test_interrupted_post_handoff_deletes_and_verifies_before_the_interrupt(self):
+        root = self.control(); world = World()
+        prepared = lease.read(root / "lease/lease.json")
+        clock = FakeClock(prepared["created_epoch"] + 10)
+        real = lease.external_guard.handoff_in; fired = []
+
+        def handoff(folder, pod_id, role, epoch):
+            if pod_id == "A" and not fired:
+                fired.append(pod_id)
+                raise KeyboardInterrupt()
+            return real(folder, pod_id, role, epoch)
+
+        def poster(body):
+            world.pods["A"] = pod("A"); clock.t = prepared["deadline_epoch"] - 60
+            return pod("A")
+        world.census = lambda current: current if not world.pods.get("A") or not fired else []
+        with patch.object(lease.external_guard, "handoff_in", side_effect=handoff),                 self.assertRaises(KeyboardInterrupt):
+            lease.create(root, True, key="k", pods=world.list, poster=poster, funds=funds_ok,
+                         provider=world.provider, clock=clock, sleep=clock.sleep)
+        self.assertIn("A", world.deletes)
+        self.assertNotIn("A", world.pods)
+
+
 if __name__ == "__main__":
     unittest.main()

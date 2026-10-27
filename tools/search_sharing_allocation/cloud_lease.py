@@ -460,16 +460,20 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
         unresolved = external_guard.create_unresolved(root) or external_guard.ambiguous_unresolved(root)
         try:
             ids = set(external_guard.known_pods(root))   # strict: any unreadable record raises (I2)
+            for pod_id in ids:
+                client.mark_persisted(pod_id)             # read from its own durable record
             receipt_id, receipt_error = external_guard.receipt_state(root)
             if receipt_error:
                 raise ValueError(receipt_error)
             if receipt_id:
-                ids.add(receipt_id)
+                ids.add(receipt_id); client.mark_durable(receipt_id)
             for name in ("lease/create-ambiguous.json", "lease/create-pod-failure.json"):
                 if (root / name).exists():
                     fallback = read(root / name).get("pod_id")
                     if fallback is not None:
                         ids.add(fallback)
+                        if external_guard.valid_id(fallback):
+                            client.mark_durable(fallback)
             ids_ok = all(external_guard.valid_id(pod_id) for pod_id in ids)
         except Exception:  # noqa: BLE001 - unreadable retained IDs: never absence
             ids, ids_ok = set(), False

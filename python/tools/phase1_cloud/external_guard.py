@@ -310,6 +310,7 @@ class LeaseClient:
         self.unpersisted = set()
         self.durable = set()        # IDs named by another readable record (a receipt), durable without a handoff
         self.verified_absent = set()
+        self.persisted = set()      # IDs whose own known-Pod record was written (or read) back
         self.errors = []            # retention failures since the caller last cleared it
         self._active = False
 
@@ -318,11 +319,25 @@ class LeaseClient:
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        """Runs on every exit, BaseException included (KeyboardInterrupt, SystemExit): release and
+        verify every open obligation, or write an ALERT naming every unresolved ID. An exception that
+        was already propagating is re-raised unchanged; otherwise a failed resolution raises."""
         try:
-            resolve_or_alert(self, self.release_deadline(), self.alert_path, self.sleep)
+            try:
+                resolve_or_alert(self, self.release_deadline(), self.alert_path, self.sleep)
+            except BaseException:
+                self.alert(sorted(self.unpersisted - self.verified_absent), 'interrupted or failed before release')
+                if exc is None:
+                    raise
         finally:
             self._active = False
         return False
+
+    def alert(self, pod_ids, reason):
+        try:
+            write(self.alert_path, {'pod_ids': pod_ids, 'reason': reason, 'epoch': self.clock()}, replace=True)
+        except Exception:  # noqa: BLE001 - the raised error or the original exception still propagates
+            pass
 
     def release_deadline(self):
         return max(self.lease_deadline, self.clock() + self.min_release_seconds)
@@ -338,23 +353,34 @@ class LeaseClient:
         finally:
             _BOUNDARY.reset(token)
 
+    def register(self, pod_ids, presence=True):
+        """The obligation comes first: every new ID joins `unpersisted` in one set update, before any
+        handoff I/O, so an interrupt at any later point leaves it for the exit to resolve."""
+        fresh = [p for p in pod_ids if valid_id(p) and p not in self.persisted and p not in self.durable]
+        self.unpersisted.update(fresh)
+        if presence:
+            self.verified_absent.difference_update(pod_ids)
+
     def retain(self, pod_id, role, presence=True):
+        """Register, then hand off; the obligation is cleared only after the durable readback."""
         if not valid_id(pod_id):
             return False
-        if presence:
-            self.verified_absent.discard(pod_id)
+        self.register([pod_id], presence)
         if role in CREATE_ROLES and self.retained.get(pod_id) not in CREATE_ROLES:
             self.retained[pod_id] = role
         self.retained.setdefault(pod_id, role)
         try:
             handoff_in(self.folder, pod_id, self.retained[pod_id], self.clock())
-            self.unpersisted.discard(pod_id)
-            return True
-        except Exception as e:  # noqa: BLE001 - kept in memory; the exit resolves it
+        except Exception as e:  # noqa: BLE001 - the obligation stays; the exit resolves it
             self.errors.append('retain:' + pod_id + ':' + type(e).__name__)
-            if pod_id not in self.durable:
-                self.unpersisted.add(pod_id)
             return False
+        self.persisted.add(pod_id)
+        self.unpersisted.discard(pod_id)
+        return True
+
+    def mark_persisted(self, pod_id):
+        """The ID was read from its own durable known-Pod record (a restart load)."""
+        self.persisted.add(pod_id); self.unpersisted.discard(pod_id)
 
     def mark_durable(self, pod_id):
         """The ID is named by a readable record the guard rereads (create receipt or ambiguity record)."""
@@ -362,13 +388,14 @@ class LeaseClient:
 
     def retry(self):
         for pod_id in sorted(self.unpersisted):
-            self.retain(pod_id, self.retained[pod_id], presence=False)
+            self.retain(pod_id, self.retained.get(pod_id, 'census'), presence=False)
 
     def census(self):
         """(raw census, owned IDs, every listed ID, malformed); each owned ID is retained first."""
         self._require_active()
         raw = self._raw(self._pods, self.key)
         owned, listed, malformed = census_entries(raw, self.name)
+        self.register(owned)            # every owned ID becomes an obligation before any handoff
         for pod_id in owned:
             self.retain(pod_id, 'census')
         return raw, owned, listed, malformed
@@ -377,6 +404,7 @@ class LeaseClient:
         self._require_active()
         got = self._raw(lambda: self._provider(self.key, pod_id).call('GET'))
         if isinstance(got, dict) and got.get('name') == self.name and valid_id(got.get('id')):
+            self.register([got['id']])
             self.retain(got['id'], 'census')
         return got
 
@@ -395,6 +423,7 @@ class LeaseClient:
         else:
             returned = self._raw(poster, body)
         if isinstance(returned, dict) and valid_id(returned.get('id')):
+            self.register([returned['id']])
             self.retain(returned['id'], 'receipt')
         return returned
 
@@ -508,6 +537,8 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe):
                 if role in CREATE_ROLES and memory.get(pod_id) not in CREATE_ROLES:
                     memory[pod_id] = role
                 memory.setdefault(pod_id, role)
+                if role is not None:
+                    client.mark_persisted(pod_id)   # its own record read back (an unreadable one stays open)
         except Exception as e:  # noqa: BLE001
             store_errors.append('store:' + type(e).__name__)
         recorded, receipt_error = receipt_state(root)
