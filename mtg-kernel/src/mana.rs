@@ -414,11 +414,30 @@ pub fn can_pay_spell(
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = spell_floating_pool(state, player, creature_spell, false, &[], false, false, false);
+    let pool = spell_floating_pool(
+        state,
+        player,
+        creature_spell,
+        false,
+        &[],
+        false,
+        false,
+        false,
+    );
     let mut plan = solve(cost, x_value, pool, &sources).filter(|plan| {
         life_payment_affordable(plan.life_paid, state.players[player.index()].life)
     })?;
-    separate_restricted_spending(&mut plan, state, player, creature_spell, false, &[], false, false, false);
+    separate_restricted_spending(
+        &mut plan,
+        state,
+        player,
+        creature_spell,
+        false,
+        &[],
+        false,
+        false,
+        false,
+    );
     Some(plan)
 }
 
@@ -459,7 +478,17 @@ pub(crate) fn can_pay_owned_from_sources(
     {
         return None;
     }
-    separate_restricted_spending(&mut plan, state, player, false, false, &[], false, false, false);
+    separate_restricted_spending(
+        &mut plan,
+        state,
+        player,
+        false,
+        false,
+        &[],
+        false,
+        false,
+        false,
+    );
     life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
@@ -1005,7 +1034,16 @@ pub fn gather_sources_for_spell(
     state: &GameState,
     creature_spell: bool,
 ) -> Vec<ManaSource> {
-    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false, &[], false, false, false)
+    gather_sources_for_spell_restrictions_v1(
+        player,
+        state,
+        creature_spell,
+        false,
+        &[],
+        false,
+        false,
+        false,
+    )
 }
 
 fn restriction_permits(
@@ -1187,7 +1225,17 @@ pub fn can_pay_excluding_sources(
         &sources,
     )
     .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))?;
-    separate_restricted_spending(&mut plan, state, player, false, false, &[], false, false, false);
+    separate_restricted_spending(
+        &mut plan,
+        state,
+        player,
+        false,
+        false,
+        &[],
+        false,
+        false,
+        false,
+    );
     Some(plan)
 }
 
@@ -1695,7 +1743,17 @@ pub(crate) fn plan_activation_mana_v1(
         &sources,
     )
     .filter(|p| life_payment_affordable(p.life_paid, projected.players[player.index()].life))?;
-    separate_restricted_spending(&mut plan, &projected, player, false, false, &[], false, false, false);
+    separate_restricted_spending(
+        &mut plan,
+        &projected,
+        player,
+        false,
+        false,
+        &[],
+        false,
+        false,
+        false,
+    );
     for (index, color) in allowed {
         let used = &mut plan.pool_used[color.pool_index()];
         if *used > 0 {

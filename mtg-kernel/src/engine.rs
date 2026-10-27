@@ -26119,7 +26119,7 @@ fn materialize_begin_cast_with_quote_v1(
     // X included; every other resolving instruction casts for free.
     let without_mana_cost = omniscience_cast_v1::free_choice(omniscience_choice)
         || resolution_permission
-        .is_some_and(|permission| permission.card.expected_zone != Zone::Graveyard)
+            .is_some_and(|permission| permission.card.expected_zone != Zone::Graveyard)
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
     // Omniscience and Aluren: a hand cast may skip its mana cost. Aluren's
     // "as though they had flash" applies only to such a cast, so outside

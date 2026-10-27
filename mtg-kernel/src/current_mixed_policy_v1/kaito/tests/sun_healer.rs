@@ -206,7 +206,7 @@ fn paid_sun_healer_base_declined_or_paid_kicker_nonland_permanent_filter_no_targ
 fn paid_kicked_healer_returns_aura_with_untargeted_ward_host_choice_source_departure_and_restore_both_seats(
 ) {
     for p in [PlayerId::P0, PlayerId::P1] {
-        let (mut s, source, target, _, removal, _) = setup(p, Some("Pacifism"), 4);
+        let (mut s, source, target, _, removal, _) = setup(p, Some("Witness Protection"), 4);
         let aura = target.unwrap();
         let host = put(&mut s, p.opponent(), "Tolarian Terror", Zone::Battlefield);
         put(&mut s, p, "Savannah Lions", Zone::Battlefield);

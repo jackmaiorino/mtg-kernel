@@ -749,7 +749,9 @@ pub(super) fn standard_target_origin(
         | S::UpToTwoControlledArtifactsOrCreatures
         | S::AttackingClericRogueWarriorOrWizardV1
         | S::AnyNumberControlledNonlandNontokenPermanentsV1
-        | S::TwoControlledArtifactsCreaturesOrLandsV1 => (Some(ZoneF::Battlefield), Some(RelF::You)),
+        | S::TwoControlledArtifactsCreaturesOrLandsV1 => {
+            (Some(ZoneF::Battlefield), Some(RelF::You))
+        }
         S::OpponentNonlandPermanentManaValueAtMost(_)
         | S::OpponentNonlandPermanent
         | S::OpponentArtifactOrCreature

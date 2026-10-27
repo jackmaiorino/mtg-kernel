@@ -508,7 +508,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1: &str =
 // Native228's retained 496-definition export includes every frozen printing,
 // with 36 printing recipes still Partial. This is record identity only;
 // it does not authorize those cards, models, search, or training.
-const FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1: &str = "30b06c76c3a370a6";
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1: &str = "2430d3860838f596";
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_FULL_POOL_PROVISIONAL_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
@@ -9053,7 +9053,7 @@ mod tests {
         ));
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1,
-            "30b06c76c3a370a6"
+            "2430d3860838f596"
         );
     }
 
