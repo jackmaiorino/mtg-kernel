@@ -961,7 +961,6 @@ pub(crate) fn apply_chosen_permanent(
             if event::add_plus_one_counters(state, chosen.object, controller, i32::from(count))
                 .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     chosen.object,
@@ -1022,7 +1021,6 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         StandardOpV1::EternalV1(op) => crate::eternal_cards_v1::execute(op, ctx, state),
         StandardOpV1::ZulAshurPermissionV1 => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -1432,7 +1430,6 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             );
             for owner in owners {
                 if state.shuffle_library(owner).is_err() {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -2764,7 +2761,6 @@ fn aura_enters_battlefield(ctx: &ExecCtx, state: &mut GameState) {
         && ctx.target_incarnation_matches(0, state)
         && aura_host_legal(def, ctx.controller, host, state) == Some(true);
     if !legal {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -2785,7 +2781,6 @@ fn aura_enters_battlefield(ctx: &ExecCtx, state: &mut GameState) {
         .attach_object_exact(ctx.source, aura_generation, host, host_generation)
         .is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -4863,7 +4858,6 @@ pub(crate) fn initialize_entry_counters(
     let count = match crate::doubling_season_v48::entry_amount(state, input, live.controller, 3) {
         Ok(count) => count,
         Err(_) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 object,

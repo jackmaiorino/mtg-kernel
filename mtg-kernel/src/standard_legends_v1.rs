@@ -74,7 +74,6 @@ fn binding(state: &GameState, object: ObjectId) -> EffectObjectBinding {
 pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         LegendEffectV1::GwennaMana(_, _) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -99,7 +98,6 @@ pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) 
             }
         }
         LegendEffectV1::ShannaPayAndDraw => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -178,7 +176,6 @@ pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) 
                 return;
             }
             if crate::engine::counter_stack_item_by_id(state, stack_item_id).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,

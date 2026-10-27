@@ -305,7 +305,6 @@ const SAND_WARRIOR_TOKEN: &str = "Sand Warrior Token";
 const ELDRAZI_SCION_TOKEN: &str = "Eldrazi Scion Token";
 
 fn halt(state: &mut GameState, source: ObjectId) {
-    eprintln!("E5B-HALT {}:{}", file!(), line!());
     state.engine.halted = Some((
         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
         source,
@@ -1408,8 +1407,15 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
     e5b_state(state).miracle_offers = remaining;
     if option == 1 {
         state.reveal_hand_card(player.opponent(), player, offer.object)?;
+        // The reveal is answered outside any event batch, so its trigger
+        // waits for the next placement directly.
         let source = AbilitySourceContractV4::capture(state, offer.object);
-        queue_trigger(state, source, player, E5bOpV1::MiracleV1);
+        let trigger = queued_trigger(QueuedTriggerV1 {
+            source,
+            controller: player,
+            op: E5bOpV1::MiracleV1,
+        });
+        state.engine.pending_triggers.push(trigger);
     }
     Ok(true)
 }

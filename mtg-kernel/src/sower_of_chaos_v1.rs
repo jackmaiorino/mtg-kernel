@@ -53,7 +53,6 @@ pub(crate) fn install(state: &mut GameState, ctx: &ExecCtx, target_index: u8) {
     crate::sower_restriction_capture_v1::install(state, ctx, object, timestamp);
     if crate::effect::frenzied_goblin_resolution_v1::install(state, ctx, object, timestamp).is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,

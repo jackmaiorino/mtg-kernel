@@ -214,7 +214,6 @@ fn read_state(state: &GameState) -> Option<&LurrusStateV1> {
 }
 
 fn halt(state: &mut GameState, source: ObjectId) {
-    eprintln!("E5B-HALT {}:{}", file!(), line!());
     state.engine.halted = Some((
         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
         source,

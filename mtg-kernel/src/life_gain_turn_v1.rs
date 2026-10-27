@@ -48,7 +48,6 @@ fn begin_turn(state: &mut GameState) {
 pub(crate) fn reset_at_untap(state: &mut GameState) {
     if let Some(ledger) = &state.life_gain_turn_v1 {
         if let Some(capture) = ledger.captures.first() {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidFirstLifeGainHistory,
                 capture.pending.source,
@@ -188,7 +187,6 @@ pub(crate) fn capture_committed_gain(state: &mut GameState) {
         Ok(ordinals) if ordinals == [Some(1)] => {}
         Ok(_) => return,
         Err(_) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidFirstLifeGainHistory,
                 candidates[0].0,

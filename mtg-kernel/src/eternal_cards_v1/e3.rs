@@ -134,7 +134,6 @@ fn e3_mut(state: &mut GameState) -> &mut E3StateV1 {
 }
 
 fn halt(state: &mut GameState, source: ObjectId) {
-    eprintln!("E5B-HALT {}:{}", file!(), line!());
     state.engine.halted = Some((
         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
         source,

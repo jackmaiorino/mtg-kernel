@@ -3070,7 +3070,6 @@ pub(crate) fn install_temporary_boost(
         && crate::engine::checked_effective_pt_with_boost(state, binding.object, (power, toughness))
             .is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             binding.object,
@@ -15733,9 +15732,7 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
                                     }
                                 }
                             }
-                            Err(_diag) => {
-                                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                                eprintln!("E5B-HALT {}:{}", file!(), line!());
+                            Err(_) => {
                                 state.engine.halted = Some((
                                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                                     source,
@@ -15745,9 +15742,7 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
                         }
                     }
                 }
-                Err(_diag) => {
-                    eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
+                Err(_) => {
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         source,
@@ -17142,7 +17137,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     if crystal_prevention_v1::mixed_environment(state)
         && !crystal_prevention_v1::ordinary_nondamage(op)
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -17161,7 +17155,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { player, card_type } => {
             let player = ctx.resolve_player(*player, state);
             if reveal_until_type_to_hand_random_bottom_v1(state, player, *card_type).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17181,7 +17174,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if crate::gorehorn_damage_v1::owns_context(state, ctx)
                 || crate::equipment_damage_source_v4::owns_context(state, ctx)
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17297,7 +17289,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             let mut packets = Vec::with_capacity(2);
             if first == second {
                 let Some(amount) = powers[0].checked_mul(2) else {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -17382,7 +17373,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 {
                     Some(count) => count,
                     None => {
-                        eprintln!("E5B-HALT {}:{}", file!(), line!());
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             ctx.source,
@@ -17398,7 +17388,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 .minus1_minus1
                 .checked_add(placed)
             else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17420,7 +17409,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             if event::add_plus_one_counters(state, object_id, ctx.controller, 1).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17430,14 +17418,12 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource
         | EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
         | EffectOp::BindDoublePlusOneCountersToTriggerSource => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
             ));
         }
         EffectOp::MaterializeStormCopies => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -17445,7 +17431,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::CreateStormCopies { binding } => {
             if crate::engine::create_storm_spell_copies(state, ctx, *binding).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17464,7 +17449,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
             if event::add_plus_one_counters(state, object.object, ctx.controller, current).is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17479,7 +17463,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             if event::add_plus_one_counters(state, object.object, ctx.controller, 1).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17496,7 +17479,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 || (!allocations.is_empty()
                     && allocations.iter().map(|n| u64::from(*n)).sum::<u64>() != u64::from(*total))
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17527,7 +17509,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 )
                 .is_err()
                 {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -17554,7 +17535,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 total.checked_add(mana_value)
             });
             let Some(amount) = amount else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17642,9 +17622,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 match crate::engine::apply_live_stack_spell_departure(state, object, *to_zone) {
                     Ok(true) => return,
                     Ok(false) => {}
-                    Err(_diag) => {
-                        eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                        eprintln!("E5B-HALT {}:{}", file!(), line!());
+                    Err(_) => {
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             object,
@@ -17669,7 +17647,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             let target_index = match target {
                 ObjectRef::Target(index) => usize::from(*index),
                 ObjectRef::ThisSource => {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -17689,7 +17666,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                         .map_or(CardType::Creature, |a| a.enchanted_type()),
                 );
             if !source_is_stack || !target_is_creature {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -17715,7 +17691,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     )
                     .is_err()
                 {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -17797,7 +17772,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::DiscardUpToThenDraw { .. }
         | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. } => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -17836,7 +17810,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 );
             } else if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item).is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18003,7 +17976,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if state.objects.get(top).zone == Zone::Hand {
                 for observer in [PlayerId::P0, PlayerId::P1] {
                     if state.reveal_hand_card(observer, player, top).is_err() {
-                        eprintln!("E5B-HALT {}:{}", file!(), line!());
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             ctx.source,
@@ -18047,7 +18019,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 if state.objects.get(card).zone == Zone::Hand {
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         if state.reveal_hand_card(observer, player, card).is_err() {
-                            eprintln!("E5B-HALT {}:{}", file!(), line!());
                             state.engine.halted = Some((
                                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                                 ctx.source,
@@ -18058,7 +18029,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 }
             }
             if state.shuffle_library(player).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18085,7 +18055,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 );
             } else if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item).is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18094,7 +18063,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::Incubate { amount } => {
             let Some(incubator) = crate::card_def::card_id_by_name("Incubator Token") else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18133,7 +18101,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 if event::add_plus_one_counters(state, token, ctx.controller, i32::from(*amount))
                     .is_err()
                 {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -18170,7 +18137,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                         if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item)
                             .is_err()
                         {
-                            eprintln!("E5B-HALT {}:{}", file!(), line!());
                             state.engine.halted = Some((
                                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                                 ctx.source,
@@ -18182,7 +18148,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             {
                 let _ = (targeting_stack_item, minimum_mana_value);
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18223,7 +18188,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::BindEntrantOutgrowsSourceThen { .. }
         | EffectOp::BindOilCounterToTriggerSource => {
             // Templates are always materialized before reaching the stack.
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -18263,7 +18227,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::CreateTokenTappedAndAttacking { token_def } => {
             let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18271,7 +18234,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             if !token.is_token || !token.has_full_support() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18326,7 +18288,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             if event::add_plus_one_counters(state, contract.source, ctx.controller, 1).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18337,7 +18298,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::DrakeIncubationFromCaptureV1 { .. }
         | EffectOp::DrakeCreateTokenFromPaidV1 => {
             // Public inline programs cannot manufacture damage or payment authority.
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -18345,7 +18305,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::AddSoulCounterToAbilitySourceV1 => {
             if event::add_soul_counter_to_ability_source_v1(state, ctx).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18376,7 +18335,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 Ok(())
             })();
             if result.is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18387,7 +18345,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. }
         | EffectOp::ConquerorGainFromCaptureV49 { .. } => {
             if crate::fiendish_panda_v1::execute(state, ctx, op).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18463,7 +18420,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 .ok()
                 .and_then(|amount| i16::try_from(amount).ok());
                 let Some(placed) = placed else {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -18521,7 +18477,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }) {
                 Some(count) => count,
                 None => {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -18533,7 +18488,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             match oil.checked_add(placed) {
                 Some(next) => *oil = next,
                 None => {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -18599,7 +18553,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
             if crate::doubling_season_v48::requires_successor(state) {
                 if event::add_plus_one_counters(state, target, ctx.controller, 1).is_err() {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -18609,7 +18562,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             } else {
                 let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
                 let Some(updated) = counters.checked_add(1) else {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -18642,7 +18594,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             )
             .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18881,7 +18832,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             preserve_known_identity,
         } => {
             if validate_effect_object_binding(state, *object).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18936,7 +18886,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::AttachSourceToTarget { object } => {
             let Some(source) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18944,7 +18893,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             let ObjectRef::Target(target_index) = object else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18981,7 +18929,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 )
                 .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -18998,7 +18945,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             let index = usize::from(*target_index);
             let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
                 if !*optional {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -19016,7 +18962,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 || *lifelink < 0
                 || *stun < 0
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19040,7 +18985,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             };
             let scaled = (scale(*plus1_plus1), scale(*lifelink), scale(*stun));
             let (Ok(placed_plus), Ok(placed_lifelink), Ok(placed_stun)) = scaled else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19056,7 +19000,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 live.counters.stun.checked_add(*stun),
             );
             let (Some(next_plus), Some(next_lifelink), Some(next_stun)) = next else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19134,7 +19077,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 .attach_object_exact(object, token_generation, host, host_generation)
                 .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19143,7 +19085,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::CreateTokenAndAttachSource { token_def } => {
             let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19151,7 +19092,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             if !token.is_token || !token.has_full_support() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19171,7 +19111,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     return;
                 }
                 let Some(source) = ctx.ability_source_contract else {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -19253,9 +19192,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ) {
                     Ok(Some(selected)) => selected,
                     Ok(None) => return,
-                    Err(_diag) => {
-                        eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                        eprintln!("E5B-HALT {}:{}", file!(), line!());
+                    Err(_) => {
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             ctx.source,
@@ -19289,7 +19226,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     source.source,
                     Target::Object(selected.object),
                 ) {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -19306,7 +19242,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     )
                     .is_err()
                 {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -19333,7 +19268,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
                 state.engine.event_log.last().cloned()
             else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19341,7 +19275,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             let Some(source) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19370,7 +19303,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 )
                 .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19433,7 +19365,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             );
         }
         EffectOp::AjaniLoyaltyV42 { .. } => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -19962,7 +19893,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     && source.controller == ctx.controller
                     && source.zone == Zone::Battlefield
             }) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -19973,7 +19903,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 .get(usize::from(*token_def))
                 .is_none_or(|token| !token.is_token || !token.has_full_support())
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20054,7 +19983,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::FishingPoleAddBaitV39
         | EffectOp::BindFishingPoleUntapV39
         | EffectOp::FishingPoleUntapV39 { .. } => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -20190,14 +20118,12 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
         }
         EffectOp::BindAshrootAttackBoostV1 => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
             ));
         }
         EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. } => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -20205,7 +20131,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::WildwoodCounterFromReceiptV1 { .. } => {
             if crate::wildwood_capture_v1::execute(state, ctx, op).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20214,7 +20139,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::TakeExtraTurnAfterThisOneV1 | EffectOp::StromkirkCounterFromCaptureV2 { .. } => {
             // These operations require their private pre-removal owners.
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -20227,7 +20151,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
         }
         EffectOp::BindAuthorityEntryGainLifeV1 => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -20240,7 +20163,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::FaebloomTapFromCaptureV43 { .. }
         | EffectOp::BindArahboCatEntryV1
         | EffectOp::ArahboTokenFromCaptureV1 { .. } => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -20251,7 +20173,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::GarrukDrawFromCaptureV1 { .. } => {
             // Actual execution requires the private removed-row owner in
             // resolve_top_of_stack, never a caller-constructed generic ctx.
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -20434,7 +20355,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::ShuffleTriggerSourceIntoOwnersLibrary => {
             let Some(source) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20442,7 +20362,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             let Some(expected_generation) = source.zone_change_count.checked_add(1) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20453,7 +20372,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             if live.card_def != source.card_def || live.owner != source.owner {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20465,7 +20383,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
             let mut staged = state.clone();
             let Ok(shuffle_token) = staged.preflight_library_shuffle(source.owner) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20483,7 +20400,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 .commit_library_shuffle(source.owner, shuffle_token)
                 .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20498,7 +20414,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ObjectRef::ThisSource => None,
             };
             let Some(target_index) = target_index else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20516,7 +20431,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             let Some(source_contract) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20570,7 +20484,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                         || (record.exiled == object
                             && record.exiled_zone_change_count == exiled_zone_change_count)
                 }) {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -20610,7 +20523,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::ReturnObjectsExiledBySource => {
             let Some(source_contract) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20642,7 +20554,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     })
             });
             if !structurally_valid {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20668,7 +20579,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if *player != ctx.controller
                 || event::install_color_damage_prevention(state, ctx.source, *color).is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20677,7 +20587,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::TransformSagaSource => {
             let Some(source_contract) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20696,7 +20605,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
             let def = &crate::card_def::CARD_DEFS[source.card_def as usize];
             if source.v4.face_index != 0 || def.saga.is_none() || def.transform_face.is_none() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20714,7 +20622,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::TransformSourceInPlace => {
             let Some(source_contract) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20739,7 +20646,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             if source.v4.face_index != 0 || def.transform_face.is_none() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20753,7 +20659,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters => {
             if state.objects.get(ctx.source).zone != Zone::Stack {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20776,7 +20681,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
             );
             let Ok(amount) = i16::try_from(ctx.x_value) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20793,7 +20697,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters { target } => {
             let ObjectRef::Target(target_index) = target else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20806,7 +20709,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 || state.objects.get(target).zone != Zone::Battlefield
                 || !crate::engine::object_has_type(state, target, CardType::Creature)
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20832,7 +20734,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
             );
             let Ok(amount) = i16::try_from(ctx.x_value) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20859,7 +20760,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::DealDamageToTargetEqualToChosenCostCreaturePower { target } => {
             let [reference] = ctx.paid_cost_refs.as_slice() else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20867,7 +20767,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             let Some(last_known_power) = reference.power_lki else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20876,7 +20775,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             };
             let Some(definition) = crate::card_def::CARD_DEFS.get(reference.card_def as usize)
             else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20884,7 +20782,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             if !definition.has_type(CardType::Creature) {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20915,7 +20812,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     last_known_power
                 }
                 _ => {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -20933,7 +20829,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::TakeInitiative { player } => {
             let player = ctx.resolve_player(*player, state);
             let Some(source) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20941,7 +20836,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             if take_initiative(state, player, source).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20950,7 +20844,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::BecomeMonarch => {
             let Some(mut source) = ctx.ability_source_contract else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20963,7 +20856,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::ResolveMonarchTrigger { binding } => {
             if resolve_monarch_trigger(state, *binding).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20978,7 +20870,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                         || !crate::engine::object_has_type(state, object, CardType::Creature)
                 })
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -20987,7 +20878,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
             let count = i32::from(*count);
             if event::add_plus_one_counters(state, object, ctx.controller, count).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -21000,7 +20890,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 live.zone != Zone::Battlefield
                     || !crate::engine::object_has_type(state, object, CardType::Creature)
             }) {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -21008,7 +20897,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             let Ok(expires_at_turn) = until_players_next_turn_expiry(state, ctx.controller) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,

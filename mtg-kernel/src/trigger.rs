@@ -4576,7 +4576,6 @@ fn sba_fixed_point_with_protected_triggers(
                 continue;
             }
             let Ok((_, toughness)) = crate::engine::checked_effective_pt(state, id) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     id,
@@ -4811,7 +4810,6 @@ pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<Pending
     match crate::life_gain_turn_v1::take_captures(state) {
         Ok(captures) => waiting.extend(captures),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidFirstLifeGainHistory,
                 source,
@@ -4890,7 +4888,6 @@ pub(crate) fn collect_and_process_with_waiting(
                 || crate::raid_entry_custody_v1::record_drop(state, pending).is_err()
                 || crate::fiendish_panda_v1::custody::unavailable(state, pending).is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -4968,7 +4965,6 @@ fn triggers_from_events(
     match crate::drake_hatcher_v1::custody::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
@@ -4979,7 +4975,6 @@ fn triggers_from_events(
     match crate::ashroot_dispatch_v2::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -4990,7 +4985,6 @@ fn triggers_from_events(
     match crate::vampire_gourmand_dispatch_v2::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5001,7 +4995,6 @@ fn triggers_from_events(
     match crate::bloodthirsty_conqueror_v49::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5012,7 +5005,6 @@ fn triggers_from_events(
     match crate::high_society_hunter_v1::collect_attacks(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5023,7 +5015,6 @@ fn triggers_from_events(
     match crate::faebloom_trick_v43::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5034,7 +5025,6 @@ fn triggers_from_events(
     match crate::stromkirk_dispatch_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5045,7 +5035,6 @@ fn triggers_from_events(
     match crate::banishing_light_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5056,7 +5045,6 @@ fn triggers_from_events(
     match crate::cerberus_capture_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5067,7 +5055,6 @@ fn triggers_from_events(
     match crate::fiendish_panda_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5078,7 +5065,6 @@ fn triggers_from_events(
     match crate::fake_your_own_death_v50::death_custody::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5089,7 +5075,6 @@ fn triggers_from_events(
     match crate::authority_of_the_consuls_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5100,7 +5085,6 @@ fn triggers_from_events(
     match crate::garruks_uprising_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5111,7 +5095,6 @@ fn triggers_from_events(
     match crate::fishing_pole_v39::lifecycle::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5122,7 +5105,6 @@ fn triggers_from_events(
     match crate::arahbo_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 source,
@@ -5155,7 +5137,6 @@ fn triggers_from_events(
                 died.object,
                 died.zone_change_count,
             )) {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     source.source,
@@ -5170,7 +5151,6 @@ fn triggers_from_events(
             }
             Ok(None) => {}
             Err(source) => {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     source,

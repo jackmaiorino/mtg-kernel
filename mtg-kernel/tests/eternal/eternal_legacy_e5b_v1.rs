@@ -998,9 +998,11 @@ fn terminus_miracle_reveals_the_first_draw_and_casts_for_white() {
         state.stack.iter().any(|item| item.source == terminus),
         "after the reveal: {after:?}
 stack {:?}
-pending {:?}",
+pending {:?}
+e5b {:?}",
         state.stack,
-        state.engine.pending_triggers
+        state.engine.pending_triggers,
+        state.eternal_v1.as_ref().map(|eternal| &eternal.e5b)
     );
     // The miracle trigger offers the cast for {W}.
     let mut offered = false;

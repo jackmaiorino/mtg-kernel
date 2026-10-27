@@ -10430,7 +10430,6 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if crate::drake_hatcher_v1::custody::validate(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
@@ -10441,7 +10440,6 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
@@ -10450,19 +10448,16 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         eprintln!("Panda prework validation rejected: {_error}");
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
     if mandatory_cast_cost_v1::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
     if crate::high_society_hunter_custody_v45::validate(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -10472,27 +10467,23 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if crate::faebloom_trick_v43::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
     if crate::controlled_creature_grants_v1::validate_color_history(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
     if crate::heraldic_banner_v1::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
     if let Err(source) = event::validate_exile_if_dies_replacements(state) {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
@@ -10512,7 +10503,6 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
@@ -10521,7 +10511,6 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
@@ -10531,7 +10520,6 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         Err(_) => {
             let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
             let source = ObjectId(0);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((mechanic, source));
             return Decision::Halted { mechanic, source };
         }
@@ -10547,12 +10535,10 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     if crate::bloodthirsty_conqueror_v49::validate(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
     if crate::high_society_hunter_custody_v45::validate(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -10562,7 +10548,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     if crate::faebloom_trick_v43::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
@@ -10577,12 +10562,10 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
     if crate::ashroot_animist_v1::validate_state(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -10590,7 +10573,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         };
     }
     if crate::stromkirk_bloodthief_v1::validate_state(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -10598,7 +10580,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         };
     }
     if crate::extra_turn_v1::validate(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -10619,7 +10600,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
                     .map(|i| i.source)
             })
             .unwrap_or(ObjectId(0));
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -10634,7 +10614,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         || crate::krenko_v1::validate_state(state).is_err()
         || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -10652,7 +10631,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
                 _ => None,
             })
             .unwrap_or(ObjectId(0));
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -10666,7 +10644,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
@@ -10675,11 +10652,9 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         #[cfg(feature = "standard-magezero-fixtures")]
         crate::standard_statics_v1::expire_attack_block_restrictions(state);
         if let Err(source) = event::validate_exile_if_dies_replacements(state) {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         }
         if let Err(source) = state.validate_attachment_relations() {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         }
         if let Some(d) = check_game_over(state) {
@@ -10745,7 +10720,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
 
         if let Some(pending) = state.engine.pending_land_play.as_ref() {
             if validate_pending_land_play(state, pending).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -11284,7 +11258,6 @@ pub(crate) fn validate_pending_discard_binding(
 fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
     let pd = state.engine.pending_discard.clone()?;
     if let Err((source, _message)) = validate_pending_discard_binding(state, &pd) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         return Some(Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -11360,7 +11333,6 @@ pub(crate) fn commit_discarded_card(state: &mut GameState, id: ObjectId) {
 
 fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: PendingDiscard) {
     if let Err((source, _message)) = validate_pending_discard_binding(state, &pending_discard) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         return;
     }
@@ -11387,7 +11359,6 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 .iter()
                 .all(|object| hand.contains(object) && Some(*object) != exclude)
         {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
             return;
         }
@@ -11603,7 +11574,6 @@ fn drain_pending_optional_cost_or_decide(state: &mut GameState) -> Option<Decisi
 fn drain_pending_spell_copy_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_spell_copy.clone()?;
     if validate_pending_spell_copy(state, &pending).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.resolving_source,
@@ -11703,7 +11673,6 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
             .unwrap()
             .resolving_item
             .source;
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         return None;
     }
@@ -11949,7 +11918,6 @@ fn drain_pending_optional_cost_sacrifice_or_decide(state: &mut GameState) -> Opt
         let candidates = sacrificeable_lands(pending.player, state, &pending.chosen);
         let remaining = pending.remaining - pending.chosen.len() as u8;
         if candidates.len() < usize::from(remaining) {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -12825,7 +12793,6 @@ pub(crate) fn validate_pending_cast(
 fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_cast.clone()?;
     if validate_pending_cast(state, &pending).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,
@@ -12948,9 +12915,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                         .optional_additional_cost_paid = Some(false);
                     return drain_pending_cast_or_decide(state);
                 }
-                Err(_diag) => {
-                    eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
+                Err(_) => {
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
                         pending.spell,
@@ -13323,9 +13288,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 if !pending.optional_additional_cost_selection_finished {
                     let candidates = match collect_evidence_candidates(pending.controller, state) {
                         Ok(candidates) => candidates,
-                        Err(_diag) => {
-                            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                            eprintln!("E5B-HALT {}:{}", file!(), line!());
+                        Err(_) => {
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -13345,9 +13308,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                         &pending.optional_additional_cost_chosen,
                     ) {
                         Ok(sum) => sum,
-                        Err(_diag) => {
-                            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                            eprintln!("E5B-HALT {}:{}", file!(), line!());
+                        Err(_) => {
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -13366,7 +13327,6 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                         return drain_pending_cast_or_decide(state);
                     }
                     if remaining.is_empty() && selected_sum < u32::from(minimum_mana_value) {
-                        eprintln!("E5B-HALT {}:{}", file!(), line!());
                         state.engine.halted = Some((
                             UnsupportedMechanic::InvalidEffectContinuation,
                             pending.spell,
@@ -13375,9 +13335,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     }
                     let max_targets = match u16::try_from(candidates.len()) {
                         Ok(count) => count,
-                        Err(_diag) => {
-                            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                            eprintln!("E5B-HALT {}:{}", file!(), line!());
+                        Err(_) => {
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -13404,9 +13362,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 if pending.optional_additional_cost_chosen.is_empty() {
                     let candidates = match bargain_candidates(kind, pending.controller, state) {
                         Ok(candidates) => candidates,
-                        Err(_diag) => {
-                            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                            eprintln!("E5B-HALT {}:{}", file!(), line!());
+                        Err(_) => {
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -13416,7 +13372,6 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     };
                     match candidates.as_slice() {
                         [] => {
-                            eprintln!("E5B-HALT {}:{}", file!(), line!());
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -13529,7 +13484,6 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
 
     if pending.x_value.is_none() {
         let Some(_) = pending_cast_selected_mana_cost(def, &pending, state) else {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.spell,
@@ -13589,7 +13543,6 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     }
 
     if finalize_cast(state, Vec::new()).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,
@@ -13601,7 +13554,6 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
 fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_activation.clone()?;
     if validate_pending_activation(state, &pending).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
@@ -13715,7 +13667,6 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 &pending.object_cost_chosen,
             );
             if candidates.is_empty() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -13790,7 +13741,6 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             let candidates = activation_graveyard_exile_candidates(&pending, state);
             let remaining = needed - pending.object_cost_chosen.len() as u8;
             if candidates.len() < usize::from(remaining) {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -13831,7 +13781,6 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             &pending.object_cost_chosen,
         );
         if candidates.is_empty() {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -13870,7 +13819,6 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             &pending.object_cost_chosen,
         );
         if candidates.is_empty() {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -13911,7 +13859,6 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             state,
         );
         if candidates.is_empty() {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -14414,7 +14361,6 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         if let Err(_error) = validate_pending_trigger(state, &pending) {
             #[cfg(test)]
             eprintln!("Pending trigger validation rejected: {_error}");
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -14446,7 +14392,6 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
                 || crate::fiendish_panda_v1::custody::unavailable(state, &pending).is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -14484,7 +14429,6 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                     || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
                     || crate::fiendish_panda_v1::custody::unavailable(state, &pending).is_err()
                 {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
                         pending.source,
@@ -14517,7 +14461,6 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         if let Err(_error) = push_trigger_onto_stack(state, pending.clone()) {
             #[cfg(test)]
             eprintln!("Trigger placement rejected: {_error}");
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -16637,9 +16580,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let fake_death_owner =
         match crate::fake_your_own_death_v50::death_custody::acquire_resolution(state, item) {
             Ok(owner) => owner,
-            Err(_diag) => {
-                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
+            Err(_) => {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16650,9 +16591,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let hunter_owner =
         match crate::high_society_hunter_custody_v45::acquire(state, item, true, false) {
             Ok(owner) => owner,
-            Err(_diag) => {
-                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
+            Err(_error) => {
+                #[cfg(test)]
+                eprintln!("Hunter resolution acquisition rejected: {_error}");
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16662,9 +16603,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         };
     let conqueror_owner = match crate::bloodthirsty_conqueror_v49::custody::acquire(state, item) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16674,9 +16613,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let panda_owner = match crate::fiendish_panda_v1::custody::acquire(state, item) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16686,9 +16623,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, item, true) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16698,9 +16633,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let targets_legal = match stack_targets_still_legal(item, state) {
         Ok(legal) => legal,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Resolution target preflight rejected: {_error}");
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16714,9 +16649,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         true,
     ) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16730,9 +16663,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         true,
     ) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16743,7 +16674,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     if !targets_legal
         && effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, item).is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
         return ResolutionProgress::Suspended;
     }
@@ -16754,9 +16684,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             true,
         ) {
             Ok(owner) => owner,
-            Err(_diag) => {
-                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
+            Err(_) => {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16770,9 +16698,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let crystal_owner = if targets_legal {
         match effect::crystal_prevention_v1::acquire_owner(state, item, true) {
             Ok(owner) => owner,
-            Err(_diag) => {
-                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
+            Err(_) => {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16784,7 +16710,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         None
     };
     if targets_legal && crate::sower_restriction_capture_v1::begin_resolution(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             resolving_source,
@@ -16795,9 +16720,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let fixed_removal_owner = match crate::fixed_source_damage_v3::acquire_removal(state, &current)
     {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 current.source,
@@ -16809,7 +16732,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         || (targets_legal
             && effect::temporary_control_v1::authority::begin_resolution(state).is_err())
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             resolving_source,
@@ -16819,9 +16741,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let stromkirk_owner = match crate::stromkirk_dispatch_v1::preflight_resolution(state, &current)
     {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16832,9 +16752,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let temporal_owner =
         match crate::extra_turn_v1::acquire(state, state.stack.last().expect("resolving item")) {
             Ok(owner) => owner,
-            Err(_diag) => {
-                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
+            Err(_) => {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16847,9 +16765,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         state.stack.last().expect("resolving item"),
     ) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16863,9 +16779,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         targets_legal,
     ) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16875,9 +16789,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let banishing_owner = match crate::banishing_light_v1::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16887,9 +16799,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let zul_owner = match crate::zul_ashur_v1::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16904,9 +16814,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     let arahbo_owner = match crate::arahbo_v1::before_remove(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Arahbo pre-pop removal rejected: {_error}");
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16916,9 +16826,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let garruk_owner = match crate::garruks_uprising_v1::before_remove(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16928,9 +16836,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let ajani_owner = match crate::ajani_full_v42::lifecycle::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16940,9 +16846,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let krenko_owner = match crate::krenko_v1::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16952,9 +16856,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let drake_owner = match crate::drake_hatcher_v1::custody::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16964,9 +16866,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let ravenous_owner = match crate::ravenous_amulet_v1::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16975,7 +16875,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     };
     if crate::fishing_pole_v39::lifecycle::preflight_resolution(state, &current).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             resolving_source,
@@ -16984,9 +16883,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
     let fishing_owner = match crate::fishing_pole_v39::lifecycle::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16996,9 +16893,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let faebloom_owner = match crate::faebloom_trick_v43::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -17008,9 +16903,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let fake_owner = match crate::fake_your_own_death_v50::spell_custody::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -17026,7 +16919,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         )
         .is_err()
         {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -17037,9 +16929,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
-            Err(_diag) => {
-                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
+            Err(_error) => {
+                #[cfg(test)]
+                eprintln!("Permanent entry pre-pop acquisition rejected: {_error}");
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -17053,7 +16945,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .expect("resolve_top_of_stack called with an empty stack");
     if crate::ajani_full_v42::lifecycle::record_removed(state, ajani_owner.as_ref(), false).is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             resolving_source,
@@ -17067,7 +16958,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     )
     .is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             resolving_source,
@@ -17078,7 +16968,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     if crate::fishing_pole_v39::lifecycle::removed_input(state, fishing_owner.as_ref(), false)
         .is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             resolving_source,
@@ -18026,7 +17915,6 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 )
                 .is_err()
                 {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
                         source.source,
@@ -18172,7 +18060,6 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     return;
                 };
                 if event::log_monarch_trigger(state, p, source).is_err() {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
                         source.source,
@@ -19055,7 +18942,6 @@ pub(crate) fn halt_on_invalid_battlefield_pt(state: &mut GameState) -> bool {
         return true;
     }
     if let Err(source) = validate_battlefield_pt(state) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         return true;
     }
@@ -20166,7 +20052,6 @@ pub(crate) fn commit_combat_damage_events_inner(
         })
         .collect();
     if crate::drake_hatcher_v1::custody::begin_combat(state, &events).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return true;
     }
@@ -20216,7 +20101,6 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
         }
     }
     if crate::drake_hatcher_v1::custody::finish_combat(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return;
     }
@@ -20254,7 +20138,6 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
             )
             .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     source.source,
@@ -21370,7 +21253,6 @@ fn finish_optional_trigger_targets(state: &mut GameState) -> Result<(), String> 
     // to fail after the pending trigger was removed.
     let pending = state.engine.pending_triggers.remove(0);
     if push_trigger_onto_stack(state, pending.clone()).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
@@ -22302,7 +22184,6 @@ pub(crate) fn copy_spell_for(
         )
         .is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, copy_source));
     }
     Some((copy_source, copy_stack_item))
@@ -22463,7 +22344,6 @@ fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (Obje
         )
         .is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, copy_source));
     }
     (copy_source, copy_stack_item)
@@ -24174,11 +24054,14 @@ fn finalize_owned_cast(
     item.v4.source_contract = Some(finalized_source_contract);
     let stack_item_id = item.v4.stack_item_id;
     mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
+    // Targeting validation re-authenticates a targeted spell's Storm
+    // trigger against the cast history, which gains this cast only with its
+    // SpellCast event; count the cast together with that event.
+    log_final_targeting_events(state, stack_item_id)?;
     state.players[pending.controller.index()].spells_cast_this_turn = state.players
         [pending.controller.index()]
     .spells_cast_this_turn
     .saturating_add(1);
-    log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
@@ -24376,9 +24259,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     match resolution_cast_v1::finish_child(state) {
         Ok(true) => return,
         Ok(false) => {}
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.spell,
@@ -24418,7 +24299,6 @@ fn finalize_activation(state: &mut GameState) {
                 || crew_requirement(ability.cost).is_some() && !staged.crew_finished
         })
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             staged.source,
@@ -24427,9 +24307,7 @@ fn finalize_activation(state: &mut GameState) {
     }
     let ajani_payment_owner = match crate::ajani_full_v42::lifecycle::acquire_payment(state) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 staged.source,
@@ -24439,9 +24317,7 @@ fn finalize_activation(state: &mut GameState) {
     };
     let fixed_payment_owner = match crate::fixed_source_damage_v3::acquire_payment(state) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 state.engine.pending_activation.as_ref().unwrap().source,
@@ -24465,9 +24341,7 @@ fn finalize_activation(state: &mut GameState) {
     frozen.drake_payment = match crate::drake_hatcher_v1::custody::capture_payment(state, &pending)
     {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -24477,9 +24351,7 @@ fn finalize_activation(state: &mut GameState) {
     };
     frozen.ravenous_payment = match crate::ravenous_amulet_v1::capture_payment(state, &pending) {
         Ok(owner) => owner,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -24510,9 +24382,7 @@ fn finalize_activation(state: &mut GameState) {
         .unwrap_or_else(|| activation_x_value(ability, &pending.targets_chosen, state))
     {
         Ok(value) => value,
-        Err(_diag) => {
-            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
+        Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -24566,7 +24436,6 @@ fn finalize_activation(state: &mut GameState) {
     if !paid {
         // Fail closed for a malformed/restored pending activation rather
         // than granting its effect without collecting the full cost.
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
@@ -24708,7 +24577,6 @@ fn push_paid_activation(
                 .reveal_hand_card(observer, owner, pending.source)
                 .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -24782,7 +24650,6 @@ fn push_paid_activation(
             .is_err()
         || crate::zul_ashur_v1::publish(state, stack_item_id).is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
@@ -24808,7 +24675,6 @@ fn push_paid_activation(
         )
         .is_err()
         {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -24817,7 +24683,6 @@ fn push_paid_activation(
         }
     }
     if log_final_targeting_events(state, stack_item_id).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,

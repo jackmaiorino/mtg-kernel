@@ -44,7 +44,6 @@ pub(crate) fn prevents_untap_step(state: &GameState, source: ObjectId) -> bool {
 /// Current controller, definition, or ability removal do not erase a captured trigger.
 pub(crate) fn untap_captured_source(ctx: &ExecCtx, state: &mut GameState) {
     let Some(contract) = ctx.ability_source_contract else {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -56,7 +55,6 @@ pub(crate) fn untap_captured_source(ctx: &ExecCtx, state: &mut GameState) {
         || contract.zone != Zone::Battlefield
         || crate::engine::validate_historical_ability_source_contract(state, contract).is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,

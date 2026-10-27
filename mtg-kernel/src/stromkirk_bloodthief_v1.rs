@@ -252,7 +252,6 @@ pub(crate) fn owns_item(item: &crate::state::StackItem) -> bool {
 }
 pub(crate) fn resolve(state: &mut GameState, ctx: &crate::effect::ExecCtx) {
     // Definition templates cannot execute outside the real dispatch owner.
-    eprintln!("E5B-HALT {}:{}", file!(), line!());
     state.engine.halted = Some((
         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
         ctx.source,

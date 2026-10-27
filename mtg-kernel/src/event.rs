@@ -1599,7 +1599,6 @@ fn initialize_entry_counters(
                 ) {
                     Ok(count) => count,
                     Err(_) => {
-                        eprintln!("E5B-HALT {}:{}", file!(), line!());
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             object,
@@ -1787,7 +1786,6 @@ pub fn apply_replacements(
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
     if let Err(source) = validate_exile_if_dies_replacements(state) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source,
@@ -1797,7 +1795,6 @@ pub fn apply_replacements(
     if let ProposedEvent::Damage(damage) = &proposed {
         if let Some(id) = damage.historical_source {
             if crate::source_power_activation_v1::damage_source(state, damage.source, id).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     damage.source,
@@ -1828,7 +1825,6 @@ pub fn apply_replacements(
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
         if crate::twinflame_tyrant_v1::replace(state, damage).is_err() {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 damage.source,
@@ -1839,7 +1835,6 @@ pub fn apply_replacements(
     }
     if let ProposedEvent::Damage(damage) = &proposed {
         if crate::effect::crystal_prevention_v1::needs_choice(state, damage) {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 damage.source,
@@ -1982,7 +1977,6 @@ pub(crate) fn replacement_apply(
             if crate::effect::crystal_prevention_v1::shield_operation(state, repl, d.amount)
                 .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     d.source,
@@ -2073,7 +2067,6 @@ pub(crate) fn install_combat_damage_prevention(
         zone_change_count: live.zone_change_count,
     };
     let Some(id) = state.engine.next_replacement_id.checked_add(1) else {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source,
@@ -2098,7 +2091,6 @@ pub(crate) fn install_exile_if_dies(
     target: crate::state::StackTargetContractV4,
 ) {
     let Some(id) = state.engine.next_replacement_id.checked_add(1) else {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source.source,
@@ -2407,7 +2399,6 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 
 pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::crystal_prevention_v1::validate(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             crate::ids::ObjectId(0),
@@ -2660,7 +2651,6 @@ pub(crate) fn propose_and_commit_crystal_discard_draw_owned(
     owner: &crate::effect::crystal_prevention_v1::OwnerV1,
 ) {
     if !owner.permits_discard_draw(state, capture, selected) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             capture.ctx.source,
@@ -2679,7 +2669,6 @@ pub(crate) fn propose_and_commit_crystal_life_gain_owned(
         crate::effect::PlayerRef::Controller => owner.controller(),
         crate::effect::PlayerRef::Opponent => owner.controller().opponent(),
         _ => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 crate::ids::ObjectId(0),
@@ -2689,7 +2678,6 @@ pub(crate) fn propose_and_commit_crystal_life_gain_owned(
     };
     let proposed = ProposedEvent::life_gain(beneficiary, amount);
     if !owner.permits_life_gain(state, &proposed, player, amount) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             crate::ids::ObjectId(0),
@@ -2916,7 +2904,6 @@ fn commit_with_entry_batch_and_source_color(
     if let ProposedEvent::ZoneChange(change) = &event {
         if let Some(request) = change.battlefield_x_v48.as_ref() {
             if change.to_zone != Zone::Battlefield || request.original < 0 {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     change.object,
@@ -2936,7 +2923,6 @@ fn commit_with_entry_batch_and_source_color(
                     .attached_to
                     .is_some_and(|host| Some(host) != request.host)
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     change.object,
@@ -2979,7 +2965,6 @@ fn commit_with_entry_batch_and_source_color(
         )
         .is_err()
         {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
@@ -2993,7 +2978,6 @@ fn commit_with_entry_batch_and_source_color(
         Ok(true) => {}
         Ok(false) => return,
         Err(_) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
@@ -3051,7 +3035,6 @@ fn commit_with_entry_batch_and_source_color(
         {
             Ok(captures) => captures,
             Err(_) => {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ObjectId(0),
@@ -3098,7 +3081,6 @@ fn commit_with_entry_batch_and_source_color(
                     let obj = state.objects.get_mut(id);
                     if !planeswalker || creature {
                         let Some(damage) = obj.damage.checked_add(d.amount.max(0) as u32) else {
-                            eprintln!("E5B-HALT {}:{}", file!(), line!());
                             state.engine.halted = Some((
                                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                                 d.source,
@@ -3416,7 +3398,6 @@ fn commit_with_entry_batch_and_source_color(
                         .attach_object_exact(object, 0, host.object, host.zone_change_count)
                         .is_err()
                     {
-                        eprintln!("E5B-HALT {}:{}", file!(), line!());
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             object,
@@ -3469,7 +3450,6 @@ fn commit_with_entry_batch_and_source_color(
                 );
             }
             if initialize_entry_lore_v48(state, object, counter_input.as_ref()).is_err() {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     object,
@@ -3623,7 +3603,6 @@ fn commit_with_entry_batch_and_source_color(
         )
         .is_err()
         {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 object,
@@ -3646,7 +3625,6 @@ fn commit_with_entry_batch_and_source_color(
             )
             .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ObjectId(0),
@@ -3773,7 +3751,6 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     let (events, token_requests) = match crate::doubling_season_v48::expand_tokens(state, events) {
         Ok(expanded) => expanded,
         Err(_) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
@@ -3784,7 +3761,6 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
         || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ObjectId(0),
@@ -3795,7 +3771,6 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         match crate::doubling_season_v48::TokenInputV48::capture(state, &token_requests) {
             Ok(input) => input,
             Err(_) => {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ObjectId(0),
@@ -3812,7 +3787,6 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         }
         _ => None,
     }) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source,
@@ -3823,7 +3797,6 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
     if crate::effect::crystal_prevention_v1::validate(state).is_err() {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             crate::ids::ObjectId(0),
@@ -3838,7 +3811,6 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         }
         _ => None,
     }) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source,
@@ -3873,7 +3845,6 @@ pub(crate) fn commit_crystal_prepared_batch(
     owner: &crate::effect::crystal_prevention_v1::OwnerV1,
 ) {
     if !owner.permits_batch(state, capture, &survivors) {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             capture.ctx.source,
@@ -3934,7 +3905,6 @@ fn commit_batch_survivors(
     if crate::doubling_season_v48::preflight_token_initialization(state, &survivors).is_err()
         || crate::doubling_season_v48::preflight_entry_roster(state, &survivors).is_err()
     {
-        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ObjectId(0),
@@ -3945,7 +3915,6 @@ fn commit_batch_survivors(
         Ok(true) => {}
         Ok(false) => return,
         Err(_) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
@@ -3994,7 +3963,6 @@ fn commit_batch_survivors(
             .find(|(source, controller, _)| *source == damage.source && *controller == player)
         {
             let Some(next) = total.checked_add(amount) else {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     damage.source,
@@ -4022,7 +3990,6 @@ fn commit_batch_survivors(
         match captured {
             Ok(captures) => Some(captures.into_iter()),
             Err(_) => {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ObjectId(0),
@@ -4105,7 +4072,6 @@ fn commit_batch_survivors(
                 )
                 .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     aura.object,
@@ -4138,7 +4104,6 @@ fn commit_batch_survivors(
             )
             .is_err()
             {
-                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ObjectId(0),
@@ -4196,7 +4161,6 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
     let captures = match captures {
         Ok(captures) => captures,
         Err(_) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
@@ -4284,7 +4248,6 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     let captures = match captures {
         Ok(captures) => captures,
         Err(_) => {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
@@ -4749,7 +4712,6 @@ fn commit_zone_change(
                     .attach_object_exact(id, generation, host.object, host.zone_change_count)
                     .is_err()
                 {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         id,
@@ -4783,7 +4745,6 @@ fn commit_zone_change(
             initialize_entry_counters(state, id, kicked, counter_input);
         }
         if initialize_entry_lore_v48(state, id, counter_input).is_err() {
-            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 id,
@@ -4810,7 +4771,6 @@ fn commit_zone_change(
             match placed {
                 Ok(placed) => state.objects.get_mut(id).v4.time_counters_v1 = placed,
                 Err(_) => {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         id,
@@ -4829,7 +4789,6 @@ fn commit_zone_change(
             ) {
                 Ok(count) => count,
                 Err(_) => {
-                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         id,
@@ -4849,7 +4808,6 @@ fn commit_zone_change(
                 {
                     Some(total) => total,
                     None => {
-                        eprintln!("E5B-HALT {}:{}", file!(), line!());
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             id,
