@@ -391,5 +391,65 @@ class StudyTagTests(Base):
         self.assertEqual(eg.known_pods(self.root), {})
 
 
+class ReviewR2Tests(Base):
+    """Round 2 review findings 1 to 3."""
+
+    def confirmed_duplicate(self, world):
+        self.record('pod1'); self.started()
+        eg.remember(self.root, 'dup2', 'duplicate', 1100.)
+        self.assertEqual(self.loop(world, polls=4), 'running')    # 60 s: dup2 confirmed absent, pod1 healthy
+        self.assertTrue((self.root / eg.KNOWN_DIR / 'dup2.absent.json').exists())
+
+    def test_confirmed_duplicate_that_reappears_in_the_census_is_deleted_again(self):
+        world = World([pod('pod1')]); self.confirmed_duplicate(world)
+        world.pods['dup2'] = pod('dup2')
+        self.loop(world, polls=1)
+        self.assertIn('dup2', world.deletes)
+        self.assertFalse((self.root / eg.KNOWN_DIR / 'dup2.absent.json').exists())
+        self.assertEqual(read(self.root / 'external-reactivated-pod.json')['pod_id'], 'dup2')
+
+    def test_confirmed_duplicate_returned_by_get_only_is_deleted_again(self):
+        world = World([pod('pod1')]); self.confirmed_duplicate(world)
+        world.census = lambda current: [p for p in current if p['id'] != 'dup2']
+        world.pods['dup2'] = pod('dup2')
+        self.loop(world, polls=1)
+        self.assertIn('dup2', world.deletes)
+
+    def test_unreadable_store_record_keeps_its_id_and_blocks_completion(self):
+        self.record('pod1'); self.started(); write(self.root / 'release-authorized.json', {})
+        eg.remember(self.root, 'dup2', 'duplicate', 1100.)
+        (self.root / eg.KNOWN_DIR / 'dup2.json').write_text('{broken')
+        world = World([pod('pod1'), pod('dup2')])
+        world.census = lambda current: [p for p in current if p['id'] != 'dup2']
+        self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertIn('dup2', world.deletes)
+        self.assertIn('pod1', world.deletes)
+        self.assertIsNone(self.completion())
+
+    def test_known_pods_reads_records_individually(self):
+        for pod_id in ('a1', 'b2'):
+            eg.remember(self.root, pod_id, 'duplicate', 1100.)
+        (self.root / eg.KNOWN_DIR / 'a1.json').write_text('[]')
+        errors = []
+        known = eg.known_pods(self.root, errors)
+        self.assertEqual(sorted(known), ['a1', 'b2'])
+        self.assertIsNone(known['a1']['role'])
+        self.assertEqual(known['b2']['role'], 'duplicate')
+        self.assertEqual(len(errors), 1)
+        with self.assertRaises(AttributeError):
+            eg.known_pods(self.root)
+
+    def test_census_entry_with_changed_or_missing_name_is_presence(self):
+        for entry in ({'id': 'pod1', 'name': 'renamed'}, {'id': 'pod1'}):
+            with self.subTest(entry=entry):
+                self.record(); self.started(); write(self.root / 'release-authorized.json', {}, replace=True)
+                world = World([pod()]); world.delete_failures = -1
+                world.get_script = iter(['absent'] * 100)      # GET says 404 while the census lists pod1
+                world.census = lambda current, entry=entry: [dict(entry)]
+                self.assertEqual(self.loop(world, polls=10), 'running')
+                self.assertIsNone(self.completion())
+                self.assertGreaterEqual(world.deletes.count('pod1'), 10)
+
+
 if __name__ == '__main__':
     unittest.main()

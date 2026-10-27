@@ -12,7 +12,9 @@ such ID (the create receipt, a Pod adopted or seen in a census, a duplicate
 recorded by create) is retained durably under lease/known-pods/ and acted on
 until that ID alone is confirmed absent: two observations at least 30 s apart,
 each a 404 for its exact-ID GET and a successful, well-formed census that does
-not list it. The primary Pod is the receipt's ID, else one adopted when the
+not list it under any name. A confirmed ID that is listed or returned again
+loses its confirmation and is a target again. An unreadable store record keeps
+its ID as a target and blocks completion. The primary Pod is the receipt's ID, else one adopted when the
 census shows exactly one unreceipted Pod and no create is ambiguous; every
 other retained ID is a duplicate and is deleted on every pass. Name prefixes
 (lease['study_tag']) are never targets here: the shared tool has no ownership
@@ -126,8 +128,12 @@ def remember(root, pod_id, role, epoch):
         pass
 
 
-def known_pods(root):
-    """{id: {'role': ..., 'absent': bool}} from the durable store; raises when it cannot be read."""
+def known_pods(root, errors=None):
+    """{id: {'role': ..., 'absent': bool}} from the durable store.
+
+    Each record is read on its own. With an `errors` list, an unreadable record
+    keeps its ID (role None, still a delete target) and is reported there;
+    without one, the first unreadable record raises."""
     folder = Path(root) / KNOWN_DIR
     if not folder.exists():
         return {}
@@ -139,7 +145,13 @@ def known_pods(root):
         pod_id = name[:-len('.json')]
         if not valid_id(pod_id):
             continue
-        result[pod_id] = {'role': read(path).get('role'), 'absent': (folder / (pod_id + '.absent.json')).exists()}
+        try:
+            role = read(path).get('role')
+        except Exception as e:  # noqa: BLE001
+            if errors is None:
+                raise
+            errors.append(pod_id + ':' + type(e).__name__); role = None
+        result[pod_id] = {'role': role, 'absent': (folder / (pod_id + '.absent.json')).exists()}
     return result
 
 
@@ -175,6 +187,15 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         except Exception as e:  # noqa: BLE001 - the in-memory copy keeps acting on it
             note('external-known-error.json', {'pod_id': pod_id, 'epoch': clock(), 'error_type': type(e).__name__})
 
+    def reactivate(pod_id, evidence):
+        """Positive presence invalidates an absence confirmation: the ID is a delete target again."""
+        confirmed.discard(pod_id); id_absence.pop(pod_id, None)
+        try:
+            (root / KNOWN_DIR / (pod_id + '.absent.json')).unlink()
+        except Exception:  # noqa: BLE001 - the next pass sees the presence again
+            pass
+        note('external-reactivated-pod.json', {'pod_id': pod_id, 'evidence': evidence, 'epoch': clock()})
+
     def mark_absent(pod_id):
         confirmed.add(pod_id)
         try:
@@ -208,13 +229,16 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
                 keep(recorded, 'receipt')
         except Exception as e:  # noqa: BLE001
             failures.append('receipt:' + type(e).__name__)
+        store_errors = []
         try:
-            for pod_id, info in known_pods(root).items():
+            for pod_id, info in known_pods(root, store_errors).items():
                 memory.setdefault(pod_id, info['role'])
                 if info['absent']:
                     confirmed.add(pod_id)
         except Exception as e:  # noqa: BLE001
-            failures.append('known:' + type(e).__name__)
+            store_errors.append('store:' + type(e).__name__)
+        if store_errors:   # a guard failure that also blocks completion
+            failures.append('known:' + ','.join(store_errors))
 
         def primary_id():
             if recorded:
@@ -225,8 +249,9 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         if reason == 'deadline':
             for pod_id in sorted(p for p in memory if p not in confirmed):
                 delete(pod_id, 'deadline_first')
-        # (C1) census: exact-name Pods only; malformed provider data is a guard failure, never absence
-        census_ok = False; malformed = False; listed = set()
+        # (C1) census: exact-name Pods are ownership; every listed ID, whatever its name, is presence.
+        # Malformed provider data is a guard failure, never absence.
+        census_ok = False; malformed = False; listed = set(); census_ids = set()
         try:
             raw = pods(key)
             if not isinstance(raw, list):
@@ -235,6 +260,8 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
             for entry in raw:
                 if not isinstance(entry, dict):
                     malformed = True; continue
+                if valid_id(entry.get('id')):
+                    census_ids.add(entry['id'])
                 if entry.get('name') != lease['name']:
                     continue
                 if valid_id(entry.get('id')):
@@ -256,15 +283,19 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
             if pod_id == adopt:
                 note('external-discovered-pod.json', {'id': pod_id, 'name': lease['name'], 'epoch': clock()})
         primary = primary_id()
-        # (C2) exact-ID GET of every retained ID not yet confirmed absent
+        for pod_id in sorted(confirmed & census_ids):
+            reactivate(pod_id, 'census')
+        # (C2) exact-ID GET of every retained ID, confirmed ones included (a reappearance reactivates it)
         observed = {}; pod = None
-        for pod_id in sorted(p for p in memory if p not in confirmed):
+        for pod_id in sorted(memory):
             try:
                 got = provider(key, pod_id).call('GET')
             except Exception as e:  # noqa: BLE001
                 failures.append('get:' + type(e).__name__); observed[pod_id] = None
                 continue
             observed[pod_id] = 'absent' if got is None else 'present'
+            if got is not None and pod_id in confirmed:
+                reactivate(pod_id, 'get')
             if pod_id == primary and got is not None:
                 pod = got
         # (C3) identity, price and cost of the primary, each isolated
@@ -308,7 +339,7 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
             reason = reason or 'ambiguous_create'
         # per-ID absence: a 404 for the exact ID AND a well-formed census that does not list it
         for pod_id in open_known:
-            seen_absent = census_ok and not malformed and pod_id not in listed and observed.get(pod_id) == 'absent'
+            seen_absent = census_ok and not malformed and pod_id not in census_ids and observed.get(pod_id) == 'absent'
             if id_absence.setdefault(pod_id, AbsenceConfirmer(clock)).observe(seen_absent):
                 mark_absent(pod_id)
         open_known = sorted(p for p in memory if p not in confirmed)
@@ -316,7 +347,7 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         census_done = census_absence.observe(census_clear)
         controller_done = not memory and (root / 'completion.json').exists() and \
             now - lease['created_epoch'] > CONTROLLER_DONE_SECONDS
-        may_finish = not open_known if memory else bool(reason or controller_done)
+        may_finish = (not open_known if memory else bool(reason or controller_done)) and not store_errors
         unresolved = create_unresolved(root)
         if census_done and may_finish and not unresolved and not ambiguous:
             note('external-guard-completion.json', {
@@ -347,7 +378,7 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
                 except Exception:  # noqa: BLE001 - preservation never blocks release
                     pass
             targets.insert(0, primary)
-        targets = [p for p in targets if not (observed.get(p) == 'absent' and p not in listed)]
+        targets = [p for p in targets if not (observed.get(p) == 'absent' and p not in census_ids)]
         for target in targets:
             delete(target, reason or 'duplicate_pod')
         if reason and clock() >= lease['deadline_epoch'] and (targets or not absent_now):

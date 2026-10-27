@@ -142,7 +142,7 @@ class Provider:
         try:
             with urllib.request.urlopen(req, timeout=15) as response:
                 body = response.read()
-                return json.loads(body) if body else {}
+                value = json.loads(body) if body else {}
         except urllib.error.HTTPError as error:
             code=error.code;error.close()
             if code == 404:
@@ -150,6 +150,11 @@ class Provider:
             raise RuntimeError('provider HTTP ' + str(code)) from None
         except (OSError, ValueError):
             raise RuntimeError('provider request unavailable') from None
+        # None is reserved for HTTP 404. A successful GET must carry a Pod object:
+        # JSON null, a list, a scalar or an empty body is malformed, never absence.
+        if method == 'GET' and (not body or not isinstance(value, dict)):
+            raise RuntimeError('provider response malformed')
+        return value
 
     def funds(self):
         # Explicit read-only GraphQL query, matching the established local helper.

@@ -246,6 +246,47 @@ class PriceAndReleaseTests(unittest.TestCase):
                                  + value['poll_seconds'])
 
 
+def http_response(body):
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = body
+    return response
+
+
+class ProviderResponseTests(unittest.TestCase):
+    """Round 2 review finding 4: None is reserved for HTTP 404."""
+
+    def test_successful_non_object_get_is_malformed_not_absent(self):
+        for body in (b'null', b'[]', b'42', b'"text"', b''):
+            with self.subTest(body=body), no_network(), \
+                    patch('urllib.request.urlopen', return_value=http_response(body)):
+                with self.assertRaisesRegex(RuntimeError, 'malformed'):
+                    lease_guard.Provider('fake-key', 'pod123').call('GET')
+
+    def test_only_http_404_is_absence(self):
+        error = urllib.error.HTTPError('https://rest.runpod.io/v1/pods/pod123', 404, 'absent', {}, None)
+        with no_network(), patch('urllib.request.urlopen', side_effect=error):
+            self.assertIsNone(lease_guard.Provider('fake-key', 'pod123').call('GET'))
+        with no_network(), patch('urllib.request.urlopen', return_value=http_response(json.dumps(pod()).encode())):
+            self.assertEqual(lease_guard.Provider('fake-key', 'pod123').call('GET')['id'], 'pod123')
+        with no_network(), patch('urllib.request.urlopen', return_value=http_response(b'')):
+            self.assertEqual(lease_guard.Provider('fake-key', 'pod123').call('DELETE'), {})
+
+    def test_recovery_never_completes_on_successful_null_responses(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            requests = []
+
+            def urlopen(request, timeout=None):
+                requests.append(request.method)
+                return http_response(b'{}' if request.method == 'DELETE' else b'null')
+            clock = FakeClock(1100, max_sleeps=20)
+            with no_network(), patch('urllib.request.urlopen', urlopen), guard_time(lease_guard, clock):
+                with self.assertRaises(Stop):
+                    lease_guard.release_after_failure(lease_guard.Provider('fake-key', 'pod123'), lease(), 'pod123',
+                                                      temporary, 'test')
+            self.assertFalse((Path(temporary) / 'released.json').exists())
+            self.assertEqual(requests.count('DELETE'), 21)   # a DELETE on every loop
+
+
 class IdleTests(unittest.TestCase):
     """#335 item 6: a progress record refreshed on a timer never hides a hung worker."""
 

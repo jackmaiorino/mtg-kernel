@@ -479,15 +479,24 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
         if i:
             sleep(ABSENT_SPACING_SECONDS)
         try:
-            census = owned_pods(key, lease, pods)
-            owned = len(census) if all(external_guard.valid_id(p.get("id")) for p in census) else None
-        except Exception:  # noqa: BLE001 - a failed census is never absence
-            owned = None
+            census = (pods or external_guard.list_pods)(key)
+            if not isinstance(census, list) or not all(isinstance(p, dict) for p in census):
+                raise ValueError("census malformed")
+            own = [p for p in census if p.get("name") == lease["name"]]
+            if not all(external_guard.valid_id(p.get("id")) for p in own):
+                raise ValueError("census entry without a valid Pod ID")
+            owned = len(own)
+            listed = {p["id"] for p in census if external_guard.valid_id(p.get("id"))}   # any name is presence
+        except Exception:  # noqa: BLE001 - a failed or malformed census is never absence
+            owned = None; listed = set()
         present = {}
         for pod_id in sorted(ids) if ids_ok else []:
+            if pod_id in listed:
+                present[pod_id] = True
+                continue
             try:
                 present[pod_id] = (provider or lease_guard.Provider)(key, pod_id).call("GET") is not None
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - including a malformed success response: never absence
                 present[pod_id] = None
         observations.append({"epoch": clock(), "owned_pods": owned, "present_by_id": present})
     absent = ids_ok and all(o["owned_pods"] == 0 and all(v is False for v in o["present_by_id"].values())

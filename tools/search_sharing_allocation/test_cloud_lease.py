@@ -13,7 +13,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cloud_lease as lease
 import diagnostic_create
@@ -360,6 +360,32 @@ class ReleaseVerificationTests(Base):
         lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
         world = World([pod("A")]); world.get_script = iter(["absent"] * 4)
         self.assertFalse(self.check(root, world))
+
+    def test_census_listing_a_retained_id_under_another_name_blocks_release(self):
+        root = self.recorded()
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        for entry in ({"id": "A", "name": "renamed"}, {"id": "A"}):
+            with self.subTest(entry=entry):
+                world = World([]); world.census = lambda current, entry=entry: [dict(entry)]
+                self.assertFalse(self.check(root, world))
+
+    def test_successful_null_get_is_never_absence(self):
+        root = self.recorded()
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"null"
+        with patch("urllib.request.urlopen", return_value=response):
+            clock = FakeClock(1000.0)
+            released = lease.verify_absent(root, key="k", pods=World([]).list, provider=lease.lease_guard.Provider,
+                                           clock=clock, sleep=clock.advance)
+        self.assertFalse(released)
+
+    def test_unreadable_retained_record_blocks_release(self):
+        root = self.recorded()
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        lease.external_guard.remember(root, "B", "duplicate", 1000.0)
+        (root / lease.external_guard.KNOWN_DIR / "B.json").write_text("{broken")
+        self.assertFalse(self.check(root, World([])))
 
     def test_attempt_without_receipt_is_unresolved_until_operator_resolution(self):
         root = self.control()
