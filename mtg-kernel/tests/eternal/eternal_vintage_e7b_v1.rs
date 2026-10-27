@@ -471,9 +471,7 @@ fn e7b_cards_are_full_with_their_printed_characteristics() {
     assert!(!Subtype::Dack.is_creature_type());
     assert_eq!(def("Bayou").subtypes, &[Subtype::Swamp, Subtype::Forest]);
     assert!(def("Abrupt Decay").spell_cannot_be_countered);
-    for name in ["Grief"] {
-        assert!(def(name).keywords.has(Keywords::MENACE), "{name}");
-    }
+    assert!(def("Grief").keywords.has(Keywords::MENACE));
     for name in ["Ichorid", "Vengevine"] {
         assert!(def(name).keywords.has(Keywords::HASTE), "{name}");
     }
