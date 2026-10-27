@@ -1102,6 +1102,8 @@ const DIAGNOSED_WITNESSES_V1: usize = 10;
 struct TermsV1 {
     count: usize,
     sum_abs: f64,
+    /// Each term, signed, in substep then row order.
+    values: Vec<f64>,
 }
 
 /// `(group, decision, selected action)` per substep, in batch order.
@@ -1194,6 +1196,7 @@ fn contribution_terms_v1(
     let mut terms = TermsV1 {
         count: 0,
         sum_abs: 0.0,
+        values: Vec::new(),
     };
     for (substep, &(_, decision, _)) in substeps.iter().enumerate() {
         let decision = &decisions[decision];
@@ -1231,6 +1234,7 @@ fn contribution_terms_v1(
             };
             terms.count += 1;
             terms.sum_abs += contribution.abs();
+            terms.values.push(contribution);
         }
     }
     terms
@@ -1402,6 +1406,390 @@ fn wide_fd_roundoff_diagnostic_receipt() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Amendment 5.1-A1 receipts (sections 3 and 4). They print only: the section
+// 5.1 gate above and its pass rule are unchanged until the reviewers rule.
+// ---------------------------------------------------------------------------
+
+/// The proposed replacement clause's bound on rho, printed against.
+const RHO_BOUND_V1: f64 = 1.0e-4;
+/// D1 examines the witnesses above this e; its pre-declared pass is e_f at
+/// most this.
+const D1_THRESHOLD_V1: f64 = 8.0;
+/// The wide state encoder bias row the amendment names.
+const D1_STATE_BIAS_ROW_V1: usize = 103;
+/// f32 unit roundoff, 2^-24.
+const UNIT_ROUNDOFF_V1: f64 = 1.0 / 16_777_216.0;
+const RHO_LISTED_V1: usize = 5;
+
+/// One dot product's value and its cancellation ratio
+/// `(|b| + sum |w_k x_k|) / |b + sum w_k x_k|`.
+fn dot_condition_v1(weight: &[f64], bias: f64, input: &[f64]) -> (f64, f64) {
+    assert_eq!(weight.len(), input.len());
+    let mut value = bias;
+    let mut mass = bias.abs();
+    for (weight, input) in weight.iter().zip(input) {
+        value += weight * input;
+        mass += (weight * input).abs();
+    }
+    (value, mass / value.abs())
+}
+
+/// The input rows one weight tensor sees in one decision's oracle forward.
+fn captured_rows_v1(
+    parameters: &[Vec<f64>],
+    hidden: usize,
+    embedding: usize,
+    decision: &GradientDecisionV1,
+    weight: usize,
+) -> Vec<Vec<f64>> {
+    let mut run = OracleRunV1 {
+        parameters,
+        hook: None,
+        capture: Some((weight, Vec::new())),
+    };
+    oracle_forward_run_v1(&mut run, hidden, embedding, &decision.view_v1(false));
+    run.capture.take().unwrap().1
+}
+
+/// Whether `substep` is its group's first, the one whose value enters the
+/// loss.
+fn is_value_substep_v1(substeps: &[(usize, usize, usize)], substep: usize) -> bool {
+    substeps
+        .iter()
+        .position(|&(group, _, _)| group == substeps[substep].0)
+        == Some(substep)
+}
+
+/// One witness with its oracle terms and roundoff measures.
+struct MeasuredV1 {
+    witness: WitnessV1,
+    terms: TermsV1,
+    abs_error: f64,
+    kappa: f64,
+    e: f64,
+}
+
+impl MeasuredV1 {
+    /// `abs error / sum |terms|`, `None` when every term is zero.
+    fn rho(&self) -> Option<f64> {
+        (self.terms.sum_abs > 0.0).then_some(self.abs_error / self.terms.sum_abs)
+    }
+
+    fn name(&self) -> String {
+        format!("{} [{}]", self.witness.block, self.witness.index)
+    }
+}
+
+/// D1 for one `value_head.2.weight` witness: per sample, the cancellation of
+/// `h_j`'s pre-activation, of `v`, and of the value residual `v - t` (the
+/// target is the terminal return on the terminal objective), the predicted
+/// per-term relative error `r_s`, and the forward-aware `e_f`.
+#[allow(clippy::too_many_arguments)]
+fn d1_value_head_v1(
+    out: &mut impl Write,
+    header: &str,
+    parameters: &[Vec<f64>],
+    hidden: usize,
+    embedding: usize,
+    decisions: &[GradientDecisionV1; 2],
+    targets: &[f64],
+    measured: &MeasuredV1,
+) {
+    let column = measured.witness.index;
+    let substeps = flattened_substeps_v1();
+    assert_eq!(measured.terms.count, substeps.len());
+    let group_count = GRADIENT_BATCH_V1.len() as f64;
+    let mut forward = 0.0;
+    for (substep, &(group, decision, _)) in substeps.iter().enumerate() {
+        let decision = &decisions[decision];
+        let state_hidden =
+            &captured_rows_v1(parameters, hidden, embedding, decision, VALUE_FIRST_WEIGHT)[0];
+        let value_hidden =
+            &captured_rows_v1(parameters, hidden, embedding, decision, VALUE_SECOND_WEIGHT)[0];
+        let m_h = state_hidden.len();
+        let (_, kappa_h) = dot_condition_v1(
+            &parameters[VALUE_FIRST_WEIGHT][column * m_h..(column + 1) * m_h],
+            parameters[VALUE_FIRST_BIAS][column],
+            state_hidden,
+        );
+        let m_v = value_hidden.len();
+        let (value, kappa_v) = dot_condition_v1(
+            &parameters[VALUE_SECOND_WEIGHT],
+            parameters[VALUE_SECOND_BIAS][0],
+            value_hidden,
+        );
+        let target = targets[group];
+        let enters = is_value_substep_v1(&substeps, substep);
+        let kappa_d = if enters {
+            (value.abs() + target.abs()) / (value - target).abs()
+        } else {
+            0.0
+        };
+        let term = measured.terms.values[substep];
+        let analytic = if enters {
+            2.0 * f64::from(VC) * (value - target) / group_count * value_hidden[column]
+        } else {
+            0.0
+        };
+        let r = (kappa_h * (m_h as f64).sqrt() + kappa_v * (m_v as f64).sqrt() + kappa_d)
+            * UNIT_ROUNDOFF_V1;
+        forward += term.abs() * r;
+        writeln!(
+            out,
+            "WIDE_FD_D1_V1 {header} sample={substep} term={term:.6e} analytic_term={analytic:.6e} \
+             h_j={:.6e} kappa_h={kappa_h:.4e} m_h={m_h} v={value:.6e} kappa_v={kappa_v:.4e} \
+             m_v={m_v} t={target:.4} kappa_d={kappa_d:.4e} r_s={r:.4e}",
+            value_hidden[column],
+        )
+        .unwrap();
+    }
+    let accumulation =
+        measured.terms.sum_abs * (measured.terms.count as f64).sqrt() * UNIT_ROUNDOFF_V1;
+    let e_f = measured.abs_error / (forward + accumulation);
+    writeln!(
+        out,
+        "WIDE_FD_D1_V1 {header} e={:.4} e_f={e_f:.4} e_f<=8={}",
+        measured.e,
+        e_f <= D1_THRESHOLD_V1,
+    )
+    .unwrap();
+}
+
+/// The upstream conditioning D1 can attribute to one `state_encoder.0.bias`
+/// witness. Its term per sample is `(1 - h_j^2) * sum_k W2[k, j] g_k`, with
+/// `g_k` the loss gradient at the state layer's second pre-activation (by
+/// central differences). Printed: the cancellation of `h_j`'s pre-activation
+/// `p` and its amplification `2 |h_j p|` into `1 - h_j^2`, the rounding
+/// sensitivity `2 h_j^2 / (1 - h_j^2)` of `1 - h_j^2`, and the cancellation of
+/// the backward dot product. `g_k`'s own error is not attributed.
+#[allow(clippy::too_many_arguments)]
+fn d1_state_bias_v1(
+    out: &mut impl Write,
+    header: &str,
+    parameters: &[Vec<f64>],
+    hidden: usize,
+    embedding: usize,
+    decisions: &[GradientDecisionV1; 2],
+    targets: &[f64],
+    advantages: &[f64],
+    measured: &MeasuredV1,
+) {
+    let row = measured.witness.index;
+    let substeps = flattened_substeps_v1();
+    assert_eq!(measured.terms.count, substeps.len());
+    let base: Vec<(Vec<f64>, f64)> = substeps
+        .iter()
+        .map(|&(_, decision, _)| {
+            substep_output_v1(parameters, hidden, embedding, &decisions[decision], None)
+        })
+        .collect();
+    let mut forward = 0.0;
+    for (substep, &(_, decision, _)) in substeps.iter().enumerate() {
+        let decision = &decisions[decision];
+        let state_input =
+            &captured_rows_v1(parameters, hidden, embedding, decision, STATE_FIRST_WEIGHT)[0];
+        let m_pre = state_input.len();
+        let (pre, kappa_pre) = dot_condition_v1(
+            &parameters[STATE_FIRST_WEIGHT][row * m_pre..(row + 1) * m_pre],
+            parameters[STATE_FIRST_BIAS][row],
+            state_input,
+        );
+        let h = pre.tanh();
+        let amplification = 2.0 * (h * pre).abs();
+        let kappa_t = 2.0 * h * h / (1.0 - h * h);
+        let mut back = 0.0;
+        let mut back_mass = 0.0;
+        for k in 0..hidden {
+            let loss = |epsilon: f64| {
+                let mut outputs = base.clone();
+                outputs[substep] = substep_output_v1(
+                    parameters,
+                    hidden,
+                    embedding,
+                    decision,
+                    Some(OracleHookV1 {
+                        weight: STATE_SECOND_WEIGHT,
+                        row: 0,
+                        site: OracleSiteV1::PreActivation(k),
+                        epsilon,
+                    }),
+                );
+                loss_from_outputs_v1(&outputs, targets, advantages)
+            };
+            let upstream = (loss(TERM_STEP_V1) - loss(-TERM_STEP_V1)) / (2.0 * TERM_STEP_V1);
+            let contribution = parameters[STATE_SECOND_WEIGHT][k * hidden + row] * upstream;
+            back += contribution;
+            back_mass += contribution.abs();
+        }
+        let kappa_back = back_mass / back.abs();
+        let term = measured.terms.values[substep];
+        let r = (amplification * kappa_pre * (m_pre as f64).sqrt()
+            + kappa_t
+            + kappa_back * (hidden as f64).sqrt())
+            * UNIT_ROUNDOFF_V1;
+        forward += term.abs() * r;
+        writeln!(
+            out,
+            "WIDE_FD_D1_V1 {header} sample={substep} term={term:.6e} analytic_term={:.6e} \
+             h_j={h:.6e} pre={pre:.6e} kappa_pre={kappa_pre:.4e} m_pre={m_pre} \
+             amplification={amplification:.4e} kappa_t={kappa_t:.4e} \
+             kappa_back={kappa_back:.4e} m_back={hidden} r_s={r:.4e}",
+            (1.0 - h * h) * back,
+        )
+        .unwrap();
+    }
+    let accumulation =
+        measured.terms.sum_abs * (measured.terms.count as f64).sqrt() * UNIT_ROUNDOFF_V1;
+    let e_f = measured.abs_error / (forward + accumulation);
+    writeln!(
+        out,
+        "WIDE_FD_D1_V1 {header} e={:.4} e_f(attributed)={e_f:.4} (no pass rule)",
+        measured.e,
+    )
+    .unwrap();
+}
+
+/// rho over every witness of one width and objective, then D1 on the
+/// `value_head.2.weight` witnesses with e above 8 and the attributable
+/// conditioning of the `state_encoder.0.bias` witnesses with e above 8 (and
+/// always wide row 103).
+fn rho_and_d1_dims_v1<D: NetDimsV1>(
+    label: &str,
+    model: &D::Net,
+    objective: ObjectiveV1,
+    out: &mut impl Write,
+) where
+    D::Net: RecordingNetV1,
+{
+    let report = fd_check_dims_v1::<D>(model, objective);
+    let decisions = gradient_decisions_v1();
+    let parameters = parameters_f64_v1(&model.parameter_snapshot_v1());
+    let measured: Vec<MeasuredV1> = report
+        .witness_list
+        .iter()
+        .map(|witness| {
+            let terms = contribution_terms_v1(
+                &parameters,
+                D::HIDDEN,
+                D::CARD_EMBEDDING,
+                &D::PARAMETER_SHAPES,
+                &decisions,
+                &report.targets,
+                &report.advantages,
+                witness.tensor,
+                witness.index,
+            );
+            let (kappa, e) = roundoff_v1(&terms, witness.rust, witness.oracle);
+            MeasuredV1 {
+                witness: witness.clone(),
+                abs_error: (witness.rust - witness.oracle).abs(),
+                terms,
+                kappa,
+                e,
+            }
+        })
+        .collect();
+    let mut ranked: Vec<&MeasuredV1> = measured
+        .iter()
+        .filter(|measured| measured.rho().is_some())
+        .collect();
+    ranked.sort_by(|left, right| right.rho().unwrap().total_cmp(&left.rho().unwrap()));
+    let zero_mass: Vec<&MeasuredV1> = measured
+        .iter()
+        .filter(|measured| measured.rho().is_none())
+        .collect();
+    let worst = ranked[0];
+    writeln!(
+        out,
+        "WIDE_FD_RHO_V1 {objective:?} {label}: witnesses={} max_rho={:.4e} at ({}) e={:.4} \
+         above_{RHO_BOUND_V1:e}={} zero_mass={} zero_mass_max_abs_error={:.4e}",
+        measured.len(),
+        worst.rho().unwrap(),
+        worst.name(),
+        worst.e,
+        ranked
+            .iter()
+            .filter(|measured| measured.rho().unwrap() > RHO_BOUND_V1)
+            .count(),
+        zero_mass.len(),
+        zero_mass
+            .iter()
+            .map(|measured| measured.abs_error)
+            .fold(0.0, f64::max),
+    )
+    .unwrap();
+    for (rank, measured) in ranked.iter().take(RHO_LISTED_V1).enumerate() {
+        writeln!(
+            out,
+            "WIDE_FD_RHO_V1 {objective:?} {label} rank={rank} rho={:.4e} witness=({}) \
+             abs_error={:.4e} kappa={:.4e} n={} e={:.4}",
+            measured.rho().unwrap(),
+            measured.name(),
+            measured.abs_error,
+            measured.kappa,
+            measured.terms.count,
+            measured.e,
+        )
+        .unwrap();
+    }
+    let wide = !is_net8_dims_v1::<D>();
+    for entry in &measured {
+        let tensor = entry.witness.tensor;
+        let header = format!("{objective:?} {label} ({})", entry.name());
+        if tensor == VALUE_SECOND_WEIGHT && entry.e > D1_THRESHOLD_V1 {
+            d1_value_head_v1(
+                out,
+                &header,
+                &parameters,
+                D::HIDDEN,
+                D::CARD_EMBEDDING,
+                &decisions,
+                &report.targets,
+                entry,
+            );
+        }
+        if tensor == STATE_FIRST_BIAS
+            && (entry.e > D1_THRESHOLD_V1 || (wide && entry.witness.index == D1_STATE_BIAS_ROW_V1))
+        {
+            d1_state_bias_v1(
+                out,
+                &header,
+                &parameters,
+                D::HIDDEN,
+                D::CARD_EMBEDDING,
+                &decisions,
+                &report.targets,
+                &report.advantages,
+                entry,
+            );
+        }
+    }
+}
+
+/// Both widths of one objective, written to stderr in one piece so parallel
+/// receipts do not interleave.
+fn rho_and_d1_receipt_v1(objective: ObjectiveV1) {
+    let narrow = perturbed_dims_v1::<Net8DimsV1>(narrow_model_v1(), 0xA11C_E5ED);
+    let wide = perturbed_dims_v1::<Net8W128DimsV1>(wide_model_v1(), 0xA11C_E5ED);
+    let mut out = Vec::new();
+    rho_and_d1_dims_v1::<Net8DimsV1>("net-8", &narrow, objective, &mut out);
+    rho_and_d1_dims_v1::<Net8W128DimsV1>("net-8w128", &wide, objective, &mut out);
+    std::io::stderr().lock().write_all(&out).unwrap();
+}
+
+/// Amendment 5.1-A1 receipt, GAE objective (prints only, never gates).
+#[test]
+fn wide_fd_rho_and_d1_receipt_gae() {
+    rho_and_d1_receipt_v1(ObjectiveV1::Gae);
+}
+
+/// Amendment 5.1-A1 receipt, terminal objective (prints only, never gates).
+#[test]
+fn wide_fd_rho_and_d1_receipt_terminal() {
+    rho_and_d1_receipt_v1(ObjectiveV1::Terminal);
 }
 
 // ---------------------------------------------------------------------------
