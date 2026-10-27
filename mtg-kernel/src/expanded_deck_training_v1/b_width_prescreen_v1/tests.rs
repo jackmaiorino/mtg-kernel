@@ -692,6 +692,10 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     .unwrap();
     assert!(create_new_v1(&attempt_path_v1(&games, 5), b"{}").is_err());
     fs::write(games.join(".result-0006.json.tmp-1"), b"{").unwrap();
+    // A crash while writing game 6's attempt record left it torn: the game was
+    // never dispatched, so the record is set aside and the game is played.
+    let torn = b"{\n  \"schema\": \"mtg-kernel-b-width-prescreen-game-at";
+    fs::write(attempt_path_v1(&games, 6), torn).unwrap();
 
     // A published result from another build is never relabelled as this one's.
     let result_path = result_path_v1(&games, 1, "json");
@@ -711,6 +715,15 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     assert_eq!(lost.plan, plan);
     assert!(!lost.natural && lost.terminal.is_none() && lost.sha256.is_none());
     assert_eq!(lost.failure.as_deref(), Some(UNPUBLISHED_ATTEMPT_V1));
+    assert_eq!(
+        record.torn_attempts,
+        [TornAttemptV1 {
+            index: 6,
+            bytes: torn.len() as u64,
+            sha256: sha(torn),
+        }]
+    );
+    assert!(record.games[6].natural || record.games[6].terminal.is_some());
     for (index, bytes) in published.iter().enumerate() {
         let result: GameResultV1 = serde_json::from_slice(bytes).unwrap();
         assert_eq!(record.games[index].terminal, result.terminal);

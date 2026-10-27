@@ -90,6 +90,9 @@ class Tree:
     def path(self, relative: str) -> Path:
         return self.root / relative
 
+    def historical_path(self) -> Path:
+        return self.root / "history" / "cards_v1.json"
+
     def edit(self, relative: str, change) -> None:
         value = load(self.path(relative))
         change(value)
@@ -103,7 +106,13 @@ class Tree:
         parents.mkdir(parents=True, exist_ok=True)
         init_bytes = b"synthetic initialization parameters"
         (parents / "init.f32le").write_bytes(init_bytes)
+        # Like the production import: a manifest whose own pin (a historical registry) names a path that does not
+        # exist here; the engine never opens it, so the read must neither need nor bind it.
+        manifest_bytes = write(parents / "manifest.json", {"target": {"registry": {
+            "path": str(self.historical_path()), "sha256": "e" * 64}}})
         import_bytes = write(parents / "import.json", {"schema": "mtg-kernel-fresh-initialization-source/v1",
+                                                       "initialization": {"path": str(parents / "manifest.json"),
+                                                                          "sha256": sha(manifest_bytes)},
                                                        "parameters": {"path": str(parents / "init.f32le"),
                                                                       "sha256": sha(init_bytes)}})
         for chain in config["chains"]:
@@ -778,26 +787,121 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertIn("inputs differ", error)
 
-    def test_nested_import_inputs_bind_the_read(self) -> None:
-        tree, section7 = self.fresh("nested")
-        status, _, error = run(tree, section7)
+    def fingerprint(self, tree: Tree, section7: str) -> str:
+        config_bytes = tree.path("config.json").read_bytes()
+        return reader.fingerprint_of(json.loads(config_bytes), tree.root, sha(config_bytes), ANALYZER_SHA256, section7)
+
+    def test_direct_import_pins_bind_the_read_and_historical_pins_do_not(self) -> None:
+        tree, section7 = self.fresh("pins")
+        # The import's manifest names a historical registry that does not exist: the read still proceeds.
+        self.assertFalse(tree.historical_path().exists())
+        status, read, error = run(tree, section7)
+        self.assertEqual((status, read["verdict"]), (0, "FUND_B"), error)
+        before = self.fingerprint(tree, section7)
+        # Creating or changing the historical file binds nothing.
+        tree.historical_path().parent.mkdir(parents=True)
+        tree.historical_path().write_bytes(b"a registry the engine never opens")
+        self.assertEqual(self.fingerprint(tree, section7), before)
+        status, _, error = run(tree, section7, "--rerender")
         self.assertEqual(status, 0, error)
-        config = load(tree.path("config.json"))
-        before = reader.inputs_sha256(config, sha(tree.path("config.json").read_bytes()), ANALYZER_SHA256, section7,
-                                      tree.root)
-        tree.path("parents/init.f32le").write_bytes(b"changed nested import input")
-        after = reader.inputs_sha256(config, sha(tree.path("config.json").read_bytes()), ANALYZER_SHA256, section7,
-                                     tree.root)
-        self.assertNotEqual(before, after)
+        # A direct pin's bytes are bound: changing them changes the fingerprint and refuses the re-render.
+        tree.path("parents/init.f32le").write_bytes(b"changed direct import input")
+        self.assertNotEqual(self.fingerprint(tree, section7), before)
         status, _, error = run(tree, section7, "--rerender")
         self.assertEqual(status, 2)
         self.assertIn("inputs differ", error)
+
+    def test_a_void_read_rerenders_from_a_moved_copy(self) -> None:
+        tree = self.copy("void-archived")
+        tree.edit("fits/k2-s3-w32.json", lambda v: v.__setitem__("config_sha256", "0" * 64))
+        section7 = tree.resign()
+        read = self.void_read(tree, section7)
+        written = tree.path(reader.READ_NAME).read_bytes()
+        self.assertNotIn(str(tree.root), json.dumps(read["void_detail"]))
+        moved = tree.clone(self.root / "archive" / "void-moved")
+        status, _, error = run(moved, section7, "--rerender")
+        self.assertEqual(status, 0, error)
+        self.assertEqual(moved.path(reader.READ_NAME).read_bytes(), written)
+
+    def test_the_root_lock_serializes_runs(self) -> None:
+        tree = self.copy("locked")
+        lock = tree.path(reader.LOCK_NAME)
+        lock.write_bytes(b'{"pid": 1}')
+        status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None))
+        self.assertIn("another analyzer holds this root", error)
+        self.assertEqual(lock.read_bytes(), b'{"pid": 1}')
+        # The operator step: with no analyzer running, remove the stale lock; the run then reads and releases it.
+        lock.unlink()
+        status, read, error = run(tree, self.template_section7)
+        self.assertEqual(status, 0, error)
+        self.assertFalse(lock.exists())
+
+    def test_unreadable_inputs_and_temporaries_are_refused_and_kept(self) -> None:
+        original = reader.open_input
+
+        def unreadable(names):
+            def opener(path):
+                if Path(path).name in names:
+                    raise PermissionError(13, "simulated unreadable file", str(path))
+                return original(path)
+            return opener
+
+        # An early mismatch (a collection built by another commit) and an unreadable later report: refused, not
+        # VOID, because every input is read in full before the analysis.
+        tree = self.copy("unreadable-report")
+        tree.edit("collect/k1/collection.json", lambda v: v.__setitem__("engine_commit", "f"))
+        section7 = tree.resign()
+        with mock.patch.object(reader, "open_input", unreadable({"k8-s4-w32.json"})):
+            status, read, error = run(tree, section7)
+        self.assertEqual((status, read), (2, None))
+        self.assertIn("cannot be read", error)
+        self.assertEqual(list(tree.root.glob(".READ.json.tmp-*")), [])
+        # A completed but unreadable unpublished read is refused and kept; nothing new is rendered.
+        tree = self.copy("unreadable-temporary")
+        with mock.patch.object(reader, "publish_temporary", side_effect=OSError("simulated crash")):
+            self.assertEqual(run(tree, self.template_section7)[0], 2)
+        temporaries = list(tree.root.glob(".READ.json.tmp-*"))
+        self.assertEqual(len(temporaries), 1)
+        kept = temporaries[0].read_bytes()
+        with mock.patch.object(reader, "open_input", unreadable({temporaries[0].name})):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None))
+        self.assertIn("cannot be read", error)
+        self.assertEqual(temporaries[0].read_bytes(), kept)
+
+    def test_an_input_changed_during_the_read_is_refused(self) -> None:
+        tree = self.copy("changing")
+        original = reader.Inventory.hashes
+        calls = []
+
+        def hashes(inventory):
+            calls.append(1)
+            if len(calls) == 2:
+                # Between the analysis and publication, a report changes.
+                path = tree.path("fits/k1-s1-w32.json")
+                path.write_bytes(path.read_bytes() + b" ")
+            return original(inventory)
+
+        with mock.patch.object(reader.Inventory, "hashes", hashes):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None))
+        self.assertIn("changed while the read was rendered", error)
+        self.assertEqual(list(tree.root.glob(".READ.json.tmp-*")), [])
+
+    def test_a_volume_without_hard_links_is_refused(self) -> None:
+        tree = self.copy("no-links")
+        with mock.patch.object(reader.os, "link", side_effect=OSError(1, "hard links are not supported")):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None))
+        self.assertIn("must support hard links", error)
+        self.assertEqual(sorted(path.name for path in tree.root.glob(".READ*")), [])
 
     def test_an_interrupted_read_publication_never_yields_two_reads(self) -> None:
         # A crash between writing the read and publishing it: the complete temporary file stays, READ.json does
         # not exist.
         tree = self.copy("interrupted-read")
-        with mock.patch.object(reader.os, "link", side_effect=OSError("simulated crash before publication")):
+        with mock.patch.object(reader, "publish_temporary", side_effect=OSError("simulated crash before publication")):
             status, read, error = run(tree, self.template_section7)
         self.assertEqual((status, read), (2, None))
         temporaries = list(tree.root.glob(".READ.json.tmp-*"))
@@ -819,12 +923,24 @@ class AnalyzerTests(unittest.TestCase):
 
         # An unpublished read of inputs that have since changed is refused, not replaced by a new read.
         tree = self.copy("interrupted-read-changed")
-        with mock.patch.object(reader.os, "link", side_effect=OSError("simulated crash before publication")):
+        with mock.patch.object(reader, "publish_temporary", side_effect=OSError("simulated crash before publication")):
             self.assertEqual(run(tree, self.template_section7)[0], 2)
         tree.edit("fits/k1-s1-w32.json", lambda v: v["report"]["steps"][0].__setitem__("loss", 0.25))
         status, read, error = run(tree, self.template_section7)
         self.assertEqual((status, read), (2, None))
         self.assertIn("unpublished read of other inputs", error)
+
+        # A complete unpublished read that no longer re-renders to the same bytes is refused, not published.
+        tree = self.copy("interrupted-read-forged")
+        with mock.patch.object(reader, "publish_temporary", side_effect=OSError("simulated crash before publication")):
+            self.assertEqual(run(tree, self.template_section7)[0], 2)
+        temporary = next(tree.root.glob(".READ.json.tmp-*"))
+        value = json.loads(temporary.read_bytes())
+        value["R"] = 0.5
+        temporary.write_bytes(reader.read_bytes(value))
+        status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None))
+        self.assertIn("does not re-render", error)
 
         # A truncated temporary (a crash while writing) is not a read: it is removed and the root is read.
         tree = self.copy("truncated-read")
