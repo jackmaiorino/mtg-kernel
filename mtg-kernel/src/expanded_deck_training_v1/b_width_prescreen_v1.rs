@@ -2274,7 +2274,11 @@ fn remove_stale_temporaries_v1(directory: &Path) -> Result<Vec<String>, String> 
     }
     let own = format!(".tmp-{}", std::process::id());
     for entry in fs::read_dir(directory).map_err(err)? {
-        let name = entry.map_err(err)?.file_name().to_string_lossy().into_owned();
+        let name = entry
+            .map_err(err)?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
         if is_temporary_name_v1(&name) && !name.ends_with(&own) {
             fs::remove_file(directory.join(&name)).map_err(err)?;
             removed.push(name);
@@ -2611,18 +2615,17 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
             .collect::<Result<_, _>>()?,
         None => loaded.config.chains.iter().collect(),
     };
-    let guard = |stage: QualifiedStageV1,
-                 forward: Option<usize>|
-     -> Result<(usize, Value), String> {
-        let workers = workers.ok_or("--workers is required")?;
-        let path = qualification
-            .as_ref()
-            .ok_or("--qualification is required (COMPUTE-POLICY.md)")?;
-        Ok((
-            workers,
-            require_qualification_v1(&loaded, path, stage, workers, forward)?,
-        ))
-    };
+    let guard =
+        |stage: QualifiedStageV1, forward: Option<usize>| -> Result<(usize, Value), String> {
+            let workers = workers.ok_or("--workers is required")?;
+            let path = qualification
+                .as_ref()
+                .ok_or("--qualification is required (COMPUTE-POLICY.md)")?;
+            Ok((
+                workers,
+                require_qualification_v1(&loaded, path, stage, workers, forward)?,
+            ))
+        };
     let mut results = Vec::new();
     let qualification_record = match stage {
         "staging-check" => {

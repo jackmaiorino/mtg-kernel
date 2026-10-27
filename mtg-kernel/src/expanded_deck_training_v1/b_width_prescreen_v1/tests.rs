@@ -761,9 +761,7 @@ fn the_throughput_guard_refuses_other_hosts_binaries_and_counts() {
     // Qualified with one forward worker per fit is not qualified with 64.
     assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(64)).is_err());
     assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 8, Some(1)).is_err());
-    assert!(
-        require_qualification_v1(loaded, &path, QualifiedStageV1::Collect, 4, None).is_err()
-    );
+    assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Collect, 4, None).is_err());
     for (field, value) in [
         ("host", json!("another-host")),
         ("binary_sha256", json!("0".repeat(64))),
@@ -841,7 +839,9 @@ fn real_b512_step0_preflight() {
         .filter_map(|(plan, game)| {
             game.stored.as_ref().map(|stored| ScreenGameRecordV1 {
                 game_id: plan.id.clone(),
-                outcome: ScreenGameOutcomeV1::from(&game.terminal),
+                outcome: ScreenGameOutcomeV1::from(
+                    game.terminal.as_ref().expect("a natural game has a terminal"),
+                ),
                 groups: decode_game_v1(&stored.bytes).unwrap(),
             })
         })
