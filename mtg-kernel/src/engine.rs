@@ -12900,7 +12900,13 @@ pub(crate) fn validate_pending_cast(
 
 fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_cast.clone()?;
-    if validate_pending_cast(state, &pending).is_err() {
+    if let Err(_error) = validate_pending_cast(state, &pending) {
+        // Temporary E5a diagnostics.
+        #[cfg(feature = "eternal-fixtures")]
+        eprintln!(
+            "E5A pending cast rejected: {_error}
+{pending:?}"
+        );
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,

@@ -6121,6 +6121,8 @@ impl RlEpisodeSessionV1 {
                 mechanic,
                 source,
             })) => {
+                #[cfg(feature = "eternal-fixtures")]
+                e5a_debug_halt(&self.state, *source);
                 self.terminal = Some(halted_terminal(
                     &self.deck_ids,
                     self.deck_hashes,
@@ -8627,6 +8629,8 @@ impl FastActorSessionV1 {
                 mechanic,
                 source,
             })) => {
+                #[cfg(feature = "eternal-fixtures")]
+                e5a_debug_halt(&self.state, *source);
                 self.terminal = Some(halted_terminal(
                     &self.deck_ids,
                     self.deck_hashes,
@@ -19279,4 +19283,37 @@ mod tests {
         }
         assert!(resampled, "the rest of the library is still resampled");
     }
+}
+
+/// Temporary E5a diagnostics: describes a halted eternal game on stderr.
+#[cfg(feature = "eternal-fixtures")]
+fn e5a_debug_halt(state: &crate::state::GameState, source: ObjectId) {
+    let described = state.objects.try_get(source).map(|object| {
+        (
+            crate::card_def::CARD_DEFS[object.card_def as usize].name,
+            object.zone,
+            object.controller,
+        )
+    });
+    eprintln!(
+        "E5A HALT source {described:?} turn {} step {:?}
+stack {:?}
+pending cast {:?}
+pending effect {:?}
+pending triggers {:?}
+recent events {:?}",
+        state.turn,
+        state.step,
+        state.stack,
+        state.engine.pending_cast,
+        state.engine.pending_effect,
+        state.engine.pending_triggers,
+        state
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .take(16)
+            .collect::<Vec<_>>()
+    );
 }

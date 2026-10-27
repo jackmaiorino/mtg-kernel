@@ -10610,7 +10610,13 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
-    inspiration_resolution_v1::drive(state)
+    let progress = inspiration_resolution_v1::drive(state);
+    // Temporary E5a diagnostics.
+    #[cfg(feature = "eternal-fixtures")]
+    if let Err(error) = &progress {
+        eprintln!("E5A resumable error: {error}");
+    }
+    progress
 }
 
 fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
