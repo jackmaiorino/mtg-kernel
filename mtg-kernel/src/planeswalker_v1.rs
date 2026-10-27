@@ -59,6 +59,7 @@ pub(crate) fn after_zone_change(
         ) {
             Ok(count) => count,
             Err(_) => {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     engine::UnsupportedMechanic::InvalidEffectContinuation,
                     object,
@@ -167,6 +168,7 @@ fn change_loyalty_with_origin(
     let counters = match quote_loyalty_change_v48(state, object, delta, origin) {
         Ok(counters) => counters,
         Err(_) => {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 engine::UnsupportedMechanic::InvalidEffectContinuation,
                 object,
@@ -200,6 +202,7 @@ pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amou
     }
     if crate::doubling_season_v48::requires_successor(state) {
         if add_loyalty_counters_u32_v48(state, object, amount as u32).is_err() {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 engine::UnsupportedMechanic::InvalidEffectContinuation,
                 object,

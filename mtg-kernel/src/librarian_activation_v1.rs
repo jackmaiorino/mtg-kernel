@@ -217,6 +217,7 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
         })
         .collect();
     let [operation] = operations.as_slice() else {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             item.source,

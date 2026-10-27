@@ -567,6 +567,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
 }
 
 fn halt(state: &mut GameState, source: ObjectId) {
+    eprintln!("E5B-HALT {}:{}", file!(), line!());
     state.engine.halted = Some((
         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
         source,

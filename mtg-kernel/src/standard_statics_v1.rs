@@ -114,6 +114,7 @@ pub(crate) fn apply_conditional_entry_counters(
     let count = match crate::doubling_season_v48::entry_amount(state, input, controller, 1) {
         Ok(count) => count,
         Err(_) => {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 id,
@@ -133,6 +134,7 @@ pub(crate) fn apply_conditional_entry_counters(
                     .plus1_plus1
                     .checked_add(count)
                 else {
+                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         id,
@@ -150,6 +152,7 @@ pub(crate) fn apply_conditional_entry_counters(
                     .ok()
                     .and_then(|count| state.objects.get(id).counters.oil.checked_add(count));
                 let Some(total) = total else {
+                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         id,

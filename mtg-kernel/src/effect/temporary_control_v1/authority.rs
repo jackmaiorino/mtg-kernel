@@ -168,6 +168,7 @@ pub(super) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
     // Direct registered primitive execution has no stack incarnation. A real
     // stack execution must always have the independent pre-removal owner.
     if ctx.stack_item_id.is_some() && resolution_history_index.is_none() {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -187,6 +188,7 @@ pub(super) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
             InstallationOriginV1::RegisteredPrimitive
         }
         _ => {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,

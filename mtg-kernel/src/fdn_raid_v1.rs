@@ -34,6 +34,7 @@ pub(crate) fn apply_entry_counters(
         ) {
             Ok(count) => count,
             Err(_) => {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     id,
@@ -48,6 +49,7 @@ pub(crate) fn apply_entry_counters(
             .plus1_plus1
             .checked_add(count)
         else {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 id,

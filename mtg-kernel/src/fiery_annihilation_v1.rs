@@ -193,6 +193,7 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     // Preflight the replacement identity before damage or Equipment exile can
     // mutate state, then capture source facts while its original spell is live.
     if creature_legal && state.engine.next_replacement_id.checked_add(1).is_none() {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,

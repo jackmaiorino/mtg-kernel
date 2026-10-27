@@ -552,6 +552,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
                 .get_or_insert_with(Default::default)
                 .finality = total;
         } else if crate::doubling_season_v48::requires_successor(state) {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -587,6 +588,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         }
         let permanent = ability.v4.ability_source_contract;
         if crate::engine::counter_stack_item_by_id(state, target).is_err() {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -656,6 +658,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         let snapshot = counter_transfer_snapshot(state, source);
         let mut staged = state.clone();
         if apply_counter_transfer(&mut staged, target, ctx.controller, snapshot).is_none() {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -703,6 +706,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
             ) {
                 Ok(count) => count,
                 Err(_) => {
+                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -714,6 +718,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
                 .ok()
                 .and_then(|count| state.objects.get(target).counters.stun.checked_add(count));
             let Some(count) = count else {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -753,6 +758,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         );
         for owner in owners {
             if staged.shuffle_library(owner).is_err() {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -812,6 +818,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         for object in &objects {
             if crate::event::add_plus_one_counters(state, object.object, ctx.controller, 1).is_err()
             {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -917,6 +924,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         }
         value.wurmlet_resolved_turn = Some(turn);
         if crate::event::add_plus_one_counters(state, ctx.source, ctx.controller, 1).is_err() {
+            eprintln!("E5B-HALT {}:{}", file!(), line!());
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,

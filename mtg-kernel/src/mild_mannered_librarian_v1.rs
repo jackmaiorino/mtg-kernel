@@ -89,6 +89,7 @@ pub(crate) fn resolve_source_upgrade(state: &mut GameState, ctx: &ExecCtx) {
         .get_or_insert_with(Default::default)
         .creature_types = Some((vec![Subtype::Werewolf.stable_id()], timestamp));
     if crate::event::add_plus_one_counters(state, source.source, ctx.controller, 2).is_err() {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,

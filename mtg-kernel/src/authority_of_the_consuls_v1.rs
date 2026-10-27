@@ -431,6 +431,7 @@ pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
         || item.v4.stack_item_id == crate::ids::StackItemId::default()
         || publication(state, *capture_history_index).map_or(true, |(_, original)| original != item)
     {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             item.source,
@@ -452,6 +453,7 @@ pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
         })
         .collect();
     let [operation_index] = operations.as_slice() else {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             item.source,
@@ -459,6 +461,7 @@ pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
         return;
     };
     if validate_operation(state, *operation_index).is_err() {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             item.source,
@@ -488,6 +491,7 @@ pub(crate) fn record_countered(state: &mut GameState, item: &crate::state::Stack
         return;
     };
     if publication(state, *capture_history_index).map_or(true, |(_, original)| original != item) {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             item.source,
@@ -510,6 +514,7 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, capture_history_inde
         capture_history_index,
     };
     if validate_source(state, &effect, ctx.ability_source_contract).is_err() {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -529,6 +534,7 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, capture_history_inde
             .stack_item_id
             .is_none_or(|id| id == crate::ids::StackItemId::default())
     {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -545,6 +551,7 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, capture_history_inde
         CommittedEvent::LifeGain { player, amount } if *player == ctx.controller && *amount == 1)
         });
     let Some(gain_index) = gain_index else {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,

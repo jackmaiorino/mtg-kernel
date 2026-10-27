@@ -6,6 +6,7 @@ use crate::state::{GameState, Target, Zone};
 
 pub(super) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     let Some(source) = ctx.ability_source_contract else {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -17,6 +18,7 @@ pub(super) fn execute(ctx: &ExecCtx, state: &mut GameState) {
         || source.zone != Zone::Battlefield
         || crate::engine::validate_historical_ability_source_contract(state, source).is_err()
     {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -53,6 +55,7 @@ pub(super) fn execute(ctx: &ExecCtx, state: &mut GameState) {
             && live.owner == source.owner
     }) && event::add_plus_one_counters(state, source.source, ctx.controller, 1).is_err()
     {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,

@@ -933,6 +933,7 @@ pub(crate) fn return_departures(state: &mut GameState, departures: &[(crate::ids
         Ok(())
     })();
     if result.is_err() {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             departures[0].0,

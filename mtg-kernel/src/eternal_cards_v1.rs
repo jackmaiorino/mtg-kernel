@@ -853,6 +853,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
             if state.shuffle_library(player).is_err() {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -932,6 +933,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                         .reveal_hand_card(ctx.controller, player, card)
                         .is_err()
                     {
+                        eprintln!("E5B-HALT {}:{}", file!(), line!());
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             ctx.source,
@@ -940,6 +942,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 }
                 Ok(None) => {}
                 Err(_) => {
+                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         ctx.source,
@@ -949,6 +952,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         EternalOpV1::DrawAtNextUpkeepV1 => {
             let Some(source) = ctx.ability_source_contract else {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -981,6 +985,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let Some(token_def) = card_id_by_name(ORC_ARMY_TOKEN) else {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -998,6 +1003,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         EternalOpV1::ExileThenReturnTransformedV1 => {
             let Some(contract) = ctx.ability_source_contract else {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -1028,6 +1034,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         EternalOpV1::ShrinkAttackersUntilYourNextTurnV1 => {
             let Some(source) = ctx.ability_source_contract else {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -1310,6 +1317,7 @@ pub(crate) fn apply_entry_counters(
                 }) {
                 Ok(total) => state.objects.get_mut(object).counters.plus1_plus1 = total,
                 Err(_) => {
+                    eprintln!("E5B-HALT {}:{}", file!(), line!());
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         object,
@@ -1322,6 +1330,7 @@ pub(crate) fn apply_entry_counters(
         {
             Ok(count) => state.objects.get_mut(object).counters.minus1_minus1 = count,
             Err(_) => {
+                eprintln!("E5B-HALT {}:{}", file!(), line!());
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     object,

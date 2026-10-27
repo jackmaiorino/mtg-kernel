@@ -153,6 +153,7 @@ pub(crate) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
         return;
     };
     if validate_targeting(state, item, state.engine.event_history.len()).is_err() {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -160,6 +161,7 @@ pub(crate) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
         return;
     }
     if masked_ref(object, state.objects.get(object)).is_err() {
+        eprintln!("E5B-HALT {}:{}", file!(), line!());
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,

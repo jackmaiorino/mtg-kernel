@@ -305,6 +305,7 @@ const SAND_WARRIOR_TOKEN: &str = "Sand Warrior Token";
 const ELDRAZI_SCION_TOKEN: &str = "Eldrazi Scion Token";
 
 fn halt(state: &mut GameState, source: ObjectId) {
+    eprintln!("E5B-HALT {}:{}", file!(), line!());
     state.engine.halted = Some((
         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
         source,

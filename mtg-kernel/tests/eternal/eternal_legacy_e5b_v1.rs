@@ -993,6 +993,15 @@ fn terminus_miracle_reveals_the_first_draw_and_casts_for_white() {
         state.eternal_v1.as_ref().map(|eternal| &eternal.e5b)
     );
     act(&mut state, Action::ChooseEffectOption(1));
+    let after = next(&mut state);
+    assert!(
+        state.stack.iter().any(|item| item.source == terminus),
+        "after the reveal: {after:?}
+stack {:?}
+pending {:?}",
+        state.stack,
+        state.engine.pending_triggers
+    );
     // The miracle trigger offers the cast for {W}.
     let mut offered = false;
     settle_with(&mut state, |_, decision| match decision {
