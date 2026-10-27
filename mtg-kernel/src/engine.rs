@@ -7746,6 +7746,7 @@ enum CastSingleObjectCostV1 {
     /// Screech).
     TapPermanents(PermanentFilterDef, u8),
     /// Retrace's discarded land cards (Wrenn and Six's emblem).
+    #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
     DiscardLandCards(u8),
 }
 
