@@ -1527,6 +1527,9 @@ fn accumulate_input_major_row_body_v1(
         HIDDEN_DIM_V1 => {
             accumulate_fixed_width_v1::<HIDDEN_DIM_V1>(weight_t, input_row, accumulator)
         }
+        W_HIDDEN_DIM_V1 => {
+            accumulate_fixed_width_v1::<W_HIDDEN_DIM_V1>(weight_t, input_row, accumulator)
+        }
         output_dim => {
             for (&value, weight_row) in input_row.iter().zip(weight_t.chunks_exact(output_dim)) {
                 for (sum, &weight) in accumulator.iter_mut().zip(weight_row) {
@@ -1994,7 +1997,61 @@ impl NativePolicyValueNetWideV1 {
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.config)?;
+        self.forward_wide_validated_rows_v1(encoded, counts)
+    }
 
+    /// Wide sibling of [`NativePolicyValueNetV1::feature_transfer_config_v3`]:
+    /// the V3 input contract over the wide parameters (config only).
+    pub(crate) fn feature_transfer_config_v3_wide_v1(&self) -> NativePolicyValueModelConfigV1 {
+        use crate::native_flat_tensorizer_v3::*;
+        NativePolicyValueModelConfigV1 {
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V3,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V3,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3,
+            ..self.config
+        }
+    }
+
+    /// Wide sibling of [`NativePolicyValueNetV1::feature_transfer_config_v4`].
+    pub(crate) fn feature_transfer_config_v4_wide_v1(&self) -> NativePolicyValueModelConfigV1 {
+        use crate::native_flat_tensorizer_v4::*;
+        NativePolicyValueModelConfigV1 {
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V4,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V4,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4,
+            ..self.config
+        }
+    }
+
+    /// The wide forward under the V3 input contract: the rows of
+    /// [`Self::forward_wide_v1`] (libm tanh), validated against
+    /// [`Self::feature_transfer_config_v3_wide_v1`].
+    pub(crate) fn forward_feature_transfer_v3_wide_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v3_wide_v1())?;
+        self.forward_wide_validated_rows_v1(encoded, counts)
+    }
+
+    /// V4 sibling of [`Self::forward_feature_transfer_v3_wide_v1`].
+    pub(crate) fn forward_feature_transfer_v4_wide_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v4_wide_v1())?;
+        self.forward_wide_validated_rows_v1(encoded, counts)
+    }
+
+    /// The wide rows after input validation; the wide forward goldens pin
+    /// their bits through [`Self::forward_wide_v1`].
+    fn forward_wide_validated_rows_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        counts: ValidatedCountsV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * W_OBJECT_ENCODER_INPUT_V1);
         for object in 0..counts.object_count {
             let features_begin = object * OBJECT_FEATURE_DIM_V1;
@@ -3526,6 +3583,70 @@ mod wide_tests {
         }
     }
 
+    /// `base`'s tensors under `config`'s input schema.
+    fn relabeled_v1(
+        base: NativeEncodedDecisionViewV1<'_>,
+        config: NativePolicyValueModelConfigV1,
+    ) -> NativeEncodedDecisionViewV1<'_> {
+        NativeEncodedDecisionViewV1 {
+            schema: NativeEncodedDecisionSchemaV1 {
+                version: config.feature_schema_version,
+                registry_version: config.feature_registry_version,
+                contract_digest: config.feature_contract_digest,
+                encoding_digest: config.feature_encoding_digest,
+                ..base.schema
+            },
+            ..base
+        }
+    }
+
+    /// The V3 and V4 wide forwards run the rows the wide goldens pin through
+    /// `forward_wide_v1`: the same tensors under their own schema give its
+    /// bits, and every forward refuses another schema.
+    #[test]
+    fn wide_feature_transfer_forwards_run_the_golden_pinned_rows() {
+        let fixture = fixture();
+        let model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+            NativePolicyValueModelConfigV1::contract_wide_v1(),
+        )
+        .expect("wide model builds");
+        let bits = |output: NativePolicyValueOutputV1| {
+            (
+                output
+                    .logits
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                output.value.to_bits(),
+            )
+        };
+        for case in &fixture.cases {
+            let contract = view(case);
+            let v3 = relabeled_v1(contract, model.feature_transfer_config_v3_wide_v1());
+            let v4 = relabeled_v1(contract, model.feature_transfer_config_v4_wide_v1());
+            let expected = bits(model.forward_wide_v1(contract).unwrap());
+            assert_eq!(
+                bits(model.forward_feature_transfer_v3_wide_v1(v3).unwrap()),
+                expected
+            );
+            assert_eq!(
+                bits(model.forward_feature_transfer_v4_wide_v1(v4).unwrap()),
+                expected
+            );
+            for refused in [
+                model.forward_feature_transfer_v3_wide_v1(contract),
+                model.forward_feature_transfer_v3_wide_v1(v4),
+                model.forward_feature_transfer_v4_wide_v1(v3),
+                model.forward_wide_v1(v3),
+            ] {
+                assert!(matches!(
+                    refused,
+                    Err(NativePolicyValueErrorV1::SchemaMismatch(_))
+                ));
+            }
+        }
+    }
+
     #[test]
     fn wide_config_drift_is_rejected_before_parameter_allocation() {
         let mut config = NativePolicyValueModelConfigV1::contract_wide_v1();
@@ -3674,6 +3795,47 @@ mod linear_rows_bit_exact_tests {
                     "avx2 {input_dim}x{output_dim}"
                 );
             }
+        }
+    }
+
+    /// The input-major kernel's fixed-width arms (64 for net-8, 128 for
+    /// net-8w128) give the generic loop's sums bit for bit, on the portable
+    /// body and through the dispatcher (AVX2 where this CPU has it).
+    #[test]
+    fn input_major_fixed_width_arms_match_the_generic_loop_bit_for_bit() {
+        let mut rng = SplitMix64::seed(0x1A9E_0128);
+        for (input_dim, output_dim) in [
+            (98, 64),
+            (169, 64),
+            (130, 128),
+            (297, 128),
+            (2779, 128),
+            (128, 128),
+            (3, 5),
+        ] {
+            let weight_t = values(&mut rng, input_dim * output_dim);
+            let input = values(&mut rng, input_dim);
+            let bias = values(&mut rng, output_dim);
+            let mut reference = bias.clone();
+            for (&value, weight_row) in input.iter().zip(weight_t.chunks_exact(output_dim)) {
+                for (sum, &weight) in reference.iter_mut().zip(weight_row) {
+                    *sum += value * weight;
+                }
+            }
+            let mut portable = bias.clone();
+            accumulate_input_major_row_body_v1(&weight_t, &input, &mut portable);
+            assert_eq!(
+                bits(&portable),
+                bits(&reference),
+                "{input_dim}x{output_dim}"
+            );
+            let mut dispatched = bias.clone();
+            accumulate_input_major_row_v1(&weight_t, &input, &mut dispatched);
+            assert_eq!(
+                bits(&dispatched),
+                bits(&reference),
+                "dispatched {input_dim}x{output_dim}"
+            );
         }
     }
 

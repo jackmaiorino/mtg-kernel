@@ -47,12 +47,14 @@ use crate::native_policy_value_net_v1::{
     CARD_VOCAB_SIZE_V1,
     EDGE_FEATURE_DIM_V1,
     HIDDEN_DIM_V1,
+    MODEL_ARCHITECTURE_VERSION_V1,
     OBJECT_FEATURE_DIM_V1,
     OBJECT_GROUP_COUNT_V1,
     PARAMETER_COUNT_V1,
     STATE_DIM_V1,
     W_CARD_EMBEDDING_DIM_V1,
     W_HIDDEN_DIM_V1,
+    W_MODEL_ARCHITECTURE_VERSION_V1,
     W_PARAMETER_COUNT_V1,
 };
 use crate::native_training_phase_diagnostic_v1::{
@@ -110,6 +112,159 @@ thread_local! {
     static PACKED_ACTUAL_RECOMPUTE_CALL_COUNT_V1: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     static ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1: RefCell<Option<Arc<PackedRecomputeTestControlV1>>> = const { RefCell::new(None) };
     static ACTIVE_FIXED_PARTITION_BACKWARD_TEST_CONTROL_V1: RefCell<Option<Arc<FixedPartitionBackwardTestControlV1>>> = const { RefCell::new(None) };
+    static EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    static TRAIN_STEP_CAPTURE_V1: RefCell<Option<TrainStepCaptureV1>> = const { RefCell::new(None) };
+}
+
+/// Test-only (amendment 5.1-A1 section 3.2): what one train step on this
+/// thread computed, read at the capture points c1 to c5. Capturing only
+/// copies values; it writes no arithmetic state.
+#[cfg(test)]
+#[derive(Default)]
+struct TrainStepCaptureV1 {
+    /// c1: every forward linear application, its input and its output (the
+    /// pre-activation), the scorer and value affine layers included.
+    forward: Vec<ForwardLinearCaptureV1>,
+    /// c1t: every tanh site's activation after the in-place tanh.
+    tanh: Vec<ForwardTanhCaptureV1>,
+    /// c2: each tanh-gradient step's incoming activation gradient.
+    upstream: Vec<TanhUpstreamCaptureV1>,
+    /// c3: each group's loss inputs, in group order.
+    group_roots: Vec<GroupRootCaptureV1>,
+    /// c3: the loss roots of each substep, in backward visiting order.
+    roots: Vec<LossRootCaptureV1>,
+    /// c4: every `linear_backward_into` call.
+    backward: Vec<LinearBackwardCaptureV1>,
+    /// c5: the gradient before the gauge projection.
+    projection: Vec<ProjectionCaptureV1>,
+}
+
+/// c1: one `linear_forward_into_arena_v1` application.
+#[cfg(test)]
+struct ForwardLinearCaptureV1 {
+    weight_index: usize,
+    bias_index: usize,
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    input: Vec<f32>,
+    output: Vec<f32>,
+}
+
+/// c1t: one `tanh_span_in_place_v1` call's activation.
+#[cfg(test)]
+struct ForwardTanhCaptureV1 {
+    post: Vec<f32>,
+}
+
+/// c3: one group's loss inputs as the driver constructs them.
+#[cfg(test)]
+struct GroupRootCaptureV1 {
+    advantage: f32,
+    target: f32,
+    value_error: f32,
+}
+
+/// c2: the activation gradient a tanh-gradient step receives, tagged with
+/// the layer whose pre-activation gradient it becomes.
+#[cfg(test)]
+struct TanhUpstreamCaptureV1 {
+    weight_index: usize,
+    d_activation: Vec<f32>,
+}
+
+/// c3: one substep's loss roots as the sequential backward builds them.
+#[cfg(test)]
+struct LossRootCaptureV1 {
+    substep_index: usize,
+    selected_action_index: usize,
+    log_probabilities: Vec<f32>,
+    d_joint_log_probability: f32,
+    d_value: f32,
+    grad_output_sum: f32,
+    d_logits: Vec<f32>,
+}
+
+/// c4: one `linear_backward_into` call's operands and results, the weight
+/// and bias gradients before and after its accumulation.
+#[cfg(test)]
+struct LinearBackwardCaptureV1 {
+    weight_index: usize,
+    bias_index: usize,
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    weight: Vec<f32>,
+    input: Vec<f32>,
+    d_output: Vec<f32>,
+    d_input: Vec<f32>,
+    d_weight_before: Vec<f32>,
+    d_weight_after: Vec<f32>,
+    d_bias_before: Vec<f32>,
+    d_bias_after: Vec<f32>,
+}
+
+/// c5: the gradient vector before the gauge's projection, and the gauge
+/// record's raw residual bits.
+#[cfg(test)]
+struct ProjectionCaptureV1 {
+    gradients: Vec<Vec<f32>>,
+    residual_bits: u32,
+}
+
+/// Test-only: whether a train-step capture is installed on this thread.
+#[cfg(test)]
+fn train_step_capture_active_v1() -> bool {
+    TRAIN_STEP_CAPTURE_V1.with(|capture| capture.borrow().is_some())
+}
+
+/// Test-only: hands the installed capture, if any, to `record`.
+#[cfg(test)]
+fn record_train_step_v1(record: impl FnOnce(&mut TrainStepCaptureV1)) {
+    TRAIN_STEP_CAPTURE_V1.with(|capture| {
+        if let Some(capture) = capture.borrow_mut().as_mut() {
+            record(capture);
+        }
+    });
+}
+
+/// Test-only: runs `work` with a train-step capture installed on this
+/// thread and returns what it captured.
+#[cfg(test)]
+fn capture_train_step_for_test_v1<R>(work: impl FnOnce() -> R) -> (R, TrainStepCaptureV1) {
+    struct ResetV1;
+    impl Drop for ResetV1 {
+        fn drop(&mut self) {
+            TRAIN_STEP_CAPTURE_V1.with(|capture| *capture.borrow_mut() = None);
+        }
+    }
+    TRAIN_STEP_CAPTURE_V1
+        .with(|capture| *capture.borrow_mut() = Some(TrainStepCaptureV1::default()));
+    let reset = ResetV1;
+    let result = work();
+    let captured = TRAIN_STEP_CAPTURE_V1
+        .with(|capture| capture.borrow_mut().take())
+        .expect("the capture stays installed while work runs");
+    drop(reset);
+    (result, captured)
+}
+
+/// Test-only: the effective GAE forward and exact-backward worker counts the
+/// updates on this thread recorded since the last call, then cleared. Zero
+/// means that stage was not consulted.
+#[cfg(test)]
+pub(crate) fn take_effective_update_workers_for_test_v1() -> (usize, usize) {
+    EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1.with(|workers| workers.replace((0, 0)))
+}
+
+#[cfg(test)]
+fn record_effective_forward_workers_for_test_v1(count: usize) {
+    EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1.with(|workers| workers.set((count, workers.get().1)));
+}
+
+#[cfg(test)]
+fn record_effective_backward_workers_for_test_v1(count: usize) {
+    EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1.with(|workers| workers.set((workers.get().0, count)));
 }
 
 #[cfg(test)]
@@ -711,6 +866,250 @@ mod wide_layout_tests {
     }
 }
 
+/// The dimensions of one trainable architecture (collab
+/// LANES/throughput-architecture-20261020/WIDE-BACKWARD-DESIGN.md section
+/// 2.1). Every width-dependent CPU training function is generic over it and
+/// monomorphized once per architecture. At [`Net8DimsV1`] every derived width
+/// and two-layer spec equals the narrow constant of today (checked at compile
+/// time below), so the narrow monomorphization makes the same kernel calls
+/// with the same arguments in the same order.
+pub(crate) trait NetDimsV1: Copy + std::fmt::Debug + Send + Sync + 'static {
+    type Net: TrainableNetV1;
+    const ARCHITECTURE: &'static str;
+    const HIDDEN: usize;
+    const CARD_EMBEDDING: usize;
+    const PARAMETER_COUNT: usize;
+    const PARAMETER_SHAPES: [&'static [usize]; PARAMETER_TENSOR_COUNT];
+    const OBJECT_ENCODER_INPUT: usize = OBJECT_FEATURE_DIM_V1 + Self::CARD_EMBEDDING;
+    const EDGE_ENCODER_INPUT: usize = EDGE_FEATURE_DIM_V1 + Self::HIDDEN * 2;
+    const NODE_UPDATE_INPUT: usize = Self::HIDDEN * 2;
+    const STATE_ENCODER_INPUT: usize = STATE_DIM_V1 + Self::HIDDEN * OBJECT_GROUP_COUNT_V1;
+    const ACTION_REF_ENCODER_INPUT: usize = ACTION_REF_FEATURE_DIM_V1 + Self::HIDDEN;
+    const ACTION_ENCODER_INPUT: usize = ACTION_FEATURE_DIM_V1 + Self::HIDDEN;
+    const SCORER_INPUT: usize = Self::HIDDEN * 2;
+    const OBJECT_SPEC: TwoLayerSpecV1 = TwoLayerSpecV1 {
+        first_weight: OBJECT_FIRST_WEIGHT,
+        first_bias: OBJECT_FIRST_BIAS,
+        second_weight: OBJECT_SECOND_WEIGHT,
+        second_bias: OBJECT_SECOND_BIAS,
+        input_dim: Self::OBJECT_ENCODER_INPUT,
+    };
+    const EDGE_SPEC: TwoLayerSpecV1 = TwoLayerSpecV1 {
+        first_weight: EDGE_FIRST_WEIGHT,
+        first_bias: EDGE_FIRST_BIAS,
+        second_weight: EDGE_SECOND_WEIGHT,
+        second_bias: EDGE_SECOND_BIAS,
+        input_dim: Self::EDGE_ENCODER_INPUT,
+    };
+    const NODE_SPEC: TwoLayerSpecV1 = TwoLayerSpecV1 {
+        first_weight: NODE_FIRST_WEIGHT,
+        first_bias: NODE_FIRST_BIAS,
+        second_weight: NODE_SECOND_WEIGHT,
+        second_bias: NODE_SECOND_BIAS,
+        input_dim: Self::NODE_UPDATE_INPUT,
+    };
+    const STATE_SPEC: TwoLayerSpecV1 = TwoLayerSpecV1 {
+        first_weight: STATE_FIRST_WEIGHT,
+        first_bias: STATE_FIRST_BIAS,
+        second_weight: STATE_SECOND_WEIGHT,
+        second_bias: STATE_SECOND_BIAS,
+        input_dim: Self::STATE_ENCODER_INPUT,
+    };
+    const ACTION_REF_SPEC: TwoLayerSpecV1 = TwoLayerSpecV1 {
+        first_weight: ACTION_REF_FIRST_WEIGHT,
+        first_bias: ACTION_REF_FIRST_BIAS,
+        second_weight: ACTION_REF_SECOND_WEIGHT,
+        second_bias: ACTION_REF_SECOND_BIAS,
+        input_dim: Self::ACTION_REF_ENCODER_INPUT,
+    };
+    const ACTION_SPEC: TwoLayerSpecV1 = TwoLayerSpecV1 {
+        first_weight: ACTION_FIRST_WEIGHT,
+        first_bias: ACTION_FIRST_BIAS,
+        second_weight: ACTION_SECOND_WEIGHT,
+        second_bias: ACTION_SECOND_BIAS,
+        input_dim: Self::ACTION_ENCODER_INPUT,
+    };
+}
+
+/// `kernel-policy-value-net-8`, the frozen narrow architecture.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Net8DimsV1;
+
+impl NetDimsV1 for Net8DimsV1 {
+    type Net = NativePolicyValueNetV1;
+    const ARCHITECTURE: &'static str = MODEL_ARCHITECTURE_VERSION_V1;
+    const HIDDEN: usize = HIDDEN_DIM_V1;
+    const CARD_EMBEDDING: usize = CARD_EMBEDDING_DIM_V1;
+    const PARAMETER_COUNT: usize = PARAMETER_COUNT_V1;
+    const PARAMETER_SHAPES: [&'static [usize]; PARAMETER_TENSOR_COUNT] = EXPECTED_PARAMETER_SHAPES;
+}
+
+/// `kernel-policy-value-net-8w128`, the wide capacity architecture.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Net8W128DimsV1;
+
+impl NetDimsV1 for Net8W128DimsV1 {
+    type Net = NativePolicyValueNetWideV1;
+    const ARCHITECTURE: &'static str = W_MODEL_ARCHITECTURE_VERSION_V1;
+    const HIDDEN: usize = W_HIDDEN_DIM_V1;
+    const CARD_EMBEDDING: usize = W_CARD_EMBEDDING_DIM_V1;
+    const PARAMETER_COUNT: usize = W_PARAMETER_COUNT_V1;
+    const PARAMETER_SHAPES: [&'static [usize]; PARAMETER_TENSOR_COUNT] =
+        W_EXPECTED_PARAMETER_SHAPES;
+}
+
+const fn same_two_layer_spec_v1(left: TwoLayerSpecV1, right: TwoLayerSpecV1) -> bool {
+    left.first_weight == right.first_weight
+        && left.first_bias == right.first_bias
+        && left.second_weight == right.second_weight
+        && left.second_bias == right.second_bias
+        && left.input_dim == right.input_dim
+}
+
+// The narrow monomorphization keeps every width of today, and the wide one
+// every width of its own layout table.
+const _: () = assert!(
+    Net8DimsV1::OBJECT_ENCODER_INPUT == OBJECT_ENCODER_INPUT
+        && Net8DimsV1::EDGE_ENCODER_INPUT == EDGE_ENCODER_INPUT
+        && Net8DimsV1::NODE_UPDATE_INPUT == NODE_UPDATE_INPUT
+        && Net8DimsV1::STATE_ENCODER_INPUT == STATE_ENCODER_INPUT
+        && Net8DimsV1::ACTION_REF_ENCODER_INPUT == ACTION_REF_ENCODER_INPUT
+        && Net8DimsV1::ACTION_ENCODER_INPUT == ACTION_ENCODER_INPUT
+        && Net8DimsV1::SCORER_INPUT == SCORER_INPUT
+        && same_two_layer_spec_v1(Net8DimsV1::OBJECT_SPEC, OBJECT_SPEC)
+        && same_two_layer_spec_v1(Net8DimsV1::EDGE_SPEC, EDGE_SPEC)
+        && same_two_layer_spec_v1(Net8DimsV1::NODE_SPEC, NODE_SPEC)
+        && same_two_layer_spec_v1(Net8DimsV1::STATE_SPEC, STATE_SPEC)
+        && same_two_layer_spec_v1(Net8DimsV1::ACTION_REF_SPEC, ACTION_REF_SPEC)
+        && same_two_layer_spec_v1(Net8DimsV1::ACTION_SPEC, ACTION_SPEC)
+);
+const _: () = assert!(
+    Net8W128DimsV1::OBJECT_ENCODER_INPUT == W_OBJECT_ENCODER_INPUT
+        && Net8W128DimsV1::EDGE_ENCODER_INPUT == W_EDGE_ENCODER_INPUT
+        && Net8W128DimsV1::NODE_UPDATE_INPUT == W_NODE_UPDATE_INPUT
+        && Net8W128DimsV1::STATE_ENCODER_INPUT == W_STATE_ENCODER_INPUT
+        && Net8W128DimsV1::ACTION_REF_ENCODER_INPUT == W_ACTION_REF_ENCODER_INPUT
+        && Net8W128DimsV1::ACTION_ENCODER_INPUT == W_ACTION_ENCODER_INPUT
+        && Net8W128DimsV1::SCORER_INPUT == W_SCORER_INPUT
+        && Net8W128DimsV1::OBJECT_SPEC.input_dim == W_OBJECT_ENCODER_INPUT
+        && Net8W128DimsV1::EDGE_SPEC.input_dim == W_EDGE_ENCODER_INPUT
+        && Net8W128DimsV1::NODE_SPEC.input_dim == W_NODE_UPDATE_INPUT
+        && Net8W128DimsV1::STATE_SPEC.input_dim == W_STATE_ENCODER_INPUT
+        && Net8W128DimsV1::ACTION_REF_SPEC.input_dim == W_ACTION_REF_ENCODER_INPUT
+        && Net8W128DimsV1::ACTION_SPEC.input_dim == W_ACTION_ENCODER_INPUT
+);
+
+/// Whether `D` is the frozen narrow architecture.
+fn is_net8_dims_v1<D: NetDimsV1>() -> bool {
+    D::ARCHITECTURE == Net8DimsV1::ARCHITECTURE
+}
+
+/// The single wide refusal (design section 2.1): every path outside the
+/// generic core is narrow only, so any other architecture refuses it before
+/// any forward work.
+fn refuse_for_architecture_v1<D: NetDimsV1>(
+    path: &'static str,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    if is_net8_dims_v1::<D>() {
+        Ok(())
+    } else {
+        Err(NativePolicyTrainErrorV1::UnsupportedForArchitecture {
+            architecture: D::ARCHITECTURE,
+            path,
+        })
+    }
+}
+
+/// The trainable model types behind one interface. Each impl delegates to the
+/// type's own inherent methods, whose bodies are unchanged.
+pub(crate) trait TrainableNetV1: Clone + std::fmt::Debug + Send + Sync {
+    fn parameter_snapshot_v1(&self) -> Vec<NativeNamedParameterV1>;
+    fn replace_parameter_snapshot_v1(
+        &mut self,
+        parameters: &[NativeNamedParameterV1],
+    ) -> Result<(), NativePolicyValueErrorV1>;
+    fn validate_parameters_v1(&self) -> Result<(), NativePolicyValueErrorV1>;
+    fn visit_parameters_v1(&self, visitor: impl FnMut(&'static str, &[usize], &[f32]));
+    fn config_v1(&self) -> NativePolicyValueModelConfigV1;
+    fn feature_transfer_config_v3(&self) -> NativePolicyValueModelConfigV1;
+    fn feature_transfer_config_v4(&self) -> NativePolicyValueModelConfigV1;
+    fn parameter_manifest_sha256_v1(&self) -> String;
+}
+
+impl TrainableNetV1 for NativePolicyValueNetV1 {
+    fn parameter_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
+        NativePolicyValueNetV1::parameter_snapshot_v1(self)
+    }
+
+    fn replace_parameter_snapshot_v1(
+        &mut self,
+        parameters: &[NativeNamedParameterV1],
+    ) -> Result<(), NativePolicyValueErrorV1> {
+        NativePolicyValueNetV1::replace_parameter_snapshot_v1(self, parameters)
+    }
+
+    fn validate_parameters_v1(&self) -> Result<(), NativePolicyValueErrorV1> {
+        NativePolicyValueNetV1::validate_parameters_v1(self)
+    }
+
+    fn visit_parameters_v1(&self, visitor: impl FnMut(&'static str, &[usize], &[f32])) {
+        NativePolicyValueNetV1::visit_parameters_v1(self, visitor)
+    }
+
+    fn config_v1(&self) -> NativePolicyValueModelConfigV1 {
+        NativePolicyValueNetV1::config_v1(self)
+    }
+
+    fn feature_transfer_config_v3(&self) -> NativePolicyValueModelConfigV1 {
+        NativePolicyValueNetV1::feature_transfer_config_v3(self)
+    }
+
+    fn feature_transfer_config_v4(&self) -> NativePolicyValueModelConfigV1 {
+        NativePolicyValueNetV1::feature_transfer_config_v4(self)
+    }
+
+    fn parameter_manifest_sha256_v1(&self) -> String {
+        NativePolicyValueNetV1::parameter_manifest_sha256_v1(self)
+    }
+}
+
+impl TrainableNetV1 for NativePolicyValueNetWideV1 {
+    fn parameter_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
+        self.parameter_snapshot_wide_v1()
+    }
+
+    fn replace_parameter_snapshot_v1(
+        &mut self,
+        parameters: &[NativeNamedParameterV1],
+    ) -> Result<(), NativePolicyValueErrorV1> {
+        self.replace_parameter_snapshot_wide_v1(parameters)
+    }
+
+    fn validate_parameters_v1(&self) -> Result<(), NativePolicyValueErrorV1> {
+        self.validate_parameters_wide_v1()
+    }
+
+    fn visit_parameters_v1(&self, visitor: impl FnMut(&'static str, &[usize], &[f32])) {
+        self.visit_parameters_wide_v1(visitor)
+    }
+
+    fn config_v1(&self) -> NativePolicyValueModelConfigV1 {
+        self.config_wide_v1()
+    }
+
+    fn feature_transfer_config_v3(&self) -> NativePolicyValueModelConfigV1 {
+        self.feature_transfer_config_v3_wide_v1()
+    }
+
+    fn feature_transfer_config_v4(&self) -> NativePolicyValueModelConfigV1 {
+        self.feature_transfer_config_v4_wide_v1()
+    }
+
+    fn parameter_manifest_sha256_v1(&self) -> String {
+        self.parameter_manifest_sha256_wide_v1()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum NativePolicyForwardInputV1<'a> {
     Encoded(Box<NativeEncodedDecisionViewV1<'a>>),
@@ -944,6 +1343,13 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     NoStateDigestUnsupported {
         path: &'static str,
     },
+    /// A learner path outside the generic-dims core (WIDE-BACKWARD-DESIGN.md
+    /// section 2.1) was requested for an architecture other than net-8.
+    /// Refused before any forward work; the state is unchanged.
+    UnsupportedForArchitecture {
+        architecture: &'static str,
+        path: &'static str,
+    },
     /// A no-state-digest invariant failed: a state-digest column of
     /// `state_encoder.0.weight` or of either Adam moment is not +0.0 (bits
     /// 0), or the state encoder bias holds -0.0. Never repaired.
@@ -992,9 +1398,19 @@ impl NativePolicyValueTrainSnapshotV1 {
     }
 }
 
+/// The net-8 train state; every narrow method keeps its name and meaning.
+pub(crate) type NativePolicyValueTrainStateV1 = NativePolicyValueTrainStateDimsV1<Net8DimsV1>;
+
+/// The net-8w128 train state (capacity experiment): the generic state at the
+/// wide dims. Its constructors train under the platform libm and no input
+/// contract only.
+pub(crate) type NativePolicyValueTrainStateWideV1 =
+    NativePolicyValueTrainStateDimsV1<Net8W128DimsV1>;
+
+/// Complete live model and Adam optimizer state of one architecture.
 #[derive(Clone, Debug)]
-pub(crate) struct NativePolicyValueTrainStateV1 {
-    model: NativePolicyValueNetV1,
+pub(crate) struct NativePolicyValueTrainStateDimsV1<D: NetDimsV1> {
+    model: D::Net,
     adam_step: u64,
     first_moments: Vec<Vec<f32>>,
     second_moments: Vec<Vec<f32>>,
@@ -1081,6 +1497,21 @@ fn check_no_state_digest_state_v1(
     first_moments: &[Vec<f32>],
     second_moments: &[Vec<f32>],
 ) -> Result<(), NativePolicyTrainErrorV1> {
+    check_no_state_digest_state_dims_v1::<Net8DimsV1>(
+        columns,
+        parameters,
+        first_moments,
+        second_moments,
+    )
+}
+
+/// [`check_no_state_digest_state_v1`] at the dims `D`.
+fn check_no_state_digest_state_dims_v1<D: NetDimsV1>(
+    columns: &std::ops::Range<usize>,
+    parameters: &[NativeNamedParameterV1],
+    first_moments: &[Vec<f32>],
+    second_moments: &[Vec<f32>],
+) -> Result<(), NativePolicyTrainErrorV1> {
     let (Some(weight), Some(bias)) = (
         parameters.get(STATE_FIRST_WEIGHT),
         parameters.get(STATE_FIRST_BIAS),
@@ -1094,11 +1525,11 @@ fn check_no_state_digest_state_v1(
     }
     let clear = |values: Option<&Vec<f32>>| {
         values.is_some_and(|values| {
-            columns_are_positive_zero_v1(values, STATE_ENCODER_INPUT, columns.clone())
+            columns_are_positive_zero_v1(values, D::STATE_ENCODER_INPUT, columns.clone())
         })
     };
     let code =
-        if !columns_are_positive_zero_v1(&weight.values, STATE_ENCODER_INPUT, columns.clone()) {
+        if !columns_are_positive_zero_v1(&weight.values, D::STATE_ENCODER_INPUT, columns.clone()) {
             "no-state-digest-weight-column-not-positive-zero"
         } else if !clear(first_moments.get(STATE_FIRST_WEIGHT)) {
             "no-state-digest-first-moment-column-not-positive-zero"
@@ -1122,10 +1553,12 @@ enum BackwardExecutionV1 {
     FixedPartitions { worker_limit: usize },
 }
 
-impl NativePolicyValueTrainStateV1 {
-    pub(crate) fn new_v1(model: NativePolicyValueNetV1) -> Result<Self, NativePolicyTrainErrorV1> {
+/// The state methods every architecture shares; the narrow names below are
+/// these at `Net8DimsV1`.
+impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
+    pub(crate) fn new_dims_v1(model: D::Net) -> Result<Self, NativePolicyTrainErrorV1> {
         let parameters = model.parameter_snapshot_v1();
-        validate_parameter_manifest(&parameters)?;
+        validate_parameter_manifest_dims_v1::<D>(&parameters)?;
         let scorer_bias_anchor_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
         let first_moments = parameters
             .iter()
@@ -1146,21 +1579,18 @@ impl NativePolicyValueTrainStateV1 {
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         };
-        state.validate_state_v1()?;
+        state.validate_state_dims_v1()?;
         Ok(state)
     }
 
-    /// Reconstructs a complete train state against a caller-provided model
-    /// template. The template supplies the frozen model contract and gauge
-    /// anchor; all snapshot data is validated before a candidate is returned.
-    pub(crate) fn from_snapshot_v1(
-        model: NativePolicyValueNetV1,
+    pub(crate) fn from_snapshot_dims_v1(
+        model: D::Net,
         snapshot: &NativePolicyValueTrainSnapshotV1,
     ) -> Result<Self, NativePolicyTrainErrorV1> {
         let template_parameters = model.parameter_snapshot_v1();
-        validate_parameter_manifest(&template_parameters)?;
+        validate_parameter_manifest_dims_v1::<D>(&template_parameters)?;
         let scorer_bias_anchor_bits = template_parameters[SCORER_SECOND_BIAS].values[0].to_bits();
-        validate_owned_train_snapshot_v1(snapshot, Some(scorer_bias_anchor_bits))?;
+        validate_owned_train_snapshot_dims_v1::<D>(snapshot, Some(scorer_bias_anchor_bits))?;
 
         let mut candidate_model = model;
         candidate_model.replace_parameter_snapshot_v1(&snapshot.parameters)?;
@@ -1183,30 +1613,293 @@ impl NativePolicyValueTrainStateV1 {
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         };
-        candidate.validate_state_v1()?;
+        candidate.validate_state_dims_v1()?;
         Ok(candidate)
     }
 
-    pub(crate) fn model_v1(&self) -> &NativePolicyValueNetV1 {
+    pub(crate) fn model_dims_v1(&self) -> &D::Net {
         &self.model
     }
 
-    pub(crate) fn adam_step_v1(&self) -> u64 {
+    pub(crate) fn adam_step_dims_v1(&self) -> u64 {
         self.adam_step
     }
 
-    pub(crate) fn scorer_bias_anchor_f32_bits_v1(&self) -> u32 {
+    pub(crate) fn scorer_bias_anchor_f32_bits_dims_v1(&self) -> u32 {
         self.scorer_bias_anchor_bits
     }
 
-    pub(crate) fn training_math_v1(&self) -> TrainingMathV1 {
+    pub(crate) fn training_math_dims_v1(&self) -> TrainingMathV1 {
         self.training_math
+    }
+
+    pub(crate) fn set_training_math_dims_v1(&mut self, math: TrainingMathV1) {
+        self.training_math = math;
+    }
+
+    /// Only net-8 trains under the no-state-digest contract (design section
+    /// 2.1); any other architecture refuses it unchanged.
+    pub(crate) fn install_no_state_digest_dims_v1(
+        &mut self,
+        columns: std::ops::Range<usize>,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        refuse_for_architecture_v1::<D>("no-state-digest install")?;
+        if self.no_state_digest_columns.is_some() {
+            return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant {
+                code: "no-state-digest-contract-already-installed",
+            });
+        }
+        if columns.is_empty() || columns.end > D::STATE_ENCODER_INPUT {
+            return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant {
+                code: "no-state-digest-columns-out-of-range",
+            });
+        }
+        let parameters = self.model.parameter_snapshot_v1();
+        check_no_state_digest_state_dims_v1::<D>(
+            &columns,
+            &parameters,
+            &self.first_moments,
+            &self.second_moments,
+        )?;
+        self.no_state_digest_columns = Some(columns);
+        Ok(())
+    }
+
+    pub(crate) fn thread_mxcsr_check_dims_v1(&self) -> ThreadMxcsrCheckV1 {
+        #[cfg(test)]
+        if self.dirty_worker_mxcsr_for_test {
+            return ThreadMxcsrCheckV1::DirtyWorkersForTest;
+        }
+        if self.no_state_digest_columns.is_some() {
+            ThreadMxcsrCheckV1::Verify
+        } else {
+            ThreadMxcsrCheckV1::Off
+        }
+    }
+
+    fn check_no_state_digest_candidate_dims_v1(
+        &self,
+        parameters: &[NativeNamedParameterV1],
+        first_moments: &[Vec<f32>],
+        second_moments: &[Vec<f32>],
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        match &self.no_state_digest_columns {
+            None => Ok(()),
+            Some(columns) => check_no_state_digest_state_dims_v1::<D>(
+                columns,
+                parameters,
+                first_moments,
+                second_moments,
+            ),
+        }
+    }
+
+    pub(crate) fn snapshot_dims_v1(
+        &self,
+    ) -> Result<NativePolicyValueTrainSnapshotV1, NativePolicyTrainErrorV1> {
+        #[cfg(test)]
+        TRAIN_STATE_SNAPSHOT_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
+        self.validate_state_dims_v1()?;
+        let parameters = self.model.parameter_snapshot_v1();
+        Ok(NativePolicyValueTrainSnapshotV1 {
+            adam_step: self.adam_step,
+            scorer_bias_anchor_bits: self.scorer_bias_anchor_bits,
+            first_moments: named_state_snapshot(&parameters, &self.first_moments),
+            second_moments: named_state_snapshot(&parameters, &self.second_moments),
+            parameters,
+        })
+    }
+
+    pub(crate) fn state_sha256_dims_v1(&self) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
+        self.validate_state_dims_v1()?;
+        Ok(hash_live_train_state_dims_v1(self))
+    }
+
+    pub(crate) fn replace_snapshot_dims_v1(
+        &mut self,
+        snapshot: &NativePolicyValueTrainSnapshotV1,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.validate_state_dims_v1()?;
+        let mut candidate = Self::from_snapshot_dims_v1(self.model.clone(), snapshot)?;
+        candidate.training_math = self.training_math;
+        if let Some(columns) = &self.no_state_digest_columns {
+            candidate.install_no_state_digest_dims_v1(columns.clone())?;
+        }
+        #[cfg(test)]
+        {
+            candidate.dirty_worker_mxcsr_for_test = self.dirty_worker_mxcsr_for_test;
+        }
+        *self = candidate;
+        Ok(())
+    }
+
+    pub(crate) fn validate_state_dims_v1(&self) -> Result<(), NativePolicyTrainErrorV1> {
+        i32::try_from(self.adam_step)
+            .map(|_| ())
+            .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
+        self.model
+            .validate_parameters_v1()
+            .map_err(|_| NativePolicyTrainErrorV1::ParameterManifest)?;
+
+        let mut parameter_manifest_invalid = false;
+        let mut parameter_tensor_count = 0usize;
+        let mut parameter_element_count = 0usize;
+        let mut scorer_bias_anchor_bits = None;
+        let expected_shapes = D::PARAMETER_SHAPES;
+        self.model.visit_parameters_v1(|name, shape, values| {
+            let ordinal = parameter_tensor_count;
+            parameter_tensor_count += 1;
+            parameter_element_count = parameter_element_count.saturating_add(values.len());
+            let Some((expected_name, expected_shape)) = EXPECTED_PARAMETER_NAMES
+                .get(ordinal)
+                .zip(expected_shapes.get(ordinal))
+            else {
+                parameter_manifest_invalid = true;
+                return;
+            };
+            if name != *expected_name
+                || shape != *expected_shape
+                || expected_shape.iter().product::<usize>() != values.len()
+                || values.iter().any(|value| !value.is_finite())
+                || (ordinal == CARD_EMBEDDING
+                    && values[..D::CARD_EMBEDDING]
+                        .iter()
+                        .any(|value| value.to_bits() != 0))
+            {
+                parameter_manifest_invalid = true;
+            }
+            if ordinal == SCORER_SECOND_BIAS {
+                scorer_bias_anchor_bits = values.first().map(|value| value.to_bits());
+            }
+        });
+        if parameter_manifest_invalid
+            || parameter_tensor_count != PARAMETER_TENSOR_COUNT
+            || parameter_element_count != D::PARAMETER_COUNT
+        {
+            return Err(NativePolicyTrainErrorV1::ParameterManifest);
+        }
+
+        if self.first_moments.len() != PARAMETER_TENSOR_COUNT
+            || self.second_moments.len() != PARAMETER_TENSOR_COUNT
+        {
+            return Err(NativePolicyTrainErrorV1::OptimizerState);
+        }
+        let mut optimizer_state_invalid = false;
+        let mut ordinal = 0usize;
+        self.model.visit_parameters_v1(|_, _, values| {
+            let first = &self.first_moments[ordinal];
+            let second = &self.second_moments[ordinal];
+            if first.len() != values.len()
+                || second.len() != values.len()
+                || first.iter().any(|value| !value.is_finite())
+                || second
+                    .iter()
+                    .any(|value| !value.is_finite() || *value < 0.0)
+                || (ordinal == CARD_EMBEDDING
+                    && (first[..D::CARD_EMBEDDING]
+                        .iter()
+                        .any(|value| value.to_bits() != 0)
+                        || second[..D::CARD_EMBEDDING]
+                            .iter()
+                            .any(|value| value.to_bits() != 0)))
+                || (ordinal == SCORER_SECOND_BIAS
+                    && (first[0].to_bits() != 0 || second[0].to_bits() != 0))
+            {
+                optimizer_state_invalid = true;
+            }
+            ordinal += 1;
+        });
+        if optimizer_state_invalid {
+            return Err(NativePolicyTrainErrorV1::OptimizerState);
+        }
+        if scorer_bias_anchor_bits != Some(self.scorer_bias_anchor_bits) {
+            return Err(NativePolicyTrainErrorV1::GaugeAnchor);
+        }
+        Ok(())
+    }
+}
+
+/// The wide state's names (the former wide sibling's interface), all at the
+/// generic methods above. Wide trains under the platform libm only and with
+/// no input contract (design section 2.1); the constructors set both.
+impl NativePolicyValueTrainStateWideV1 {
+    pub(crate) fn new_wide_v1(
+        model: NativePolicyValueNetWideV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        Self::new_dims_v1(model)
+    }
+
+    /// Reconstructs a complete wide train state against a caller-provided
+    /// model template, as [`NativePolicyValueTrainStateV1::from_snapshot_v1`].
+    pub(crate) fn from_snapshot_wide_v1(
+        model: NativePolicyValueNetWideV1,
+        snapshot: &NativePolicyValueTrainSnapshotV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        Self::from_snapshot_dims_v1(model, snapshot)
+    }
+
+    pub(crate) fn model_v1(&self) -> &NativePolicyValueNetWideV1 {
+        self.model_dims_v1()
+    }
+
+    pub(crate) fn adam_step_v1(&self) -> u64 {
+        self.adam_step_dims_v1()
+    }
+
+    pub(crate) fn scorer_bias_anchor_f32_bits_v1(&self) -> u32 {
+        self.scorer_bias_anchor_f32_bits_dims_v1()
+    }
+
+    pub(crate) fn snapshot_v1(
+        &self,
+    ) -> Result<NativePolicyValueTrainSnapshotV1, NativePolicyTrainErrorV1> {
+        self.snapshot_dims_v1()
+    }
+
+    pub(crate) fn state_sha256_v1(&self) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
+        self.state_sha256_dims_v1()
+    }
+
+    pub(crate) fn validate_state_v1(&self) -> Result<(), NativePolicyTrainErrorV1> {
+        self.validate_state_dims_v1()
+    }
+}
+
+impl NativePolicyValueTrainStateV1 {
+    pub(crate) fn new_v1(model: NativePolicyValueNetV1) -> Result<Self, NativePolicyTrainErrorV1> {
+        Self::new_dims_v1(model)
+    }
+
+    /// Reconstructs a complete train state against a caller-provided model
+    /// template. The template supplies the frozen model contract and gauge
+    /// anchor; all snapshot data is validated before a candidate is returned.
+    pub(crate) fn from_snapshot_v1(
+        model: NativePolicyValueNetV1,
+        snapshot: &NativePolicyValueTrainSnapshotV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        Self::from_snapshot_dims_v1(model, snapshot)
+    }
+
+    pub(crate) fn model_v1(&self) -> &NativePolicyValueNetV1 {
+        self.model_dims_v1()
+    }
+
+    pub(crate) fn adam_step_v1(&self) -> u64 {
+        self.adam_step_dims_v1()
+    }
+
+    pub(crate) fn scorer_bias_anchor_f32_bits_v1(&self) -> u32 {
+        self.scorer_bias_anchor_f32_bits_dims_v1()
+    }
+
+    pub(crate) fn training_math_v1(&self) -> TrainingMathV1 {
+        self.training_math_dims_v1()
     }
 
     /// Train with `math` from now on. A new or restored state trains with
     /// the platform's libm until its owner records otherwise.
     pub(crate) fn set_training_math_v1(&mut self, math: TrainingMathV1) {
-        self.training_math = math;
+        self.set_training_math_dims_v1(math);
     }
 
     /// Refuses a learner path the portable math does not cover.
@@ -1229,25 +1922,7 @@ impl NativePolicyValueTrainStateV1 {
         &mut self,
         columns: std::ops::Range<usize>,
     ) -> Result<(), NativePolicyTrainErrorV1> {
-        if self.no_state_digest_columns.is_some() {
-            return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant {
-                code: "no-state-digest-contract-already-installed",
-            });
-        }
-        if columns.is_empty() || columns.end > STATE_ENCODER_INPUT {
-            return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant {
-                code: "no-state-digest-columns-out-of-range",
-            });
-        }
-        let parameters = self.model.parameter_snapshot_v1();
-        check_no_state_digest_state_v1(
-            &columns,
-            &parameters,
-            &self.first_moments,
-            &self.second_moments,
-        )?;
-        self.no_state_digest_columns = Some(columns);
-        Ok(())
+        self.install_no_state_digest_dims_v1(columns)
     }
 
     /// The installed contract's state-digest columns, if any.
@@ -1269,15 +1944,7 @@ impl NativePolicyValueTrainStateV1 {
 
     /// Which threads of this state's train steps verify the pinned MXCSR.
     pub(crate) fn thread_mxcsr_check_v1(&self) -> ThreadMxcsrCheckV1 {
-        #[cfg(test)]
-        if self.dirty_worker_mxcsr_for_test {
-            return ThreadMxcsrCheckV1::DirtyWorkersForTest;
-        }
-        if self.no_state_digest_columns.is_some() {
-            ThreadMxcsrCheckV1::Verify
-        } else {
-            ThreadMxcsrCheckV1::Off
-        }
+        self.thread_mxcsr_check_dims_v1()
     }
 
     /// Test-only: every worker of this state's later train steps dirties its
@@ -1295,12 +1962,7 @@ impl NativePolicyValueTrainStateV1 {
         first_moments: &[Vec<f32>],
         second_moments: &[Vec<f32>],
     ) -> Result<(), NativePolicyTrainErrorV1> {
-        match &self.no_state_digest_columns {
-            None => Ok(()),
-            Some(columns) => {
-                check_no_state_digest_state_v1(columns, parameters, first_moments, second_moments)
-            }
-        }
+        self.check_no_state_digest_candidate_dims_v1(parameters, first_moments, second_moments)
     }
 
     pub(crate) fn first_moment_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
@@ -1345,24 +2007,13 @@ impl NativePolicyValueTrainStateV1 {
     pub(crate) fn snapshot_v1(
         &self,
     ) -> Result<NativePolicyValueTrainSnapshotV1, NativePolicyTrainErrorV1> {
-        #[cfg(test)]
-        TRAIN_STATE_SNAPSHOT_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
-        self.validate_state_v1()?;
-        let parameters = self.model.parameter_snapshot_v1();
-        Ok(NativePolicyValueTrainSnapshotV1 {
-            adam_step: self.adam_step,
-            scorer_bias_anchor_bits: self.scorer_bias_anchor_bits,
-            first_moments: named_state_snapshot(&parameters, &self.first_moments),
-            second_moments: named_state_snapshot(&parameters, &self.second_moments),
-            parameters,
-        })
+        self.snapshot_dims_v1()
     }
 
     /// Domain-separated digest of every ordered parameter and moment bit plus
     /// the Adam step. Invalid live state never receives a digest.
     pub(crate) fn state_sha256_v1(&self) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
-        self.validate_state_v1()?;
-        Ok(hash_live_train_state_v1(self))
+        self.state_sha256_dims_v1()
     }
 
     /// Atomically replaces model parameters, moments, and Adam step. The
@@ -1371,202 +2022,40 @@ impl NativePolicyValueTrainStateV1 {
         &mut self,
         snapshot: &NativePolicyValueTrainSnapshotV1,
     ) -> Result<(), NativePolicyTrainErrorV1> {
-        self.validate_state_v1()?;
-        let mut candidate = Self::from_snapshot_v1(self.model.clone(), snapshot)?;
-        candidate.training_math = self.training_math;
-        if let Some(columns) = &self.no_state_digest_columns {
-            candidate.install_no_state_digest_v1(columns.clone())?;
-        }
-        #[cfg(test)]
-        {
-            candidate.dirty_worker_mxcsr_for_test = self.dirty_worker_mxcsr_for_test;
-        }
-        *self = candidate;
-        Ok(())
+        self.replace_snapshot_dims_v1(snapshot)
     }
 
     pub(crate) fn validate_state_v1(&self) -> Result<(), NativePolicyTrainErrorV1> {
-        i32::try_from(self.adam_step)
-            .map(|_| ())
-            .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
-        self.model
-            .validate_parameters_v1()
-            .map_err(|_| NativePolicyTrainErrorV1::ParameterManifest)?;
-
-        let mut parameter_manifest_invalid = false;
-        let mut parameter_tensor_count = 0usize;
-        let mut parameter_element_count = 0usize;
-        let mut scorer_bias_anchor_bits = None;
-        self.model.visit_parameters_v1(|name, shape, values| {
-            let ordinal = parameter_tensor_count;
-            parameter_tensor_count += 1;
-            parameter_element_count = parameter_element_count.saturating_add(values.len());
-            let Some((expected_name, expected_shape)) = EXPECTED_PARAMETER_NAMES
-                .get(ordinal)
-                .zip(EXPECTED_PARAMETER_SHAPES.get(ordinal))
-            else {
-                parameter_manifest_invalid = true;
-                return;
-            };
-            if name != *expected_name
-                || shape != *expected_shape
-                || expected_shape.iter().product::<usize>() != values.len()
-                || values.iter().any(|value| !value.is_finite())
-                || (ordinal == CARD_EMBEDDING
-                    && values[..CARD_EMBEDDING_DIM_V1]
-                        .iter()
-                        .any(|value| value.to_bits() != 0))
-            {
-                parameter_manifest_invalid = true;
-            }
-            if ordinal == SCORER_SECOND_BIAS {
-                scorer_bias_anchor_bits = values.first().map(|value| value.to_bits());
-            }
-        });
-        if parameter_manifest_invalid
-            || parameter_tensor_count != PARAMETER_TENSOR_COUNT
-            || parameter_element_count != PARAMETER_COUNT_V1
-        {
-            return Err(NativePolicyTrainErrorV1::ParameterManifest);
-        }
-
-        if self.first_moments.len() != PARAMETER_TENSOR_COUNT
-            || self.second_moments.len() != PARAMETER_TENSOR_COUNT
-        {
-            return Err(NativePolicyTrainErrorV1::OptimizerState);
-        }
-        let mut optimizer_state_invalid = false;
-        let mut ordinal = 0usize;
-        self.model.visit_parameters_v1(|_, _, values| {
-            let first = &self.first_moments[ordinal];
-            let second = &self.second_moments[ordinal];
-            if first.len() != values.len()
-                || second.len() != values.len()
-                || first.iter().any(|value| !value.is_finite())
-                || second
-                    .iter()
-                    .any(|value| !value.is_finite() || *value < 0.0)
-                || (ordinal == CARD_EMBEDDING
-                    && (first[..CARD_EMBEDDING_DIM_V1]
-                        .iter()
-                        .any(|value| value.to_bits() != 0)
-                        || second[..CARD_EMBEDDING_DIM_V1]
-                            .iter()
-                            .any(|value| value.to_bits() != 0)))
-                || (ordinal == SCORER_SECOND_BIAS
-                    && (first[0].to_bits() != 0 || second[0].to_bits() != 0))
-            {
-                optimizer_state_invalid = true;
-            }
-            ordinal += 1;
-        });
-        if optimizer_state_invalid {
-            return Err(NativePolicyTrainErrorV1::OptimizerState);
-        }
-        if scorer_bias_anchor_bits != Some(self.scorer_bias_anchor_bits) {
-            return Err(NativePolicyTrainErrorV1::GaugeAnchor);
-        }
-        Ok(())
+        self.validate_state_dims_v1()
     }
 
-    /// Applies one complete grouped loss/backward/Adam update.  Every input,
-    /// gradient, moment, and candidate parameter is validated before the live
-    /// model or optimizer state changes.
     pub(crate) fn train_step_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
         value_coefficient: f32,
         learning_rate: f32,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        self.train_step_with_recompute_workers_v1(groups, value_coefficient, learning_rate, 1)
+        self.train_step_dims_v1(groups, value_coefficient, learning_rate)
     }
 
-    /// Canonical CPU update under the explicit rich-V6 / flat-V3 input
-    /// contract. Recomputes all captured output bits before backward and
-    /// reuses the existing grouped loss and Adam arithmetic. A successor
-    /// manifest, owned by the caller, must bind these inputs and parameters;
-    /// this is neither admission to nor continuation of a legacy Store V2.
     pub(crate) fn train_step_feature_transfer_v3(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
         value_coefficient: f32,
         learning_rate: f32,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        for (group_index, group) in groups.iter().enumerate() {
-            for (substep_index, substep) in group.substeps.iter().enumerate() {
-                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
-                    return Err(
-                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
-                            group_index,
-                            substep_index,
-                        },
-                    );
-                }
-            }
-        }
-        let input_config = self.model.feature_transfer_config_v3();
-        self.train_step_with_input_config_v1(
-            groups,
-            value_coefficient,
-            learning_rate,
-            1,
-            BackwardExecutionV1::Sequential,
-            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
-            input_config,
-        )
+        self.train_step_feature_transfer_v3_dims_v1(groups, value_coefficient, learning_rate)
     }
 
-    /// V4 sibling of `train_step_feature_transfer_v3`, for the fresh-lineage
-    /// (V7 observation-schema) successor contract. `NativePolicyPhysicalDecisionV1`
-    /// carries an already-encoded, schema-tagged `NativeEncodedDecisionViewV1`
-    /// regardless of generation, so the grouped loss/backward/Adam arithmetic
-    /// (`train_step_with_input_config_v1`) is fully shared unchanged; only the
-    /// input-config schema this validates every encoded view against differs.
-    /// The CUDA successor is `train_step_cuda_feature_transfer_v4`, which
-    /// validates the V4 identity and shares the same device kernel path as
-    /// `train_step_cuda_feature_transfer_v3` (`train_step_cuda_burn_dense_inner_v1`
-    /// is dims-oblivious and generation-agnostic; only the identity check
-    /// upstream of it differs).
     pub(crate) fn train_step_feature_transfer_v4(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
         value_coefficient: f32,
         learning_rate: f32,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        for (group_index, group) in groups.iter().enumerate() {
-            for (substep_index, substep) in group.substeps.iter().enumerate() {
-                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
-                    return Err(
-                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
-                            group_index,
-                            substep_index,
-                        },
-                    );
-                }
-            }
-        }
-        let input_config = self.model.feature_transfer_config_v4();
-        self.train_step_with_input_config_v1(
-            groups,
-            value_coefficient,
-            learning_rate,
-            1,
-            BackwardExecutionV1::Sequential,
-            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
-            input_config,
-        )
+        self.train_step_feature_transfer_v4_dims_v1(groups, value_coefficient, learning_rate)
     }
 
-    /// Config-driven fixed-partition sibling of `train_step_feature_transfer_v4`,
-    /// for the fresh-lineage `update_backward_execution=fixed_partition_4`
-    /// option (`expanded_deck_training_v1::execute_update_v1`,
-    /// `phase1_bo3_learning_v1::continuation::apply_prepared`'s weighted V4
-    /// arm has its own sibling in `weighted_v3`). Validation, forward
-    /// arithmetic and Adam are fully shared with `train_step_feature_transfer_v4`
-    /// via `train_step_with_input_config_v1`; only `backward_execution` differs.
-    /// There is no V3 sibling: callers must reject any non-sequential value for
-    /// a V3-generation policy before reaching this function, so the V3/imported
-    /// path never changes.
     pub(crate) fn train_step_feature_transfer_v4_fixed_partition_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
@@ -1574,29 +2063,11 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         backward_worker_limit: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        for (group_index, group) in groups.iter().enumerate() {
-            for (substep_index, substep) in group.substeps.iter().enumerate() {
-                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
-                    return Err(
-                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
-                            group_index,
-                            substep_index,
-                        },
-                    );
-                }
-            }
-        }
-        let input_config = self.model.feature_transfer_config_v4();
-        self.train_step_with_input_config_v1(
+        self.train_step_feature_transfer_v4_fixed_partition_dims_v1(
             groups,
             value_coefficient,
             learning_rate,
-            1,
-            BackwardExecutionV1::FixedPartitions {
-                worker_limit: backward_worker_limit,
-            },
-            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
-            input_config,
+            backward_worker_limit,
         )
     }
 
@@ -1932,11 +2403,6 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
-    /// Production entry point for bounded independent packed-tape
-    /// recomputation. The scalar entry point above remains the numerical
-    /// reference. Every worker result is consumed at its original ordinal
-    /// before that substep's packed-tape validation and loss work; backward
-    /// begins only after the complete ordered pass succeeds.
     pub(crate) fn train_step_with_recompute_workers_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
@@ -1944,14 +2410,11 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         recompute_worker_limit: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
-        self.train_step_with_recompute_workers_inner_v1(
+        self.train_step_with_recompute_workers_dims_v1(
             groups,
             value_coefficient,
             learning_rate,
             recompute_worker_limit,
-            BackwardExecutionV1::Sequential,
-            &mut phase_recorder,
         )
     }
 
@@ -1963,7 +2426,259 @@ impl NativePolicyValueTrainStateV1 {
         recompute_worker_limit: usize,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        self.train_step_with_recompute_workers_inner_v1(
+        self.train_step_with_recompute_workers_profiled_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            phase_recorder,
+        )
+    }
+
+    pub(crate) fn train_step_with_fixed_partition_parallel_backward_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_fixed_partition_parallel_backward_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            backward_worker_limit,
+        )
+    }
+
+    pub(crate) fn train_step_with_fixed_partition_parallel_backward_profiled_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        backward_worker_limit: usize,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_fixed_partition_parallel_backward_profiled_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            backward_worker_limit,
+            phase_recorder,
+        )
+    }
+
+    fn train_step_with_recompute_workers_inner_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        backward_execution: BackwardExecutionV1,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_recompute_workers_inner_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            backward_execution,
+            phase_recorder,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn train_step_with_input_config_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        backward_execution: BackwardExecutionV1,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+        input_config: NativePolicyValueModelConfigV1,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_input_config_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            backward_execution,
+            phase_recorder,
+            input_config,
+        )
+    }
+}
+
+/// The terminal `terminal_reinforce_value/v3` CPU update at the dims `D`; the
+/// narrow names above are these at `Net8DimsV1`.
+impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
+    /// Applies one complete grouped loss/backward/Adam update.  Every input,
+    /// gradient, moment, and candidate parameter is validated before the live
+    /// model or optimizer state changes.
+    pub(crate) fn train_step_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_recompute_workers_dims_v1(groups, value_coefficient, learning_rate, 1)
+    }
+
+    /// Canonical CPU update under the explicit rich-V6 / flat-V3 input
+    /// contract. Recomputes all captured output bits before backward and
+    /// reuses the existing grouped loss and Adam arithmetic. A successor
+    /// manifest, owned by the caller, must bind these inputs and parameters;
+    /// this is neither admission to nor continuation of a legacy Store V2.
+    pub(crate) fn train_step_feature_transfer_v3_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        for (group_index, group) in groups.iter().enumerate() {
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
+                    return Err(
+                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                            group_index,
+                            substep_index,
+                        },
+                    );
+                }
+            }
+        }
+        let input_config = self.model.feature_transfer_config_v3();
+        self.train_step_with_input_config_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            1,
+            BackwardExecutionV1::Sequential,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            input_config,
+        )
+    }
+
+    /// V4 sibling of `train_step_feature_transfer_v3`, for the fresh-lineage
+    /// (V7 observation-schema) successor contract. `NativePolicyPhysicalDecisionV1`
+    /// carries an already-encoded, schema-tagged `NativeEncodedDecisionViewV1`
+    /// regardless of generation, so the grouped loss/backward/Adam arithmetic
+    /// (`train_step_with_input_config_v1`) is fully shared unchanged; only the
+    /// input-config schema this validates every encoded view against differs.
+    /// The CUDA successor is `train_step_cuda_feature_transfer_v4`, which
+    /// validates the V4 identity and shares the same device kernel path as
+    /// `train_step_cuda_feature_transfer_v3` (`train_step_cuda_burn_dense_inner_v1`
+    /// is dims-oblivious and generation-agnostic; only the identity check
+    /// upstream of it differs).
+    pub(crate) fn train_step_feature_transfer_v4_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        for (group_index, group) in groups.iter().enumerate() {
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
+                    return Err(
+                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                            group_index,
+                            substep_index,
+                        },
+                    );
+                }
+            }
+        }
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_with_input_config_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            1,
+            BackwardExecutionV1::Sequential,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            input_config,
+        )
+    }
+
+    /// Config-driven fixed-partition sibling of `train_step_feature_transfer_v4`,
+    /// for the fresh-lineage `update_backward_execution=fixed_partition_4`
+    /// option (`expanded_deck_training_v1::execute_update_v1`,
+    /// `phase1_bo3_learning_v1::continuation::apply_prepared`'s weighted V4
+    /// arm has its own sibling in `weighted_v3`). Validation, forward
+    /// arithmetic and Adam are fully shared with `train_step_feature_transfer_v4`
+    /// via `train_step_with_input_config_v1`; only `backward_execution` differs.
+    /// There is no V3 sibling: callers must reject any non-sequential value for
+    /// a V3-generation policy before reaching this function, so the V3/imported
+    /// path never changes.
+    pub(crate) fn train_step_feature_transfer_v4_fixed_partition_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        for (group_index, group) in groups.iter().enumerate() {
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
+                    return Err(
+                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                            group_index,
+                            substep_index,
+                        },
+                    );
+                }
+            }
+        }
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_with_input_config_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            1,
+            BackwardExecutionV1::FixedPartitions {
+                worker_limit: backward_worker_limit,
+            },
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            input_config,
+        )
+    }
+
+    /// Production entry point for bounded independent packed-tape
+    /// recomputation. The scalar entry point above remains the numerical
+    /// reference. Every worker result is consumed at its original ordinal
+    /// before that substep's packed-tape validation and loss work; backward
+    /// begins only after the complete ordered pass succeeds.
+    pub(crate) fn train_step_with_recompute_workers_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.train_step_with_recompute_workers_inner_dims_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            BackwardExecutionV1::Sequential,
+            &mut phase_recorder,
+        )
+    }
+
+    pub(crate) fn train_step_with_recompute_workers_profiled_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_recompute_workers_inner_dims_v1(
             groups,
             value_coefficient,
             learning_rate,
@@ -1980,7 +2695,7 @@ impl NativePolicyValueTrainStateV1 {
     /// value controls only how many scoped workers evaluate the four frozen
     /// partitions. The sequential production entry points above remain
     /// byte-unchanged in arithmetic and retain their existing backend identity.
-    pub(crate) fn train_step_with_fixed_partition_parallel_backward_v1(
+    pub(crate) fn train_step_with_fixed_partition_parallel_backward_dims_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
         value_coefficient: f32,
@@ -1989,7 +2704,7 @@ impl NativePolicyValueTrainStateV1 {
         backward_worker_limit: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
-        self.train_step_with_fixed_partition_parallel_backward_profiled_v1(
+        self.train_step_with_fixed_partition_parallel_backward_profiled_dims_v1(
             groups,
             value_coefficient,
             learning_rate,
@@ -1999,7 +2714,7 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
-    pub(crate) fn train_step_with_fixed_partition_parallel_backward_profiled_v1(
+    pub(crate) fn train_step_with_fixed_partition_parallel_backward_profiled_dims_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
         value_coefficient: f32,
@@ -2008,7 +2723,7 @@ impl NativePolicyValueTrainStateV1 {
         backward_worker_limit: usize,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        self.train_step_with_recompute_workers_inner_v1(
+        self.train_step_with_recompute_workers_inner_dims_v1(
             groups,
             value_coefficient,
             learning_rate,
@@ -2020,7 +2735,7 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
-    fn train_step_with_recompute_workers_inner_v1(
+    fn train_step_with_recompute_workers_inner_dims_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
         value_coefficient: f32,
@@ -2029,7 +2744,7 @@ impl NativePolicyValueTrainStateV1 {
         backward_execution: BackwardExecutionV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        self.train_step_with_input_config_v1(
+        self.train_step_with_input_config_dims_v1(
             groups,
             value_coefficient,
             learning_rate,
@@ -2041,7 +2756,7 @@ impl NativePolicyValueTrainStateV1 {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn train_step_with_input_config_v1(
+    fn train_step_with_input_config_dims_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
         value_coefficient: f32,
@@ -2051,6 +2766,24 @@ impl NativePolicyValueTrainStateV1 {
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
         input_config: NativePolicyValueModelConfigV1,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        // The wide refusal list (design section 2.1), before any forward work.
+        if !is_net8_dims_v1::<D>() {
+            if groups
+                .iter()
+                .flat_map(|group| group.substeps)
+                .any(|substep| {
+                    matches!(&substep.forward, NativePolicyForwardInputV1::Packed { .. })
+                })
+            {
+                refuse_for_architecture_v1::<D>("packed forward input")?;
+            }
+            if self.no_state_digest_columns.is_some() {
+                refuse_for_architecture_v1::<D>("no-state-digest install")?;
+            }
+            if !self.training_math.is_platform_libm() {
+                refuse_for_architecture_v1::<D>("portable math")?;
+            }
+        }
         let forward_loss_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
         if matches!(
             backward_execution,
@@ -2091,7 +2824,7 @@ impl NativePolicyValueTrainStateV1 {
         }
         // The no-state-digest contract covers canonical inputs only, and
         // every thread below must run in the pinned MXCSR state.
-        let mxcsr = self.thread_mxcsr_check_v1();
+        let mxcsr = self.thread_mxcsr_check_dims_v1();
         if self.no_state_digest_columns.is_some()
             && groups
                 .iter()
@@ -2107,8 +2840,12 @@ impl NativePolicyValueTrainStateV1 {
         mxcsr.verify_v1()?;
 
         let parameters = self.model.parameter_snapshot_v1();
-        validate_parameter_manifest(&parameters)?;
-        validate_optimizer_state(&parameters, &self.first_moments, &self.second_moments)?;
+        validate_parameter_manifest_dims_v1::<D>(&parameters)?;
+        validate_optimizer_state_dims_v1::<D>(
+            &parameters,
+            &self.first_moments,
+            &self.second_moments,
+        )?;
         validate_canonical_gauge_state(
             &parameters,
             &self.first_moments,
@@ -2173,7 +2910,7 @@ impl NativePolicyValueTrainStateV1 {
             for (substep_index, substep) in group.substeps.iter().enumerate() {
                 let tape = match &substep.forward {
                     NativePolicyForwardInputV1::Encoded(encoded) => {
-                        let recomputed = Box::new(forward_with_tape(
+                        let recomputed = Box::new(forward_with_tape_dims_v1::<D>(
                             &parameters,
                             input_config,
                             **encoded,
@@ -2267,6 +3004,14 @@ impl NativePolicyValueTrainStateV1 {
             let advantage = target - value;
             let policy_term = -joint_log_probability * advantage;
             let value_error = value - target;
+            #[cfg(test)]
+            record_train_step_v1(|capture| {
+                capture.group_roots.push(GroupRootCaptureV1 {
+                    advantage,
+                    target,
+                    value_error,
+                });
+            });
             let value_term = value_error * value_error;
             policy_sum += policy_term;
             value_sum += value_term;
@@ -2335,12 +3080,24 @@ impl NativePolicyValueTrainStateV1 {
                                 *gradient - math.exp_f32_v1(*log_probability) * grad_output_sum,
                             );
                         }
+                        #[cfg(test)]
+                        record_train_step_v1(|capture| {
+                            capture.roots.push(LossRootCaptureV1 {
+                                substep_index,
+                                selected_action_index: selected.selected_action_index,
+                                log_probabilities: selected.log_probabilities.clone(),
+                                d_joint_log_probability,
+                                d_value: if substep_index == 0 { d_value } else { 0.0 },
+                                grad_output_sum,
+                                d_logits: reverse_workspace.d_logits.clone(),
+                            });
+                        });
                         gauge_accumulator.observe(
                             selected.tape.logits_v1(),
                             selected.selected_action_index,
                             d_joint_log_probability,
                         )?;
-                        reverse_decision(
+                        reverse_decision_dims_v1::<D>(
                             &parameters,
                             &mut gradients,
                             &selected.tape,
@@ -2369,7 +3126,7 @@ impl NativePolicyValueTrainStateV1 {
                 let gauge_accumulator =
                     observe_scorer_bias_gauge_v1(&group_tapes, &coefficients, math)?;
                 let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
-                gradients = fixed_partition_backward_gradients_v1(
+                gradients = fixed_partition_backward_gradients_dims_v1::<D>(
                     &parameters,
                     &group_tapes,
                     &coefficients,
@@ -2388,6 +3145,13 @@ impl NativePolicyValueTrainStateV1 {
         let scorer_bias_before_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
         let mut scorer_bias_gauge =
             gauge_accumulator.finish(raw_scorer_bias_residual, scorer_bias_before_bits)?;
+        #[cfg(test)]
+        record_train_step_v1(|capture| {
+            capture.projection.push(ProjectionCaptureV1 {
+                gradients: gradients.clone(),
+                residual_bits: scorer_bias_gauge.raw_gradient_residual.to_bits(),
+            });
+        });
         gradients[SCORER_SECOND_BIAS][0] = 0.0;
         phase_recorder.finish_v1(backward_gauge_timer);
 
@@ -2417,14 +3181,18 @@ impl NativePolicyValueTrainStateV1 {
             phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
         let mut candidate_model = self.model.clone();
         candidate_model.replace_parameter_snapshot_v1(&next_parameters)?;
-        validate_optimizer_state(&next_parameters, &next_first_moments, &next_second_moments)?;
+        validate_optimizer_state_dims_v1::<D>(
+            &next_parameters,
+            &next_first_moments,
+            &next_second_moments,
+        )?;
         validate_canonical_gauge_state(
             &next_parameters,
             &next_first_moments,
             &next_second_moments,
             self.scorer_bias_anchor_bits,
         )?;
-        self.check_no_state_digest_candidate_v1(
+        self.check_no_state_digest_candidate_dims_v1(
             &next_parameters,
             &next_first_moments,
             &next_second_moments,
@@ -2548,6 +3316,67 @@ fn fixed_partition_backward_gradients_v1(
     groups: &[GroupTapeV1<'_>],
     coefficients: &[(f32, f32)],
     worker_limit: usize,
+    reduced_gradients: Vec<Vec<f32>>,
+    execution_context: &FixedPartitionBackwardExecutionContextV1,
+    math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
+) -> Result<Vec<Vec<f32>>, NativePolicyTrainErrorV1> {
+    fixed_partition_backward_gradients_dims_v1::<Net8DimsV1>(
+        parameters,
+        groups,
+        coefficients,
+        worker_limit,
+        reduced_gradients,
+        execution_context,
+        math,
+        mxcsr,
+    )
+}
+
+fn fixed_partition_backward_outcomes_v1(
+    parameters: &[NativeNamedParameterV1],
+    groups: &[GroupTapeV1<'_>],
+    coefficients: &[(f32, f32)],
+    partition_count: usize,
+    partition_ordinals: &[usize],
+    execution_context: &FixedPartitionBackwardExecutionContextV1,
+    math: TrainingMathV1,
+) -> Vec<FixedPartitionBackwardOutcomeV1> {
+    fixed_partition_backward_outcomes_dims_v1::<Net8DimsV1>(
+        parameters,
+        groups,
+        coefficients,
+        partition_count,
+        partition_ordinals,
+        execution_context,
+        math,
+    )
+}
+
+fn fixed_partition_backward_v1(
+    parameters: &[NativeNamedParameterV1],
+    groups: &[GroupTapeV1<'_>],
+    coefficients: &[(f32, f32)],
+    partition_count: usize,
+    partition_ordinal: usize,
+    math: TrainingMathV1,
+) -> Result<FixedPartitionBackwardResultV1, NativePolicyTrainErrorV1> {
+    fixed_partition_backward_dims_v1::<Net8DimsV1>(
+        parameters,
+        groups,
+        coefficients,
+        partition_count,
+        partition_ordinal,
+        math,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fixed_partition_backward_gradients_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    groups: &[GroupTapeV1<'_>],
+    coefficients: &[(f32, f32)],
+    worker_limit: usize,
     mut reduced_gradients: Vec<Vec<f32>>,
     execution_context: &FixedPartitionBackwardExecutionContextV1,
     math: TrainingMathV1,
@@ -2561,7 +3390,7 @@ fn fixed_partition_backward_gradients_v1(
     let partition_ordinals = (0..partition_count).collect::<Vec<_>>();
     let worker_count = worker_limit.min(partition_count);
     let outcomes = if worker_count == 1 {
-        fixed_partition_backward_outcomes_v1(
+        fixed_partition_backward_outcomes_dims_v1::<D>(
             parameters,
             groups,
             coefficients,
@@ -2598,7 +3427,7 @@ fn fixed_partition_backward_gradients_v1(
                                     })
                                     .collect();
                             }
-                            fixed_partition_backward_outcomes_v1(
+                            fixed_partition_backward_outcomes_dims_v1::<D>(
                                 parameters,
                                 groups,
                                 coefficients,
@@ -2626,7 +3455,7 @@ fn fixed_partition_backward_gradients_v1(
                     },
                     Err(_) => {
                         execution_context.record_inline_fallback_v1();
-                        outcomes.extend(fixed_partition_backward_outcomes_v1(
+                        outcomes.extend(fixed_partition_backward_outcomes_dims_v1::<D>(
                             parameters,
                             groups,
                             coefficients,
@@ -2675,7 +3504,7 @@ fn fixed_partition_backward_gradients_v1(
     Ok(reduced_gradients)
 }
 
-fn fixed_partition_backward_outcomes_v1(
+fn fixed_partition_backward_outcomes_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     groups: &[GroupTapeV1<'_>],
     coefficients: &[(f32, f32)],
@@ -2697,7 +3526,7 @@ fn fixed_partition_backward_outcomes_v1(
                         "injected fixed-partition backward panic at partition {partition_ordinal}"
                     );
                 }
-                fixed_partition_backward_v1(
+                fixed_partition_backward_dims_v1::<D>(
                     parameters,
                     groups,
                     coefficients,
@@ -2728,7 +3557,7 @@ fn fixed_partition_reverse_bounds_v1(
     (start, start + len)
 }
 
-fn fixed_partition_backward_v1(
+fn fixed_partition_backward_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     groups: &[GroupTapeV1<'_>],
     coefficients: &[(f32, f32)],
@@ -2754,7 +3583,7 @@ fn fixed_partition_backward_v1(
                 &mut reverse_workspace,
                 math,
             );
-            reverse_decision(
+            reverse_decision_dims_v1::<D>(
                 parameters,
                 &mut gradients,
                 &selected.tape,
@@ -3228,7 +4057,7 @@ fn f32_gamma(operation_count: usize) -> Result<f64, NativePolicyTrainErrorV1> {
 }
 
 #[derive(Clone, Copy)]
-struct TwoLayerSpecV1 {
+pub(crate) struct TwoLayerSpecV1 {
     first_weight: usize,
     first_bias: usize,
     second_weight: usize,
@@ -3334,37 +4163,43 @@ struct DecisionTapeArenaCapacityV1 {
 
 impl DecisionTapeArenaCapacityV1 {
     fn checked_v1(counts: ValidatedCountsV1) -> Result<Self, NativePolicyTrainErrorV1> {
+        Self::checked_dims_v1::<Net8DimsV1>(counts)
+    }
+
+    fn checked_dims_v1<D: NetDimsV1>(
+        counts: ValidatedCountsV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
         let mut f32_count = 0usize;
         checked_add_tape_rows_v1(
             &mut f32_count,
             counts.object_count,
-            OBJECT_ENCODER_INPUT + 2 * HIDDEN_DIM_V1,
+            D::OBJECT_ENCODER_INPUT + 2 * D::HIDDEN,
         )?;
         checked_add_tape_rows_v1(
             &mut f32_count,
             counts.edge_count,
-            EDGE_ENCODER_INPUT + 2 * HIDDEN_DIM_V1,
+            D::EDGE_ENCODER_INPUT + 2 * D::HIDDEN,
         )?;
         checked_add_tape_rows_v1(
             &mut f32_count,
             counts.object_count,
-            NODE_UPDATE_INPUT + 2 * HIDDEN_DIM_V1,
+            D::NODE_UPDATE_INPUT + 2 * D::HIDDEN,
         )?;
-        checked_add_tape_rows_v1(&mut f32_count, 1, STATE_ENCODER_INPUT + 2 * HIDDEN_DIM_V1)?;
+        checked_add_tape_rows_v1(&mut f32_count, 1, D::STATE_ENCODER_INPUT + 2 * D::HIDDEN)?;
         checked_add_tape_rows_v1(
             &mut f32_count,
             counts.action_ref_count,
-            ACTION_REF_ENCODER_INPUT + 2 * HIDDEN_DIM_V1,
+            D::ACTION_REF_ENCODER_INPUT + 2 * D::HIDDEN,
         )?;
         checked_add_tape_rows_v1(
             &mut f32_count,
             counts.action_count,
-            ACTION_ENCODER_INPUT + 2 * HIDDEN_DIM_V1,
+            D::ACTION_ENCODER_INPUT + 2 * D::HIDDEN,
         )?;
-        checked_add_tape_rows_v1(&mut f32_count, counts.action_count, SCORER_INPUT)?;
-        checked_add_tape_rows_v1(&mut f32_count, counts.action_count, HIDDEN_DIM_V1)?;
+        checked_add_tape_rows_v1(&mut f32_count, counts.action_count, D::SCORER_INPUT)?;
+        checked_add_tape_rows_v1(&mut f32_count, counts.action_count, D::HIDDEN)?;
         checked_add_tape_rows_v1(&mut f32_count, counts.action_count, 1)?;
-        checked_add_tape_rows_v1(&mut f32_count, 1, HIDDEN_DIM_V1)?;
+        checked_add_tape_rows_v1(&mut f32_count, 1, D::HIDDEN)?;
         checked_add_tape_rows_v1(&mut f32_count, 1, 1)?;
 
         let usize_count = counts
@@ -3375,14 +4210,14 @@ impl DecisionTapeArenaCapacityV1 {
             .ok_or_else(decision_tape_arena_overflow_v1)?;
         let object_pool_count = counts
             .object_count
-            .checked_mul(HIDDEN_DIM_V1)
+            .checked_mul(D::HIDDEN)
             .ok_or_else(decision_tape_arena_overflow_v1)?;
         let group_pool_count = OBJECT_GROUP_COUNT_V1
-            .checked_mul(HIDDEN_DIM_V1)
+            .checked_mul(D::HIDDEN)
             .ok_or_else(decision_tape_arena_overflow_v1)?;
         let action_pool_count = counts
             .action_count
-            .checked_mul(HIDDEN_DIM_V1)
+            .checked_mul(D::HIDDEN)
             .ok_or_else(decision_tape_arena_overflow_v1)?;
         let capacity = Self {
             f32_count,
@@ -3493,6 +4328,9 @@ struct TwoLayerTapeV1 {
 /// an independent heap allocation for each layer output. The layout is private
 /// update-local state and does not participate in a persisted schema.
 struct DecisionTapeV1 {
+    /// The hidden width of the architecture that recorded it; the reverse
+    /// pass refuses a tape of another width before any arithmetic.
+    hidden_dim: usize,
     f32_arena: Vec<f32>,
     usize_arena: Vec<usize>,
     object_card_ids: TapeSpanV1,
@@ -3760,7 +4598,17 @@ fn forward_with_tape(
     encoded: NativeEncodedDecisionViewV1<'_>,
     math: TrainingMathV1,
 ) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
-    forward_with_tape_input_major_v1(parameters, None, config, encoded, math)
+    forward_with_tape_dims_v1::<Net8DimsV1>(parameters, config, encoded, math)
+}
+
+/// [`forward_with_tape`] at the dims `D`.
+fn forward_with_tape_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+    encoded: NativeEncodedDecisionViewV1<'_>,
+    math: TrainingMathV1,
+) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
+    forward_with_tape_input_major_dims_v1::<D>(parameters, None, config, encoded, math)
 }
 
 /// `forward_with_tape`, with the hidden-width layers' rows on the vectorized
@@ -3773,10 +4621,27 @@ fn forward_with_tape_input_major_v1(
     encoded: NativeEncodedDecisionViewV1<'_>,
     math: TrainingMathV1,
 ) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
+    forward_with_tape_input_major_dims_v1::<Net8DimsV1>(
+        parameters,
+        input_major,
+        config,
+        encoded,
+        math,
+    )
+}
+
+/// [`forward_with_tape_input_major_v1`] at the dims `D`.
+fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
+    config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+    encoded: NativeEncodedDecisionViewV1<'_>,
+    math: TrainingMathV1,
+) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
     #[cfg(test)]
     FORWARD_WITH_TAPE_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
     let counts = encoded.validate(config)?;
-    let capacities = DecisionTapeArenaCapacityV1::checked_v1(counts)?;
+    let capacities = DecisionTapeArenaCapacityV1::checked_dims_v1::<D>(counts)?;
     let mut f32_arena = Vec::with_capacity(capacities.f32_count);
     let mut usize_arena = Vec::with_capacity(capacities.usize_count);
     let object_card_ids = append_usize_casts_v1(&mut usize_arena, encoded.object_card_ids)?;
@@ -3801,18 +4666,18 @@ fn forward_with_tape_input_major_v1(
             &mut f32_arena,
             &encoded.object_features[feature_begin..feature_begin + OBJECT_FEATURE_DIM_V1],
         )?;
-        let embedding_begin = token * CARD_EMBEDDING_DIM_V1;
+        let embedding_begin = token * D::CARD_EMBEDDING;
         append_external_f32_v1(
             &mut f32_arena,
-            &embedding[embedding_begin..embedding_begin + CARD_EMBEDDING_DIM_V1],
+            &embedding[embedding_begin..embedding_begin + D::CARD_EMBEDDING],
         )?;
     }
     let object_input =
         TapeSpanV1::checked_v1(object_input_start, f32_arena.len() - object_input_start)?;
-    let object_encoder = two_layer_forward_into_arena_v1(
+    let object_encoder = two_layer_forward_into_arena_dims_v1::<D>(
         parameters,
         input_major,
-        OBJECT_SPEC,
+        D::OBJECT_SPEC,
         object_input,
         counts.object_count,
         &mut f32_arena,
@@ -3822,7 +4687,7 @@ fn forward_with_tape_input_major_v1(
     let mut pooling_scratch = Vec::with_capacity(capacities.scratch_f32_count);
     resize_tape_scratch_v1(
         &mut pooling_scratch,
-        counts.object_count * HIDDEN_DIM_V1,
+        counts.object_count * D::HIDDEN,
         capacities.scratch_f32_count,
     )?;
     let edge_encoder = if counts.edge_count == 0 {
@@ -3835,38 +4700,38 @@ fn forward_with_tape_input_major_v1(
                 &mut f32_arena,
                 &encoded.edge_features[feature_begin..feature_begin + EDGE_FEATURE_DIM_V1],
             )?;
-            let source_begin = edge_source_indices.values_v1(&usize_arena)[edge] * HIDDEN_DIM_V1;
+            let source_begin = edge_source_indices.values_v1(&usize_arena)[edge] * D::HIDDEN;
             append_arena_f32_v1(
                 &mut f32_arena,
                 object_encoder
                     .second_output
-                    .checked_subspan_v1(source_begin, HIDDEN_DIM_V1)?,
+                    .checked_subspan_v1(source_begin, D::HIDDEN)?,
             )?;
-            let target_begin = edge_target_indices.values_v1(&usize_arena)[edge] * HIDDEN_DIM_V1;
+            let target_begin = edge_target_indices.values_v1(&usize_arena)[edge] * D::HIDDEN;
             append_arena_f32_v1(
                 &mut f32_arena,
                 object_encoder
                     .second_output
-                    .checked_subspan_v1(target_begin, HIDDEN_DIM_V1)?,
+                    .checked_subspan_v1(target_begin, D::HIDDEN)?,
             )?;
         }
         let edge_input =
             TapeSpanV1::checked_v1(edge_input_start, f32_arena.len() - edge_input_start)?;
-        let tape = two_layer_forward_into_arena_v1(
+        let tape = two_layer_forward_into_arena_dims_v1::<D>(
             parameters,
             input_major,
-            EDGE_SPEC,
+            D::EDGE_SPEC,
             edge_input,
             counts.edge_count,
             &mut f32_arena,
             math,
         )?;
-        add_indexed_rows(
+        add_indexed_rows_dims_v1::<D>(
             &mut pooling_scratch,
             tape.second_output.values_v1(&f32_arena),
             edge_source_indices.values_v1(&usize_arena),
         );
-        add_indexed_rows(
+        add_indexed_rows_dims_v1::<D>(
             &mut pooling_scratch,
             tape.second_output.values_v1(&f32_arena),
             edge_target_indices.values_v1(&usize_arena),
@@ -3876,23 +4741,20 @@ fn forward_with_tape_input_major_v1(
 
     let node_input_start = f32_arena.len();
     for object in 0..counts.object_count {
-        let begin = object * HIDDEN_DIM_V1;
+        let begin = object * D::HIDDEN;
         append_arena_f32_v1(
             &mut f32_arena,
             object_encoder
                 .second_output
-                .checked_subspan_v1(begin, HIDDEN_DIM_V1)?,
+                .checked_subspan_v1(begin, D::HIDDEN)?,
         )?;
-        append_external_f32_v1(
-            &mut f32_arena,
-            &pooling_scratch[begin..begin + HIDDEN_DIM_V1],
-        )?;
+        append_external_f32_v1(&mut f32_arena, &pooling_scratch[begin..begin + D::HIDDEN])?;
     }
     let node_input = TapeSpanV1::checked_v1(node_input_start, f32_arena.len() - node_input_start)?;
-    let node_update = two_layer_forward_into_arena_v1(
+    let node_update = two_layer_forward_into_arena_dims_v1::<D>(
         parameters,
         input_major,
-        NODE_SPEC,
+        D::NODE_SPEC,
         node_input,
         counts.object_count,
         &mut f32_arena,
@@ -3901,10 +4763,10 @@ fn forward_with_tape_input_major_v1(
 
     resize_tape_scratch_v1(
         &mut pooling_scratch,
-        OBJECT_GROUP_COUNT_V1 * HIDDEN_DIM_V1,
+        OBJECT_GROUP_COUNT_V1 * D::HIDDEN,
         capacities.scratch_f32_count,
     )?;
-    add_indexed_rows(
+    add_indexed_rows_dims_v1::<D>(
         &mut pooling_scratch,
         node_update.second_output.values_v1(&f32_arena),
         object_groups.values_v1(&usize_arena),
@@ -3914,10 +4776,10 @@ fn forward_with_tape_input_major_v1(
     append_external_f32_v1(&mut f32_arena, &pooling_scratch)?;
     let state_input =
         TapeSpanV1::checked_v1(state_input_start, f32_arena.len() - state_input_start)?;
-    let state_encoder = two_layer_forward_into_arena_v1(
+    let state_encoder = two_layer_forward_into_arena_dims_v1::<D>(
         parameters,
         input_major,
-        STATE_SPEC,
+        D::STATE_SPEC,
         state_input,
         1,
         &mut f32_arena,
@@ -3926,7 +4788,7 @@ fn forward_with_tape_input_major_v1(
 
     resize_tape_scratch_v1(
         &mut pooling_scratch,
-        counts.action_count * HIDDEN_DIM_V1,
+        counts.action_count * D::HIDDEN,
         capacities.scratch_f32_count,
     )?;
     let action_ref_encoder = if counts.action_ref_count == 0 {
@@ -3945,28 +4807,28 @@ fn forward_with_tape_input_major_v1(
                 &encoded.action_ref_features
                     [feature_begin..feature_begin + ACTION_REF_FEATURE_DIM_V1],
             )?;
-            let node_begin = node_index * HIDDEN_DIM_V1;
+            let node_begin = node_index * D::HIDDEN;
             append_arena_f32_v1(
                 &mut f32_arena,
                 node_update
                     .second_output
-                    .checked_subspan_v1(node_begin, HIDDEN_DIM_V1)?,
+                    .checked_subspan_v1(node_begin, D::HIDDEN)?,
             )?;
         }
         let action_ref_input = TapeSpanV1::checked_v1(
             action_ref_input_start,
             f32_arena.len() - action_ref_input_start,
         )?;
-        let tape = two_layer_forward_into_arena_v1(
+        let tape = two_layer_forward_into_arena_dims_v1::<D>(
             parameters,
             input_major,
-            ACTION_REF_SPEC,
+            D::ACTION_REF_SPEC,
             action_ref_input,
             counts.action_ref_count,
             &mut f32_arena,
             math,
         )?;
-        add_indexed_rows(
+        add_indexed_rows_dims_v1::<D>(
             &mut pooling_scratch,
             tape.second_output.values_v1(&f32_arena),
             action_ref_action_indices.values_v1(&usize_arena),
@@ -3981,18 +4843,18 @@ fn forward_with_tape_input_major_v1(
             &mut f32_arena,
             &encoded.action_features[feature_begin..feature_begin + ACTION_FEATURE_DIM_V1],
         )?;
-        let pooled_begin = action * HIDDEN_DIM_V1;
+        let pooled_begin = action * D::HIDDEN;
         append_external_f32_v1(
             &mut f32_arena,
-            &pooling_scratch[pooled_begin..pooled_begin + HIDDEN_DIM_V1],
+            &pooling_scratch[pooled_begin..pooled_begin + D::HIDDEN],
         )?;
     }
     let action_input =
         TapeSpanV1::checked_v1(action_input_start, f32_arena.len() - action_input_start)?;
-    let action_encoder = two_layer_forward_into_arena_v1(
+    let action_encoder = two_layer_forward_into_arena_dims_v1::<D>(
         parameters,
         input_major,
-        ACTION_SPEC,
+        D::ACTION_SPEC,
         action_input,
         counts.action_count,
         &mut f32_arena,
@@ -4002,12 +4864,12 @@ fn forward_with_tape_input_major_v1(
     let scorer_input_start = f32_arena.len();
     for action in 0..counts.action_count {
         append_arena_f32_v1(&mut f32_arena, state_encoder.second_output)?;
-        let action_begin = action * HIDDEN_DIM_V1;
+        let action_begin = action * D::HIDDEN;
         append_arena_f32_v1(
             &mut f32_arena,
             action_encoder
                 .second_output
-                .checked_subspan_v1(action_begin, HIDDEN_DIM_V1)?,
+                .checked_subspan_v1(action_begin, D::HIDDEN)?,
         )?;
     }
     let scorer_input =
@@ -4019,8 +4881,8 @@ fn forward_with_tape_input_major_v1(
         SCORER_FIRST_BIAS,
         scorer_input,
         counts.action_count,
-        SCORER_INPUT,
-        HIDDEN_DIM_V1,
+        D::SCORER_INPUT,
+        D::HIDDEN,
         &mut f32_arena,
     )?;
     tanh_span_in_place_v1(&mut f32_arena, scorer_hidden, math);
@@ -4031,7 +4893,7 @@ fn forward_with_tape_input_major_v1(
         SCORER_SECOND_BIAS,
         scorer_hidden,
         counts.action_count,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
         1,
         &mut f32_arena,
     )?;
@@ -4043,8 +4905,8 @@ fn forward_with_tape_input_major_v1(
         VALUE_FIRST_BIAS,
         state_encoder.second_output,
         1,
-        HIDDEN_DIM_V1,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
+        D::HIDDEN,
         &mut f32_arena,
     )?;
     tanh_span_in_place_v1(&mut f32_arena, value_hidden, math);
@@ -4055,7 +4917,7 @@ fn forward_with_tape_input_major_v1(
         VALUE_SECOND_BIAS,
         value_hidden,
         1,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
         1,
         &mut f32_arena,
     )?;
@@ -4066,6 +4928,7 @@ fn forward_with_tape_input_major_v1(
     }
 
     Ok(DecisionTapeV1 {
+        hidden_dim: D::HIDDEN,
         f32_arena,
         usize_arena,
         object_card_ids,
@@ -4109,7 +4972,16 @@ trait ReverseGradientSinkV1<'t> {
 
     /// Each object's card-embedding row receives the embedding part of that
     /// object's `d_object_input` row; padding token 0 receives nothing.
-    fn card_embedding_v1(&mut self, object_card_ids: &'t [usize], d_object_input: &[f32]);
+    fn card_embedding_dims_v1<D: NetDimsV1>(
+        &mut self,
+        object_card_ids: &'t [usize],
+        d_object_input: &[f32],
+    );
+
+    /// [`Self::card_embedding_dims_v1`] at `Net8DimsV1`.
+    fn card_embedding_v1(&mut self, object_card_ids: &'t [usize], d_object_input: &[f32]) {
+        self.card_embedding_dims_v1::<Net8DimsV1>(object_card_ids, d_object_input);
+    }
 }
 
 /// The sequential backward: each term is added to `gradients` when computed.
@@ -4142,14 +5014,18 @@ impl<'t> ReverseGradientSinkV1<'t> for AccumulateGradientsV1<'_> {
         )
     }
 
-    fn card_embedding_v1(&mut self, object_card_ids: &'t [usize], d_object_input: &[f32]) {
+    fn card_embedding_dims_v1<D: NetDimsV1>(
+        &mut self,
+        object_card_ids: &'t [usize],
+        d_object_input: &[f32],
+    ) {
         for (object, token) in object_card_ids.iter().copied().enumerate() {
             if token == 0 {
                 continue;
             }
-            let source = object * OBJECT_ENCODER_INPUT + OBJECT_FEATURE_DIM_V1;
-            let destination = token * CARD_EMBEDDING_DIM_V1;
-            for embedding in 0..CARD_EMBEDDING_DIM_V1 {
+            let source = object * D::OBJECT_ENCODER_INPUT + OBJECT_FEATURE_DIM_V1;
+            let destination = token * D::CARD_EMBEDDING;
+            for embedding in 0..D::CARD_EMBEDDING {
                 self.0[CARD_EMBEDDING][destination + embedding] +=
                     d_object_input[source + embedding];
             }
@@ -4165,7 +5041,21 @@ fn reverse_decision(
     d_value: f32,
     workspace: &mut ReverseDecisionWorkspaceV1,
 ) -> Result<(), NativePolicyTrainErrorV1> {
-    reverse_decision_into_v1(
+    reverse_decision_dims_v1::<Net8DimsV1>(
+        parameters, gradients, tape, d_logits, d_value, workspace,
+    )
+}
+
+/// [`reverse_decision`] at the dims `D`.
+fn reverse_decision_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    gradients: &mut [Vec<f32>],
+    tape: &DecisionTapeV1,
+    d_logits: &[f32],
+    d_value: f32,
+    workspace: &mut ReverseDecisionWorkspaceV1,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    reverse_decision_into_dims_v1::<D>(
         parameters,
         &mut AccumulateGradientsV1(gradients),
         tape,
@@ -4183,6 +5073,24 @@ fn reverse_decision_into_v1<'t>(
     d_value: f32,
     workspace: &mut ReverseDecisionWorkspaceV1,
 ) -> Result<(), NativePolicyTrainErrorV1> {
+    reverse_decision_into_dims_v1::<Net8DimsV1>(
+        parameters, sink, tape, d_logits, d_value, workspace,
+    )
+}
+
+/// [`reverse_decision_into_v1`] at the dims `D`. A tape another width
+/// recorded is refused before any arithmetic.
+fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    sink: &mut impl ReverseGradientSinkV1<'t>,
+    tape: &'t DecisionTapeV1,
+    d_logits: &[f32],
+    d_value: f32,
+    workspace: &mut ReverseDecisionWorkspaceV1,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    if tape.hidden_dim != D::HIDDEN {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
     let logits = tape.logits_v1();
     let object_card_ids = tape.object_card_ids_v1();
     let object_groups = tape.object_groups_v1();
@@ -4224,11 +5132,18 @@ fn reverse_decision_into_v1<'t>(
         SCORER_SECOND_BIAS,
         tape.f32_values_v1(tape.scorer_hidden),
         action_count,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
         1,
         d_logits,
         d_scorer_hidden,
     )?;
+    #[cfg(test)]
+    record_train_step_v1(|capture| {
+        capture.upstream.push(TanhUpstreamCaptureV1 {
+            weight_index: SCORER_FIRST_WEIGHT,
+            d_activation: d_scorer_hidden.to_vec(),
+        });
+    });
     apply_tanh_gradient(tape.f32_values_v1(tape.scorer_hidden), d_scorer_hidden)?;
     sink.linear_v1(
         parameters,
@@ -4236,19 +5151,19 @@ fn reverse_decision_into_v1<'t>(
         SCORER_FIRST_BIAS,
         tape.f32_values_v1(tape.scorer_input),
         action_count,
-        SCORER_INPUT,
-        HIDDEN_DIM_V1,
+        D::SCORER_INPUT,
+        D::HIDDEN,
         d_scorer_hidden,
         d_scorer_input,
     )?;
-    resize_zeroed_v1(d_state_hidden, HIDDEN_DIM_V1);
-    resize_zeroed_v1(d_action_hidden, action_count * HIDDEN_DIM_V1);
+    resize_zeroed_v1(d_state_hidden, D::HIDDEN);
+    resize_zeroed_v1(d_action_hidden, action_count * D::HIDDEN);
     for action in 0..action_count {
-        let source = action * SCORER_INPUT;
-        for hidden in 0..HIDDEN_DIM_V1 {
+        let source = action * D::SCORER_INPUT;
+        for hidden in 0..D::HIDDEN {
             d_state_hidden[hidden] += d_scorer_input[source + hidden];
-            d_action_hidden[action * HIDDEN_DIM_V1 + hidden] =
-                d_scorer_input[source + HIDDEN_DIM_V1 + hidden];
+            d_action_hidden[action * D::HIDDEN + hidden] =
+                d_scorer_input[source + D::HIDDEN + hidden];
         }
     }
 
@@ -4259,11 +5174,18 @@ fn reverse_decision_into_v1<'t>(
         VALUE_SECOND_BIAS,
         tape.f32_values_v1(tape.value_hidden),
         1,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
         1,
         &d_value_output,
         d_value_hidden,
     )?;
+    #[cfg(test)]
+    record_train_step_v1(|capture| {
+        capture.upstream.push(TanhUpstreamCaptureV1 {
+            weight_index: VALUE_FIRST_WEIGHT,
+            d_activation: d_value_hidden.to_vec(),
+        });
+    });
     apply_tanh_gradient(tape.f32_values_v1(tape.value_hidden), d_value_hidden)?;
     sink.linear_v1(
         parameters,
@@ -4271,17 +5193,17 @@ fn reverse_decision_into_v1<'t>(
         VALUE_FIRST_BIAS,
         tape.f32_values_v1(tape.state_encoder.second_output),
         1,
-        HIDDEN_DIM_V1,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
+        D::HIDDEN,
         d_value_hidden,
         d_state_value,
     )?;
     add_slices(d_state_hidden, d_state_value)?;
 
-    two_layer_backward_into(
+    two_layer_backward_into_dims_v1::<D>(
         parameters,
         sink,
-        ACTION_SPEC,
+        D::ACTION_SPEC,
         &tape.f32_arena,
         &tape.action_encoder,
         d_action_hidden,
@@ -4289,28 +5211,28 @@ fn reverse_decision_into_v1<'t>(
         two_layer_first_output,
         d_action_input,
     )?;
-    resize_zeroed_v1(d_action_ref_pooled, action_count * HIDDEN_DIM_V1);
+    resize_zeroed_v1(d_action_ref_pooled, action_count * D::HIDDEN);
     for action in 0..action_count {
-        let source = action * ACTION_ENCODER_INPUT + ACTION_FEATURE_DIM_V1;
-        let destination = action * HIDDEN_DIM_V1;
-        d_action_ref_pooled[destination..destination + HIDDEN_DIM_V1]
-            .copy_from_slice(&d_action_input[source..source + HIDDEN_DIM_V1]);
+        let source = action * D::ACTION_ENCODER_INPUT + ACTION_FEATURE_DIM_V1;
+        let destination = action * D::HIDDEN;
+        d_action_ref_pooled[destination..destination + D::HIDDEN]
+            .copy_from_slice(&d_action_input[source..source + D::HIDDEN]);
     }
 
-    resize_zeroed_v1(d_object_hidden, object_count * HIDDEN_DIM_V1);
+    resize_zeroed_v1(d_object_hidden, object_count * D::HIDDEN);
     if let Some(action_ref_tape) = &tape.action_ref_encoder {
         let action_ref_count = action_ref_action_indices.len();
-        resize_zeroed_v1(d_action_ref_hidden, action_ref_count * HIDDEN_DIM_V1);
+        resize_zeroed_v1(d_action_ref_hidden, action_ref_count * D::HIDDEN);
         for (action_ref, &action_index) in action_ref_action_indices.iter().enumerate() {
-            let source = action_index * HIDDEN_DIM_V1;
-            let destination = action_ref * HIDDEN_DIM_V1;
-            d_action_ref_hidden[destination..destination + HIDDEN_DIM_V1]
-                .copy_from_slice(&d_action_ref_pooled[source..source + HIDDEN_DIM_V1]);
+            let source = action_index * D::HIDDEN;
+            let destination = action_ref * D::HIDDEN;
+            d_action_ref_hidden[destination..destination + D::HIDDEN]
+                .copy_from_slice(&d_action_ref_pooled[source..source + D::HIDDEN]);
         }
-        two_layer_backward_into(
+        two_layer_backward_into_dims_v1::<D>(
             parameters,
             sink,
-            ACTION_REF_SPEC,
+            D::ACTION_REF_SPEC,
             &tape.f32_arena,
             action_ref_tape,
             d_action_ref_hidden,
@@ -4319,18 +5241,18 @@ fn reverse_decision_into_v1<'t>(
             d_action_ref_input,
         )?;
         for (action_ref, &node_index) in action_ref_node_indices.iter().enumerate() {
-            let source = action_ref * ACTION_REF_ENCODER_INPUT + ACTION_REF_FEATURE_DIM_V1;
-            let destination = node_index * HIDDEN_DIM_V1;
-            for hidden in 0..HIDDEN_DIM_V1 {
+            let source = action_ref * D::ACTION_REF_ENCODER_INPUT + ACTION_REF_FEATURE_DIM_V1;
+            let destination = node_index * D::HIDDEN;
+            for hidden in 0..D::HIDDEN {
                 d_object_hidden[destination + hidden] += d_action_ref_input[source + hidden];
             }
         }
     }
 
-    two_layer_backward_into(
+    two_layer_backward_into_dims_v1::<D>(
         parameters,
         sink,
-        STATE_SPEC,
+        D::STATE_SPEC,
         &tape.f32_arena,
         &tape.state_encoder,
         d_state_hidden,
@@ -4339,17 +5261,17 @@ fn reverse_decision_into_v1<'t>(
         d_state_input,
     )?;
     for (object, group) in object_groups.iter().copied().enumerate() {
-        let source = STATE_DIM_V1 + group * HIDDEN_DIM_V1;
-        let destination = object * HIDDEN_DIM_V1;
-        for hidden in 0..HIDDEN_DIM_V1 {
+        let source = STATE_DIM_V1 + group * D::HIDDEN;
+        let destination = object * D::HIDDEN;
+        for hidden in 0..D::HIDDEN {
             d_object_hidden[destination + hidden] += d_state_input[source + hidden];
         }
     }
 
-    two_layer_backward_into(
+    two_layer_backward_into_dims_v1::<D>(
         parameters,
         sink,
-        NODE_SPEC,
+        D::NODE_SPEC,
         &tape.f32_arena,
         &tape.node_update,
         d_object_hidden,
@@ -4357,33 +5279,33 @@ fn reverse_decision_into_v1<'t>(
         two_layer_first_output,
         d_node_input,
     )?;
-    resize_zeroed_v1(d_object_base, object_count * HIDDEN_DIM_V1);
-    resize_zeroed_v1(d_edge_pooled, object_count * HIDDEN_DIM_V1);
+    resize_zeroed_v1(d_object_base, object_count * D::HIDDEN);
+    resize_zeroed_v1(d_edge_pooled, object_count * D::HIDDEN);
     for object in 0..object_count {
-        let source = object * NODE_UPDATE_INPUT;
-        let destination = object * HIDDEN_DIM_V1;
-        d_object_base[destination..destination + HIDDEN_DIM_V1]
-            .copy_from_slice(&d_node_input[source..source + HIDDEN_DIM_V1]);
-        d_edge_pooled[destination..destination + HIDDEN_DIM_V1]
-            .copy_from_slice(&d_node_input[source + HIDDEN_DIM_V1..source + NODE_UPDATE_INPUT]);
+        let source = object * D::NODE_UPDATE_INPUT;
+        let destination = object * D::HIDDEN;
+        d_object_base[destination..destination + D::HIDDEN]
+            .copy_from_slice(&d_node_input[source..source + D::HIDDEN]);
+        d_edge_pooled[destination..destination + D::HIDDEN]
+            .copy_from_slice(&d_node_input[source + D::HIDDEN..source + D::NODE_UPDATE_INPUT]);
     }
 
     if let Some(edge_tape) = &tape.edge_encoder {
         let edge_count = edge_source_indices.len();
-        resize_zeroed_v1(d_edge_hidden, edge_count * HIDDEN_DIM_V1);
+        resize_zeroed_v1(d_edge_hidden, edge_count * D::HIDDEN);
         for edge in 0..edge_count {
-            let destination = edge * HIDDEN_DIM_V1;
-            let source_row = edge_source_indices[edge] * HIDDEN_DIM_V1;
-            let target_row = edge_target_indices[edge] * HIDDEN_DIM_V1;
-            for hidden in 0..HIDDEN_DIM_V1 {
+            let destination = edge * D::HIDDEN;
+            let source_row = edge_source_indices[edge] * D::HIDDEN;
+            let target_row = edge_target_indices[edge] * D::HIDDEN;
+            for hidden in 0..D::HIDDEN {
                 d_edge_hidden[destination + hidden] =
                     d_edge_pooled[source_row + hidden] + d_edge_pooled[target_row + hidden];
             }
         }
-        two_layer_backward_into(
+        two_layer_backward_into_dims_v1::<D>(
             parameters,
             sink,
-            EDGE_SPEC,
+            D::EDGE_SPEC,
             &tape.f32_arena,
             edge_tape,
             d_edge_hidden,
@@ -4392,21 +5314,21 @@ fn reverse_decision_into_v1<'t>(
             d_edge_input,
         )?;
         for edge in 0..edge_count {
-            let source = edge * EDGE_ENCODER_INPUT + EDGE_FEATURE_DIM_V1;
-            let source_destination = edge_source_indices[edge] * HIDDEN_DIM_V1;
-            let target_destination = edge_target_indices[edge] * HIDDEN_DIM_V1;
-            for hidden in 0..HIDDEN_DIM_V1 {
+            let source = edge * D::EDGE_ENCODER_INPUT + EDGE_FEATURE_DIM_V1;
+            let source_destination = edge_source_indices[edge] * D::HIDDEN;
+            let target_destination = edge_target_indices[edge] * D::HIDDEN;
+            for hidden in 0..D::HIDDEN {
                 d_object_base[source_destination + hidden] += d_edge_input[source + hidden];
                 d_object_base[target_destination + hidden] +=
-                    d_edge_input[source + HIDDEN_DIM_V1 + hidden];
+                    d_edge_input[source + D::HIDDEN + hidden];
             }
         }
     }
 
-    two_layer_backward_into(
+    two_layer_backward_into_dims_v1::<D>(
         parameters,
         sink,
-        OBJECT_SPEC,
+        D::OBJECT_SPEC,
         &tape.f32_arena,
         &tape.object_encoder,
         d_object_base,
@@ -4414,7 +5336,7 @@ fn reverse_decision_into_v1<'t>(
         two_layer_first_output,
         d_object_input,
     )?;
-    sink.card_embedding_v1(object_card_ids, d_object_input);
+    sink.card_embedding_dims_v1::<D>(object_card_ids, d_object_input);
     Ok(())
 }
 
@@ -4432,9 +5354,36 @@ fn resize_tape_scratch_v1(
 
 fn tanh_span_in_place_v1(arena: &mut [f32], span: TapeSpanV1, math: TrainingMathV1) {
     math.tanh_in_place_v1(span.values_mut_v1(arena));
+    #[cfg(test)]
+    if train_step_capture_active_v1() {
+        let capture = ForwardTanhCaptureV1 {
+            post: span.values_v1(arena).to_vec(),
+        };
+        record_train_step_v1(|captures| captures.tanh.push(capture));
+    }
 }
 
 fn two_layer_forward_into_arena_v1(
+    parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
+    spec: TwoLayerSpecV1,
+    input: TapeSpanV1,
+    rows: usize,
+    arena: &mut Vec<f32>,
+    math: TrainingMathV1,
+) -> Result<TwoLayerTapeV1, NativePolicyTrainErrorV1> {
+    two_layer_forward_into_arena_dims_v1::<Net8DimsV1>(
+        parameters,
+        input_major,
+        spec,
+        input,
+        rows,
+        arena,
+        math,
+    )
+}
+
+fn two_layer_forward_into_arena_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     input_major: Option<&InputMajorWeightsV1>,
     spec: TwoLayerSpecV1,
@@ -4451,7 +5400,7 @@ fn two_layer_forward_into_arena_v1(
         input,
         rows,
         spec.input_dim,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
         arena,
     )?;
     tanh_span_in_place_v1(arena, first_output, math);
@@ -4462,8 +5411,8 @@ fn two_layer_forward_into_arena_v1(
         spec.second_bias,
         first_output,
         rows,
-        HIDDEN_DIM_V1,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
+        D::HIDDEN,
         arena,
     )?;
     tanh_span_in_place_v1(arena, second_output, math);
@@ -4487,6 +5436,38 @@ fn two_layer_backward_into<'t>(
     d_first_output: &mut Vec<f32>,
     d_input: &mut Vec<f32>,
 ) -> Result<(), NativePolicyTrainErrorV1> {
+    two_layer_backward_into_dims_v1::<Net8DimsV1>(
+        parameters,
+        sink,
+        spec,
+        arena,
+        tape,
+        d_output,
+        d_second_pre,
+        d_first_output,
+        d_input,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn two_layer_backward_into_dims_v1<'t, D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    sink: &mut impl ReverseGradientSinkV1<'t>,
+    spec: TwoLayerSpecV1,
+    arena: &'t [f32],
+    tape: &TwoLayerTapeV1,
+    d_output: &[f32],
+    d_second_pre: &mut Vec<f32>,
+    d_first_output: &mut Vec<f32>,
+    d_input: &mut Vec<f32>,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    #[cfg(test)]
+    record_train_step_v1(|capture| {
+        capture.upstream.push(TanhUpstreamCaptureV1 {
+            weight_index: spec.second_weight,
+            d_activation: d_output.to_vec(),
+        });
+    });
     d_second_pre.clear();
     d_second_pre.extend_from_slice(d_output);
     apply_tanh_gradient(tape.second_output.values_v1(arena), d_second_pre)?;
@@ -4496,8 +5477,8 @@ fn two_layer_backward_into<'t>(
         spec.second_bias,
         tape.first_output.values_v1(arena),
         tape.rows,
-        HIDDEN_DIM_V1,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
+        D::HIDDEN,
         d_second_pre,
         d_first_output,
     )?;
@@ -4509,7 +5490,7 @@ fn two_layer_backward_into<'t>(
         tape.input.values_v1(arena),
         tape.rows,
         spec.input_dim,
-        HIDDEN_DIM_V1,
+        D::HIDDEN,
         d_first_output,
         d_input,
     )
@@ -4520,26 +5501,35 @@ fn two_layer_backward_into<'t>(
 /// (`accumulate_input_major_row_v1`). Each output is still its bias plus the
 /// products in input order, so the forward's bits are unchanged.
 pub(super) struct InputMajorWeightsV1 {
+    /// The architecture's hidden width (`NetDimsV1::HIDDEN`).
+    hidden: usize,
     /// By parameter index: `(input_dim, weight_t)` for a `[hidden, input]`
-    /// weight, `weight_t[input * HIDDEN_DIM_V1 + output]`.
+    /// weight, `weight_t[input * hidden + output]`.
     weights: Vec<Option<(usize, Vec<f32>)>>,
 }
 
 impl InputMajorWeightsV1 {
     pub(super) fn of_v1(parameters: &[NativeNamedParameterV1]) -> Self {
+        Self::of_dims_v1::<Net8DimsV1>(parameters)
+    }
+
+    /// [`Self::of_v1`] at the dims `D`.
+    pub(super) fn of_dims_v1<D: NetDimsV1>(parameters: &[NativeNamedParameterV1]) -> Self {
+        let hidden = D::HIDDEN;
         let weights = parameters
             .iter()
             .enumerate()
             .map(|(index, parameter)| match *parameter.shape.as_slice() {
-                [HIDDEN_DIM_V1, input_dim]
-                    if index != CARD_EMBEDDING
+                [output_dim, input_dim]
+                    if output_dim == hidden
+                        && index != CARD_EMBEDDING
                         && input_dim > 0
-                        && parameter.values.len() == HIDDEN_DIM_V1 * input_dim =>
+                        && parameter.values.len() == hidden * input_dim =>
                 {
                     let mut weight_t = vec![0.0; parameter.values.len()];
                     for (output, row) in parameter.values.chunks_exact(input_dim).enumerate() {
                         for (input, &value) in row.iter().enumerate() {
-                            weight_t[input * HIDDEN_DIM_V1 + output] = value;
+                            weight_t[input * hidden + output] = value;
                         }
                     }
                     Some((input_dim, weight_t))
@@ -4547,14 +5537,14 @@ impl InputMajorWeightsV1 {
                 _ => None,
             })
             .collect();
-        Self { weights }
+        Self { hidden, weights }
     }
 
     /// The input-major weight for a layer with these dimensions, if held.
     fn get_v1(&self, weight_index: usize, input_dim: usize, output_dim: usize) -> Option<&[f32]> {
         match self.weights.get(weight_index)? {
             Some((held_input_dim, weight_t))
-                if *held_input_dim == input_dim && output_dim == HIDDEN_DIM_V1 =>
+                if *held_input_dim == input_dim && output_dim == self.hidden =>
             {
                 Some(weight_t)
             }
@@ -4612,6 +5602,19 @@ fn linear_forward_into_arena_v1(
         }
     }
     validate_finite_slice("linear_forward", output.values_v1(arena))?;
+    #[cfg(test)]
+    if train_step_capture_active_v1() {
+        let capture = ForwardLinearCaptureV1 {
+            weight_index,
+            bias_index,
+            rows,
+            input_dim,
+            output_dim,
+            input: input.values_v1(arena).to_vec(),
+            output: output.values_v1(arena).to_vec(),
+        };
+        record_train_step_v1(|captures| captures.forward.push(capture));
+    }
     Ok(output)
 }
 
@@ -4674,6 +5677,13 @@ fn linear_backward_into(
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
     resize_zeroed_v1(d_input, rows * input_dim);
+    #[cfg(test)]
+    let captured_before = train_step_capture_active_v1().then(|| {
+        (
+            gradients[weight_index].clone(),
+            gradients[bias_index].clone(),
+        )
+    });
     linear_backward_rows_v1(
         &LinearBackwardRowsV1 {
             weight,
@@ -4700,6 +5710,25 @@ fn linear_backward_into(
                 gradients[bias_index][output_index] += d_output[row * output_dim + output_index];
             }
         }
+    }
+    #[cfg(test)]
+    if let Some((d_weight_before, d_bias_before)) = captured_before {
+        let capture = LinearBackwardCaptureV1 {
+            weight_index,
+            bias_index,
+            rows,
+            input_dim,
+            output_dim,
+            weight: weight.to_vec(),
+            input: input.to_vec(),
+            d_output: d_output.to_vec(),
+            d_input: d_input.clone(),
+            d_weight_before,
+            d_weight_after: gradients[weight_index].clone(),
+            d_bias_before,
+            d_bias_after: gradients[bias_index].clone(),
+        };
+        record_train_step_v1(|captures| captures.backward.push(capture));
     }
     Ok(())
 }
@@ -4909,14 +5938,25 @@ fn adam_update_impl(
 fn validate_parameter_manifest(
     parameters: &[NativeNamedParameterV1],
 ) -> Result<(), NativePolicyTrainErrorV1> {
+    validate_parameter_manifest_dims_v1::<Net8DimsV1>(parameters)
+}
+
+fn validate_optimizer_state(
+    parameters: &[NativeNamedParameterV1],
+    first_moments: &[Vec<f32>],
+    second_moments: &[Vec<f32>],
+) -> Result<(), NativePolicyTrainErrorV1> {
+    validate_optimizer_state_dims_v1::<Net8DimsV1>(parameters, first_moments, second_moments)
+}
+
+/// [`validate_parameter_manifest`] at the dims `D`.
+fn validate_parameter_manifest_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+) -> Result<(), NativePolicyTrainErrorV1> {
     if parameters.len() != PARAMETER_TENSOR_COUNT
         || parameters
             .iter()
-            .zip(
-                EXPECTED_PARAMETER_NAMES
-                    .iter()
-                    .zip(EXPECTED_PARAMETER_SHAPES),
-            )
+            .zip(EXPECTED_PARAMETER_NAMES.iter().zip(D::PARAMETER_SHAPES))
             .any(|(parameter, (expected_name, expected_shape))| {
                 parameter.name != *expected_name
                     || parameter.shape.as_slice() != expected_shape
@@ -4927,8 +5967,8 @@ fn validate_parameter_manifest(
             .iter()
             .map(|parameter| parameter.values.len())
             .sum::<usize>()
-            != PARAMETER_COUNT_V1
-        || parameters[CARD_EMBEDDING].values[..CARD_EMBEDDING_DIM_V1]
+            != D::PARAMETER_COUNT
+        || parameters[CARD_EMBEDDING].values[..D::CARD_EMBEDDING]
             .iter()
             .any(|value| value.to_bits() != 0)
     {
@@ -4937,7 +5977,8 @@ fn validate_parameter_manifest(
     Ok(())
 }
 
-fn validate_optimizer_state(
+/// [`validate_optimizer_state`] at the dims `D`.
+fn validate_optimizer_state_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     first_moments: &[Vec<f32>],
     second_moments: &[Vec<f32>],
@@ -4956,10 +5997,10 @@ fn validate_optimizer_state(
                         .iter()
                         .any(|value| !value.is_finite() || *value < 0.0)
             })
-        || first_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1]
+        || first_moments[CARD_EMBEDDING][..D::CARD_EMBEDDING]
             .iter()
             .any(|value| value.to_bits() != 0)
-        || second_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1]
+        || second_moments[CARD_EMBEDDING][..D::CARD_EMBEDDING]
             .iter()
             .any(|value| value.to_bits() != 0)
     {
@@ -4994,10 +6035,18 @@ fn validate_owned_train_snapshot_v1(
     snapshot: &NativePolicyValueTrainSnapshotV1,
     expected_scorer_bias_anchor_bits: Option<u32>,
 ) -> Result<(), NativePolicyTrainErrorV1> {
+    validate_owned_train_snapshot_dims_v1::<Net8DimsV1>(snapshot, expected_scorer_bias_anchor_bits)
+}
+
+/// [`validate_owned_train_snapshot_v1`] at the dims `D`.
+fn validate_owned_train_snapshot_dims_v1<D: NetDimsV1>(
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+    expected_scorer_bias_anchor_bits: Option<u32>,
+) -> Result<(), NativePolicyTrainErrorV1> {
     i32::try_from(snapshot.adam_step)
         .map(|_| ())
         .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
-    validate_parameter_manifest(&snapshot.parameters)?;
+    validate_parameter_manifest_dims_v1::<D>(&snapshot.parameters)?;
 
     if snapshot.first_moments.len() != snapshot.parameters.len()
         || snapshot.second_moments.len() != snapshot.parameters.len()
@@ -5019,10 +6068,10 @@ fn validate_owned_train_snapshot_v1(
                         .iter()
                         .any(|value| !value.is_finite() || *value < 0.0)
             })
-        || snapshot.first_moments[CARD_EMBEDDING].values[..CARD_EMBEDDING_DIM_V1]
+        || snapshot.first_moments[CARD_EMBEDDING].values[..D::CARD_EMBEDDING]
             .iter()
             .any(|value| value.to_bits() != 0)
-        || snapshot.second_moments[CARD_EMBEDDING].values[..CARD_EMBEDDING_DIM_V1]
+        || snapshot.second_moments[CARD_EMBEDDING].values[..D::CARD_EMBEDDING]
             .iter()
             .any(|value| value.to_bits() != 0)
         || snapshot.first_moments[SCORER_SECOND_BIAS].values[0].to_bits() != 0
@@ -5139,361 +6188,26 @@ fn hash_owned_train_snapshot_v1(snapshot: &NativePolicyValueTrainSnapshotV1) -> 
     finish_train_state_hash_v1(hasher)
 }
 
-// Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings of
-// the owned-snapshot validate/hash pair above. `NativePolicyValueTrainSnapshotV1`
-// is itself dimension-erased (plain named-parameter vectors), so it is
-// reused verbatim; only the shape/count/gauge-padding checks below are
-// wide-specific (`W_EXPECTED_PARAMETER_SHAPES`, `W_PARAMETER_COUNT_V1`,
-// `W_CARD_EMBEDDING_DIM_V1`). The parameter ORDER (tensor names, ordinal
-// positions, and hence `CARD_EMBEDDING`/`SCORER_SECOND_BIAS`/
-// `PARAMETER_TENSOR_COUNT`) is topology-derived and identical between the
-// frozen and wide nets (proven by `wide_layout_names_match_frozen_layout_names_exactly`),
-// so those three stay shared rather than duplicated. The frozen
-// `validate_parameter_manifest`/`validate_owned_train_snapshot_v1`/
-// `hash_owned_train_snapshot_v1` above are untouched.
-fn validate_parameter_manifest_wide_v1(
-    parameters: &[NativeNamedParameterV1],
-) -> Result<(), NativePolicyTrainErrorV1> {
-    if parameters.len() != PARAMETER_TENSOR_COUNT
-        || parameters
-            .iter()
-            .zip(native_train_state_parameter_layout_wide_v1())
-            .any(|(parameter, (expected_name, expected_shape))| {
-                parameter.name != expected_name
-                    || parameter.shape.as_slice() != expected_shape
-                    || expected_shape.iter().product::<usize>() != parameter.values.len()
-                    || parameter.values.iter().any(|value| !value.is_finite())
-            })
-        || parameters
-            .iter()
-            .map(|parameter| parameter.values.len())
-            .sum::<usize>()
-            != W_PARAMETER_COUNT_V1
-        || parameters[CARD_EMBEDDING].values[..W_CARD_EMBEDDING_DIM_V1]
-            .iter()
-            .any(|value| value.to_bits() != 0)
-    {
-        return Err(NativePolicyTrainErrorV1::ParameterManifest);
-    }
-    Ok(())
-}
-
-fn validate_owned_train_snapshot_wide_v1(
-    snapshot: &NativePolicyValueTrainSnapshotV1,
-    expected_scorer_bias_anchor_bits: Option<u32>,
-) -> Result<(), NativePolicyTrainErrorV1> {
-    i32::try_from(snapshot.adam_step)
-        .map(|_| ())
-        .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
-    validate_parameter_manifest_wide_v1(&snapshot.parameters)?;
-
-    if snapshot.first_moments.len() != snapshot.parameters.len()
-        || snapshot.second_moments.len() != snapshot.parameters.len()
-        || snapshot
-            .parameters
-            .iter()
-            .zip(&snapshot.first_moments)
-            .zip(&snapshot.second_moments)
-            .any(|((parameter, first), second)| {
-                first.name != parameter.name
-                    || second.name != parameter.name
-                    || first.shape != parameter.shape
-                    || second.shape != parameter.shape
-                    || first.values.len() != parameter.values.len()
-                    || second.values.len() != parameter.values.len()
-                    || first.values.iter().any(|value| !value.is_finite())
-                    || second
-                        .values
-                        .iter()
-                        .any(|value| !value.is_finite() || *value < 0.0)
-            })
-        || snapshot.first_moments[CARD_EMBEDDING].values[..W_CARD_EMBEDDING_DIM_V1]
-            .iter()
-            .any(|value| value.to_bits() != 0)
-        || snapshot.second_moments[CARD_EMBEDDING].values[..W_CARD_EMBEDDING_DIM_V1]
-            .iter()
-            .any(|value| value.to_bits() != 0)
-        || snapshot.first_moments[SCORER_SECOND_BIAS].values[0].to_bits() != 0
-        || snapshot.second_moments[SCORER_SECOND_BIAS].values[0].to_bits() != 0
-    {
-        return Err(NativePolicyTrainErrorV1::OptimizerState);
-    }
-
-    let parameter_anchor_bits = snapshot.parameters[SCORER_SECOND_BIAS].values[0].to_bits();
-    if parameter_anchor_bits != snapshot.scorer_bias_anchor_bits
-        || expected_scorer_bias_anchor_bits
-            .is_some_and(|expected| snapshot.scorer_bias_anchor_bits != expected)
-    {
-        return Err(NativePolicyTrainErrorV1::GaugeAnchor);
-    }
-    Ok(())
-}
-
-fn hash_owned_train_snapshot_wide_v1(snapshot: &NativePolicyValueTrainSnapshotV1) -> [u8; 32] {
-    let mut hasher =
-        begin_train_state_hash_v1(snapshot.adam_step, snapshot.scorer_bias_anchor_bits);
-    for (section, tensors) in [
-        (b"parameters".as_slice(), snapshot.parameters.as_slice()),
-        (
-            b"first_moments".as_slice(),
-            snapshot.first_moments.as_slice(),
-        ),
-        (
-            b"second_moments".as_slice(),
-            snapshot.second_moments.as_slice(),
-        ),
-    ] {
-        begin_train_state_tensor_section_v1(&mut hasher, section, tensors.len());
-        for (ordinal, tensor) in tensors.iter().enumerate() {
-            hash_train_state_tensor_v1(
-                &mut hasher,
-                ordinal,
-                tensor.name,
-                &tensor.shape,
-                &tensor.values,
-            );
-        }
-    }
-    finish_train_state_hash_v1(hasher)
-}
-
 /// Wide-net sibling of [`NativePolicyValueTrainSnapshotV1::state_sha256_v1`].
-/// Kept as a free function (rather than an inherent method) because the
-/// owned snapshot type is shared verbatim between the frozen and wide
-/// architectures; the caller supplies which validation/hash pair applies.
+/// The owned snapshot type is width-free; the caller supplies which
+/// architecture validates it. The digest's byte stream is the one
+/// [`hash_owned_train_snapshot_v1`] writes for every architecture.
 pub(crate) fn wide_owned_train_snapshot_state_sha256_v1(
     snapshot: &NativePolicyValueTrainSnapshotV1,
 ) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
-    validate_owned_train_snapshot_wide_v1(snapshot, None)?;
-    Ok(hash_owned_train_snapshot_wide_v1(snapshot))
-}
-
-/// Wide-net (`kernel-policy-value-net-8w128`) sibling of
-/// [`NativePolicyValueTrainStateV1`]. Mirrors it exactly, wrapping
-/// [`NativePolicyValueNetWideV1`] instead of the frozen model and using the
-/// wide validate/hash pair above (`validate_parameter_manifest_wide_v1`,
-/// `validate_owned_train_snapshot_wide_v1`). This is the "wide train state"
-/// CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3 / task item 3 calls for:
-/// the CPU-side owner of a wide model's live optimizer state, built from the
-/// wide train-state payload codec (`native_train_state_payload_v1`'s
-/// `encode_native_train_state_payload_wide_v1`/`decode_..._wide_v1`) the same
-/// way the frozen train state is built from the frozen codec. The frozen
-/// `NativePolicyValueTrainStateV1` and its methods are untouched.
-#[derive(Clone, Debug)]
-pub(crate) struct NativePolicyValueTrainStateWideV1 {
-    model: NativePolicyValueNetWideV1,
-    adam_step: u64,
-    first_moments: Vec<Vec<f32>>,
-    second_moments: Vec<Vec<f32>>,
-    scorer_bias_anchor_bits: u32,
-}
-
-impl NativePolicyValueTrainStateWideV1 {
-    pub(crate) fn new_wide_v1(
-        model: NativePolicyValueNetWideV1,
-    ) -> Result<Self, NativePolicyTrainErrorV1> {
-        let parameters = model.parameter_snapshot_wide_v1();
-        validate_parameter_manifest_wide_v1(&parameters)?;
-        let scorer_bias_anchor_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
-        let first_moments = parameters
-            .iter()
-            .map(|parameter| vec![0.0; parameter.values.len()])
-            .collect();
-        let second_moments = parameters
-            .iter()
-            .map(|parameter| vec![0.0; parameter.values.len()])
-            .collect();
-        let state = Self {
-            model,
-            adam_step: 0,
-            first_moments,
-            second_moments,
-            scorer_bias_anchor_bits,
-        };
-        state.validate_state_v1()?;
-        Ok(state)
-    }
-
-    /// Reconstructs a complete wide train state against a caller-provided
-    /// model template, mirroring [`NativePolicyValueTrainStateV1::from_snapshot_v1`].
-    pub(crate) fn from_snapshot_wide_v1(
-        model: NativePolicyValueNetWideV1,
-        snapshot: &NativePolicyValueTrainSnapshotV1,
-    ) -> Result<Self, NativePolicyTrainErrorV1> {
-        let template_parameters = model.parameter_snapshot_wide_v1();
-        validate_parameter_manifest_wide_v1(&template_parameters)?;
-        let scorer_bias_anchor_bits = template_parameters[SCORER_SECOND_BIAS].values[0].to_bits();
-        validate_owned_train_snapshot_wide_v1(snapshot, Some(scorer_bias_anchor_bits))?;
-
-        let mut candidate_model = model;
-        candidate_model.replace_parameter_snapshot_wide_v1(&snapshot.parameters)?;
-        let candidate = Self {
-            model: candidate_model,
-            adam_step: snapshot.adam_step,
-            first_moments: snapshot
-                .first_moments
-                .iter()
-                .map(|parameter| parameter.values.clone())
-                .collect(),
-            second_moments: snapshot
-                .second_moments
-                .iter()
-                .map(|parameter| parameter.values.clone())
-                .collect(),
-            scorer_bias_anchor_bits,
-        };
-        candidate.validate_state_v1()?;
-        Ok(candidate)
-    }
-
-    pub(crate) fn model_v1(&self) -> &NativePolicyValueNetWideV1 {
-        &self.model
-    }
-
-    pub(crate) fn adam_step_v1(&self) -> u64 {
-        self.adam_step
-    }
-
-    pub(crate) fn scorer_bias_anchor_f32_bits_v1(&self) -> u32 {
-        self.scorer_bias_anchor_bits
-    }
-
-    /// Returns a complete owned snapshot only after validating the live state.
-    pub(crate) fn snapshot_v1(
-        &self,
-    ) -> Result<NativePolicyValueTrainSnapshotV1, NativePolicyTrainErrorV1> {
-        self.validate_state_v1()?;
-        let parameters = self.model.parameter_snapshot_wide_v1();
-        Ok(NativePolicyValueTrainSnapshotV1 {
-            adam_step: self.adam_step,
-            scorer_bias_anchor_bits: self.scorer_bias_anchor_bits,
-            first_moments: named_state_snapshot(&parameters, &self.first_moments),
-            second_moments: named_state_snapshot(&parameters, &self.second_moments),
-            parameters,
-        })
-    }
-
-    /// Domain-separated digest of every ordered parameter and moment bit plus
-    /// the Adam step, mirroring [`NativePolicyValueTrainStateV1::state_sha256_v1`].
-    pub(crate) fn state_sha256_v1(&self) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
-        self.validate_state_v1()?;
-        Ok(hash_live_train_state_wide_v1(self))
-    }
-
-    pub(crate) fn validate_state_v1(&self) -> Result<(), NativePolicyTrainErrorV1> {
-        i32::try_from(self.adam_step)
-            .map(|_| ())
-            .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
-        self.model
-            .validate_parameters_wide_v1()
-            .map_err(|_| NativePolicyTrainErrorV1::ParameterManifest)?;
-
-        let mut parameter_manifest_invalid = false;
-        let mut parameter_tensor_count = 0usize;
-        let mut parameter_element_count = 0usize;
-        let mut scorer_bias_anchor_bits = None;
-        let expected_layout: Vec<(&'static str, &'static [usize])> =
-            native_train_state_parameter_layout_wide_v1().collect();
-        self.model.visit_parameters_wide_v1(|name, shape, values| {
-            let ordinal = parameter_tensor_count;
-            parameter_tensor_count += 1;
-            parameter_element_count = parameter_element_count.saturating_add(values.len());
-            let Some((expected_name, expected_shape)) = expected_layout.get(ordinal).copied()
-            else {
-                parameter_manifest_invalid = true;
-                return;
-            };
-            if name != expected_name
-                || shape != expected_shape
-                || expected_shape.iter().product::<usize>() != values.len()
-                || values.iter().any(|value| !value.is_finite())
-                || (ordinal == CARD_EMBEDDING
-                    && values[..W_CARD_EMBEDDING_DIM_V1]
-                        .iter()
-                        .any(|value| value.to_bits() != 0))
-            {
-                parameter_manifest_invalid = true;
-            }
-            if ordinal == SCORER_SECOND_BIAS {
-                scorer_bias_anchor_bits = values.first().map(|value| value.to_bits());
-            }
-        });
-        if parameter_manifest_invalid
-            || parameter_tensor_count != PARAMETER_TENSOR_COUNT
-            || parameter_element_count != W_PARAMETER_COUNT_V1
-        {
-            return Err(NativePolicyTrainErrorV1::ParameterManifest);
-        }
-
-        if self.first_moments.len() != PARAMETER_TENSOR_COUNT
-            || self.second_moments.len() != PARAMETER_TENSOR_COUNT
-        {
-            return Err(NativePolicyTrainErrorV1::OptimizerState);
-        }
-        let mut optimizer_state_invalid = false;
-        let mut ordinal = 0usize;
-        self.model.visit_parameters_wide_v1(|_, _, values| {
-            let first = &self.first_moments[ordinal];
-            let second = &self.second_moments[ordinal];
-            if first.len() != values.len()
-                || second.len() != values.len()
-                || first.iter().any(|value| !value.is_finite())
-                || second
-                    .iter()
-                    .any(|value| !value.is_finite() || *value < 0.0)
-                || (ordinal == CARD_EMBEDDING
-                    && (first[..W_CARD_EMBEDDING_DIM_V1]
-                        .iter()
-                        .any(|value| value.to_bits() != 0)
-                        || second[..W_CARD_EMBEDDING_DIM_V1]
-                            .iter()
-                            .any(|value| value.to_bits() != 0)))
-                || (ordinal == SCORER_SECOND_BIAS
-                    && (first[0].to_bits() != 0 || second[0].to_bits() != 0))
-            {
-                optimizer_state_invalid = true;
-            }
-            ordinal += 1;
-        });
-        if optimizer_state_invalid {
-            return Err(NativePolicyTrainErrorV1::OptimizerState);
-        }
-        if scorer_bias_anchor_bits != Some(self.scorer_bias_anchor_bits) {
-            return Err(NativePolicyTrainErrorV1::GaugeAnchor);
-        }
-        Ok(())
-    }
-}
-
-fn hash_live_train_state_wide_v1(state: &NativePolicyValueTrainStateWideV1) -> [u8; 32] {
-    let mut hasher = begin_train_state_hash_v1(state.adam_step, state.scorer_bias_anchor_bits);
-    begin_train_state_tensor_section_v1(&mut hasher, b"parameters", PARAMETER_TENSOR_COUNT);
-    let mut ordinal = 0usize;
-    state.model.visit_parameters_wide_v1(|name, shape, values| {
-        hash_train_state_tensor_v1(&mut hasher, ordinal, name, shape, values);
-        ordinal += 1;
-    });
-    debug_assert_eq!(ordinal, PARAMETER_TENSOR_COUNT);
-
-    for (section, moments) in [
-        (b"first_moments".as_slice(), state.first_moments.as_slice()),
-        (
-            b"second_moments".as_slice(),
-            state.second_moments.as_slice(),
-        ),
-    ] {
-        begin_train_state_tensor_section_v1(&mut hasher, section, moments.len());
-        let mut ordinal = 0usize;
-        state.model.visit_parameters_wide_v1(|name, shape, _| {
-            hash_train_state_tensor_v1(&mut hasher, ordinal, name, shape, &moments[ordinal]);
-            ordinal += 1;
-        });
-        debug_assert_eq!(ordinal, PARAMETER_TENSOR_COUNT);
-    }
-    finish_train_state_hash_v1(hasher)
+    validate_owned_train_snapshot_dims_v1::<Net8W128DimsV1>(snapshot, None)?;
+    Ok(hash_owned_train_snapshot_v1(snapshot))
 }
 
 fn hash_live_train_state_v1(state: &NativePolicyValueTrainStateV1) -> [u8; 32] {
+    hash_live_train_state_dims_v1(state)
+}
+
+/// [`hash_live_train_state_v1`] at the dims `D`: the same byte stream as the
+/// owned snapshot's hash.
+fn hash_live_train_state_dims_v1<D: NetDimsV1>(
+    state: &NativePolicyValueTrainStateDimsV1<D>,
+) -> [u8; 32] {
     let mut hasher = begin_train_state_hash_v1(state.adam_step, state.scorer_bias_anchor_bits);
     begin_train_state_tensor_section_v1(&mut hasher, b"parameters", PARAMETER_TENSOR_COUNT);
     let mut ordinal = 0usize;
@@ -5537,10 +6251,18 @@ fn named_state_snapshot(
 }
 
 fn add_indexed_rows(destination: &mut [f32], source: &[f32], indices: &[usize]) {
+    add_indexed_rows_dims_v1::<Net8DimsV1>(destination, source, indices)
+}
+
+fn add_indexed_rows_dims_v1<D: NetDimsV1>(
+    destination: &mut [f32],
+    source: &[f32],
+    indices: &[usize],
+) {
     for (row, index) in indices.iter().copied().enumerate() {
-        let source_begin = row * HIDDEN_DIM_V1;
-        let destination_begin = index * HIDDEN_DIM_V1;
-        for hidden in 0..HIDDEN_DIM_V1 {
+        let source_begin = row * D::HIDDEN;
+        let destination_begin = index * D::HIDDEN;
+        for hidden in 0..D::HIDDEN {
             destination[destination_begin + hidden] += source[source_begin + hidden];
         }
     }
@@ -5734,6 +6456,9 @@ mod tests {
     };
     use serde::Deserialize;
     use sha2::{Digest, Sha256};
+
+    mod narrow_dims_refactor_bit_pins_v1;
+    mod wide_train_step_v1;
 
     const FORWARD_JSON: &str =
         include_str!("../../data/native_policy_value_net_v1/runner_fixed_forward_goldens_v1.json");
