@@ -599,10 +599,8 @@ class ReleaseUnhandedTests(unittest.TestCase):
     def run_release(self, world, deadline_after=120, ids=('A',), sleep=None):
         clock = FakeClock(1000.)
         folder = Path(self.temporary.name) / 'known-pods'
-        client = eg.LeaseClient(folder, NAME, 'k', world.provider, world.list, clock)
-        with no_network():
-            pending = eg.release_unhanded(client, list(ids), 1000. + deadline_after,
-                                          sleep or clock.sleep)
+        with no_network(), eg.LeaseClient(folder, NAME, 'k', world.provider, world.list, clock, clock.sleep) as client:
+            pending = eg.release_unhanded(client, list(ids), 1000. + deadline_after, sleep or clock.sleep)
         return pending, clock
 
     def setUp(self):
@@ -662,10 +660,12 @@ class ReleaseReappearanceTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
         self.folder = Path(self.temporary.name) / 'known-pods'
 
+    def client(self, world, clock):
+        return eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock, clock.sleep)
+
     def test_a_reappearing_confirmed_id_is_released_again_before_success(self):
         clock = FakeClock(1000.)
         world = World([pod('A'), pod('B')])
-        client = eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock)
         sleeps = [0]; reappeared = []
         real_delete = world.provider
 
@@ -678,13 +678,12 @@ class ReleaseReappearanceTests(unittest.TestCase):
                 return call(method)
             api.call = wrapped
             return api
-        client._provider = provider
 
         def sleep(seconds):
             sleeps[0] += 1; clock.sleep(seconds)
             if clock.t == 1050:                                 # A was confirmed absent; it comes back
                 world.pods['A'] = pod('A'); reappeared.append(len(world.deletes))
-        with no_network():
+        with no_network(), eg.LeaseClient(self.folder, NAME, 'k', provider, world.list, clock, sleep) as client:
             pending = eg.release_unhanded(client, ['A', 'B'], 1300., sleep)
         self.assertEqual(pending, [])
         self.assertIn('A', world.deletes[reappeared[0]:])          # A was deleted again after reappearing
@@ -694,84 +693,157 @@ class ReleaseReappearanceTests(unittest.TestCase):
     def test_a_reappearing_id_that_cannot_be_released_is_reported(self):
         clock = FakeClock(1000.)
         world = World([pod('A')])
-        client = eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock)
 
         def sleep(seconds):
             clock.sleep(seconds)
             world.pods['A'] = pod('A')                          # A keeps coming back
-        with no_network():
+        with no_network(), self.client(world, clock) as client:
             pending = eg.release_unhanded(client, ['A'], 1120., sleep)
         self.assertEqual(pending, ['A'])
 
     def test_recovery_census_retains_a_new_owned_id(self):
         clock = FakeClock(1000.)
         world = World([pod('A'), pod('B')])
-        client = eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock)
-        with no_network():
+        with no_network(), self.client(world, clock) as client:
             eg.release_unhanded(client, ['A'], 1300., clock.sleep)
-        self.assertEqual(eg.handoff_in(self.folder, 'B', 'census', 0) and
-                         read(self.folder / 'B.json')['id'], 'B')   # B was handed off by the census
+        self.assertEqual(read(self.folder / 'B.json'), {'id': 'B', 'role': 'census',
+                                                         'epoch': read(self.folder / 'B.json')['epoch']})
 
     def test_recovery_census_releases_a_new_owned_id_it_cannot_hand_off(self):
         clock = FakeClock(1000.)
         world = World([pod('A'), pod('B')])
-        client = eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock)
         real = eg.handoff_in
 
         def handoff(folder, pod_id, role, epoch):
             if pod_id == 'B':
                 raise OSError('read-only store')
             return real(folder, pod_id, role, epoch)
-        with no_network(), mock.patch.object(eg, 'handoff_in', side_effect=handoff):
+        with no_network(), mock.patch.object(eg, 'handoff_in', side_effect=handoff), \
+                self.client(world, clock) as client:
             pending = eg.release_unhanded(client, ['A'], 1300., clock.sleep)
         self.assertEqual(pending, [])
         self.assertNotIn('B', world.pods)
+        self.assertFalse((self.folder / 'B.json').exists())
 
 
 class ProviderBoundaryTests(unittest.TestCase):
-    """Round 5: census, GET, DELETE and POST calls exist only inside the provider boundary (LeaseClient)
-    or the raw clients themselves; no call site can skip retention."""
+    """Rounds 5 and 6: the provider boundary, checked statically and at runtime.
 
-    FORBIDDEN_ATTRS = {'call', 'create', '_call', 'list_pods', '_pods', '_provider'}
-    ALLOWED_RECEIVERS = {('create', 'cloud_lease')}   # the lease-level create, which goes through the boundary
-    FORBIDDEN_NAMES = {'pods', 'poster', 'list_pods'}
-    ALLOWED_SCOPES = {'LeaseClient', 'Provider', 'DiagnosedProvider'}
+    Static, in every lease module: no attribute reference (call or not) to a raw provider method and no
+    raw census or poster call outside LeaseClient and the raw clients; urllib, http.client and requests
+    only in the modules that implement a raw client, and urlopen only inside those clients; every
+    LeaseClient (or lease_client) is entered with `with`, so its exit resolves unhanded IDs.
+    Runtime: the raw clients refuse to run outside a LeaseClient call."""
 
-    @staticmethod
-    def violations(source):
+    FORBIDDEN_ATTRS = {'call', 'create', '_call', 'list_pods', '_pods', '_provider', 'urlopen', 'funds'}
+    FORBIDDEN_CALL_NAMES = {'pods', 'poster'}
+    FORBIDDEN_NAMES = {'list_pods', 'urlopen'}
+    ALLOWED_SCOPES = {'LeaseClient', 'Provider', 'PodApi', 'DiagnosedProvider', 'list_pods'}
+    # (attribute, receiver name) pairs that are not raw provider methods
+    ALLOWED_RECEIVERS = {('create', 'cloud_lease')}             # the lease-level create, which uses the boundary
+    # live_funds reads the account balance (no Pod ID) through the resident guard's read-only query
+    ALLOWED_IN_SCOPE = {('funds', 'live_funds')}
+    NETWORK_MODULES = {'urllib', 'http', 'requests'}
+    NETWORK_FILES = {'external_guard.py', 'prepare_lease.py', 'diagnostic_create.py'}
+    CLIENT_FACTORIES = {'LeaseClient', 'lease_client'}
+
+    @classmethod
+    def violations(cls, source, filename='module.py'):
         import ast
         tree = ast.parse(source)
         found = []
+        with_items = {id(item.context_expr) for node in ast.walk(tree) if isinstance(node, (ast.With, ast.AsyncWith))
+                      for item in node.items}
 
         def visit(node, scopes):
             if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 scopes = scopes + [node.name]
-            if isinstance(node, ast.Call) and not set(scopes) & ProviderBoundaryTests.ALLOWED_SCOPES:
+            inside = set(scopes) & cls.ALLOWED_SCOPES
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and filename not in cls.NETWORK_FILES:
+                names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or '']
+                if any(n.split('.')[0] in cls.NETWORK_MODULES for n in names):
+                    found.append((node.lineno, 'import'))
+            if isinstance(node, ast.Attribute) and node.attr in cls.FORBIDDEN_ATTRS and not inside:
+                receiver = node.value.id if isinstance(node.value, ast.Name) else None
+                if (node.attr, receiver) not in cls.ALLOWED_RECEIVERS and \
+                        not any((node.attr, scope) in cls.ALLOWED_IN_SCOPE for scope in scopes):
+                    found.append((node.lineno, node.attr))
+            if isinstance(node, ast.Name) and node.id in cls.FORBIDDEN_NAMES and not inside:
+                found.append((node.lineno, node.id))
+            if isinstance(node, ast.Call) and not inside:
+                if isinstance(node.func, ast.Name) and node.func.id in cls.FORBIDDEN_CALL_NAMES:
+                    found.append((node.lineno, node.func.id))
+            if isinstance(node, ast.Call):
                 func = node.func
-                if isinstance(func, ast.Attribute) and func.attr in ProviderBoundaryTests.FORBIDDEN_ATTRS:
-                    receiver = func.value.id if isinstance(func.value, ast.Name) else None
-                    if (func.attr, receiver) not in ProviderBoundaryTests.ALLOWED_RECEIVERS:
-                        found.append((node.lineno, func.attr))
-                if isinstance(func, ast.Name) and func.id in ProviderBoundaryTests.FORBIDDEN_NAMES:
-                    found.append((node.lineno, func.id))
+                name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+                if name in cls.CLIENT_FACTORIES and id(node) not in with_items and 'lease_client' not in scopes:
+                    found.append((node.lineno, 'unmanaged ' + name))
             for child in ast.iter_child_nodes(node):
                 visit(child, scopes)
         visit(tree, [])
         return found
 
-    def test_lease_modules_reach_the_provider_only_through_the_boundary(self):
+    def modules(self):
         here = Path(eg.__file__).resolve().parent
-        modules = [here / 'external_guard.py', here / 'prepare_lease.py',
-                   here.parents[2] / 'tools/search_sharing_allocation/cloud_lease.py',
-                   here.parents[2] / 'tools/search_sharing_allocation/diagnostic_create.py']
-        for module in modules:
-            with self.subTest(module=module.name):
-                self.assertEqual(self.violations(module.read_text(encoding='utf-8')), [])
+        return [here / 'external_guard.py', here / 'prepare_lease.py',
+                here.parents[2] / 'tools/search_sharing_allocation/cloud_lease.py',
+                here.parents[2] / 'tools/search_sharing_allocation/diagnostic_create.py']
 
-    def test_the_check_detects_raw_calls(self):
-        self.assertEqual(len(self.violations("def f(provider, key, pods):\n"
-                                             "    provider(key, 'A').call('GET')\n"
-                                             "    pods(key)\n")), 2)
+    def test_lease_modules_reach_the_provider_only_through_the_boundary(self):
+        for module in self.modules():
+            with self.subTest(module=module.name):
+                self.assertEqual(self.violations(module.read_text(encoding='utf-8'), module.name), [])
+
+    def test_every_entry_point_enters_the_client_with_with(self):
+        import ast
+        users = []
+        for module in self.modules():
+            tree = ast.parse(module.read_text(encoding='utf-8'))
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.With, ast.AsyncWith)):
+                    for item in node.items:
+                        func = getattr(item.context_expr, 'func', None)
+                        name = getattr(func, 'id', None) or getattr(func, 'attr', None)
+                        if name in self.CLIENT_FACTORIES:
+                            users.append(module.name)
+        # the guard (run), prepare_lease create, and cloud_lease create, resolve-ambiguous, verify-absent, status
+        self.assertEqual(sorted(users), ['cloud_lease.py'] * 4 + ['external_guard.py', 'prepare_lease.py'])
+
+    def test_the_check_detects_each_escape_form(self):
+        cases = {
+            'call spelling': "def f(provider, key):\n    provider(key, 'A').call('GET')\n",
+            'bound method alias': "def f(provider, key):\n    send = provider(key, 'A').call\n    send('DELETE')\n",
+            'census call': "def f(pods, key):\n    pods(key)\n",
+            'census reference': "import external_guard\ndef f():\n    g = external_guard.list_pods\n",
+            'direct urlopen': "def f(r):\n    urllib.request.urlopen(r)\n",
+            'urlopen name': "from urllib.request import urlopen\n",
+            'network import': "import requests\n",
+            'http.client import': "import http.client\n",
+            'unmanaged client': "def f(a):\n    c = LeaseClient(a, 'n', 'k')\n",
+            'unmanaged lease_client': "def f(a):\n    c = lease_client(a, {}, 'k')\n",
+        }
+        for label, source in cases.items():
+            with self.subTest(label=label):
+                self.assertTrue(self.violations(source, 'cloud_lease.py'), label)
+        self.assertEqual(self.violations("def f(a):\n    with LeaseClient(a, 'n', 'k') as c:\n        c.census()\n",
+                                         'cloud_lease.py'), [])
+
+    def test_raw_clients_refuse_to_run_outside_the_boundary(self):
+        import prepare_lease
+        with no_network():
+            with self.assertRaisesRegex(RuntimeError, 'must go through LeaseClient'):
+                eg.PodApi('k', 'A').call('GET')
+            with self.assertRaisesRegex(RuntimeError, 'must go through LeaseClient'):
+                eg.list_pods('k')
+            with self.assertRaisesRegex(RuntimeError, 'must go through LeaseClient'):
+                prepare_lease.Provider('k').create({'name': NAME})
+
+    def test_the_client_refuses_use_outside_its_with_block(self):
+        world = World([pod('A')])
+        client = eg.LeaseClient(Path(tempfile.mkdtemp()) / 'known-pods', NAME, 'k', world.provider, world.list)
+        with self.assertRaisesRegex(RuntimeError, 'outside its with block'):
+            client.census()
+        self.assertEqual(world.calls, 0)
 
 
 if __name__ == '__main__':

@@ -31,8 +31,7 @@ import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
 from lease_guard import validate
-from external_guard import LeaseClient, list_pods, resolve_or_alert, valid_id
-from lease_guard import Provider as LeaseProvider
+from external_guard import LeaseClient, require_boundary, resolve_or_alert, valid_id
 from runtime_observation import IMAGE_REFERENCE
 
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
@@ -196,6 +195,7 @@ class Provider:
         self.key = key
 
     def create(self, body):
+        require_boundary('Pod create')
         payload = json.dumps(body).encode()
         request = urllib.request.Request(PODS_URL, data=payload, method='POST',
             headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json',
@@ -296,22 +296,28 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     api = api or Provider(key)
     options = dict(release or {})
     clock = options.pop('clock', time.time); sleep = options.pop('sleep', time.sleep)
-    # The provider boundary (LeaseClient) retains the raw POST ID, validated as a string and
-    # whatever its name or other fields, before this code examines anything else (I1, I4).
-    client = LeaseClient(output / 'known-pods', body.get('name'), key, options.get('provider', LeaseProvider),
-                         options.get('pods', list_pods), clock)
+    try:
+        deadline = float(read(output / 'lease.json')['deadline_epoch'])
+    except Exception:  # noqa: BLE001
+        deadline = 0.0
+    # The provider boundary retains the raw POST ID, validated as a string and whatever its name or
+    # other fields, before this code examines anything else (I1); leaving the block releases any ID
+    # that could not be handed off, or fails loudly (I4).
+    with LeaseClient(output / 'known-pods', body.get('name'), key, options.get('provider'), options.get('pods'),
+                     clock, sleep, output / 'ALERT-pod-not-released.json', lease_deadline=deadline,
+                     min_release_seconds=MIN_RELEASE_SECONDS) as client:
+        return _post_and_record(client, api, body, output, now, deadline, clock, sleep)
+
+
+def _post_and_record(client, api, body, output, now, deadline, clock, sleep):
     returned = None; error = None
     try:
-        returned = client.post(api.create, body)
+        returned = client.post(body, api=api)
     except Exception as post_error:  # noqa: BLE001 - classified below
         error = post_error
     pod_id = returned.get('id') if isinstance(returned, dict) and valid_id(returned.get('id')) else None
     if client.unpersisted:
         # I4: without a durable handoff this process releases the Pod itself, or fails loudly.
-        try:
-            deadline = float(read(output / 'lease.json')['deadline_epoch'])
-        except Exception:  # noqa: BLE001
-            deadline = 0.0
         resolve_or_alert(client, max(deadline, clock() + MIN_RELEASE_SECONDS), output / 'ALERT-pod-not-released.json',
                          sleep)
         raise RuntimeError('create handoff failed; the Pod was deleted and verified absent')

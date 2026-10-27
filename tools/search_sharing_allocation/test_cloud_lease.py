@@ -6,6 +6,7 @@ a fake clock with a hard sleep cap.
 import io
 import json
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -374,7 +375,7 @@ class ReleaseVerificationTests(Base):
         response.__enter__.return_value.read.return_value = b"null"
         with patch("urllib.request.urlopen", return_value=response):
             clock = FakeClock(1000.0)
-            released = lease.verify_absent(root, key="k", pods=World([]).list, provider=lease.lease_guard.Provider,
+            released = lease.verify_absent(root, key="k", pods=World([]).list, provider=lease.external_guard.PodApi,
                                            clock=clock, sleep=clock.advance)
         self.assertFalse(released)
 
@@ -645,6 +646,42 @@ class RoundFiveTests(Base):
         self.assertTrue(lease.read(root / "verify-absent.json")["observations"][0]["present_by_id"]["B"])
         world.pods.clear()
         self.assertTrue(check())
+
+
+class StatusCommandTests(Base):
+    """Round 6 finding 1: the status command ends through the boundary's exit, whatever happens."""
+
+    def run_status(self, root, world, failing=("B",), late=True, **patches):
+        real = lease.external_guard.handoff_in
+
+        def handoff(folder, pod_id, role, epoch):
+            if pod_id in failing:
+                raise OSError("read-only store")
+            return real(folder, pod_id, role, epoch)
+        prepared = lease.read(root / "lease/lease.json")
+        clock = FakeClock(prepared["deadline_epoch"] - 60 if late else 1000.0)
+        out = io.StringIO()
+        with patch.object(sys, "argv", ["cloud_lease.py", "status", "--control", str(root)]),                 patch.object(lease.external_guard, "api_key", return_value="k"),                 patch.object(lease.external_guard, "list_pods", world.list),                 patch.object(lease.external_guard, "PodApi", world.provider),                 patch.object(lease.external_guard, "handoff_in", side_effect=handoff),                 patch.object(lease.time, "time", clock), patch.object(lease.time, "sleep", clock.sleep),                 patch("sys.stdout", out):
+            lease.main()
+        return out.getvalue()
+
+    def test_status_releases_an_owned_pod_it_could_not_hand_off(self):
+        root = self.control(); world = World([pod("B")])
+        printed = self.run_status(root, world)
+        self.assertIn('"B"', printed)
+        self.assertNotIn("B", world.pods)                    # deleted and verified absent before exiting
+
+    def test_status_fails_loudly_when_it_cannot_release(self):
+        root = self.control(); world = World([pod("B")]); world.delete_failures = -1
+        with self.assertRaisesRegex(RuntimeError, "ALERT"):
+            self.run_status(root, world)
+        self.assertEqual(lease.read(root / "ALERT-pod-not-released.json")["pod_ids"], ["B"])
+
+    def test_status_formatting_failure_still_resolves(self):
+        root = self.control(); world = World([pod("B")])
+        with patch.object(lease, "safe_pod", side_effect=ValueError("formatting failed")),                 self.assertRaisesRegex(ValueError, "formatting failed"):
+            self.run_status(root, world)
+        self.assertNotIn("B", world.pods)
 
 
 if __name__ == "__main__":

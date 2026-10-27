@@ -73,6 +73,7 @@ usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json re
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 from pathlib import Path
@@ -100,6 +101,7 @@ POD_ID = re.compile('[A-Za-z0-9]+')
 
 
 def list_pods(key):
+    require_boundary('Pod census')
     request = urllib.request.Request('https://rest.runpod.io/v1/pods', headers={
         'Authorization': 'Bearer ' + key, 'User-Agent': 'Mozilla/5.0 g115-external-guard/1'})
     with urllib.request.urlopen(request, timeout=15) as response:
@@ -266,26 +268,81 @@ def known_pods(root, errors=None):
     return result
 
 
+_BOUNDARY = contextvars.ContextVar('lease_provider_boundary', default=False)
+
+
+def require_boundary(what):
+    """Runtime half of the provider boundary: the raw clients run only inside a LeaseClient call."""
+    if not _BOUNDARY.get():
+        raise RuntimeError(what + ' must go through LeaseClient (the provider boundary)')
+
+
+class PodApi(Provider):
+    """The raw workstation Pod GET/DELETE client. It runs only inside a LeaseClient call; the resident
+    guard on the Pod keeps using lease_guard.Provider for its own runtime ID."""
+
+    def call(self, method):
+        require_boundary('Pod ' + method)
+        return Provider.call(self, method)
+
+
 class LeaseClient:
-    """The provider boundary of the lease tools: every census, GET, DELETE and POST of the guard, the
-    watchdog, both creators and verify-absent goes through one of these (a test enforces it).
+    """The provider boundary of the lease tools, used as a context manager by every entry point (a test
+    enforces both).
 
-    Every census and GET response retains each owned (exact-name) Pod ID it carries, and every POST
-    response retains its raw ID whatever its name, before the caller sees the data (I1). Retention is a
-    durable handoff, written and read back (I4); an ID whose handoff fails stays in `unpersisted` and in
-    memory, and nothing ever leaves `retained`."""
+    Inside it, every census and GET response retains each owned (exact-name) Pod ID it carries, and
+    every POST response its raw ID whatever its name, before the caller sees the data (I1). Retention is
+    a durable handoff, written and read back (I4); an ID whose handoff fails stays in `unpersisted` and
+    in memory, and nothing ever leaves `retained`. Leaving the block, on any exit (exceptions included),
+    runs resolve_or_alert: IDs that are neither durable nor verified absent are deleted and verified, or
+    an ALERT record is written and RuntimeError raised. The raw clients refuse to run outside it."""
 
-    def __init__(self, folder, name, key, provider=Provider, pods=list_pods, clock=time.time):
+    def __init__(self, folder, name, key, provider=None, pods=None, clock=None, sleep=None, alert_path=None,
+                 lease_deadline=0.0, min_release_seconds=120):
         self.folder = Path(folder); self.name = name; self.key = key
-        self._provider = provider; self._pods = pods; self.clock = clock
-        self.retained = {}       # Pod ID -> role
+        self._provider = provider or PodApi
+        self._pods = pods or list_pods
+        self.clock = clock or time.time
+        self.sleep = sleep or time.sleep
+        self.alert_path = Path(alert_path) if alert_path else self.folder.parent / 'ALERT-pod-not-released.json'
+        self.lease_deadline = lease_deadline; self.min_release_seconds = min_release_seconds
+        self.retained = {}          # Pod ID -> role
         self.unpersisted = set()
-        self.durable = set()     # IDs named by another readable record (a receipt), durable without a handoff
-        self.errors = []         # retention failures since the caller last cleared it
+        self.durable = set()        # IDs named by another readable record (a receipt), durable without a handoff
+        self.verified_absent = set()
+        self.errors = []            # retention failures since the caller last cleared it
+        self._active = False
 
-    def retain(self, pod_id, role):
+    def __enter__(self):
+        self._active = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            resolve_or_alert(self, self.release_deadline(), self.alert_path, self.sleep)
+        finally:
+            self._active = False
+        return False
+
+    def release_deadline(self):
+        return max(self.lease_deadline, self.clock() + self.min_release_seconds)
+
+    def _require_active(self):
+        if not self._active:
+            raise RuntimeError('LeaseClient used outside its with block')
+
+    def _raw(self, function, *args):
+        token = _BOUNDARY.set(True)
+        try:
+            return function(*args)
+        finally:
+            _BOUNDARY.reset(token)
+
+    def retain(self, pod_id, role, presence=True):
         if not valid_id(pod_id):
             return False
+        if presence:
+            self.verified_absent.discard(pod_id)
         if role in CREATE_ROLES and self.retained.get(pod_id) not in CREATE_ROLES:
             self.retained[pod_id] = role
         self.retained.setdefault(pod_id, role)
@@ -293,7 +350,7 @@ class LeaseClient:
             handoff_in(self.folder, pod_id, self.retained[pod_id], self.clock())
             self.unpersisted.discard(pod_id)
             return True
-        except Exception as e:  # noqa: BLE001 - kept in memory; the caller's ending path resolves it
+        except Exception as e:  # noqa: BLE001 - kept in memory; the exit resolves it
             self.errors.append('retain:' + pod_id + ':' + type(e).__name__)
             if pod_id not in self.durable:
                 self.unpersisted.add(pod_id)
@@ -305,37 +362,49 @@ class LeaseClient:
 
     def retry(self):
         for pod_id in sorted(self.unpersisted):
-            self.retain(pod_id, self.retained[pod_id])
+            self.retain(pod_id, self.retained[pod_id], presence=False)
 
     def census(self):
         """(raw census, owned IDs, every listed ID, malformed); each owned ID is retained first."""
-        raw = self._pods(self.key)
+        self._require_active()
+        raw = self._raw(self._pods, self.key)
         owned, listed, malformed = census_entries(raw, self.name)
         for pod_id in owned:
             self.retain(pod_id, 'census')
         return raw, owned, listed, malformed
 
     def get(self, pod_id):
-        got = self._provider(self.key, pod_id).call('GET')
+        self._require_active()
+        got = self._raw(lambda: self._provider(self.key, pod_id).call('GET'))
         if isinstance(got, dict) and got.get('name') == self.name and valid_id(got.get('id')):
             self.retain(got['id'], 'census')
         return got
 
     def delete(self, pod_id):
-        return self._provider(self.key, pod_id).call('DELETE')
+        self._require_active()
+        return self._raw(lambda: self._provider(self.key, pod_id).call('DELETE'))
 
-    def post(self, poster, body):
-        returned = poster(body)
+    def post(self, body, poster=None, api=None):
+        """POST through the given poster function, the given create client, or the default one."""
+        self._require_active()
+        if poster is None:
+            if api is None:
+                from prepare_lease import Provider as PostApi   # lazy: prepare_lease imports this module
+                api = PostApi(self.key)
+            returned = self._raw(lambda: api.create(body))
+        else:
+            returned = self._raw(poster, body)
         if isinstance(returned, dict) and valid_id(returned.get('id')):
             self.retain(returned['id'], 'receipt')
         return returned
 
 
-def release_unhanded(client, pod_ids, deadline, sleep=time.sleep):
+def release_unhanded(client, pod_ids, deadline, sleep=None):
     """I4 for an ending path that holds IDs it could not hand off: DELETE each and verify absence (I5)
     until the deadline. Confirmation is never terminal: every target is checked on every pass, any
     later presence reactivates it, and any owned ID that turns up unpersisted joins the targets.
     Returns the IDs not confirmed absent in the final pass; the caller must fail loudly on any."""
+    sleep = sleep or client.sleep
     targets = set(pod_ids) | client.unpersisted
     confirmers = {}
     while True:
@@ -344,7 +413,7 @@ def release_unhanded(client, pod_ids, deadline, sleep=time.sleep):
             census_ok = not malformed
         except Exception:  # noqa: BLE001 - never absence
             listed, census_ok = set(), False
-        targets |= client.unpersisted
+        targets |= client.unpersisted - client.verified_absent
         state = {}
         for pod_id in sorted(targets):
             try:
@@ -357,19 +426,20 @@ def release_unhanded(client, pod_ids, deadline, sleep=time.sleep):
                 absent = False
             seen = census_ok and pod_id not in listed and absent
             state[pod_id] = confirmers.setdefault(pod_id, AbsenceConfirmer(client.clock)).observe(seen)
-        targets |= client.unpersisted
+        targets |= client.unpersisted - client.verified_absent
         if all(state.get(pod_id) for pod_id in targets):
+            client.verified_absent |= targets
             return []
         if client.clock() >= deadline:
             return sorted(pod_id for pod_id in targets if not state.get(pod_id))
         sleep(RELEASE_POLL_SECONDS)
 
 
-def resolve_or_alert(client, deadline, alert_path, sleep=time.sleep, also=()):
-    """Every ending path calls this: IDs that are neither durable nor verified absent are released here
-    (release_unhanded); if any remain, an ALERT record is written and RuntimeError('ALERT ...') raised.
-    Returns the IDs this call released."""
-    targets = set(also) | client.unpersisted
+def resolve_or_alert(client, deadline, alert_path, sleep=None, also=()):
+    """Every ending path runs this (LeaseClient's exit does): IDs that are neither durable nor verified
+    absent are released here (release_unhanded); if any remain, an ALERT record is written and
+    RuntimeError('ALERT ...') raised. Returns the IDs this call released."""
+    targets = (set(also) | client.unpersisted) - client.verified_absent
     if not targets:
         return set()
     pending = release_unhanded(client, targets, deadline, sleep)
@@ -383,10 +453,17 @@ def resolve_or_alert(client, deadline, alert_path, sleep=time.sleep, also=()):
     return targets
 
 
-def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=time.sleep,
+def run(root, key, pods=None, provider=None, clock=time.time, sleep=time.sleep,
         once=False, preserve=None, marker_probe=None):
     root = Path(root); lease = read(root / 'lease/lease.json'); validate(lease)
-    client = LeaseClient(root / KNOWN_DIR, lease['name'], key, provider, pods, clock)
+    # Leaving this block (completion, a --once pass, any exception) resolves every ID that is neither
+    # durable nor verified absent, or fails loudly (I4).
+    with LeaseClient(root / KNOWN_DIR, lease['name'], key, provider, pods, clock, sleep,
+                     root / 'ALERT-pod-not-released.json', min_release_seconds=ONCE_RELEASE_SECONDS) as client:
+        return _guard(root, lease, client, clock, sleep, once, preserve, marker_probe)
+
+
+def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe):
     highest = lease['rate_ceiling_usd_hour']; preserved = False; deletes = 0; last_probe = None
     census_absence = AbsenceConfirmer(clock)
     id_absence = {}
@@ -438,14 +515,14 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
             store_errors.append(receipt_error)
         if recorded:
             client.mark_durable(recorded)
-            client.retain(recorded, 'receipt')
+            client.retain(recorded, 'receipt', presence=False)
         for name in ('lease/create-ambiguous.json', 'lease/create-pod-failure.json'):
             try:
                 if (root / name).exists():
                     fallback = read(root / name).get('pod_id')
                     if valid_id(fallback):
                         client.mark_durable(fallback)
-                        client.retain(fallback, 'receipt')
+                        client.retain(fallback, 'receipt', presence=False)
             except Exception as e:  # noqa: BLE001
                 store_errors.append(name + ':' + type(e).__name__)
         client.retry()                              # every unpersisted ID, every pass (I2, I4)
@@ -587,9 +664,8 @@ def run(root, key, pods=list_pods, provider=Provider, clock=time.time, sleep=tim
         if reason and clock() >= lease['deadline_epoch'] and (targets or not absent_now):
             note('ALERT-pod-not-released.json', {'targets': targets, 'epoch': clock(), 'reason': reason})
         if once:
-            # I4: a watchdog pass never ends holding an ID that is neither durable nor verified absent
+            # I4: the LeaseClient exit resolves any ID that is neither durable nor verified absent
             client.retry()
-            resolve_or_alert(client, clock() + ONCE_RELEASE_SECONDS, root / 'ALERT-pod-not-released.json', sleep)
             return
         sleep(POLL_SECONDS)
 
