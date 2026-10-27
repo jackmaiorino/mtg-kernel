@@ -643,8 +643,9 @@ class OnceEndingTests(Base):
         with self.failing_dup2():
             self.once(world)
         self.assertNotIn('dup2', world.pods)
-        self.assertIn('pod1', world.pods)
         self.assertGreaterEqual(self.clock.t - 1100., 30)          # absence verified, not assumed
+        # the failed retention is a store failure, so the pass also released the lease (I2, fail closed)
+        self.assertEqual(self.status()['reason'], 'guard_failure')
 
     def test_once_fails_loudly_when_it_cannot_release(self):
         self.record('pod1'); self.started()
