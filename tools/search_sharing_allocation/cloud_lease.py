@@ -158,12 +158,11 @@ raise SystemExit(guard.returncode)
     return metadata
 
 
-def owned_pods(key, lease, pods=None):
-    """Every Pod with the lease's exact name: all of them are this lease's. Name prefixes are never owned."""
-    census = (pods or external_guard.list_pods)(key)
-    if not isinstance(census, list):
-        raise ValueError("census is not a list")
-    return [p for p in census if isinstance(p, dict) and p.get("name") == lease["name"]]
+def lease_client(root, lease, key, provider=None, pods=None, clock=time.time):
+    """The lease's provider boundary (external_guard.LeaseClient): every census, GET, DELETE and POST
+    retains each owned Pod ID it sees under lease/known-pods/ before returning."""
+    return external_guard.LeaseClient(Path(root) / external_guard.KNOWN_DIR, lease["name"], key,
+                                      provider or lease_guard.Provider, pods or external_guard.list_pods, clock)
 
 
 def best_effort(path, value):
@@ -173,10 +172,6 @@ def best_effort(path, value):
         return True
     except Exception:  # noqa: BLE001
         return False
-
-
-def matching_pods(key, name, pods=None):
-    return [p for p in (pods or external_guard.list_pods)(key) if p.get("name") == name]
 
 
 def finite_or_none(value):
@@ -216,13 +211,12 @@ def live_funds(key):
     return lease_guard.Provider(key, "funding").funds()
 
 
-def delete_pod(key, pod_id, provider=None):
-    (provider or lease_guard.Provider)(key, pod_id).call("DELETE")
-
-
 def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provider=None, clock=time.time,
            sleep=time.sleep):
-    """One POST per prepared lease, ever. Every refusal happens before the POST."""
+    """One POST per prepared lease, ever. Every refusal happens before the POST.
+
+    Every census and the POST go through a LeaseClient, which retains each owned Pod ID before this code
+    sees it (I1, I4); every exit, refusals included, resolves IDs that were not handed off (I4)."""
     if not execute:
         raise ValueError("create requires --execute after the owner has spending authority")
     root = Path(root)
@@ -247,6 +241,12 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
     if clock() > lease["created_epoch"] + 300:
         raise ValueError("prepare a fresh allocation timestamp without extending the approved deadline")
     key = key or external_guard.api_key()
+    client = lease_client(root, lease, key, provider, pods, clock)
+
+    def finish(also=()):
+        """I4 at every exit: IDs not handed off are released here, or the create fails loudly."""
+        return external_guard.resolve_or_alert(client, max(lease["deadline_epoch"], clock() + MIN_RELEASE_SECONDS),
+                                               root / "ALERT-pod-not-released.json", sleep, also)
     try:   # fresh funding through the API, at most FUNDING_MAX_AGE_SECONDS old at the POST
         observed = (funds or live_funds)(key)
         observed_epoch = clock()
@@ -259,10 +259,10 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
     lease_guard.validate(dict(lease, funded_balance_usd=min(balance, lease["funded_balance_usd"])))
     write(root / "lease/funding-at-create.json", {"epoch": observed_epoch, "balance_usd": balance,
           "under_balance": under, "account_spend_usd_hour": finite_or_none(observed.get("account_spend_usd_hour"))})
-    existing = owned_pods(key, lease, pods)
-    if existing:
-        raise ValueError("a Pod with this lease's name already exists: " +
-                         ",".join(sorted(str(p.get("id")) for p in existing)))
+    _, existing, _, malformed = client.census()   # each existing owned ID is retained before the refusal
+    if existing or malformed:
+        finish()
+        raise ValueError("a Pod with this lease's name already exists: " + ",".join(existing or ["(malformed entry)"]))
     if clock() - observed_epoch > FUNDING_MAX_AGE_SECONDS:
         raise ValueError("funding observation older than 120 s at the POST")
     body = copy.deepcopy(read(root / "lease/create-request-template.json"))
@@ -270,32 +270,17 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
     body["env"]["RUNPOD_API_KEY"] = key
     body["env"]["SSH_PUBLIC_KEY"] = Path(metadata["public_key_path"]).read_text().strip()
     write(root / "lease/create-attempt.json", {"epoch": clock(), "exact_name": lease["name"]})
-    # ---- the POST ----
+    # ---- the POST: the raw returned ID is retained by the client whatever its name (I1) ----
     returned = None; post_error = None
     try:
-        returned = (poster or prepare_lease.Provider(key).create)(body)
+        returned = client.post(poster or prepare_lease.Provider(key).create, body)
     except Exception as error:  # noqa: BLE001 - outcome decided below; only an explicit 4xx is definite
         post_error = str(error) if isinstance(error, RuntimeError) else type(error).__name__
     del body
-    # I1: the raw POST ID (whatever the response's name) and then each valid exact-name census entry are
-    # handed off on their own (written and read back) before any other field is validated.
-    unhanded = []
-
-    def hand(pod_id, role):
-        try:
-            external_guard.handoff(root, pod_id, role, clock())
-            return True
-        except Exception:  # noqa: BLE001
-            if pod_id not in unhanded:
-                unhanded.append(pod_id)
-            return False
     post_id = returned.get("id") if isinstance(returned, dict) and external_guard.valid_id(returned.get("id")) else None
-    if post_id:
-        hand(post_id, "receipt")
     census_ok = False; malformed = False; owned = []; entries = {}
     try:
-        census = (pods or external_guard.list_pods)(key)
-        owned, _, malformed = external_guard.census_entries(census, lease["name"])
+        census, owned, _, malformed = client.census()
         entries = {e["id"]: e for e in census if isinstance(e, dict) and e.get("name") == lease["name"]
                    and external_guard.valid_id(e.get("id"))}
         census_ok = True
@@ -304,29 +289,18 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
     recorded = post_id; source = returned if post_id else None; reconciled = False
     if recorded is None and owned:
         recorded = sorted(owned)[0]; source = entries.get(recorded); reconciled = True
-    for pod_id in owned:
-        hand(pod_id, "receipt" if pod_id == recorded else "duplicate")
     if recorded:
+        client.retain(recorded, "receipt")
         best_effort(root / "lease/created-pod.json", dict({"id": recorded, "name": lease["name"]},
                     **({"reconciled_exact_name": True} if reconciled else {})))
-    # I4: an ID this process could not hand off stays its responsibility: it is deleted and verified
-    # absent here, or the create fails loudly.
-    if unhanded:
-        pending = external_guard.release_unhanded(
-            key, unhanded, lease["name"], max(lease["deadline_epoch"], clock() + MIN_RELEASE_SECONDS),
-            provider=provider or lease_guard.Provider, pods=pods or external_guard.list_pods, clock=clock,
-            sleep=sleep)
-        if pending:
-            best_effort(root / "ALERT-pod-not-released.json", {"epoch": clock(), "pod_ids": pending,
-                        "reason": "handoff_failed"})
-            raise RuntimeError("ALERT: Pods " + ",".join(pending) + " could not be handed off or verified released")
-        if recorded in unhanded:
-            raise RuntimeError("create handoff failed; the Pod was deleted and verified absent")
-    extras = [p for p in owned if p != recorded and p not in unhanded]
+    released = finish()   # I4: IDs not handed off are deleted and verified absent here, or this fails loudly
+    if recorded in released:
+        raise RuntimeError("create handoff failed; the Pod was deleted and verified absent")
+    extras = [p for p in owned if p != recorded and p not in released]
     deleted = []
     for pod_id in extras:   # duplicates are never kept; each is handed off, so the guardian keeps deleting it
         try:
-            delete_pod(key, pod_id, provider)
+            client.delete(pod_id)
             deleted.append(pod_id)
         except Exception:  # noqa: BLE001
             pass
@@ -343,7 +317,7 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
                     "post_error": post_error, "census_ok": census_ok and not malformed})
         raise RuntimeError("create outcome ambiguous; the guardian deletes any Pod with this lease's name "
                            "until an operator runs resolve-ambiguous")
-    # 3. name, price and allocation validated from the raw data before any priced receipt is written
+    # name, price and allocation validated from the raw data before any priced receipt is written
     try:
         rate = lease_guard.pod_rate(source if isinstance(source, dict) else {})
         ok = (source.get("name") == lease["name"] and rate <= lease["rate_ceiling_usd_hour"]
@@ -353,7 +327,7 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
     if not ok:
         best_effort(root / "release-authorized.json", {"epoch": clock(), "reason": "name, price or allocation invalid"})
         try:
-            delete_pod(key, recorded, provider)
+            client.delete(recorded)
         except Exception:  # noqa: BLE001 - the guardian keeps deleting
             pass
         raise ValueError("observed pod price or allocation invalid; DELETE requested, guardian continues")
@@ -426,13 +400,9 @@ def pod_marker_probe(root, run=None):
     return probe
 
 
-def verified_released(root):
-    path = Path(root) / "verify-absent.json"
-    return path.exists() and read(path).get("released") is True
-
-
 def guardian(root, once=False, *, key=None, run_guard=None):
-    """Only the key is required before the guard loop; every optional step is failure-tolerant."""
+    """Only the key is required before the guard loop; every optional step is failure-tolerant.
+    No persisted result (verify-absent.json included) ends it: the guard always checks the provider."""
     root = Path(root)
     key = key or external_guard.api_key()
     if not once:
@@ -444,14 +414,13 @@ def guardian(root, once=False, *, key=None, run_guard=None):
         except Exception:  # noqa: BLE001 - create refuses without a fresh receipt; the guard still runs
             pass
     # external_guard wraps its own writes: a failed receipt never prevents a DELETE, and a failed
-    # known-Pod, marker or retention write is a store failure that blocks completion (I2).
+    # known-Pod write is a store failure that blocks completion (I2).
     (run_guard or external_guard.run)(root, key, once=once,
                                       preserve=None if once else (lambda pod_id, t: preserve(root, pod_id, t)),
-                                      marker_probe=pod_marker_probe(root),
-                                      released=lambda: verified_released(root))
+                                      marker_probe=pod_marker_probe(root))
 
 
-def resolve_ambiguous(root, checked_by, *, key=None, pods=None, clock=time.time):
+def resolve_ambiguous(root, checked_by, *, key=None, pods=None, provider=None, clock=time.time, sleep=time.sleep):
     """Operator-only resolution of a create that may have allocated an unreceipted Pod, after checking
     the RunPod console and API."""
     root = Path(root)
@@ -461,23 +430,28 @@ def resolve_ambiguous(root, checked_by, *, key=None, pods=None, clock=time.time)
         raise ValueError("state who checked the RunPod console/API and what was seen")
     lease = read(root / "lease/lease.json")
     key = key or external_guard.api_key()
-    visible = owned_pods(key, lease, pods)
-    if visible:
+    client = lease_client(root, lease, key, provider, pods, clock)
+    _, visible, _, malformed = client.census()   # each visible owned ID is retained first
+    external_guard.resolve_or_alert(client, clock() + MIN_RELEASE_SECONDS, root / "ALERT-pod-not-released.json",
+                                    sleep)
+    if visible or malformed:
         raise ValueError("Pods with this lease's name are still visible; the guardian keeps deleting them: " +
-                         ",".join(sorted(str(p.get("id")) for p in visible)))
+                         ",".join(visible or ["(malformed entry)"]))
     write(root / external_guard.OPERATOR_RESOLUTION, {"epoch": clock(), "checked_by": checked_by.strip(),
           "census_owned_pods": 0, "rule": "operator checked the RunPod console and API; census empty"})
     return True
 
 
 def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, sleep=time.sleep):
-    """Two observations >= 30 s apart. Each is an exact-ID GET of every retained Pod ID (the receipt and
-    lease/known-pods/) and a well-formed census of Pods with the lease's name; a failed or malformed read
-    is never absence. Also requires the guardian's double-confirmed completion and refuses while a create
-    is unresolved. Its result gates guardian task removal."""
+    """Two observations >= 30 s apart, each a well-formed census (through the client, so a newly seen
+    owned Pod is retained) and an exact-ID GET of every retained Pod ID; a failed or malformed read is
+    never absence. An ID first seen during this check fails it (the next check covers it). Also requires
+    the guardian's double-confirmed completion and refuses while a create is unresolved. IDs that could
+    not be handed off are released here or reported with an ALERT. The result gates task removal."""
     root = Path(root)
     lease = read(root / "lease/lease.json")
     key = key or external_guard.api_key()
+    client = lease_client(root, lease, key, provider, pods, clock)
     unresolved = external_guard.create_unresolved(root) or external_guard.ambiguous_unresolved(root)
     try:
         ids = set(external_guard.known_pods(root))   # strict: any unreadable record raises (I2)
@@ -494,42 +468,48 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
         ids_ok = all(external_guard.valid_id(pod_id) for pod_id in ids)
     except Exception:  # noqa: BLE001 - unreadable retained IDs: never absence
         ids, ids_ok = set(), False
+    initial = set(ids)
     observations = []
     for i in range(2):
         if i:
             sleep(ABSENT_SPACING_SECONDS)
         try:
-            census = (pods or external_guard.list_pods)(key)
-            if not isinstance(census, list) or not all(isinstance(p, dict) for p in census):
-                raise ValueError("census malformed")
-            own = [p for p in census if p.get("name") == lease["name"]]
-            if not all(external_guard.valid_id(p.get("id")) for p in own):
-                raise ValueError("census entry without a valid Pod ID")
-            owned = len(own)
-            listed = {p["id"] for p in census if external_guard.valid_id(p.get("id"))}   # any name is presence
+            _, owned, listed, malformed = client.census()
+            owned_count = None if malformed else len(owned)
         except Exception:  # noqa: BLE001 - a failed or malformed census is never absence
-            owned = None; listed = set()
+            owned_count, listed = None, set()
+        ids |= set(client.retained)                   # newly seen owned IDs join the check
         present = {}
         for pod_id in sorted(ids) if ids_ok else []:
             if pod_id in listed:
                 present[pod_id] = True
                 continue
             try:
-                present[pod_id] = (provider or lease_guard.Provider)(key, pod_id).call("GET") is not None
+                present[pod_id] = client.get(pod_id) is not None
             except Exception:  # noqa: BLE001 - including a malformed success response: never absence
                 present[pod_id] = None
-        observations.append({"epoch": clock(), "owned_pods": owned, "present_by_id": present})
-    absent = ids_ok and all(o["owned_pods"] == 0 and all(v is False for v in o["present_by_id"].values())
-                            for o in observations) and \
+        ids |= set(client.retained)
+        observations.append({"epoch": clock(), "owned_pods": owned_count, "present_by_id": present})
+    discovered = sorted(ids - initial)
+    absent = ids_ok and not discovered and \
+        all(o["owned_pods"] == 0 and all(v is False for v in o["present_by_id"].values()) for o in observations) and \
+        all(set(o["present_by_id"]) == ids for o in observations) and \
         observations[1]["epoch"] - observations[0]["epoch"] >= ABSENT_SPACING_SECONDS
     completion = root / "external-guard-completion.json"
     try:
         guard_done = completion.exists() and read(completion).get("absent_confirmations") == 2
     except Exception:  # noqa: BLE001
         guard_done = False
-    released = absent and guard_done and not unresolved
+    alert = None
+    try:   # I4: an ID this check found but could not hand off is released here, or reported loudly
+        external_guard.resolve_or_alert(client, clock() + MIN_RELEASE_SECONDS,
+                                        root / "ALERT-pod-not-released.json", sleep)
+    except RuntimeError as error:
+        alert = str(error)
+    released = absent and guard_done and not unresolved and alert is None
     record = {"observations": observations, "provider_absent_twice": absent, "guardian_completion": guard_done,
-              "create_unresolved": unresolved, "retained_ids": sorted(ids), "released": released}
+              "create_unresolved": unresolved, "retained_ids": sorted(ids), "discovered_ids": discovered,
+              "alert": alert, "released": released}
     best_effort(root / "verify-absent.json", record)
     if not released:
         best_effort(root / "ALERT-pod-not-released.json", {"epoch": clock(), **record})
@@ -566,10 +546,11 @@ def main():
         guardian(args.control, once=args.once)
     elif args.mode == "status":
         lease = read(args.control / "lease/lease.json")
-        matches = owned_pods(external_guard.api_key(), lease)
-        print(json.dumps({"name": lease["name"], "matching_pods": [
-            safe_pod(p, lease["name"]) if p.get("name") == lease["name"] else {"id": str(p.get("id"))}
-            for p in matches]}))
+        client = lease_client(args.control, lease, external_guard.api_key())
+        census, owned, _, malformed = client.census()   # retains every owned ID it reports
+        print(json.dumps({"name": lease["name"], "malformed_entries": malformed, "matching_pods": [
+            safe_pod(p, lease["name"]) for p in census
+            if isinstance(p, dict) and p.get("name") == lease["name"] and p.get("id") in owned]}))
     elif args.mode == "resolve-ambiguous":
         print(json.dumps({"resolved": resolve_ambiguous(args.control, args.checked_by)}))
     elif args.mode == "verify-absent":

@@ -325,7 +325,8 @@ class ResponsibilityTests(unittest.TestCase):
         release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
         patches = [patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'})]
         if handoff_fails:
-            patches.append(patch.object(pl, 'handoff_in', side_effect=OSError('read-only store')))
+            import external_guard
+            patches.append(patch.object(external_guard, 'handoff_in', side_effect=OSError('read-only store')))
         with no_network(), patches[0], (patches[1] if handoff_fails else patch.object(pl, 'MIN_RELEASE_SECONDS', 120)):
             with self.assertRaises(Exception) as raised:
                 pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW,

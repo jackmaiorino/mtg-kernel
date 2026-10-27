@@ -111,10 +111,15 @@ class ExternalGuardTests(Base):
         self.assertEqual(world.deletes, ['pod1'])
         self.assertEqual(read(self.root / 'external-guard-error.json')['error_type'], 'ValueError')
 
-    def test_released_lease_exits_without_deleting(self):
-        world = World([pod()]); self.record()
-        self.assertEqual(self.loop(world, released=lambda: True), 'returned')
-        self.assertEqual(world.calls, 0)
+    def test_persisted_release_records_never_end_the_guard(self):
+        # round 5 finding 1 (I5): a verify-absent.json or old completion is information only
+        self.record(); self.started(); write(self.root / 'release-authorized.json', {})
+        write(self.root / 'verify-absent.json', {'released': True})
+        write(self.root / 'external-guard-completion.json', {'absent_confirmations': 2})
+        world = World([pod()])
+        self.once(world)
+        self.assertGreater(world.calls, 0)
+        self.assertEqual(world.deletes, ['pod1'])
 
 
 class DuplicateTests(Base):
@@ -495,7 +500,7 @@ class InvariantTests(Base):
         # I1: the ID is kept in memory; the pass counts as a store failure
         self.record('pod1'); self.started(); write(self.root / 'release-authorized.json', {})
         world = World([pod('pod1')])
-        with mock.patch.object(eg, 'handoff', side_effect=OSError('read-only store')):
+        with mock.patch.object(eg, 'handoff_in', side_effect=OSError('read-only store')):
             self.assertEqual(self.loop(world, polls=10), 'running')
         self.assertEqual(world.deletes[0], 'pod1')
         self.assertIsNone(self.completion())
@@ -556,7 +561,7 @@ class PersistenceTests(Base):
     def test_failed_census_id_write_is_retried_and_blocks_completion_until_durable(self):
         self.record('pod1'); self.started(); write(self.root / 'release-authorized.json', {})
         world = World([pod('pod1'), pod('dup2')])
-        real = eg.handoff; failures = [6]; durable_at = []
+        real = eg.handoff_in; failures = [6]; durable_at = []
 
         def flaky(root, pod_id, role, epoch):
             if pod_id == 'dup2' and failures[0]:
@@ -565,7 +570,7 @@ class PersistenceTests(Base):
             if pod_id == 'dup2' and not durable_at:
                 durable_at.append(self.clock.t)
             return real(root, pod_id, role, epoch)
-        with mock.patch.object(eg, 'handoff', side_effect=flaky):
+        with mock.patch.object(eg, 'handoff_in', side_effect=flaky):
             self.assertEqual(self.loop(world, polls=40), 'returned')       # one process: retried until durable
         # both Pods were absent from the second pass (1115 s), so only the unpersisted dup2 delayed completion
         self.assertGreater(durable_at[0], 1115 + 30)
@@ -576,13 +581,13 @@ class PersistenceTests(Base):
     def test_unpersisted_id_blocks_completion_while_the_store_stays_unwritable(self):
         self.record('pod1'); self.started(); write(self.root / 'release-authorized.json', {})
         world = World([pod('pod1'), pod('dup2')])
-        real = eg.handoff
+        real = eg.handoff_in
 
         def never_dup2(root, pod_id, role, epoch):
             if pod_id == 'dup2':
                 raise OSError('disk full')
             return real(root, pod_id, role, epoch)
-        with mock.patch.object(eg, 'handoff', side_effect=never_dup2):
+        with mock.patch.object(eg, 'handoff_in', side_effect=never_dup2):
             self.assertEqual(self.loop(world, polls=10), 'running')
         self.assertIsNone(self.completion())
         self.assertIn('dup2', world.deletes)
@@ -591,12 +596,17 @@ class PersistenceTests(Base):
 class ReleaseUnhandedTests(unittest.TestCase):
     """I4: a creator's own release loop deletes and verifies absence from fresh evidence, bounded by time."""
 
-    def run_release(self, world, deadline_after=120):
+    def run_release(self, world, deadline_after=120, ids=('A',), sleep=None):
         clock = FakeClock(1000.)
+        folder = Path(self.temporary.name) / 'known-pods'
+        client = eg.LeaseClient(folder, NAME, 'k', world.provider, world.list, clock)
         with no_network():
-            pending = eg.release_unhanded('k', ['A'], NAME, 1000. + deadline_after, provider=world.provider,
-                                          pods=world.list, clock=clock, sleep=clock.sleep)
+            pending = eg.release_unhanded(client, list(ids), 1000. + deadline_after,
+                                          sleep or clock.sleep)
         return pending, clock
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
 
     def test_deletes_and_needs_two_spaced_absences(self):
         world = World([pod('A')])
@@ -613,6 +623,154 @@ class ReleaseUnhandedTests(unittest.TestCase):
                 pending, clock = self.run_release(world)
                 self.assertEqual(pending, ['A'])
                 self.assertLessEqual(clock.t, 1000. + 120 + eg.RELEASE_POLL_SECONDS)
+
+
+class OnceEndingTests(Base):
+    """Round 5 finding 2 (I4): a --once pass never ends holding an ID that is neither durable nor verified absent."""
+
+    def failing_dup2(self):
+        real = eg.handoff_in
+
+        def handoff(folder, pod_id, role, epoch):
+            if pod_id == 'dup2':
+                raise OSError('read-only store')
+            return real(folder, pod_id, role, epoch)
+        return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
+
+    def test_once_releases_an_unpersisted_duplicate_and_verifies_it(self):
+        self.record('pod1'); self.started()
+        world = World([pod('pod1'), pod('dup2')])
+        with self.failing_dup2():
+            self.once(world)
+        self.assertNotIn('dup2', world.pods)
+        self.assertIn('pod1', world.pods)
+        self.assertGreaterEqual(self.clock.t - 1100., 30)          # absence verified, not assumed
+
+    def test_once_fails_loudly_when_it_cannot_release(self):
+        self.record('pod1'); self.started()
+        world = World([pod('pod1'), pod('dup2')]); world.delete_failures = -1
+        with self.failing_dup2(), self.assertRaisesRegex(RuntimeError, 'ALERT'):
+            self.once(world)
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['dup2'])
+
+
+class ReleaseReappearanceTests(unittest.TestCase):
+    """Round 5 finding 3: confirmation is never terminal in release_unhanded; finding 4: its census retains."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
+        self.folder = Path(self.temporary.name) / 'known-pods'
+
+    def test_a_reappearing_confirmed_id_is_released_again_before_success(self):
+        clock = FakeClock(1000.)
+        world = World([pod('A'), pod('B')])
+        client = eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock)
+        sleeps = [0]; reappeared = []
+        real_delete = world.provider
+
+        def provider(key, pod_id):
+            api = real_delete(key, pod_id); call = api.call
+
+            def wrapped(method):
+                if method == 'DELETE' and pod_id == 'B' and clock.t < 1100:
+                    raise RuntimeError('provider HTTP 500')    # B stays until 1100
+                return call(method)
+            api.call = wrapped
+            return api
+        client._provider = provider
+
+        def sleep(seconds):
+            sleeps[0] += 1; clock.sleep(seconds)
+            if clock.t == 1050:                                 # A was confirmed absent; it comes back
+                world.pods['A'] = pod('A'); reappeared.append(len(world.deletes))
+        with no_network():
+            pending = eg.release_unhanded(client, ['A', 'B'], 1300., sleep)
+        self.assertEqual(pending, [])
+        self.assertIn('A', world.deletes[reappeared[0]:])          # A was deleted again after reappearing
+        self.assertNotIn('A', world.pods)
+        self.assertGreaterEqual(clock.t, 1100 + 30)
+
+    def test_a_reappearing_id_that_cannot_be_released_is_reported(self):
+        clock = FakeClock(1000.)
+        world = World([pod('A')])
+        client = eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock)
+
+        def sleep(seconds):
+            clock.sleep(seconds)
+            world.pods['A'] = pod('A')                          # A keeps coming back
+        with no_network():
+            pending = eg.release_unhanded(client, ['A'], 1120., sleep)
+        self.assertEqual(pending, ['A'])
+
+    def test_recovery_census_retains_a_new_owned_id(self):
+        clock = FakeClock(1000.)
+        world = World([pod('A'), pod('B')])
+        client = eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock)
+        with no_network():
+            eg.release_unhanded(client, ['A'], 1300., clock.sleep)
+        self.assertEqual(eg.handoff_in(self.folder, 'B', 'census', 0) and
+                         read(self.folder / 'B.json')['id'], 'B')   # B was handed off by the census
+
+    def test_recovery_census_releases_a_new_owned_id_it_cannot_hand_off(self):
+        clock = FakeClock(1000.)
+        world = World([pod('A'), pod('B')])
+        client = eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock)
+        real = eg.handoff_in
+
+        def handoff(folder, pod_id, role, epoch):
+            if pod_id == 'B':
+                raise OSError('read-only store')
+            return real(folder, pod_id, role, epoch)
+        with no_network(), mock.patch.object(eg, 'handoff_in', side_effect=handoff):
+            pending = eg.release_unhanded(client, ['A'], 1300., clock.sleep)
+        self.assertEqual(pending, [])
+        self.assertNotIn('B', world.pods)
+
+
+class ProviderBoundaryTests(unittest.TestCase):
+    """Round 5: census, GET, DELETE and POST calls exist only inside the provider boundary (LeaseClient)
+    or the raw clients themselves; no call site can skip retention."""
+
+    FORBIDDEN_ATTRS = {'call', 'create', '_call', 'list_pods', '_pods', '_provider'}
+    ALLOWED_RECEIVERS = {('create', 'cloud_lease')}   # the lease-level create, which goes through the boundary
+    FORBIDDEN_NAMES = {'pods', 'poster', 'list_pods'}
+    ALLOWED_SCOPES = {'LeaseClient', 'Provider', 'DiagnosedProvider'}
+
+    @staticmethod
+    def violations(source):
+        import ast
+        tree = ast.parse(source)
+        found = []
+
+        def visit(node, scopes):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                scopes = scopes + [node.name]
+            if isinstance(node, ast.Call) and not set(scopes) & ProviderBoundaryTests.ALLOWED_SCOPES:
+                func = node.func
+                if isinstance(func, ast.Attribute) and func.attr in ProviderBoundaryTests.FORBIDDEN_ATTRS:
+                    receiver = func.value.id if isinstance(func.value, ast.Name) else None
+                    if (func.attr, receiver) not in ProviderBoundaryTests.ALLOWED_RECEIVERS:
+                        found.append((node.lineno, func.attr))
+                if isinstance(func, ast.Name) and func.id in ProviderBoundaryTests.FORBIDDEN_NAMES:
+                    found.append((node.lineno, func.id))
+            for child in ast.iter_child_nodes(node):
+                visit(child, scopes)
+        visit(tree, [])
+        return found
+
+    def test_lease_modules_reach_the_provider_only_through_the_boundary(self):
+        here = Path(eg.__file__).resolve().parent
+        modules = [here / 'external_guard.py', here / 'prepare_lease.py',
+                   here.parents[2] / 'tools/search_sharing_allocation/cloud_lease.py',
+                   here.parents[2] / 'tools/search_sharing_allocation/diagnostic_create.py']
+        for module in modules:
+            with self.subTest(module=module.name):
+                self.assertEqual(self.violations(module.read_text(encoding='utf-8')), [])
+
+    def test_the_check_detects_raw_calls(self):
+        self.assertEqual(len(self.violations("def f(provider, key, pods):\n"
+                                             "    provider(key, 'A').call('GET')\n"
+                                             "    pods(key)\n")), 2)
 
 
 if __name__ == '__main__':

@@ -31,7 +31,8 @@ import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
 from lease_guard import validate
-from external_guard import handoff_in, valid_id
+from external_guard import LeaseClient, list_pods, resolve_or_alert, valid_id
+from lease_guard import Provider as LeaseProvider
 from runtime_observation import IMAGE_REFERENCE
 
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
@@ -293,21 +294,27 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     # refusal as a create that may have allocated a Pod no receipt names.
     write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
     api = api or Provider(key)
+    options = dict(release or {})
+    clock = options.pop('clock', time.time); sleep = options.pop('sleep', time.sleep)
+    # The provider boundary (LeaseClient) retains the raw POST ID, validated as a string and
+    # whatever its name or other fields, before this code examines anything else (I1, I4).
+    client = LeaseClient(output / 'known-pods', body.get('name'), key, options.get('provider', LeaseProvider),
+                         options.get('pods', list_pods), clock)
     returned = None; error = None
     try:
-        returned = api.create(body)
+        returned = client.post(api.create, body)
     except Exception as post_error:  # noqa: BLE001 - classified below
         error = post_error
-    # I1: the raw POST ID is validated as a string (never coerced, whatever the
-    # name or other fields) and handed off before anything else is examined.
     pod_id = returned.get('id') if isinstance(returned, dict) and valid_id(returned.get('id')) else None
-    if pod_id is not None:
+    if client.unpersisted:
+        # I4: without a durable handoff this process releases the Pod itself, or fails loudly.
         try:
-            handoff_in(output / 'known-pods', pod_id, 'receipt', now)
+            deadline = float(read(output / 'lease.json')['deadline_epoch'])
         except Exception:  # noqa: BLE001
-            # I4: without a durable handoff this process releases the Pod itself.
-            _release_or_fail(key, pod_id, body.get('name'), output, release)
-            raise RuntimeError('create handoff failed; the Pod was deleted and verified absent') from None
+            deadline = 0.0
+        resolve_or_alert(client, max(deadline, clock() + MIN_RELEASE_SECONDS), output / 'ALERT-pod-not-released.json',
+                         sleep)
+        raise RuntimeError('create handoff failed; the Pod was deleted and verified absent')
     sanitized = None
     if error is None:
         try:
@@ -337,26 +344,6 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     # The ID is already handed off (known-pods); a failed receipt write still fails the create.
     write(output / 'created-pod.json', result, replace=True)
     return result
-
-
-def _release_or_fail(key, pod_id, name, output, release=None):
-    """I4: DELETE the Pod and verify its absence before this creator exits; fail loudly otherwise."""
-    from external_guard import release_unhanded
-    options = dict(release or {})
-    clock = options.get('clock', time.time)
-    try:
-        deadline = float(read(Path(output) / 'lease.json')['deadline_epoch'])
-    except Exception:  # noqa: BLE001
-        deadline = 0.0
-    deadline = max(deadline, clock() + MIN_RELEASE_SECONDS)
-    pending = release_unhanded(key, [pod_id], name, deadline, **options)
-    if pending:
-        try:
-            write(Path(output) / 'ALERT-pod-not-released.json', {'pod_ids': pending, 'reason': 'handoff_failed'},
-                  replace=True)
-        except Exception:  # noqa: BLE001
-            pass
-        raise RuntimeError('ALERT: Pod ' + pod_id + ' could not be handed off or verified released')
 
 
 def main():

@@ -268,9 +268,7 @@ class GuardianTests(Base):
         lease.guardian(root, once=True, key="k", run_guard=run_guard)
         self.assertIsNone(seen["preserve"])
         self.assertTrue(seen["once"])
-        self.assertFalse(seen["released"]())
-        lease.write(root / "verify-absent.json", {"released": True})
-        self.assertTrue(seen["released"]())
+        self.assertNotIn("released", seen)    # no persisted result can end a guard (I5)
 
     def test_marker_probe_reads_resident_state_and_failures_mean_not_ready(self):
         root = self.control(); calls = []
@@ -519,19 +517,19 @@ class ResponsibilityTests(Base):
     """Round 4: I1 retains the raw POST ID and each valid census entry first; I4 keeps responsibility."""
 
     def create_with(self, root, world, poster, failing_ids=(), **options):
-        real = lease.external_guard.handoff
+        real = lease.external_guard.handoff_in
 
-        def handoff(root, pod_id, role, epoch):
+        def handoff(folder, pod_id, role, epoch):
             if pod_id in failing_ids:
                 raise OSError("read-only store")
-            return real(root, pod_id, role, epoch)
+            return real(folder, pod_id, role, epoch)
         prepared = lease.read(root / "lease/lease.json")
         clock = FakeClock(prepared["created_epoch"] + 10)
 
         def slow_poster(body):   # the POST returns near the deadline, which bounds any release loop
             result = poster(body); clock.t = prepared["deadline_epoch"] - 60
             return result
-        with patch.object(lease.external_guard, "handoff", side_effect=handoff):
+        with patch.object(lease.external_guard, "handoff_in", side_effect=handoff):
             return lease.create(root, True, key="k", pods=world.list, poster=slow_poster, funds=funds_ok,
                                 provider=world.provider, clock=clock, sleep=clock.sleep, **options)
 
@@ -583,6 +581,70 @@ class ResponsibilityTests(Base):
             self.create_with(root, world, poster)
         self.assertEqual(lease.external_guard.known_pods(root)["A"], "receipt")
         self.assertEqual(world.deletes, ["A"])
+
+
+class RoundFiveTests(Base):
+    """Round 5: persisted results are information only; every census path retains what it sees."""
+
+    def test_persisted_verify_absent_never_ends_the_guardian(self):
+        root = self.control(); world = World([pod("A")])
+        lease.write(root / "lease/created-pod.json", {"id": "A", "name": NAME})
+        lease.write(root / "release-authorized.json", {})
+        lease.write(root / "worker-started.json", {})
+        lease.write(root / "verify-absent.json", {"released": True})
+        clock = FakeClock(lease.read(root / "lease/lease.json")["created_epoch"] + 60)
+
+        def run_guard(root, key, **kw):
+            return lease.external_guard.run(root, key, pods=world.list, provider=world.provider, clock=clock,
+                                            sleep=clock.sleep, **kw)
+        lease.guardian(root, once=True, key="k", run_guard=run_guard)
+        self.assertEqual(world.deletes, ["A"])
+
+    def test_pre_post_refusal_retains_the_existing_owned_pod(self):
+        root = self.control(); world = World([pod("B")]); posts = []
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            self.create(root, world, lambda body: posts.append(1))
+        self.assertEqual(posts, [])
+        self.assertEqual(lease.external_guard.known_pods(root), {"B": "census"})
+
+    def test_pre_post_refusal_releases_an_existing_pod_it_cannot_hand_off(self):
+        root = self.control(); world = World([pod("B")])
+        prepared = lease.read(root / "lease/lease.json")
+        clock = FakeClock(prepared["created_epoch"] + 10)
+        real = lease.external_guard.handoff_in
+
+        def handoff(folder, pod_id, role, epoch):
+            if pod_id == "B":
+                raise OSError("read-only store")
+            return real(folder, pod_id, role, epoch)
+
+        def funds(key):   # the funding read happens just before the census; move near the deadline there
+            clock.t = prepared["deadline_epoch"] - 60
+            return funds_ok(key)
+        with patch.object(lease.external_guard, "handoff_in", side_effect=handoff), \
+                self.assertRaisesRegex(ValueError, "already exists"):
+            lease.create(root, True, key="k", pods=world.list, poster=lambda body: None, funds=funds,
+                         provider=world.provider, clock=clock, sleep=clock.sleep)
+        self.assertNotIn("B", world.pods)
+
+    def test_verification_retains_a_new_owned_pod_and_checks_it_on_retry(self):
+        root = self.control()
+        lease.write(root / "lease/create-attempt.json", {})
+        lease.write(root / "lease/created-pod.json", {"id": "A", "name": NAME})
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        world = World([pod("B")])                        # A is gone; duplicate B is billed
+        clock = FakeClock(1000.0)
+
+        def check():
+            return lease.verify_absent(root, key="k", pods=world.list, provider=world.provider, clock=clock,
+                                       sleep=clock.advance)
+        self.assertFalse(check())                       # B discovered by the census
+        self.assertEqual(lease.external_guard.known_pods(root)["B"], "census")
+        world.census = lambda current: []                # the retry's census omits B
+        self.assertFalse(check())                       # B is still GET-checked and present
+        self.assertTrue(lease.read(root / "verify-absent.json")["observations"][0]["present_by_id"]["B"])
+        world.pods.clear()
+        self.assertTrue(check())
 
 
 if __name__ == "__main__":
