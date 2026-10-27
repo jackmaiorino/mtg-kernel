@@ -98,15 +98,25 @@ struct Boundary {
     refs: Vec<FlatActionRefV2>,
     objects: Vec<FlatActionObjectV2>,
 }
+/// `diagnose`: on a decision-input failure, also name the failing check
+/// (recording only; costs a repeat of the checks, so only on request).
 fn boundary(
     s: &FastActorSessionV1,
     d: FastActorDecisionV1,
     mode: V4SearchSampleMode,
+    diagnose: bool,
 ) -> Result<Boundary, BoundaryFailure> {
     let invalid = |stage| BoundaryFailure::at(stage, Error::InvalidVisibleBinding);
-    let (observation, semantics) = s
-        .diagnostic_current_decision_input_v4(d)
-        .map_err(|e| invalid("decision_input")(format!("{e:?}")))?;
+    let (observation, semantics) = s.diagnostic_current_decision_input_v4(d).map_err(|e| {
+        invalid("decision_input")(if diagnose {
+            // `<variant>@<check> <detail>`: the kind keeps variant and check.
+            let check = s.diagnose_current_decision_input_v4(d);
+            let (name, detail) = check.split_once(' ').unwrap_or((&check, ""));
+            format!("{e:?}@{name} {detail}")
+        } else {
+            format!("{e:?}")
+        })
+    })?;
     if mode == V4SearchSampleMode::Legacy && observation.extensions.decision_local_library.is_some()
     {
         return Err(BoundaryFailure {
@@ -290,7 +300,7 @@ impl FastActorSessionV1 {
         let FastActorResponseV1::Decision(d) = self.current_response() else {
             return Err(Error::NoLiveDecision);
         };
-        let before = boundary(self, d, mode).map_err(|f| f.error)?;
+        let before = boundary(self, d, mode, false).map_err(|f| f.error)?;
         let actor = self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
         let plan = if mode == V4SearchSampleMode::FutureChanceV3 {
             crate::effect::library_choice_search_v2::plan_future_v3(&self.state, actor)
@@ -382,7 +392,7 @@ impl FastActorSessionV1 {
         copy.flat_action_cache_spare = None;
         copy.flat_action_cache_spare_v2 = None;
         copy.current = Some(current);
-        let after = match boundary(&copy, d, mode) {
+        let after = match boundary(&copy, d, mode, encoding_failure.is_some()) {
             Ok(after) => after,
             Err(failure) => {
                 // Recording only (mtg-kernel#380): keep the inner error that
@@ -434,7 +444,7 @@ fn boundary_encoding_failure_v1(
     };
     let detail = format!(
         "{}; {:?} legal={} root_candidates={} sampled_candidates={}; {}",
-        clip(&failure.inner, 160),
+        clip(&failure.inner, 400),
         d.decision_kind,
         d.legal_action_count,
         original.len(),
@@ -443,7 +453,7 @@ fn boundary_encoding_failure_v1(
     );
     V4BoundaryEncodingFailureV1 {
         kind,
-        detail: clip(&detail, 480),
+        detail: clip(&detail, 640),
     }
 }
 
@@ -641,7 +651,12 @@ mod tests {
         );
         assert!(matches!(result, Err(Error::SampleBoundaryEncodingFailed)));
         let recorded = sink.expect("encoding failure recorded");
-        assert!(recorded.kind.contains(':'), "{recorded:?}");
+        // The live menu shrank, so the decision input fails and the kind
+        // names the failing check after the variant.
+        assert!(
+            recorded.kind.starts_with("decision_input:") && recorded.kind.contains('@'),
+            "{recorded:?}"
+        );
         assert!(
             recorded.detail.contains("first differing candidate"),
             "{recorded:?}"
