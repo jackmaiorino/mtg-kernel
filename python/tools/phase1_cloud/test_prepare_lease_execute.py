@@ -232,6 +232,45 @@ class FailureRecordingTests(unittest.TestCase):
             self.assertFalse((output / 'created-pod.json').exists())
 
 
+class AmbiguousCreateTests(unittest.TestCase):
+    """collab#335 review r1 finding 2: only an explicit 4xx proves that no Pod exists."""
+
+    def attempt(self, temporary, error):
+        output = prepared_output(temporary)
+        snapshot = snapshot_path(temporary)
+        api = Mock(); api.create.side_effect = error
+        with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+            with self.assertRaises(type(error)):
+                pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+        self.snapshot = snapshot
+        return output
+
+    def test_timeout_or_5xx_records_an_ambiguous_create(self):
+        for error in (RuntimeError('provider request unavailable'), RuntimeError('provider HTTP 503'),
+                      TimeoutError('timed out')):
+            with self.subTest(error=str(error)), tempfile.TemporaryDirectory() as temporary:
+                output = self.attempt(temporary, error)
+                self.assertTrue((output / 'create-attempt.json').exists())
+                self.assertTrue((output / 'create-ambiguous.json').exists())
+                self.assertFalse(read(output / 'create-pod-failure.json')['definite'])
+
+    def test_explicit_4xx_is_definite_and_not_ambiguous(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.attempt(temporary, RuntimeError('provider HTTP 400'))
+            self.assertTrue(read(output / 'create-pod-failure.json')['definite'])
+            self.assertFalse((output / 'create-ambiguous.json').exists())
+
+    def test_second_create_of_the_same_preparation_refuses_before_posting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.attempt(temporary, RuntimeError('provider request unavailable'))
+            snapshot = self.snapshot
+            api = Mock()
+            with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+                with self.assertRaisesRegex(ValueError, 'earlier create receipt'):
+                    pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+            api.create.assert_not_called()
+
+
 def fresh_spec():
     # main() has no --now hook for the offline --spec step either, so the
     # lease's own created_epoch/account_observed_epoch/quote_observed_epoch

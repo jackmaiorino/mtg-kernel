@@ -348,6 +348,80 @@ class ReleaseVerificationTests(Base):
                                                 pods=World([]).list))
         self.assertTrue(self.check(root, World([])))
 
+    def test_retained_duplicate_present_by_id_blocks_release_despite_an_empty_census(self):
+        root = self.recorded()
+        lease.external_guard.remember(root, "B", "duplicate", 1000.0)
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        world = World([pod("B")]); world.census = lambda current: []    # census omits B, GET still finds it
+        self.assertFalse(self.check(root, world))
+
+    def test_census_listing_the_recorded_pod_blocks_release_despite_a_404(self):
+        root = self.recorded()
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        world = World([pod("A")]); world.get_script = iter(["absent"] * 4)
+        self.assertFalse(self.check(root, world))
+
+    def test_attempt_without_receipt_is_unresolved_until_operator_resolution(self):
+        root = self.control()
+        lease.write(root / "lease/create-attempt.json", {})
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        self.assertFalse(self.check(root, World([])))
+        self.assertTrue(lease.resolve_ambiguous(root, "operator checked console 12:00", key="k",
+                                                pods=World([]).list))
+        self.assertTrue(self.check(root, World([])))
+
+
+class ReviewR1CreateTests(Base):
+    """Review r1 findings 1 and 5 on the create path."""
+
+    def test_failed_duplicate_delete_is_retained_for_the_guardian(self):
+        root = self.control(); world = World(); world.delete_failures = -1
+
+        def poster(body):
+            world.pods["A"] = pod("A"); world.pods["B"] = pod("B")
+            return pod("A")
+        self.assertEqual(self.create(root, world, poster)["id"], "A")
+        self.assertEqual(world.deletes, ["B"])
+        self.assertEqual(lease.external_guard.known_pods(root)["B"]["role"], "duplicate")
+        self.assertEqual(lease.external_guard.known_pods(root)["A"]["role"], "receipt")
+
+    def test_post_creation_diagnostics_never_gate_the_delete(self):
+        failing = {"post-census-error.json", "duplicates-deleted.json", "created-pod.json",
+                   "created-pod-detail.json", "release-authorized.json"}
+        original = lease.write
+
+        def write(path, value, **kw):
+            if Path(path).name in failing:
+                raise OSError("disk full")
+            return original(path, value, **kw)
+        # census works before the POST, then fails; the returned Pod is overpriced
+        root = self.control(); world = World(); calls = [0]
+
+        def census(key):
+            calls[0] += 1
+            if calls[0] > 1:
+                raise RuntimeError("census HTTP 503")
+            return world.list(key)
+
+        def poster(body):
+            world.pods["A"] = pod("A", costPerHr=9.0); return pod("A", costPerHr=9.0)
+        with patch.object(lease, "write", write):
+            with self.assertRaisesRegex(ValueError, "price or allocation invalid"):
+                lease.create(root, True, key="k", pods=census, poster=poster, funds=funds_ok,
+                             provider=world.provider)
+        self.assertEqual(world.deletes, ["A"])
+        self.assertIn("A", lease.external_guard.known_pods(root))
+        # duplicates are deleted even when every post-creation receipt fails
+        import shutil
+        shutil.rmtree(root)
+        root = self.control(); world = World()
+
+        def two(body):
+            world.pods["A"] = pod("A"); world.pods["B"] = pod("B"); return pod("A")
+        with patch.object(lease, "write", write):
+            self.assertEqual(self.create(root, world, two)["id"], "A")
+        self.assertEqual(world.deletes, ["B"])
+
 
 if __name__ == "__main__":
     unittest.main()

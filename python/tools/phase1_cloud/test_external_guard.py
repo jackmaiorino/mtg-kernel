@@ -276,5 +276,120 @@ class StartupTests(Base):
         self.assertLessEqual(len(probes), 1 + 8 * eg.POLL_SECONDS // eg.MARKER_PROBE_SECONDS)
 
 
+class RetentionTests(Base):
+    """Review r1 finding 1: every discovered or duplicate ID is retained until it alone is confirmed absent."""
+
+    def test_adopted_pod_is_still_deleted_after_a_census_outage(self):
+        world = World([pod()])
+        self.once(world)                                   # adopted, retained durably
+        self.assertIn('pod1', eg.known_pods(self.root))
+        world.list_fails = True
+        self.clock.t = lease()['deadline_epoch'] + 5
+        self.once(world)                                   # a later pass (a fresh process would do the same)
+        self.assertEqual(world.deletes[0], 'pod1')
+
+    def test_retained_duplicate_missing_from_the_census_is_deleted_and_blocks_completion(self):
+        self.record('pod1'); self.started(); write(self.root / 'release-authorized.json', {})
+        eg.remember(self.root, 'dup2', 'duplicate', 1100.)
+        world = World([pod('pod1'), pod('dup2')]); world.delete_failures = -1
+        world.census = lambda current: [p for p in current if p['id'] != 'dup2']   # stale census omits dup2
+        self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertGreaterEqual(world.deletes.count('dup2'), 10)
+        self.assertIsNone(self.completion())
+
+    def test_each_retained_id_needs_its_own_two_absences(self):
+        self.record('pod1'); self.started(); write(self.root / 'release-authorized.json', {})
+        eg.remember(self.root, 'dup2', 'duplicate', 1100.)
+        world = World([pod('pod1'), pod('dup2')])
+        self.assertEqual(self.loop(world), 'returned')
+        self.assertEqual(sorted(world.deletes[:2]), ['dup2', 'pod1'])
+        self.assertTrue((self.root / eg.KNOWN_DIR / 'dup2.absent.json').exists())
+        self.assertEqual(self.completion()['known_pods'], ['dup2', 'pod1'])
+
+
+class UnresolvedCreateTests(Base):
+    """Review r1 finding 2: release authorization never proves that a create failed."""
+
+    def test_timed_out_create_with_release_authorized_never_completes_and_deletes_a_late_pod(self):
+        write(self.root / 'lease/create-attempt.json', {})
+        write(self.root / 'lease/create-ambiguous.json', {'error_type': 'RuntimeError'})
+        write(self.root / 'lease/create-pod-failure.json', {'definite': False})
+        write(self.root / 'release-authorized.json', {})
+        world = World([])
+        self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertIsNone(self.completion())
+        world.pods['late'] = pod('late')                   # the delayed Pod appears
+        self.loop(world, polls=3)
+        self.assertIn('late', world.deletes)
+        self.assertIsNone(self.completion())
+
+    def test_attempt_without_receipt_blocks_completion_until_a_definite_refusal(self):
+        write(self.root / 'lease/create-attempt.json', {})
+        self.clock.t = lease()['deadline_epoch']
+        self.assertEqual(self.loop(World([]), polls=10), 'running')
+        self.assertIsNone(self.completion())
+        write(self.root / 'lease/create-pod-failure.json', {'definite': True})
+        self.assertEqual(self.loop(World([]), polls=10), 'returned')
+
+
+class CensusAbsenceTests(Base):
+    """Review r1 finding 3: absence needs a 404 for the exact ID AND a census that does not list it."""
+
+    def test_census_listing_the_recorded_pod_is_never_absence(self):
+        self.record(); self.started(); write(self.root / 'release-authorized.json', {})
+        world = World([pod()]); world.delete_failures = -1
+        world.get_script = iter(['absent'] * 100)          # GET says 404 while the census still lists pod1
+        self.assertEqual(self.loop(world, polls=10), 'running')
+        self.assertIsNone(self.completion())
+        self.assertGreaterEqual(world.deletes.count('pod1'), 10)
+
+
+class MalformedProviderDataTests(Base):
+    """Review r1 finding 4: malformed provider data never stops the DELETE of known IDs."""
+
+    def test_malformed_get_response_still_deletes(self):
+        for raw in ([], b'text', 42, {'id': 'pod1'}):
+            with self.subTest(raw=raw):
+                self.record(); self.started()
+                world = World([pod()]); world.get_script = iter([raw])
+                status = self.once(world)
+                self.assertIn(status['reason'], ('guard_failure', 'price_malformed'))
+                self.assertEqual(world.deletes, ['pod1'])
+
+    def test_malformed_census_is_a_failure_never_absence(self):
+        for census in (lambda current: current + [{'name': NAME}], lambda current: current + ['junk'],
+                       lambda current: {'pods': current}):
+            with self.subTest(census=census):
+                self.record(); self.started()
+                world = World([pod()]); world.census = census
+                self.assertEqual(self.once(world)['reason'], 'guard_failure')
+                self.assertEqual(world.deletes, ['pod1'])
+                world.pods.clear()
+                self.assertEqual(self.loop(world, polls=5), 'running')
+                self.assertIsNone(self.completion())
+
+    def test_adopted_pod_is_deleted_at_the_deadline_despite_a_malformed_census(self):
+        world = World([pod()])
+        self.once(world)
+        world.census = lambda current: [{'name': NAME}]
+        self.clock.t = lease()['deadline_epoch'] + 5
+        self.once(world)
+        self.assertEqual(world.deletes[0], 'pod1')
+
+
+class StudyTagTests(Base):
+    """A study tag prefix is never ownership in the shared guard (no ownership source exists here)."""
+
+    def test_tag_prefixed_pod_of_another_lease_is_never_a_target(self):
+        write(self.root / 'lease/lease.json', lease() | {'study_tag': 'phase1-qual'}, replace=True)
+        other = {'id': 'other', 'name': 'phase1-qual-other-lease', 'costPerHr': 0.96}
+        world = World([other])
+        self.clock.t = lease()['deadline_epoch'] + 5
+        self.assertEqual(self.loop(world), 'returned')
+        self.assertEqual(world.deletes, [])
+        self.assertIn('other', world.pods)
+        self.assertEqual(eg.known_pods(self.root), {})
+
+
 if __name__ == '__main__':
     unittest.main()

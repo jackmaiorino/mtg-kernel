@@ -10,7 +10,9 @@ Spend safety (mtg-kernel-collab#335):
   exact name, requires a fresh account funding read (at most 120 s old at the
   POST, not under balance, the lease still fundable at the observed balance),
   records the returned identity before parsing any price, censuses after the
-  POST and DELETEs duplicates. A missing, malformed or above-ceiling price
+  POST and DELETEs duplicates. Every Pod ID it sees is retained under
+  lease/known-pods/, so the guardian keeps deleting each until it alone is
+  confirmed absent; post-creation diagnostics are best-effort. A missing, malformed or above-ceiling price
   (max of costPerHr and adjustedCostPerHr) requests release and DELETEs at once.
 - an ambiguous POST (timeout, 5xx, transport error) with no Pod seen never
   resolves automatically: lease/create-ambiguous.json keeps the guardian
@@ -156,10 +158,29 @@ raise SystemExit(guard.returncode)
 
 
 def owned_pods(key, lease, pods=None):
-    """Every Pod with the lease's exact name (or its study tag, when set): all of them are this lease's."""
-    tag = lease.get("study_tag")
-    return [p for p in (pods or external_guard.list_pods)(key)
-            if p.get("name") == lease["name"] or (tag and str(p.get("name", "")).startswith(tag))]
+    """Every Pod with the lease's exact name: all of them are this lease's. Name prefixes are never owned."""
+    census = (pods or external_guard.list_pods)(key)
+    if not isinstance(census, list):
+        raise ValueError("census is not a list")
+    return [p for p in census if isinstance(p, dict) and p.get("name") == lease["name"]]
+
+
+def best_effort(path, value):
+    """Post-creation diagnostics never gate a DELETE."""
+    try:
+        write(path, value, replace=True)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def retain(root, pod_id, role, epoch):
+    """Durably hand a Pod ID to the guardian (lease/known-pods/); best-effort, the census is the fallback."""
+    try:
+        external_guard.remember(root, pod_id, role, epoch)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def matching_pods(key, name, pods=None):
@@ -263,25 +284,34 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
         post_error = str(error) if isinstance(error, RuntimeError) else type(error).__name__
     del body
     recorded = None; source = returned
-    try:   # 1. the returned identity is recorded first, before anything that can fail on pricing
+    # 1. the returned identity is kept first, before anything that can fail on pricing or local storage
+    try:
         recorded = pod_identity(returned, lease["name"])
-        write(root / "lease/created-pod.json", recorded)
     except Exception:  # noqa: BLE001
         recorded = None
-    # 2. reconciliation, each step isolated; the guardian keeps deleting duplicates regardless
+    if recorded:
+        retain(root, recorded["id"], "receipt", clock())
+        best_effort(root / "lease/created-pod.json", recorded)
+    # 2. reconciliation, each step isolated; every diagnostic is best-effort and never gates a DELETE
     matches = None
     try:
         matches = owned_pods(key, lease, pods)
-    except Exception as e:  # noqa: BLE001
-        write(root / "lease/post-census-error.json", {"epoch": clock(), "error_type": type(e).__name__})
+        if not all(external_guard.valid_id(p.get("id")) for p in matches):
+            raise ValueError("census entry without a valid Pod ID")
+    except Exception as e:  # noqa: BLE001 - a failed or malformed census is never evidence of absence
+        matches = None
+        best_effort(root / "lease/post-census-error.json", {"epoch": clock(), "error_type": type(e).__name__})
     if recorded is None and matches:
         try:
-            source = sorted([p for p in matches if p.get("name") == lease["name"]], key=lambda p: str(p["id"]))[0]
+            source = sorted(matches, key=lambda p: str(p["id"]))[0]
             recorded = pod_identity(source, lease["name"])
-            write(root / "lease/created-pod.json", dict(recorded, reconciled_exact_name=True))
+            retain(root, recorded["id"], "receipt", clock())
+            best_effort(root / "lease/created-pod.json", dict(recorded, reconciled_exact_name=True))
         except Exception:  # noqa: BLE001
             recorded = None
     extras = [p["id"] for p in (matches or []) if recorded is None or p["id"] != recorded["id"]]
+    for pod_id in extras:   # retained durably first, so the guardian keeps deleting each until it is absent
+        retain(root, pod_id, "duplicate", clock())
     deleted = []
     for pod_id in extras:   # duplicates are never kept
         try:
@@ -290,16 +320,16 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
         except Exception:  # noqa: BLE001
             pass
     if extras:
-        write(root / "lease/duplicates-deleted.json", {"epoch": clock(), "extras": extras, "deleted": deleted})
+        best_effort(root / "lease/duplicates-deleted.json", {"epoch": clock(), "extras": extras, "deleted": deleted})
     if recorded is None:
-        definite = post_error is not None and re.fullmatch(r"provider HTTP 4\d\d", post_error) is not None \
-            and matches is not None and not matches
+        definite = (post_error is not None and re.fullmatch(r"provider HTTP 4\d\d", post_error) is not None
+                    and matches is not None and not matches)
         if definite:
-            write(root / "lease/create-failure.json", {"epoch": clock(), "exact_name": lease["name"],
-                  "provider_error": post_error, "census_ok": True})
+            best_effort(root / "lease/create-failure.json", {"epoch": clock(), "exact_name": lease["name"],
+                        "provider_error": post_error, "census_ok": True})
             raise RuntimeError("create refused by the provider (" + post_error + "); no Pod exists")
-        write(root / "lease/create-ambiguous.json", {"epoch": clock(), "exact_name": lease["name"],
-              "post_error": post_error, "census_ok": matches is not None})
+        best_effort(root / "lease/create-ambiguous.json", {"epoch": clock(), "exact_name": lease["name"],
+                    "post_error": post_error, "census_ok": matches is not None})
         raise RuntimeError("create outcome ambiguous; the guardian deletes any Pod with this lease's name "
                            "until an operator runs resolve-ambiguous")
     # 3. price and allocation validated from the raw response before any priced receipt is written
@@ -309,17 +339,14 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
     except Exception:  # noqa: BLE001 - NaN, missing or malformed price
         ok = False
     if not ok:
+        best_effort(root / "release-authorized.json", {"epoch": clock(), "reason": "price or allocation invalid"})
         try:
-            write(root / "release-authorized.json", {"epoch": clock(), "reason": "price or allocation invalid"},
-                  replace=True)
-        finally:
-            try:
-                delete_pod(key, recorded["id"], provider)
-            except Exception:  # noqa: BLE001 - the guardian keeps deleting
-                pass
+            delete_pod(key, recorded["id"], provider)
+        except Exception:  # noqa: BLE001 - the guardian keeps deleting
+            pass
         raise ValueError("observed pod price or allocation invalid; DELETE requested, guardian continues")
     detail = safe_pod(source, lease["name"])
-    write(root / "lease/created-pod-detail.json", detail)
+    best_effort(root / "lease/created-pod-detail.json", detail)
     return detail
 
 
@@ -413,9 +440,10 @@ def guardian(root, once=False, *, key=None, run_guard=None):
 
 
 def resolve_ambiguous(root, checked_by, *, key=None, pods=None, clock=time.time):
-    """Operator-only resolution of an ambiguous create after checking the RunPod console and API."""
+    """Operator-only resolution of a create that may have allocated an unreceipted Pod, after checking
+    the RunPod console and API."""
     root = Path(root)
-    if not external_guard.ambiguous_unresolved(root):
+    if not external_guard.create_unresolved(root):
         raise ValueError("no unresolved ambiguous create for this lease")
     if not isinstance(checked_by, str) or len(checked_by.strip()) < 10:
         raise ValueError("state who checked the RunPod console/API and what was seen")
@@ -431,43 +459,51 @@ def resolve_ambiguous(root, checked_by, *, key=None, pods=None, clock=time.time)
 
 
 def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, sleep=time.sleep):
-    """Two observations >= 30 s apart, each an exact-ID GET of the recorded Pod and a census of every
-    Pod with the lease's name (a failed read is never absence), plus the guardian's own double-confirmed
-    completion; refuses while the create is ambiguous. Its result gates guardian task removal."""
+    """Two observations >= 30 s apart. Each is an exact-ID GET of every retained Pod ID (the receipt and
+    lease/known-pods/) and a well-formed census of Pods with the lease's name; a failed or malformed read
+    is never absence. Also requires the guardian's double-confirmed completion and refuses while a create
+    is unresolved. Its result gates guardian task removal."""
     root = Path(root)
     lease = read(root / "lease/lease.json")
     key = key or external_guard.api_key()
-    created = read(root / "lease/created-pod.json") if (root / "lease/created-pod.json").exists() else None
-    ambiguous = (root / "lease/create-attempt.json").exists() and created is None and \
-        not (root / external_guard.OPERATOR_RESOLUTION).exists() and \
-        not (root / "lease/create-failure.json").exists()
+    unresolved = external_guard.create_unresolved(root) or external_guard.ambiguous_unresolved(root)
+    try:
+        ids = set(external_guard.known_pods(root))
+        if (root / "lease/created-pod.json").exists():
+            ids.add(read(root / "lease/created-pod.json")["id"])
+        ids_ok = all(external_guard.valid_id(pod_id) for pod_id in ids)
+    except Exception:  # noqa: BLE001 - unreadable retained IDs: never absence
+        ids, ids_ok = set(), False
     observations = []
     for i in range(2):
         if i:
             sleep(ABSENT_SPACING_SECONDS)
         try:
-            owned = len(owned_pods(key, lease, pods))
+            census = owned_pods(key, lease, pods)
+            owned = len(census) if all(external_guard.valid_id(p.get("id")) for p in census) else None
         except Exception:  # noqa: BLE001 - a failed census is never absence
             owned = None
-        try:
-            by_id = (provider or lease_guard.Provider)(key, created["id"]).call("GET") is not None \
-                if created else False
-        except Exception:  # noqa: BLE001
-            by_id = None
-        observations.append({"epoch": clock(), "owned_pods": owned, "by_id_present": by_id})
-    absent = all(o["owned_pods"] == 0 and o["by_id_present"] is False for o in observations) and \
+        present = {}
+        for pod_id in sorted(ids) if ids_ok else []:
+            try:
+                present[pod_id] = (provider or lease_guard.Provider)(key, pod_id).call("GET") is not None
+            except Exception:  # noqa: BLE001
+                present[pod_id] = None
+        observations.append({"epoch": clock(), "owned_pods": owned, "present_by_id": present})
+    absent = ids_ok and all(o["owned_pods"] == 0 and all(v is False for v in o["present_by_id"].values())
+                            for o in observations) and \
         observations[1]["epoch"] - observations[0]["epoch"] >= ABSENT_SPACING_SECONDS
     completion = root / "external-guard-completion.json"
     try:
         guard_done = completion.exists() and read(completion).get("absent_confirmations") == 2
     except Exception:  # noqa: BLE001
         guard_done = False
-    released = absent and guard_done and not ambiguous
+    released = absent and guard_done and not unresolved
     record = {"observations": observations, "provider_absent_twice": absent, "guardian_completion": guard_done,
-              "create_ambiguous": ambiguous, "released": released}
-    write(root / "verify-absent.json", record, replace=True)
+              "create_unresolved": unresolved, "retained_ids": sorted(ids), "released": released}
+    best_effort(root / "verify-absent.json", record)
     if not released:
-        write(root / "ALERT-pod-not-released.json", {"epoch": clock(), **record}, replace=True)
+        best_effort(root / "ALERT-pod-not-released.json", {"epoch": clock(), **record})
     return released
 
 

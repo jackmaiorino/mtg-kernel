@@ -283,14 +283,29 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
         raise ValueError('create already attempted or in progress for this lease '
                          '(one POST per prepared lease)') from None
     os.close(lock)
+    # The external guard treats an attempt without a receipt or a definite
+    # refusal as a create that may have allocated a Pod no receipt names.
+    write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
     api = api or Provider(key)
     try:
         raw = api.create(body)
         sanitized = sanitize_pod(raw)
-    except (RuntimeError, ValueError, KeyError, TypeError) as error:
-        write(output / 'create-pod-failure.json', {'schema': FAILURE_SCHEMA,
-              'failed_epoch': now, 'error_type': type(error).__name__,
-              'error': str(error)}, replace=True)
+    except Exception as error:
+        # Only an explicit provider refusal (HTTP 4xx) proves no Pod exists. A
+        # timeout, 5xx, transport error or malformed response is ambiguous: the
+        # external guard keeps deleting any Pod with the lease's name and never
+        # completes until an operator writes ambiguous-resolved-by-operator.json.
+        definite = isinstance(error, RuntimeError) and re.fullmatch(r'provider HTTP 4\d\d', str(error)) is not None
+        for path, value in ((output / 'create-pod-failure.json', {'schema': FAILURE_SCHEMA,
+                             'failed_epoch': now, 'error_type': type(error).__name__,
+                             'error': str(error), 'definite': definite}),
+                            (output / 'create-ambiguous.json', None if definite else {
+                             'epoch': now, 'exact_name': body.get('name'), 'error_type': type(error).__name__})):
+            if value is not None:
+                try:
+                    write(path, value, replace=True)
+                except Exception:  # noqa: BLE001 - create-attempt.json already blocks guard completion
+                    pass
         raise
     result = {'schema': CREATED_SCHEMA, 'created_epoch': now, **sanitized}
     write(output / 'created-pod.json', result, replace=True)

@@ -72,7 +72,8 @@ class World:
         self.delete_failures = 0      # the next N DELETEs fail; -1 = always
         self.get_failures = 0         # the next N GETs fail; -1 = always
         self.list_fails = False
-        self.get_script = None        # optional iterator of 'absent' / 'present' overriding GET
+        self.census = None            # optional callable(current pods) -> raw census (stale or malformed data)
+        self.get_script = None        # optional iterator of 'absent' / 'present' / raw responses overriding GET
         self.funds_value = dict(FUNDS_OK)
         self.funds_script = None      # optional iterator of account reads (an Exception instance raises)
         self.funds_calls = 0
@@ -89,7 +90,8 @@ class World:
             self._count(('LIST', None))
             if self.list_fails:
                 raise RuntimeError('census HTTP 503')
-            return [dict(p) for p in self.pods.values()]
+            current = [dict(p) for p in self.pods.values()]
+            return self.census(current) if self.census else current
 
     def provider(self, key, pod_id):
         return FakeApi(self, pod_id)
@@ -111,9 +113,9 @@ class FakeApi:
                     world.get_failures -= world.get_failures > 0
                     raise RuntimeError('provider HTTP 503')
                 if world.get_script is not None:
-                    step = next(world.get_script, 'absent')   # 'absent', 'present' or a Pod dict
-                    if isinstance(step, dict):
-                        return dict(step)
+                    step = next(world.get_script, 'absent')   # 'absent', 'present' or a raw response
+                    if not isinstance(step, str):
+                        return step
                     return None if step == 'absent' else dict(world.pods.get(self.pod_id) or {'id': self.pod_id})
                 return dict(world.pods[self.pod_id]) if self.pod_id in world.pods else None
             if method == 'DELETE':
