@@ -229,6 +229,9 @@ pub enum LibraryCardFilter {
     /// A blue instant card (Merchant Scroll). Appended for the eternal
     /// catalog.
     BlueInstantV1,
+    /// A colorless creature card (Eye of Ugin). Appended for the eternal
+    /// catalog.
+    ColorlessCreatureV1,
 }
 
 impl LibraryCardFilter {
@@ -15599,6 +15602,10 @@ fn stage_creature_sacrifice_choice(
 pub(crate) enum LinkedHandExileKind {
     ReturnTrigger,
     UntilSourceLeaves,
+    /// The card stays exiled (Thought-Knot Seer). Appended for the eternal
+    /// catalog.
+    #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+    ExiledV1,
 }
 
 impl LinkedHandExileKind {
@@ -15616,6 +15623,8 @@ pub(crate) fn linked_hand_exile_kind(card_def: u16) -> Option<LinkedHandExileKin
         "Mesmeric Fiend" => Some(LinkedHandExileKind::ReturnTrigger),
         #[cfg(feature = "standard-magezero-fixtures")]
         "Deep-Cavern Bat" => Some(LinkedHandExileKind::UntilSourceLeaves),
+        #[cfg(feature = "eternal-fixtures")]
+        "Thought-Knot Seer" => Some(LinkedHandExileKind::ExiledV1),
         _ => None,
     }
 }
@@ -15631,6 +15640,8 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Hardlight Containment"
             | "Banishing Light"
             | "Portable Hole"
+            | "Leyline Binding"
+            | "Static Prison"
     )
 }
 
@@ -16054,6 +16065,9 @@ fn library_filter_matches(
         LibraryCardFilter::BlueInstantV1 => {
             def.has_type(CardType::Instant) && def.colors.contains(&crate::mana::ManaColor::U)
         }
+        LibraryCardFilter::ColorlessCreatureV1 => {
+            def.has_type(CardType::Creature) && def.colors.is_empty()
+        }
     })
 }
 
@@ -16102,6 +16116,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         }
         LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 42),
         LibraryCardFilter::BlueInstantV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 43),
+        LibraryCardFilter::ColorlessCreatureV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 44),
     }
 }
 

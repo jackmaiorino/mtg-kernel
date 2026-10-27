@@ -2287,18 +2287,16 @@ fn flat_validate_origin_decision_common_scoped_v42(
                 if choices.is_empty() {
                     return Err(invalid());
                 }
-                let cost_target_count =
-                    crate::engine::mana_ability_cost_targets(*player, *object, state)
-                        .len()
-                        .max(1);
-                mana_action_count = mana_action_count
-                    .checked_add(
-                        choices
-                            .len()
-                            .checked_mul(cost_target_count)
-                            .ok_or_else(invalid)?,
+                for &choice in choices.as_slice() {
+                    let cost_target_count = crate::engine::mana_ability_cost_targets_for_choice(
+                        *player, *object, choice, state,
                     )
-                    .ok_or_else(invalid)?;
+                    .len()
+                    .max(1);
+                    mana_action_count = mana_action_count
+                        .checked_add(cost_target_count)
+                        .ok_or_else(invalid)?;
+                }
             }
             let expected_count = castable_spells
                 .len()
@@ -2338,8 +2336,9 @@ fn flat_validate_origin_decision_common_scoped_v42(
                     return Err(invalid());
                 }
                 for &choice in choices.as_slice() {
-                    let cost_targets =
-                        crate::engine::mana_ability_cost_targets(*player, *object, state);
+                    let cost_targets = crate::engine::mana_ability_cost_targets_for_choice(
+                        *player, *object, choice, state,
+                    );
                     if cost_targets.is_empty() {
                         let candidate = &candidates[cursor];
                         let valid = match (&candidate.semantic, &candidate.policy_action) {

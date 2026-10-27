@@ -594,6 +594,11 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             out.atoms.push(Atom::Opaque);
             ObjF::Typed(CardTypeF::Instant)
         }
+        LibraryCardFilter::ColorlessCreatureV1 => {
+            // The colorless refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Creature)
+        }
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(_) => ObjF::Permanent,
         LibraryCardFilter::ArtifactWithManaValue(_) => {
             // The frozen vocabulary lacks an exact mana-value read predicate.
@@ -626,6 +631,10 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
         PermanentFilter::Creature => (ObjF::Typed(CardTypeF::Creature), None),
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
         PermanentFilter::Token => (ObjF::Token, None),
+        PermanentFilter::DesertV1 => {
+            // Vocabulary gap: ObjF has no subtype class.
+            (ObjF::Typed(CardTypeF::Land), None)
+        }
     }
 }
 

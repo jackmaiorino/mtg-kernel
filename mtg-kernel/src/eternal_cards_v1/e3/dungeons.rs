@@ -700,6 +700,9 @@ pub(crate) fn resolution_cast_card(
     choice: &E3ChoiceV1,
     selected: &[Target],
 ) -> Option<EffectObjectBinding> {
+    if let E3ChoiceKindV1::E5bV1(_) = choice.kind {
+        return crate::eternal_legacy_e5b_v1::resolution_cast_card(choice, selected);
+    }
     let E3ChoiceKindV1::MadWizardV1 { .. } = choice.kind else {
         return None;
     };
@@ -715,6 +718,11 @@ pub(crate) fn validate_resolution_cast(
     selected: &[Target],
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
+    if let E3ChoiceKindV1::E5bV1(_) = choice.kind {
+        return crate::eternal_legacy_e5b_v1::validate_resolution_cast(
+            suspended, choice, selected, permission,
+        );
+    }
     if resolution_cast_card(choice, selected) != Some(permission.card)
         || selected.len() != 1
         || permission.card.expected_zone != Zone::Hand

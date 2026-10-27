@@ -946,7 +946,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         PORTABLE_HOLE => &PORTABLE_HOLE_TRIGGERS,
         SOUL_GUIDE_LANTERN => &LANTERN_TRIGGERS,
         UNDERWORLD_BREACH => &BREACH_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_legacy_e5b_v1::triggers_for(name),
     }
 }
 
@@ -959,6 +959,9 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    if let Some(spec) = crate::eternal_legacy_e5b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }
@@ -986,7 +989,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
             ))
         ),
         FORTH_EORLINGAS => *effect == lurrus(LurrusOpV1::BecomeMonarchV1),
-        _ => false,
+        _ => crate::eternal_legacy_e5b_v1::delayed_effect_matches(name, effect),
     }
 }
 
@@ -1136,8 +1139,14 @@ pub(crate) fn note_combat_damage(state: &mut GameState, events: &[CommittedEvent
 }
 
 /// A main phase began for the active player: Mana Drain's delayed triggers
-/// for that player.
+/// for that player, and Static Prison's first-main-phase trigger.
 pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
+    let mut triggers = crate::eternal_legacy_e5b_v1::begin_main_phase(state);
+    triggers.extend(mana_drains_due(state));
+    triggers
+}
+
+fn mana_drains_due(state: &mut GameState) -> Vec<PendingTrigger> {
     let player = state.active_player;
     let Some(eternal) = state.eternal_v1.as_mut() else {
         return Vec::new();

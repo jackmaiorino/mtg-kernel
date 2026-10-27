@@ -202,6 +202,18 @@ pub enum StandardTargetV1 {
     /// modes). Different target words may name one artifact creature
     /// (115.3).
     ArtifactThenCreatureV1,
+    /// "Up to one other target nonland permanent" (Phelia, Exuberant
+    /// Shepherd).
+    UpToOneOtherNonlandPermanentV1,
+    /// "Target triggered ability or colorless spell" (Consign to Memory).
+    TriggeredAbilityOrColorlessSpellV1,
+    /// Eldrazi Confluence's chosen modes: `creatures` "target creature"
+    /// slots, then `permanents` "target nonland permanent" slots. Each slot
+    /// may name an object another slot named (115.3).
+    CreaturesThenNonlandPermanentsV1 {
+        creatures: u8,
+        permanents: u8,
+    },
 }
 
 impl StandardTargetV1 {
@@ -217,6 +229,14 @@ impl StandardTargetV1 {
             Self::PlayerThenArtifactV1
             | Self::PlayerThenCreatureV1
             | Self::ArtifactThenCreatureV1 => (2, 2),
+            Self::UpToOneOtherNonlandPermanentV1 => (1, 0),
+            Self::CreaturesThenNonlandPermanentsV1 {
+                creatures,
+                permanents,
+            } => {
+                let count = creatures.saturating_add(permanents);
+                (count, count)
+            }
             _ => (1, 1),
         }
     }
@@ -257,7 +277,9 @@ impl StandardTargetV1 {
     fn on_stack(self) -> bool {
         matches!(
             self,
-            Self::InstantOrSorcerySpellV1 | Self::SpellWithSingleTargetV1
+            Self::InstantOrSorcerySpellV1
+                | Self::SpellWithSingleTargetV1
+                | Self::TriggeredAbilityOrColorlessSpellV1
         )
     }
 }
@@ -310,6 +332,9 @@ fn stack_spell_matches(
         }
         StandardTargetV1::SpellWithSingleTargetV1 => item.targets.len() == 1,
         StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => item.controller != controller,
+        StandardTargetV1::TriggeredAbilityOrColorlessSpellV1 => {
+            state.objects.get(source).v4.effective_color_mask == 0
+        }
         _ => false,
     }
 }
@@ -334,6 +359,62 @@ pub(crate) fn legal_targets(
                 .collect(),
             None => Vec::new(),
         };
+    }
+    if let StandardTargetV1::CreaturesThenNonlandPermanentsV1 {
+        creatures,
+        permanents,
+    } = target
+    {
+        // Each mode's "target" word may name an object another named.
+        let slot = prefix.len();
+        let wanted = if slot < usize::from(creatures) {
+            Some(true)
+        } else if slot < usize::from(creatures) + usize::from(permanents) {
+            Some(false)
+        } else {
+            None
+        };
+        let Some(creature_slot) = wanted else {
+            return Vec::new();
+        };
+        return [PlayerId::P0, PlayerId::P1]
+            .iter()
+            .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+            .filter(|&id| {
+                if creature_slot {
+                    crate::engine::object_has_type(state, id, CardType::Creature)
+                } else {
+                    !crate::engine::object_has_type(state, id, CardType::Land)
+                }
+            })
+            .map(Target::Object)
+            .collect();
+    }
+    if target == StandardTargetV1::TriggeredAbilityOrColorlessSpellV1 {
+        let announcing = state
+            .engine
+            .pending_cast
+            .as_ref()
+            .map(|pending| pending.spell);
+        return state
+            .stack
+            .iter()
+            .filter(|item| item.v4.stack_item_id != crate::ids::StackItemId::default())
+            .filter_map(|item| match item.kind {
+                crate::state::StackItemKind::TriggeredAbility => {
+                    Some(Target::StackItem(item.v4.stack_item_id))
+                }
+                crate::state::StackItemKind::Spell
+                    if Some(item.source) != announcing
+                        && source.is_none_or(|(id, _)| id != item.source)
+                        && stack_spell_matches(target, controller, item.source, state) =>
+                {
+                    Some(Target::Object(item.source))
+                }
+                _ => None,
+            })
+            .filter(|candidate| !prefix.contains(candidate))
+            .collect();
     }
     if matches!(
         target,
@@ -416,6 +497,7 @@ pub(crate) fn legal_targets(
                 StandardTargetV1::AnotherNonlegendaryControlledCreature
                     | StandardTargetV1::AnotherNonlandPermanent
                     | StandardTargetV1::AnotherArtifactV1
+                    | StandardTargetV1::UpToOneOtherNonlandPermanentV1
             ) || Some(id) != source.map(|(id, _)| id)
         })
         // "Any number of target" permanents are distinct (115.3).
@@ -524,6 +606,11 @@ pub(crate) fn target_matches(
         | StandardTargetV1::PlayerThenCreatureV1
         | StandardTargetV1::ArtifactThenCreatureV1 => {
             has(CardType::Artifact) || has(CardType::Creature)
+        }
+        StandardTargetV1::UpToOneOtherNonlandPermanentV1 => !has(CardType::Land),
+        StandardTargetV1::TriggeredAbilityOrColorlessSpellV1 => false,
+        StandardTargetV1::CreaturesThenNonlandPermanentsV1 { .. } => {
+            has(CardType::Creature) || !has(CardType::Land)
         }
     }
 }
@@ -2881,6 +2968,14 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     {
         boost.0 += artifacts;
         boost.1 += artifacts;
+    }
+    // It That Heralds the End: "Other colorless creatures you control get
+    // +1/+1."
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        let lord = crate::eternal_legacy_e5b_v1::controlled_boost(state, object);
+        boost.0 += lord.0;
+        boost.1 += lord.1;
     }
     boost
 }

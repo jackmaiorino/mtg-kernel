@@ -611,7 +611,7 @@ pub(super) fn escape_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_e5b_v1::escape_for(name),
     }
 }
 
@@ -635,9 +635,9 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
 }
 
 /// Activated abilities printed on one face only.
-pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
+pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
     match name {
         "Tamiyo, Inquisitive Student" => Some(1),
-        _ => None,
+        _ => super::build_eternal_e5b_v1::activated_ability_face_for(name, index),
     }
 }

@@ -90,7 +90,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Aether Spellbomb" => &AETHER_SPELLBOMB,
         "Soul-Guide Lantern" => &SOUL_GUIDE_LANTERN,
         "Psychic Frog" => &PSYCHIC_FROG,
-        _ => &[],
+        _ => super::build_eternal_e5b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -162,7 +162,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::AnyPlayer",
             "crate::eternal_lurrus_v1::flame_of_anor_draw",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e5b_v1::special_for(name),
     })
 }
 
@@ -170,7 +170,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Flame of Anor" => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: crate::eternal_lurrus_v1::flame_of_anor_artifact })",
-        _ => "None",
+        _ => super::build_eternal_e5b_v1::mode2_for(name),
     }
 }
 
@@ -179,7 +179,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Flame of Anor" => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: crate::eternal_lurrus_v1::flame_of_anor_creature })",
-        _ => "None",
+        _ => super::build_eternal_e5b_v1::mode3_for(name),
     }
 }
 
@@ -188,7 +188,7 @@ pub(super) fn mode3_for(name: &str) -> &'static str {
 pub(super) fn additional_modes_for(name: &str) -> &'static str {
     match name {
         "Flame of Anor" => "&[ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::PlayerThenArtifactV1), effect: crate::eternal_lurrus_v1::flame_of_anor_draw_artifact }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1), effect: crate::eternal_lurrus_v1::flame_of_anor_draw_creature }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::ArtifactThenCreatureV1), effect: crate::eternal_lurrus_v1::flame_of_anor_artifact_creature }]",
-        _ => "&[]",
+        _ => super::build_eternal_e5b_v1::additional_modes_for(name),
     }
 }
 
@@ -198,7 +198,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Lurrus of the Dream-Den" => &["Keywords::LIFELINK"],
         "Snapcaster Mage" => &["Keywords::FLASH"],
         "Human Knight Token" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
-        _ => &[],
+        _ => super::build_eternal_e5b_v1::keywords_for(name),
     }
 }
 
@@ -238,7 +238,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Flame of Anor" => "modes:choose_one_or_two_if_controls_wizard_as_cast",
         "Prismatic Ending" => "converge:colors_spent_bound_target_mana_value",
         "Brain Freeze" => "cast:storm:copies_may_choose_new_targets",
-        _ => "none",
+        _ => super::build_eternal_e5b_v1::trigger_recipe_for(name),
     }
 }
 
@@ -250,7 +250,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Force of Negation" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::NotYourTurnV1 })",
         "Gush" => "Some(AltCostDef { components: &[CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count: 2, filter: PermanentFilterDef::LandWithSubtype(Subtype::Island) }], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_e5b_v1::alt_cost_for(name),
     }
 }
 
@@ -263,7 +263,7 @@ pub(super) fn delve_for(name: &str) -> bool {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Thundertrap Trainer" => Some("{4}"),
-        _ => None,
+        _ => super::build_eternal_e5b_v1::kicker_cost_for(name),
     }
 }
 

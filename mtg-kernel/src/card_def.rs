@@ -373,6 +373,13 @@ pub enum Subtype {
     /// Frog, Hexing Squelcher).
     Frog,
     Sorcerer,
+    /// Appended for the eternal catalog's Legacy aggro, Eldrazi and control
+    /// lists (Voice of Victory, Quantum Riddler, the Sand Warrior and
+    /// Eldrazi Scion tokens).
+    Bard,
+    Sphinx,
+    Sand,
+    Scion,
 }
 
 impl Subtype {
@@ -695,6 +702,14 @@ impl Subtype {
         Subtype::Frog,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Sorcerer,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Bard,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Sphinx,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Sand,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Scion,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -795,6 +810,10 @@ impl Subtype {
                     | Subtype::Archon
                     | Subtype::Frog
                     | Subtype::Sorcerer
+                    | Subtype::Bard
+                    | Subtype::Sphinx
+                    | Subtype::Sand
+                    | Subtype::Scion
             )
         {
             return true;
@@ -1369,6 +1388,9 @@ pub enum PermanentFilter {
     /// (Repurposing Bay's "Sacrifice another artifact"). Appended.
     AnotherArtifact,
     Token,
+    /// A controlled Desert (Lazotep Quarry's "Sacrifice a Desert").
+    /// Appended for the eternal catalog.
+    DesertV1,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -1756,6 +1778,9 @@ pub enum ManaAbilityCostDef {
     /// priority with nothing being cast, activated or resolved. Appended for
     /// the eternal catalog.
     DiscardHandAndSacrificeSelfV1,
+    /// "{T}, Sacrifice a creature" (Lazotep Quarry): the creature is the
+    /// activation's cost target. Appended for the eternal catalog.
+    TapSelfSacrificeControlledCreatureV1,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -1902,6 +1927,10 @@ pub enum ManaSpendRestrictionDef {
     /// "Spend this mana only to cast artifact spells" (Mishra's Workshop).
     /// Appended for the eternal catalog.
     ArtifactSpellV1,
+    /// "Spend this mana only to cast colorless Eldrazi spells or activate
+    /// abilities of colorless Eldrazi" (Eldrazi Temple). Appended for the
+    /// eternal catalog.
+    ColorlessEldraziSpellV1,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
@@ -3092,7 +3121,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xac2a_c313_e3e3_a6b5;
+        const EXPECTED_ETERNAL: u64 = 0xd570_6b3e_6788_d50b;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

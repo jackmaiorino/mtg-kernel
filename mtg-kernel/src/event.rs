@@ -2695,11 +2695,27 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
         batch_without_linked_aura_v1(state, vec![event]);
         return;
     }
+    // Quantum Riddler: "if you would draw one or more cards, you draw that
+    // many cards plus one instead", read before the draw.
+    #[cfg(feature = "eternal-fixtures")]
+    let extra_draws = match &event {
+        ProposedEvent::Draw(draw) => Some((
+            draw.player,
+            crate::eternal_legacy_e5b_v1::riddler_extra_draws(state, draw.player),
+        )),
+        _ => None,
+    };
     if let Some(final_event) = apply_replacements(state, event) {
         let lifelink_gain = lifelink_gain_for(state, &final_event);
         commit(state, final_event);
         if let Some((player, amount)) = lifelink_gain {
             commit(state, ProposedEvent::life_gain(player, amount));
+        }
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some((player, extra)) = extra_draws {
+        for _ in 0..extra {
+            commit(state, ProposedEvent::draw(player));
         }
     }
 }
