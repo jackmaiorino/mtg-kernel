@@ -10969,6 +10969,10 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             continue;
         }
 
+        // Mystic Forge and Bolas's Citadel: "You may look at the top card of
+        // your library any time."
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_e5a_v1::permissions::look_at_library_tops(state);
         return Decision::CastSpellOrPass {
             player: state.priority_player,
             castable_spells: castable_spells(state.priority_player, state),

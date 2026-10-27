@@ -47,6 +47,33 @@ pub(crate) fn library_top_cast(
     .then_some(false)
 }
 
+/// Mystic Forge and Bolas's Citadel: "You may look at the top card of your
+/// library any time." Before a priority decision, each player controlling
+/// one knows the top card of their own library; the opponent learns
+/// nothing.
+pub(crate) fn look_at_library_tops(state: &mut GameState) {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let Some(&top) = state.players[player.index()].library.first() else {
+            continue;
+        };
+        if !(controls_active(state, player, MYSTIC_FORGE)
+            || controls_active(state, player, BOLAS_CITADEL))
+        {
+            continue;
+        }
+        let incarnation = state.objects.get(top).zone_change_count;
+        let known = state
+            .known_library_cards(player, player)
+            .iter()
+            .any(|entry| {
+                entry.position == 0 && entry.object == top && entry.zone_change_count == incarnation
+            });
+        if !known {
+            state.reveal_library_top(player, player, 1);
+        }
+    }
+}
+
 /// Records a spell announced from the top of its owner's library, so the
 /// cast keeps its permission and payment form while it is on the stack.
 pub(crate) fn note_library_cast(state: &mut GameState, player: PlayerId, card: ObjectId) {

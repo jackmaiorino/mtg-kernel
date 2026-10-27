@@ -848,7 +848,9 @@ fn kozilek_command_makes_spawn_and_scries_or_exiles_a_creature_and_cards() {
     act(&mut state, Action::CastSpell(command));
     match next(&mut state) {
         Decision::ChooseSpellMode { legal_modes, .. } => {
-            assert_eq!(legal_modes.len(), 6);
+            // No creature is on the battlefield, so only the three pairs
+            // without "exile target creature" can be chosen.
+            assert_eq!(legal_modes, vec![0, 2, 4]);
             act(&mut state, Action::ChooseSpellMode(0));
         }
         other => panic!("expected the modes, got {other:?}"),
@@ -993,12 +995,9 @@ fn the_fantasticar_becomes_a_creature_and_turns_into_four_constructs() {
         pool(&mut state, P0, &[], 1);
         cast(&mut state, key, &[]);
         casts += 1;
-        settle_with(&mut state, |state, decision| match decision {
-            // Animate it; on the fourth spell, sacrifice it.
-            Decision::ChooseEffectOption { .. } => {
-                let _ = state;
-                Action::ChooseEffectOption(0)
-            }
+        // Animate it; on the fourth spell, sacrifice it.
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
             other => first_answer(other),
         });
         if casts < 4 {
@@ -1091,12 +1090,12 @@ fn ugin_exiles_colored_permanents_on_casts_and_uses_its_loyalty() {
     assert_eq!(loyalty(&state, ugin), Some(7));
 
     // A colorless spell triggers it again.
-    let suplex_target = put(&mut state, P1, "Serra's Emissary", Zone::Battlefield);
+    let second_oath = put(&mut state, P1, "Oath of Druids", Zone::Battlefield);
     let top = put(&mut state, P0, "Sensei's Divining Top", Zone::Hand);
     pool(&mut state, P0, &[], 1);
     cast(&mut state, top, &[]);
-    settle_targeting_seen(&mut state, Target::Object(suplex_target));
-    assert_eq!(zone(&state, suplex_target), Zone::Exile);
+    settle_targeting_seen(&mut state, Target::Object(second_oath));
+    assert_eq!(zone(&state, second_oath), Zone::Exile);
 
     // +2: gain 3 life and draw. 0 (next turn): add {C}{C}{C}.
     let hand = state.players[0].hand.len();

@@ -32,6 +32,7 @@ pub(crate) mod statics;
 mod triggers;
 
 pub(crate) use execute::execute;
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(unused_imports))]
 pub(crate) use triggers::{
     begin_turn, delayed_effect_matches, delayed_triggers, note_land_played, note_tapped_for_mana,
     trigger_matches, trigger_target_spec, triggers_for,

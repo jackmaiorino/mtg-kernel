@@ -129,7 +129,7 @@ pub(crate) fn drive(
             Ok(false)
         }
         E5aOpV1::ScryTargetXV1 { slot } => {
-            let Some(Target::Player(scrier)) = continuation.ctx.targets.get(usize::from(*slot))
+            let Some(&Target::Player(scrier)) = continuation.ctx.targets.get(usize::from(*slot))
             else {
                 return Ok(false);
             };
@@ -137,7 +137,7 @@ pub(crate) fn drive(
             Ok(crate::eternal_cards_v1::e3::dungeons::stage_scry(
                 state,
                 continuation,
-                *scrier,
+                scrier,
                 count,
                 path,
             ))

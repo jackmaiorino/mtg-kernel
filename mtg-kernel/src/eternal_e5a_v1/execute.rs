@@ -153,20 +153,24 @@ pub(crate) fn execute(op: &E5aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         E5aOpV1::PutSourceOntoBattlefieldV1 => {
-            let Some(contract) = ctx.ability_source_contract else {
-                halt(state, ctx.source);
-                return;
-            };
-            let in_hand = state.objects.try_get(contract.source).is_some_and(|live| {
+            // The card revealed from the hand to activate the ability, if it
+            // is still that hand incarnation.
+            let (source, zone_change_count) =
+                match (ctx.ability_source_contract, ctx.hidden_ability_source) {
+                    (Some(contract), _) => (contract.source, contract.zone_change_count),
+                    (None, Some(hidden)) => (hidden.object, hidden.zone_change_count),
+                    (None, None) => (ctx.source, state.objects.get(ctx.source).zone_change_count),
+                };
+            let in_hand = state.objects.try_get(source).is_some_and(|live| {
                 live.zone == Zone::Hand
-                    && live.zone_change_count == contract.zone_change_count
+                    && live.zone_change_count == zone_change_count
                     && live.owner == ctx.controller
             });
             if in_hand {
                 event::propose_and_commit(
                     state,
                     ProposedEvent::zone_change_to_battlefield_under_controller(
-                        contract.source,
+                        source,
                         ctx.controller,
                     ),
                 );

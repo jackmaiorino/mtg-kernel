@@ -162,7 +162,7 @@ pub(crate) fn player_protected_from(state: &GameState, player: PlayerId, source:
 /// Serra's Emissary: "... and creatures you control have protection from
 /// the chosen card type."
 pub(crate) fn object_protected_from(state: &GameState, object: ObjectId, source: ObjectId) -> bool {
-    if !read_state(state).is_some_and(|e5a| !e5a.emissary_types.is_empty()) {
+    if read_state(state).is_none_or(|e5a| e5a.emissary_types.is_empty()) {
         return false;
     }
     let Some(live) = state.objects.try_get(object) else {
