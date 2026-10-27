@@ -4,8 +4,9 @@ frozen at 12aab0f2).
 Standard library only. Every constant comes from the driver's config, whose ``analyzer.sha256`` must equal this
 file's own SHA-256; the analyzer refuses to run otherwise. Inputs are the driver's records under one run root
 (``mtg-kernel`` ``expanded_deck_training_v1::b_width_prescreen_v1``), the parent files the config pins, and the SHA-256
-of ``data/SECTION7.json`` as the note's section 7 records it (a different hash is refused before anything is
-written).
+of ``data/SECTION7.json`` as the note's section 7 records it. A different hash, or any expected input that is
+missing or cannot be read (a premature run, a host without the parents, a drive error), is refused before anything
+is written; only a content or hash mismatch makes the read VOID.
 
 The checks run in the note's section 6 order (data, the 48-hour wall cap, attrition, fits, pairing, function
 preservation, numerical validity, sensitivity control, decision). Any failure makes the read VOID; an invalid
@@ -148,18 +149,20 @@ def require(ok: bool, check: str, detail: object) -> None:
 
 
 def read_file(path: Path, check: str) -> bytes:
+    """An input's bytes. An input that cannot be read is not a data outcome: the analyzer refuses (nothing is
+    written) instead of reading VOID. ``check`` names the check for the refusal message."""
     try:
         return path.read_bytes()
     except OSError as error:
-        raise Void(check, f"{path}: {error}") from None
+        raise Refused(f"{check}: {path} cannot be read: {error}") from None
 
 
-def load_json(path: Path, check: str) -> tuple[dict, bytes]:
+def load_json(path: Path, check: str, display: str | None = None) -> tuple[dict, bytes]:
     data = read_file(path, check)
     try:
         return json.loads(data), data
     except json.JSONDecodeError as error:
-        raise Void(check, f"{path}: {error}") from None
+        raise Void(check, f"{display or path}: {error}") from None
 
 
 def check_config(config: dict) -> None:
@@ -255,7 +258,7 @@ class Inputs:
         self.files: dict[str, str] = {}
 
     def read(self, relative: str, check: str) -> tuple[dict, bytes]:
-        value, data = load_json(self.root / relative, check)
+        value, data = load_json(self.root / relative, check, relative)
         self.files[relative] = sha256_bytes(data)
         return value, data
 
@@ -337,6 +340,7 @@ def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict)
         natural = {"fit": [], "holdout": []}
         excluded = []
         groups_of = {}
+        substeps = 0
         for game, (game_id, split, _, _) in zip(games, schedule):
             attempted[split].append(game_id)
             require(game["plan"]["split"] == split, "data", f"{game_id}: split differs from the config")
@@ -351,8 +355,11 @@ def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict)
             require(sha256_bytes(store[start:end]) == game["sha256"], "data", f"{game_id}: stored bytes differ")
             groups = int.from_bytes(store[start:start + 4], "little")
             require(groups > 0 and groups == game["groups"], "data", f"{game_id}: group count differs from the store")
+            require(isinstance(game["substeps"], int) and game["substeps"] >= groups, "data",
+                    f"{game_id}: fewer substeps than groups")
             natural[split].append(game_id)
             groups_of[game_id] = groups
+            substeps += game["substeps"]
         require(record["attempted"] == attempted, "data", f"chain {k}: attempted ids differ from the config")
         require(record["natural"] == natural, "data", f"chain {k}: retained ids differ from the collection")
         require(sorted(row["id"] for row in record["excluded"]) == sorted(excluded), "data",
@@ -378,6 +385,7 @@ def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict)
                       "fit_groups", "steps"):
             require(record[field] == entry[field], "data", f"chain {k}: {field} differs from section 7")
         chain_data[k] = {"record": record, "sha256": sha256_bytes(record_bytes), "store_groups": groups_of,
+                         "substeps": substeps,
                          "schedule": {row[0]: row for row in schedule}}
     return chain_data
 
@@ -557,13 +565,14 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float) -> tup
     # 5. Function preservation.
     for k in chains:
         preservation, _ = inputs.read(f"preserve/k{k}.json", "function_preservation")
-        groups = data[k]["fit_groups"] + data[k]["holdout_groups"]
+        # The driver's forward comparison consumes every substep of every retained fit and holdout game.
+        substeps = chain_data[k]["substeps"]
         require(preservation.get("schema") == PRESERVATION_SCHEMA
                 and preservation.get("config_sha256") == config_sha256
                 and preservation.get("data_record_sha256") == data_sha[k] and preservation.get("chain") == k
                 and (preservation.get("engine_commit"), preservation.get("binary_sha256")) == build
                 and preservation.get("pass") is True and isinstance(preservation.get("inputs"), int)
-                and preservation["inputs"] >= groups, "function_preservation",
+                and preservation["inputs"] == substeps, "function_preservation",
                 f"chain {k}: no passed forward comparison over every recorded input")
         by_seed = {row.get("seed"): row for row in preservation.get("seeds", [])}
         require(sorted(by_seed) == sorted(seeds) and len(by_seed) == len(preservation.get("seeds", [])),
@@ -745,7 +754,7 @@ def render(config: dict, config_sha256: str, analyzer_sha256: str, root: Path, s
                   "section7_sha256": section7_sha256, "root": str(root), "read_at_unix": read_at}
     try:
         body, files = analyze(config, config_sha256, root, read_at)
-    except (Void, KeyError, TypeError, AttributeError, IndexError, ValueError, ZeroDivisionError, OSError) as error:
+    except (Void, KeyError, TypeError, AttributeError, IndexError, ValueError, ZeroDivisionError) as error:
         void = error if isinstance(error, Void) else Void("malformed_input", f"{type(error).__name__}: {error}")
         read.update({"verdict": "VOID", "void_check": void.check, "void_detail": void.detail,
                      "statement": "VOID: a section 6 check failed; this is not a 'not funded' reading."})
@@ -844,6 +853,41 @@ def unpublished_reads(root: Path) -> tuple[list[Path], list[Path]]:
     return complete, incomplete
 
 
+def without_root(data: bytes) -> bytes:
+    """A read's bytes with its ``root`` field removed (every other field, content and hash binding kept)."""
+    value = json.loads(data)
+    value.pop("root", None)
+    return read_bytes(value)
+
+
+def missing_inputs(config: dict, root: Path) -> list[str]:
+    """Every expected input that does not exist: LAUNCH.json, each chain's data, collection, store and
+    preservation records, each pinned parent and import file (recursively), and for every (chain, seed, arm) its
+    report, its refusal file or an interrupted refusal publication."""
+    missing = []
+
+    def need(path: Path, label: str) -> None:
+        if not path.is_file():
+            missing.append(label)
+
+    need(root / "LAUNCH.json", "LAUNCH.json")
+    fits = root / "fits"
+    for chain in config["chains"]:
+        k = chain["index"]
+        for relative in (f"data/k{k}.json", f"collect/k{k}/collection.json", f"collect/k{k}/games.bin",
+                         f"preserve/k{k}.json"):
+            need(root / relative, relative)
+        for pin in [chain["source"]["checkpoint"], *import_closure(chain["source"]["play_import"])]:
+            need(Path(pin["path"]), pin["path"])
+        for s in config["fitting"]["fitting_seeds"]:
+            for arm in ARMS:
+                name = f"k{k}-s{s}-{arm}"
+                if not ((fits / f"{name}.json").is_file() or (fits / f"{name}.refused.json").is_file()
+                        or any(fits.glob(f".{name}.refused.json.tmp-*"))):
+                    missing.append(f"fits/{name}.json")
+    return list(dict.fromkeys(missing))
+
+
 def inside(path: Path, folder: Path) -> bool:
     try:
         path.relative_to(folder)
@@ -881,6 +925,12 @@ def main(argv: list[str] | None = None) -> int:
             out = None
         if canonical.exists() and not arguments.rerender:
             raise Refused(f"{canonical} exists: this run root has been read (use --rerender only to re-render it)")
+        missing = missing_inputs(config, root)
+        if missing:
+            # A premature run (a stage unfinished), a host without the parents, or a lost file is not a data
+            # outcome: refuse without writing anything.
+            raise Refused(f"{len(missing)} expected inputs are missing, so nothing was read: "
+                          + ", ".join(missing[:20]))
         if not arguments.rerender:
             # A run that crashed after writing its read but before publishing it already rendered the read: it is
             # published as is (never rendered again), so an operator cannot pick between two completed reads. An
@@ -915,7 +965,9 @@ def main(argv: list[str] | None = None) -> int:
         read = render(config, config_sha256, analyzer_sha256, root, arguments.section7_sha256, read_at)
         data = read_bytes(read)
         if arguments.rerender:
-            if canonical.read_bytes() != data:
+            # A re-render may run from a moved copy of the root (an archive): every field but the root itself
+            # must be reproduced.
+            if without_root(canonical.read_bytes()) != without_root(data):
                 raise Refused("the re-rendered read differs from the existing one; nothing was written")
         else:
             publish_read(root, canonical, data)

@@ -196,7 +196,7 @@ class Tree:
                 widen_seed = reader.domain_seed(fitting["widen_seed_domain"], k, s)
                 child = sha(f"widened-{k}-{s}".encode())
                 preservation_seeds.append({"seed": s, "widen_seed": widen_seed, "child_state_sha256": child,
-                                           "inputs_compared": fit_groups + holdout_groups + 7, "mismatches": 0,
+                                           "inputs_compared": fit_groups + holdout_groups, "mismatches": 0,
                                            "first_mismatch": None})
                 for arm in reader.ARMS:
                     final = {}
@@ -269,7 +269,7 @@ class Tree:
             write(self.root / "preserve" / f"k{k}.json",
                   {"schema": reader.PRESERVATION_SCHEMA, "config_sha256": config_sha, "engine_commit": ENGINE,
                    "binary_sha256": BINARY, "chain": k, "data_record_sha256": sha(data_bytes), "parent_state_sha256": parent_state,
-                   "inputs": fit_groups + holdout_groups + 7, "seeds": preservation_seeds, "pass": True})
+                   "inputs": fit_groups + holdout_groups, "seeds": preservation_seeds, "pass": True})
         section7 = {"schema": reader.SECTION7_SCHEMA, "note": config["note"], "config_sha256": config_sha,
                     "analyzer": config["analyzer"], "engine_commit": ENGINE, "binary_sha256": BINARY,
                     "launch": {"sha256": sha(launch_bytes), "launched_at_unix": NOW - 3600},
@@ -633,11 +633,10 @@ class AnalyzerTests(unittest.TestCase):
             t.edit("data/SECTION7.json", lambda v: v["launch"].__setitem__("sha256", launch))
             return t.resign()
 
-        def missing(relative):
-            def damage(t: Tree) -> str:
-                t.path(relative).unlink()
-                return t.resign()
-            return damage
+        def report_refused(t: Tree) -> str:
+            t.path("fits/k3-s2-w32.json").unlink()
+            write(t.path("fits/k3-s2-w32.refused.json"), {"error": "BatchLargerThanFitSet"})
+            return t.resign()
 
         cases = {
             # Data.
@@ -666,7 +665,7 @@ class AnalyzerTests(unittest.TestCase):
             "launch record": ("wall_cap", lambda t: (t.edit("LAUNCH.json", lambda v: v.__setitem__("host", "x")),
                                                      t.resign())[1]),
             # Fits.
-            "missing report": ("fits", missing("fits/k3-s2-w32.json")),
+            "report missing but refusal present": ("fits", report_refused),
             "duplicate report": ("fits", extra_file),
             "entry refusal": ("fits", refusal_file),
             "interrupted refusal publication": ("fits", refusal_temporary),
@@ -704,9 +703,9 @@ class AnalyzerTests(unittest.TestCase):
                 "decision_source_sha256", "0" * 64))),
             "w64 step 0 differs across seeds": ("pairing", fit_edit("k4-s3-w64.json", w64_step0_across_seeds)),
             "w64 fresh state differs across seeds": ("pairing", fit_edit("k4-s3-w64.json", w64_fresh)),
+            "w32 fresh state differs across seeds": ("pairing", fit_edit("k4-s2-w32.json", w64_fresh)),
             "fit inputs against the data record": ("pairing", fit_inputs_differ),
             # Function preservation.
-            "missing preservation record": ("function_preservation", missing("preserve/k6.json")),
             "forward mismatch": ("function_preservation", preserve_edit(
                 lambda v: v["seeds"][1].__setitem__("mismatches", 1))),
             "preservation not passed": ("function_preservation", preserve_edit(lambda v: v.__setitem__("pass", False))),
@@ -738,6 +737,46 @@ class AnalyzerTests(unittest.TestCase):
                 tree, section7 = self.fresh(name.replace(" ", "-"))
                 tree.path(target).write_bytes(b"changed")
                 self.assertEqual(self.void_read(tree, section7)["void_check"], "data")
+
+    def test_missing_inputs_are_refused_not_void(self) -> None:
+        cases = {
+            "missing report": lambda t: t.path("fits/k3-s2-w32.json").unlink(),
+            "missing preservation record": lambda t: t.path("preserve/k6.json").unlink(),
+            "missing store": lambda t: t.path("collect/k2/games.bin").unlink(),
+            "missing launch record": lambda t: t.path("LAUNCH.json").unlink(),
+            "fits folder absent": lambda t: shutil.rmtree(t.path("fits")),
+        }
+        for name, damage in cases.items():
+            with self.subTest(name):
+                tree = self.copy(name.replace(" ", "-"))
+                damage(tree)
+                status, read, error = run(tree, self.template_section7)
+                self.assertEqual((status, read), (2, None), error)
+                self.assertIn("missing", error)
+                self.assertEqual(list(tree.root.glob(".READ.json.tmp-*")), [])
+        for name, target in (("parent absent", "parents/r2-s3-b512.json"),
+                             ("nested import input absent", "parents/init.f32le")):
+            with self.subTest(name):
+                tree, section7 = self.fresh(name.replace(" ", "-"))
+                tree.path(target).unlink()
+                status, read, error = run(tree, section7)
+                self.assertEqual((status, read), (2, None), error)
+                self.assertIn(str(tree.path(target)), error)
+
+    def test_a_rerender_from_a_moved_copy_reproduces_the_read(self) -> None:
+        tree = self.copy("archived")
+        status, read, error = run(tree, self.template_section7)
+        self.assertEqual(status, 0, error)
+        written = tree.path(reader.READ_NAME).read_bytes()
+        moved = tree.clone(self.root / "archive" / "moved")
+        status, _, error = run(moved, self.template_section7, "--rerender")
+        self.assertEqual(status, 0, error)
+        self.assertEqual(moved.path(reader.READ_NAME).read_bytes(), written)
+        # Only the root may differ: a changed record still refuses the re-render.
+        moved.edit("fits/k1-s1-w32.json", lambda v: v["report"]["steps"][0].__setitem__("loss", 0.25))
+        status, _, error = run(moved, self.template_section7, "--rerender")
+        self.assertEqual(status, 2)
+        self.assertIn("inputs differ", error)
 
     def test_nested_import_inputs_bind_the_read(self) -> None:
         tree, section7 = self.fresh("nested")

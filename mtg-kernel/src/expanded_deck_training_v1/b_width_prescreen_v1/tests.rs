@@ -776,7 +776,10 @@ fn an_entry_refusal_is_recorded_and_never_rerun() {
     let interrupted = root.join("fits/.k1-s1-w64.refused.json.tmp-77");
     fs::write(&interrupted, b"{").unwrap();
     let promoted = fit_chain_stage_v1(loaded, root, &chain, 1, 1).unwrap_err();
-    assert!(promoted.contains("records a fit-entry refusal"), "{promoted}");
+    assert!(
+        promoted.contains("records a fit-entry refusal"),
+        "{promoted}"
+    );
     assert!(refusal.exists() && !interrupted.exists());
     assert!(!fit_path_v1(root, 1, 1, "w64").exists());
 }
