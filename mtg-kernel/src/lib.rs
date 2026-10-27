@@ -264,6 +264,9 @@ pub mod eternal_lurrus_v1;
 /// Pauper Affinity, Tron and Ephemerate card programs of the eternal
 /// catalog (wave E6a).
 pub mod eternal_pauper_e6a_v1;
+/// Pauper Bogles, white aggro, Rakdos Madness and Gates card programs of
+/// the eternal catalog (wave E6b).
+pub mod eternal_pauper_e6b_v1;
 /// Vintage card programs of the eternal catalog (wave E4).
 pub mod eternal_vintage_v1;
 pub mod event;

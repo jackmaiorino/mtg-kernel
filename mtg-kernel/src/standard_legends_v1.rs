@@ -311,6 +311,12 @@ pub(crate) fn katilda_mana_colors(
         if !colors.is_empty() {
             return colors;
         }
+        // Abundant Growth: 'Enchanted land has "{T}: Add one mana of any
+        // color."'
+        let colors = crate::eternal_pauper_e6b_v1::granted_mana_colors(state, object);
+        if !colors.is_empty() {
+            return colors;
+        }
     }
     let Some(live) = state.objects.try_get(object) else {
         return Vec::new();

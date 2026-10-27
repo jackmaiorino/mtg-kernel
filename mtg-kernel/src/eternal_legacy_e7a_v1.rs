@@ -920,8 +920,29 @@ fn mill_four() -> EffectOp {
     }
 }
 
+/// Archon of Cruelty: "target opponent sacrifices a creature or
+/// planeswalker of their choice, discards a card, and loses 3 life. You draw
+/// a card and gain 3 life." A root sequence, so its discard can suspend.
 fn archon_trigger() -> EffectOp {
-    e7a(E7aOpV1::ArchonV1)
+    EffectOp::Sequence(vec![
+        e7a(E7aOpV1::ArchonV1),
+        EffectOp::DiscardCards {
+            player: PlayerRef::Target(0),
+            count: 1,
+        },
+        EffectOp::LoseLife {
+            player: PlayerRef::Target(0),
+            amount: 3,
+        },
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 3,
+        },
+    ])
 }
 
 fn animate_dead_return() -> EffectOp {
@@ -1910,29 +1931,7 @@ pub(crate) fn drive(
             if !continuation.ctx.target_incarnation_matches(0, state) {
                 return Ok(false);
             }
-            // After the sacrifice: the discard, the life loss, the draw and
-            // the life gain, in printed order.
-            let rest = [
-                EffectOp::DiscardCards {
-                    player: PlayerRef::Target(0),
-                    count: 1,
-                },
-                EffectOp::LoseLife {
-                    player: PlayerRef::Target(0),
-                    amount: 3,
-                },
-                EffectOp::DrawCards {
-                    player: PlayerRef::Controller,
-                    count: 1,
-                },
-                EffectOp::GainLife {
-                    player: PlayerRef::Controller,
-                    amount: 3,
-                },
-            ];
-            for op in rest.into_iter().rev() {
-                push(continuation, op, &path);
-            }
+            // The sacrifice; the rest of the trigger's sequence follows.
             let candidates = controlled_permanents(state, opponent)
                 .into_iter()
                 .filter(|&object| {
@@ -3186,15 +3185,15 @@ fn answer_dredge(state: &mut GameState, player: PlayerId, option: u16) -> Result
             let card = *cards
                 .get(index - 1)
                 .ok_or("the dredge option is out of range")?;
-            let ctx = ExecCtx::no_targets(card, player);
-            crate::effect::execute(
-                &EffectOp::MillCards {
-                    player: PlayerRef::Controller,
-                    count: 3,
-                },
-                &ctx,
-                state,
-            );
+            // Mill three: the top three cards go to the graveyard together,
+            // in library order.
+            let milled = state.players[player.index()]
+                .library
+                .iter()
+                .take(3)
+                .map(|&top| ProposedEvent::zone_change(top, Zone::Graveyard))
+                .collect::<Vec<_>>();
+            event::propose_and_commit_batch(state, milled);
             if state.objects.get(card).zone == Zone::Graveyard {
                 event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Hand));
             }

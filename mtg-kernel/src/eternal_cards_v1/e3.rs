@@ -271,6 +271,9 @@ pub enum E3ChoiceKindV1 {
     E6aV1(crate::eternal_pauper_e6a_v1::E6aChoiceV1),
     /// A wave E5a choice (`eternal_e5a_v1::choices`).
     E5aV1(crate::eternal_e5a_v1::E5aChoiceV1),
+    /// A choice owned by the Pauper Bogles, white aggro and Rakdos Madness
+    /// lists' module (`eternal_pauper_e6b_v1`).
+    E6bV1(crate::eternal_pauper_e6b_v1::E6bChoiceV1),
     /// A wave E7a choice (`eternal_legacy_e7a_v1`).
     E7aV1(crate::eternal_legacy_e7a_v1::E7aChoiceV1),
 }
@@ -298,6 +301,9 @@ impl E3ChoiceV1 {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::E6aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::E6bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::E7aV1(kind) = &self.kind {
@@ -332,6 +338,7 @@ impl E3ChoiceV1 {
         match &self.kind {
             E3ChoiceKindV1::E5bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E6aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::E6bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E7aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
@@ -377,6 +384,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::MadWizardV1 { drawn } => out.extend(drawn.iter().copied()),
             E3ChoiceKindV1::E5bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E6aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::E6bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E7aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
@@ -578,6 +586,13 @@ pub(crate) fn finish_selection(
             bindings,
         ),
         E3ChoiceKindV1::E6aV1(kind) => crate::eternal_pauper_e6a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::E6bV1(kind) => crate::eternal_pauper_e6b_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -893,6 +908,9 @@ pub(crate) fn drive(
         EternalOpV1::E5aV1(op) => {
             crate::eternal_e5a_v1::choices::drive(state, continuation, op, path)
         }
+        EternalOpV1::E6bV1(op) => {
+            crate::eternal_pauper_e6b_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::E7aV1(op) => {
             crate::eternal_legacy_e7a_v1::drive(state, continuation, op, path)
         }
@@ -921,6 +939,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::AcererakAttacksV1
     ) || matches!(op, EternalOpV1::E5bV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::E6aV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::E6bV1(op) if op.contains_player_choice())
 }
 
 /// The cards (not tokens or copies) in `player`'s graveyard, in order.
@@ -1168,7 +1187,10 @@ pub(crate) fn damage_prevented_by_protection(
 ) -> bool {
     let protected = match target {
         Target::Player(player) => player_protected(state, player),
-        Target::Object(object) => protected_from_spell(state, object, source),
+        Target::Object(object) => {
+            protected_from_spell(state, object, source)
+                || crate::eternal_pauper_e6b_v1::protected_from_source(state, object, source)
+        }
         Target::StackItem(_) => false,
     };
     protected || crate::eternal_e5a_v1::statics::damage_prevented(state, source, target)
@@ -1588,7 +1610,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY => &FLUSTERSTORM_TRIGGERS,
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
@@ -1602,9 +1624,8 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     match name {
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
-        | TENDRILS_OF_AGONY | THASSAS_ORACLE | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => {
-            Some(TargetSpec::None)
-        }
+        | TENDRILS_OF_AGONY | GALVANIC_RELAY | THASSAS_ORACLE | EMRAKUL | ATRAXA
+        | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -1843,6 +1864,14 @@ pub(crate) fn object_targetable(
     if source.is_some_and(|source| {
         crate::eternal_e5a_v1::statics::object_protected_from(state, object, source)
     }) {
+        return false;
+    }
+    // Benevolent Blessing's protection from a color.
+    if live.zone == Zone::Battlefield
+        && source.is_some_and(|source| {
+            crate::eternal_pauper_e6b_v1::protected_from_source(state, object, source)
+        })
+    {
         return false;
     }
     if live.controller == controller || live.zone != Zone::Battlefield {
@@ -2137,7 +2166,7 @@ pub(crate) fn delayed_triggers(
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY => {
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => {
             matches!(effect, EffectOp::CreateStormCopies { .. })
         }
         dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),

@@ -3145,6 +3145,8 @@ fn commit_with_entry_batch_and_source_color(
             // Yawgmoth's Will and Suplex exile instead.
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);

@@ -149,7 +149,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Sewer-veillance Cam" => &SEWER_VEILLANCE_CAM,
         "Tithing Blade" => &TITHING_BLADE,
         "Behold the Multiverse" => &BEHOLD_THE_MULTIVERSE,
-        _ => super::build_eternal_e7a_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_e6b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -227,7 +227,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_pauper_e6a_v1::union_of_the_third_path",
         ),
-        _ => return super::build_eternal_e7a_v1::special_for(name),
+        _ => return super::build_eternal_e6b_v1::special_for(name),
     })
 }
 
@@ -240,7 +240,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Mulldrifter" => &["Keywords::FLYING"],
         "Omen of the Dead" => &["Keywords::FLASH"],
         "Sewer-veillance Cam" => &["Keywords::FLASH"],
-        _ => super::build_eternal_e7a_v1::keywords_for(name),
+        _ => super::build_eternal_e6b_v1::keywords_for(name),
     }
 }
 
@@ -262,7 +262,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Mulldrifter" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 2, x_count: 0 })], condition: AltCostCondition::Always })",
         "Behold the Multiverse" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 1, x_count: 0 })], condition: AltCostCondition::ForetoldV1 })",
-        _ => super::build_eternal_e7a_v1::alt_cost_for(name),
+        _ => super::build_eternal_e6b_v1::alt_cost_for(name),
     }
 }
 
@@ -276,7 +276,7 @@ pub(super) fn additional_cost_for(name: &str) -> &'static str {
         "Crop Rotation" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Land }])"
         }
-        _ => super::build_eternal_e7a_v1::additional_cost_for(name),
+        _ => super::build_eternal_e6b_v1::additional_cost_for(name),
     }
 }
 
@@ -294,7 +294,7 @@ pub(super) fn flashback_for(name: &str) -> String {
     let cost = match name {
         "Moment's Peace" => "{2}{G}",
         "Mystical Teachings" => "{5}{B}",
-        _ => return super::build_eternal_e7a_v1::flashback_for(name),
+        _ => return super::build_eternal_e6b_v1::flashback_for(name),
     };
     let (pips, generic, x_count) = super::parse_cost(cost);
     format!(
@@ -307,7 +307,7 @@ pub(super) fn flashback_for(name: &str) -> String {
 pub(super) fn attachment_for(name: &str) -> &'static str {
     match name {
         "Cryoshatter" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: -5, toughness: 0, keywords: Keywords::NONE, per_controlled_subtype: None }))",
-        _ => super::build_eternal_e7a_v1::attachment_for(name),
+        _ => super::build_eternal_e6b_v1::attachment_for(name),
     }
 }
 
@@ -315,14 +315,14 @@ pub(super) fn attachment_for(name: &str) -> &'static str {
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Tithing Blade" => "Some(TransformFaceDef { name: \"Consuming Sepulcher\", types: &[CardType::Artifact], subtypes: &[], colors: &[ManaColor::B], power: None, toughness: None, keywords: Keywords::NONE })",
-        _ => "None",
+        _ => super::build_eternal_e6b_v1::transform_face_for(name),
     }
 }
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Tithing Blade" => Some("Consuming Sepulcher"),
-        _ => None,
+        _ => super::build_eternal_e6b_v1::transform_face_name_for(name),
     }
 }
 
@@ -365,6 +365,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Prohibit" => "spell:counter_target_spell_mana_value_at_most_2_or_4_if_kicked",
         "Union of the Third Path" => "spell:draw_1:gain_life_per_card_in_hand",
-        _ => super::build_eternal_e7a_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_e6b_v1::trigger_recipe_for(name),
     }
 }

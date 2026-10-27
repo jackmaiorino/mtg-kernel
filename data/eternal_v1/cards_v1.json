@@ -8085,6 +8085,1645 @@
    "java_file": "Mage.Sets/src/mage/cards/y/YawgmothsWill.java"
   },
   {
+   "name": "Abundant Growth",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "aura",
+    "enchant_land",
+    "etb_trigger",
+    "draw_card",
+    "grants_mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AbundantGrowth.java"
+  },
+  {
+   "name": "Alms of the Vein",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-rakdos-madness"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "drain",
+    "madness"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AlmsOfTheVein.java"
+  },
+  {
+   "name": "Ancestral Mask",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "pump_per_enchantment"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AncestralMask.java"
+  },
+  {
+   "name": "Angelic Gift",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "etb_trigger",
+    "draw_card",
+    "flying"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AngelicGift.java"
+  },
+  {
+   "name": "Armadillo Cloak",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c",
+    "pauper-selesnya-gates"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "trample",
+    "damage_life_gain_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/ArmadilloCloak.java"
+  },
+  {
+   "name": "Asgardian Citadel",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R",
+    "W"
+   ],
+   "decks": [
+    "pauper-boros-moxite"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "enters_tapped",
+    "etb_life_gain",
+    "mana_ability"
+   ]
+  },
+  {
+   "name": "Ash Barrens",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability",
+    "colorless_mana",
+    "landcycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AshBarrens.java"
+  },
+  {
+   "name": "Battle Screech",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro",
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "token_creation",
+    "flashback",
+    "tap_creatures_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BattleScreech.java"
+  },
+  {
+   "name": "Benevolent Blessing",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c",
+    "mono-white-heroic"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "aura",
+    "enchant_creature",
+    "choose_color",
+    "protection_from_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BenevolentBlessing.java"
+  },
+  {
+   "name": "Boros Garrison",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R",
+    "W"
+   ],
+   "decks": [
+    "pauper-boros-moxite",
+    "pauper-inside-out-combo",
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "bounce_land"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BorosGarrison.java"
+  },
+  {
+   "name": "Bushwhack",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "modal",
+    "basic_land_search",
+    "fight"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/Bushwhack.java"
+  },
+  {
+   "name": "Cartouche of Solidarity",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura",
+    "Cartouche"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "aura",
+    "enchant_controlled_creature",
+    "etb_trigger",
+    "token_creation",
+    "first_strike"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CartoucheOfSolidarity.java"
+  },
+  {
+   "name": "Cliffgate",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Gate"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "pauper-snacker-gates",
+    "pauper-selesnya-gates"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_tapped",
+    "gate_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Cliffgate.java"
+  },
+  {
+   "name": "Dawnbringer Cleric",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-boros-synthesizer"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "modal",
+    "life_gain",
+    "enchantment_removal",
+    "graveyard_exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DawnbringerCleric.java"
+  },
+  {
+   "name": "Demand Answers",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-rakdos-madness"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "additional_cost",
+    "sacrifice_cost",
+    "discard",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DemandAnswers.java"
+  },
+  {
+   "name": "Eagles of the North",
+   "engine_capability": "full",
+   "mana_cost": "{5}{W}",
+   "mana_value": 6,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "etb_trigger",
+    "team_pump",
+    "landcycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EaglesOfTheNorth.java"
+  },
+  {
+   "name": "Ethereal Armor",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c",
+    "mono-white-heroic"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "pump_per_enchantment",
+    "first_strike"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EtherealArmor.java"
+  },
+  {
+   "name": "Fortress Kin-Guard",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dog",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "endure",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FortressKinGuard.java"
+  },
+  {
+   "name": "Gladecover Scout",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Scout"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "hexproof"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GladecoverScout.java"
+  },
+  {
+   "name": "Greatsword of Tyr",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Equipment"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "equipment",
+    "attack_trigger",
+    "plus_one_counters",
+    "tap_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GreatswordOfTyr.java"
+  },
+  {
+   "name": "Guardians' Pledge",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro",
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "team_pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GuardiansPledge.java"
+  },
+  {
+   "name": "Heliod's Pilgrim",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "tutor",
+    "aura_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HeliodsPilgrim.java"
+  },
+  {
+   "name": "Idyllic Grange",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Plains"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W"
+   ],
+   "decks": [
+    "pauper-white-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped_unless",
+    "etb_trigger",
+    "plus_one_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/IdyllicGrange.java"
+  },
+  {
+   "name": "Jagged Barrens",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Desert"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B",
+    "R"
+   ],
+   "decks": [
+    "pauper-rakdos-madness"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_tapped",
+    "etb_trigger",
+    "damage",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/j/JaggedBarrens.java"
+  },
+  {
+   "name": "Kitchen Imp",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Imp"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-rakdos-madness"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "flying",
+    "haste",
+    "madness"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KitchenImp.java"
+  },
+  {
+   "name": "Leonardo, Big Brother",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Mutant",
+    "Ninja",
+    "Turtle"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro",
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-boros-bully",
+    "pauper-azorius-faeries",
+    "pauper-jeskai-affinity-de7a3292-fefc-4cb7-857f-d257a6d0b7f3"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "sneak",
+    "alt_cost",
+    "pump_per_creature"
+   ]
+  },
+  {
+   "name": "Lunarch Veteran",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro",
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "life_gain",
+    "creature_enters_trigger",
+    "disturb",
+    "transform"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LunarchVeteran.java"
+  },
+  {
+   "name": "Malevolent Rumble",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c",
+    "pauper-gruul-ponza",
+    "pauper-snacker-gates",
+    "pauper-gruul-ramp",
+    "pauper-dredge",
+    "pauper-selesnya-gates",
+    "legacy-lands",
+    "legacy-nic-fit",
+    "legacy-loam-pox",
+    "vintage-fastbond-lands"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "reveal",
+    "card_selection",
+    "mill",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MalevolentRumble.java"
+  },
+  {
+   "name": "Mana Tithe",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-boros-moxite"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "counter_target",
+    "force_spike"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/ManaTithe.java"
+  },
+  {
+   "name": "Manor Gate",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Gate"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "pauper-snacker-gates",
+    "pauper-selesnya-gates"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_tapped",
+    "gate_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/ManorGate.java"
+  },
+  {
+   "name": "Martyr's Soul",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "convoke",
+    "etb_trigger",
+    "intervening_if",
+    "plus_one_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MartyrsSoul.java"
+  },
+  {
+   "name": "Pursue the Past",
+   "engine_capability": "full",
+   "mana_cost": "{R}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W",
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-boros-moxite",
+    "pauper-snacker-gates",
+    "pauper-inside-out-combo",
+    "pauper-selesnya-gates"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "life_gain",
+    "discard",
+    "draw_card",
+    "flashback"
+   ]
+  },
+  {
+   "name": "Raffine's Informant",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro",
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "connive"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RaffinesInformant.java"
+  },
+  {
+   "name": "Ragged Short Spear",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Equipment"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-boros-moxite"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "equipment",
+    "etb_trigger",
+    "discard",
+    "draw_card"
+   ]
+  },
+  {
+   "name": "Rakdos Carnarium",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B",
+    "R"
+   ],
+   "decks": [
+    "pauper-rakdos-madness"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "bounce_land"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RakdosCarnarium.java"
+  },
+  {
+   "name": "Ramosian Rally",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "alt_cost",
+    "tap_creature_cost",
+    "team_pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RamosianRally.java"
+  },
+  {
+   "name": "Rancor",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c",
+    "pauper-infect-09cfa92b-ebe6-4cfb-be11-6f64e5cb7bf6"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "trample",
+    "return_to_hand"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/Rancor.java"
+  },
+  {
+   "name": "Salt Road Packbeast",
+   "engine_capability": "full",
+   "mana_cost": "{5}{W}",
+   "mana_value": 6,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Beast"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "affinity",
+    "etb_trigger",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SaltRoadPackbeast.java"
+  },
+  {
+   "name": "Search Party Captain",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_reduction",
+    "etb_trigger",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SearchPartyCaptain.java"
+  },
+  {
+   "name": "Sheltering Landscape",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "tap_ability",
+    "fetch_effect",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/ShelteringLandscape.java"
+  },
+  {
+   "name": "Silhana Ledgewalker",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "hexproof",
+    "evasion"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SilhanaLedgewalker.java"
+  },
+  {
+   "name": "Slippery Bogle",
+   "engine_capability": "full",
+   "mana_cost": "{G/U}",
+   "mana_value": 1,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Beast"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "hexproof",
+    "hybrid_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SlipperyBogle.java"
+  },
+  {
+   "name": "Spider-Man, Web-Slinger",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spider",
+    "Human",
+    "Hero"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "web_slinging",
+    "alt_cost",
+    "return_to_hand_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SpiderManWebSlinger.java"
+  },
+  {
+   "name": "Spirit Link",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c",
+    "mono-white-heroic"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "damage_life_gain_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SpiritLink.java"
+  },
+  {
+   "name": "Thraben Inspector",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-white-aggro",
+    "pauper-boros-moxite",
+    "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    "pauper-glintblade",
+    "pauper-boros-synthesizer",
+    "pauper-boros-bully",
+    "pauper-azorius-faeries",
+    "pauper-jeskai-affinity-de7a3292-fefc-4cb7-857f-d257a6d0b7f3"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "etb_trigger",
+    "investigate",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThrabenInspector.java"
+  },
+  {
+   "name": "Utopia Sprawl",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c",
+    "pauper-gruul-ponza",
+    "pauper-gruul-ramp"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "aura",
+    "enchant_land",
+    "choose_color",
+    "mana_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UtopiaSprawl.java"
+  },
+  {
+   "name": "Vampire's Kiss",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-rakdos-madness"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "drain",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VampiresKiss.java"
+  },
+  {
+   "name": "Wind-Scarred Crag",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R",
+    "W"
+   ],
+   "decks": [
+    "pauper-boros-moxite",
+    "pauper-inside-out-combo",
+    "pauper-boros-synthesizer"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "enters_tapped",
+    "etb_life_gain",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WindScarredCrag.java"
+  },
+  {
+   "name": "Bird Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "flying"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/BirdToken.java",
+   "is_token": true
+  },
+  {
+   "name": "White Warrior Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "vigilance"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/WarriorVigilantToken.java",
+   "is_token": true
+  },
+  {
+   "name": "White Spirit Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritWhiteToken.java",
+   "is_token": true
+  },
+  {
    "name": "Abhorrent Oculus",
    "engine_capability": "full",
    "mana_cost": "{2}{U}",

@@ -1,6 +1,6 @@
 //! Eternal wave E7a: native rules tests for the cards that complete Legacy
 //! Sewer-Cam combo, Rakdos Reanimator, The Epic Storm, Stiflenought, Mardu
-//! Energy and Affinity Stompy, and most of Legacy Lands.
+//! Energy, Affinity Stompy and Lands.
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
@@ -1099,7 +1099,8 @@ fn emry_mills_four_and_lets_an_artifact_be_cast_from_the_graveyard() {
     let emry = put(&mut state, P0, "Emry, Lurker of the Loch", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 0);
     cast(&mut state, emry, &[]);
-    settled(&mut state);
+    // The milled cards' graveyard order is chosen.
+    settle_first(&mut state);
     assert_eq!(zone(&state, emry), Zone::Battlefield);
     assert_eq!(library_len(&state, P0), 16, "milled four");
 

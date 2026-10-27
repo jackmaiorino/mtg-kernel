@@ -232,6 +232,12 @@ pub enum StandardTargetV1 {
     /// "Target artifact or creature you control and target creature an
     /// opponent controls with power 3 or less" (Oko, Thief of Crowns).
     ControlledArtifactOrCreatureThenOpponentSmallCreatureV1,
+    /// "Enchant Forest" (Utopia Sprawl): a land with the Forest subtype,
+    /// any controller.
+    ForestV1,
+    /// "Up to one target creature defending player controls" (Greatsword
+    /// of Tyr): a creature the opponent controls.
+    UpToOneOpponentCreatureV1,
     /// "Target artifact card in your graveyard" (Emry, Lurker of the Loch).
     ArtifactCardInOwnGraveyardV1,
     /// "Target artifact card with mana value N or less from your graveyard"
@@ -268,6 +274,7 @@ impl StandardTargetV1 {
             Self::ArtifactThenArtifactCardInItsControllersGraveyardV1 => (2, 2),
             Self::UpToOneOtherNonlandPermanentV1 => (1, 0),
             Self::TwoControlledArtifactsCreaturesOrLandsV1 => (2, 2),
+            Self::UpToOneOpponentCreatureV1 => (1, 0),
             Self::CreaturesThenNonlandPermanentsV1 {
                 creatures,
                 permanents,
@@ -844,6 +851,13 @@ pub(crate) fn target_matches(
         StandardTargetV1::CreatureThenGraveyardCardsV1 => has(CardType::Creature),
         StandardTargetV1::UpToOneColoredPermanentV1 => {
             crate::engine::object_color_mask(state, object) & 0b1_1111 != 0
+        }
+        StandardTargetV1::ForestV1 => {
+            has(CardType::Land)
+                && crate::engine::has_effective_subtype(state, object, Subtype::Forest)
+        }
+        StandardTargetV1::UpToOneOpponentCreatureV1 => {
+            live.controller != controller && has(CardType::Creature)
         }
         // Graveyard filters, answered above.
         StandardTargetV1::ArtifactCardInOwnGraveyardV1
@@ -2175,7 +2189,9 @@ pub(crate) fn departure_face(
 /// Whether a departure from the battlefield records its face, so leave
 /// triggers printed on one face see the face that left.
 pub(crate) fn records_departure_face(def: &CardDef) -> bool {
-    def.transform_face.is_some() && matches!(def.name, POLUKRANOS | OJER | CECIL)
+    def.transform_face.is_some()
+        && (matches!(def.name, POLUKRANOS | OJER | CECIL)
+            || (cfg!(feature = "eternal-fixtures") && def.name == "Lunarch Veteran"))
 }
 
 pub(crate) fn trigger_matches(
@@ -2974,6 +2990,7 @@ pub fn aura_enters() -> EffectOp {
 /// Whether `def` is one of this module's Auras.
 pub(crate) fn is_aura(def: &CardDef) -> bool {
     matches!(def.name, SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT)
+        || (cfg!(feature = "eternal-fixtures") && crate::eternal_pauper_e6b_v1::is_aura(def))
 }
 
 /// Whether this module's Aura `def`, controlled by `controller`, may
@@ -2991,7 +3008,7 @@ pub(crate) fn aura_host_legal(
     let card_type = match def.name {
         SHELTERED_BY_GHOSTS => CardType::Creature,
         HARDLIGHT_CONTAINMENT => CardType::Artifact,
-        _ => return None,
+        _ => return crate::eternal_pauper_e6b_v1::aura_host_legal(def, controller, host, state),
     };
     Some(live.zone == Zone::Battlefield && live.controller == controller && type_ok(card_type))
 }
@@ -3220,6 +3237,10 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
         let lord = crate::eternal_legacy_e5b_v1::controlled_boost(state, object);
         boost.0 += lord.0;
         boost.1 += lord.1;
+        // Leonardo, Big Brother: "+1/+0 for each other creature you control."
+        let leonardo = crate::eternal_pauper_e6b_v1::controlled_boost(state, object);
+        boost.0 += leonardo.0;
+        boost.1 += leonardo.1;
     }
     boost
 }
@@ -3593,6 +3614,12 @@ pub(crate) fn graveyard_cast_granted(
                     zone_change_count,
                 )
                 || crate::eternal_lurrus_v1::lurrus_permission(
+                    state,
+                    object,
+                    holder,
+                    zone_change_count,
+                )
+                || crate::eternal_pauper_e6b_v1::disturb_permission(
                     state,
                     object,
                     holder,

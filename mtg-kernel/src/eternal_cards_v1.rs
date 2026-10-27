@@ -103,6 +103,13 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_e5a_v1::E5aStateV1::is_empty"
     )]
     pub e5a: crate::eternal_e5a_v1::E5aStateV1,
+    /// The Pauper Bogles, white aggro and Rakdos Madness lists' state
+    /// (`eternal_pauper_e6b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_pauper_e6b_v1::E6bStateV1::is_empty"
+    )]
+    pub e6b: crate::eternal_pauper_e6b_v1::E6bStateV1,
     /// Wave E7a's state (`eternal_legacy_e7a_v1`).
     #[serde(
         default,
@@ -170,6 +177,9 @@ pub enum EternalTriggerV1 {
     E6aV1(crate::eternal_pauper_e6a_v1::E6aTriggerV1),
     /// A condition owned by wave E5a's module.
     E5aV1(crate::eternal_e5a_v1::E5aTriggerV1),
+    /// A condition owned by the Pauper Bogles, white aggro and Rakdos
+    /// Madness lists' module.
+    E6bV1(crate::eternal_pauper_e6b_v1::E6bTriggerV1),
     /// A condition owned by wave E7a's module.
     E7aV1(crate::eternal_legacy_e7a_v1::E7aTriggerV1),
 }
@@ -294,6 +304,9 @@ pub enum EternalOpV1 {
     E6aV1(crate::eternal_pauper_e6a_v1::E6aOpV1),
     /// A leaf owned by wave E5a's module.
     E5aV1(crate::eternal_e5a_v1::E5aOpV1),
+    /// A leaf owned by the Pauper Bogles, white aggro and Rakdos Madness
+    /// lists' module.
+    E6bV1(crate::eternal_pauper_e6b_v1::E6bOpV1),
     /// A leaf owned by wave E7a's module.
     E7aV1(crate::eternal_legacy_e7a_v1::E7aOpV1),
 }
@@ -316,6 +329,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 }
                 EternalTriggerV1::E6aV1(condition) => {
                     crate::eternal_pauper_e6a_v1::arrival_condition(condition)
+                }
+                EternalTriggerV1::E6bV1(condition) => {
+                    crate::eternal_pauper_e6b_v1::arrival_condition(condition)
                 }
                 EternalTriggerV1::E7aV1(condition) => {
                     crate::eternal_legacy_e7a_v1::arrival_condition(condition)
@@ -820,6 +836,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E5bV1(op) => crate::eternal_legacy_e5b_v1::execute(op, ctx, state),
         EternalOpV1::E6aV1(op) => crate::eternal_pauper_e6a_v1::execute(op, ctx, state),
         EternalOpV1::E5aV1(op) => crate::eternal_e5a_v1::execute(op, ctx, state),
+        EternalOpV1::E6bV1(op) => crate::eternal_pauper_e6b_v1::execute(op, ctx, state),
         EternalOpV1::E7aV1(op) => crate::eternal_legacy_e7a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
@@ -1287,6 +1304,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && e3::blocker_allowed(state, attacker, blocker)
         && crate::eternal_vintage_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_e5a_v1::statics::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_pauper_e6b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_legacy_e7a_v1::blocker_allowed(state, attacker, blocker)
 }
 
@@ -1470,6 +1488,9 @@ pub(crate) fn delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_e5a_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_pauper_e6b_v1::delayed_triggers(
+        state, events,
+    ));
     triggers.extend(crate::eternal_legacy_e7a_v1::delayed_triggers(
         state, events,
     ));
@@ -1647,6 +1668,12 @@ pub(crate) fn trigger_matches(
     if condition == EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 {
         return e3::trigger_matches(condition, events, index, source, state);
     }
+    // These conditions check their own source, which may show a back face.
+    if let EternalTriggerV1::E6bV1(condition) = condition {
+        return crate::eternal_pauper_e6b_v1::trigger_matches(
+            condition, events, index, source, state,
+        );
+    }
     if let EternalTriggerV1::E5bV1(condition) = condition {
         if crate::eternal_legacy_e5b_v1::functions_on_stack(condition) {
             return crate::eternal_legacy_e5b_v1::trigger_matches(
@@ -1677,6 +1704,7 @@ pub(crate) fn trigger_matches(
         EternalTriggerV1::E5aV1(condition) => {
             crate::eternal_e5a_v1::trigger_matches(condition, events, index, source, state)
         }
+        EternalTriggerV1::E6bV1(_) => false,
         EternalTriggerV1::E7aV1(condition) => {
             crate::eternal_legacy_e7a_v1::trigger_matches(condition, events, index, source, state)
         }

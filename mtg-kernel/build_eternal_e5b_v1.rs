@@ -249,7 +249,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         // "Sacrifice this token: Add {C}."
         "Eldrazi Scion Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_e6b_v1::mana_ability_def_for(name),
     }
 }
 
