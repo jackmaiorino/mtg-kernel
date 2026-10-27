@@ -41,6 +41,18 @@ pub(crate) fn libm_environment_token_v1() -> u32 {
     }
 }
 
+/// Settles now, once per process, whether `tanh8` may be used: reads the
+/// proof record or runs the proof. Without it the first activation does
+/// this, so a caller that times its searches (Stage 4a's seat clock) calls
+/// it at startup to keep the proof's 40 CPU seconds out of every search.
+/// Results are the same bits either way; only when the cost lands changes.
+pub(crate) fn prepare_v1() {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    if windows::default_mxcsr() && windows::fma3_enabled() {
+        let _ = windows::proved();
+    }
+}
+
 /// `*v = v.tanh()` for every value, with the same bits.
 pub(crate) fn libm_tanh_in_place_v1(values: &mut [f32]) {
     #[cfg(all(windows, target_arch = "x86_64"))]
@@ -253,16 +265,27 @@ mod windows {
     }
 
     /// Where proof records live: `MTG_KERNEL_VECTOR_TANH_DIR`, else
-    /// `%LOCALAPPDATA%\mtg-kernel\vector-tanh`.
+    /// `%LOCALAPPDATA%\mtg-kernel\vector-tanh`, else (an environment
+    /// without `LOCALAPPDATA`, such as an allowlisted launcher's) the same
+    /// folder under Windows' default `%USERPROFILE%\AppData\Local`.
     fn record_dir() -> Option<std::path::PathBuf> {
-        if let Some(dir) = std::env::var_os("MTG_KERNEL_VECTOR_TANH_DIR") {
+        record_dir_from(|name| std::env::var_os(name))
+    }
+
+    /// `record_dir` over an environment lookup (testable).
+    pub(super) fn record_dir_from(
+        var: impl Fn(&str) -> Option<std::ffi::OsString>,
+    ) -> Option<std::path::PathBuf> {
+        if let Some(dir) = var("MTG_KERNEL_VECTOR_TANH_DIR") {
             return Some(dir.into());
         }
-        std::env::var_os("LOCALAPPDATA").map(|base| {
-            std::path::Path::new(&base)
-                .join("mtg-kernel")
-                .join("vector-tanh")
-        })
+        let local = var("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                var("USERPROFILE")
+                    .map(|home| std::path::Path::new(&home).join("AppData").join("Local"))
+            });
+        local.map(|base| base.join("mtg-kernel").join("vector-tanh"))
     }
 
     use std::ffi::c_void;
@@ -648,6 +671,42 @@ mod tests {
             assert!(windows::fma3_enabled());
             assert!(windows::default_mxcsr());
         }
+    }
+
+    /// Proof records are found without `LOCALAPPDATA` (an allowlisted
+    /// launcher environment), in the folder Windows' default would give.
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn proof_record_folder_falls_back_to_the_profile() {
+        use std::ffi::OsString;
+        use std::path::PathBuf;
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| OsString::from(v))
+            }
+        };
+        let tail = |base: &str| PathBuf::from(base).join("mtg-kernel").join("vector-tanh");
+        assert_eq!(
+            windows::record_dir_from(env(&[
+                ("MTG_KERNEL_VECTOR_TANH_DIR", "D:/proofs"),
+                ("LOCALAPPDATA", "C:/L"),
+                ("USERPROFILE", "C:/U"),
+            ])),
+            Some(PathBuf::from("D:/proofs"))
+        );
+        assert_eq!(
+            windows::record_dir_from(env(&[("LOCALAPPDATA", "C:/L"), ("USERPROFILE", "C:/U")])),
+            Some(tail("C:/L"))
+        );
+        let profile = PathBuf::from("C:/U").join("AppData").join("Local");
+        assert_eq!(
+            windows::record_dir_from(env(&[("USERPROFILE", "C:/U")])),
+            Some(profile.join("mtg-kernel").join("vector-tanh"))
+        );
+        assert_eq!(windows::record_dir_from(env(&[])), None);
     }
 
     #[cfg(all(windows, target_arch = "x86_64"))]
