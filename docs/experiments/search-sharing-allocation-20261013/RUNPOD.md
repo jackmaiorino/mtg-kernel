@@ -51,26 +51,38 @@ $cloudTaskName = 'Codex-SearchAllocation-20261013-lease-001'
 python $cloudScript prepare --control $cloudControl --name search-sharing-allocation-20261013-lease-001
 $cloudAction = New-ScheduledTaskAction -Execute 'C:\Python314\pythonw.exe' -Argument ('"'+$cloudScript+'" guardian --control "'+$cloudControl+'"')
 $cloudPrincipal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
-$cloudSettings = New-ScheduledTaskSettingsSet -Hidden -WakeToRun -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 5) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $cloudTaskName -Action $cloudAction -Principal $cloudPrincipal -Settings $cloudSettings
+# No expiry: no execution limit, restart on failure, re-triggered every 5 minutes indefinitely.
+$cloudTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+$cloudTrigger.Repetition.Duration = ''
+$cloudSettings = New-ScheduledTaskSettingsSet -Hidden -WakeToRun -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName $cloudTaskName -Action $cloudAction -Trigger $cloudTrigger -Principal $cloudPrincipal -Settings $cloudSettings
+# Independent watchdog: one guardian pass every 5 minutes.
+$watchAction = New-ScheduledTaskAction -Execute 'C:\Python314\pythonw.exe' -Argument ('"'+$cloudScript+'" guardian --once --control "'+$cloudControl+'"')
+$watchSettings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName ($cloudTaskName+'-watchdog') -Action $watchAction -Trigger $cloudTrigger -Principal $cloudPrincipal -Settings $watchSettings
 Start-ScheduledTask -TaskName $cloudTaskName
 Get-Content -LiteralPath ($cloudControl+'\guardian-ready.json')
 python $cloudScript create --control $cloudControl --execute
 python $cloudScript status --control $cloudControl
 ~~~
 
-Create refuses an unarmed or dead guardian. An ambiguous POST is reconciled
-by listing the exact unique name before any retry; one matching ID is adopted,
-multiple matches prevent both creation and deletion. Existing unrelated pods
-are untouched. Before native work, observe the resident guard's fresh
+Create refuses an unarmed or dead guardian, any earlier create of the same
+lease (one POST per prepared lease), any existing Pod with the lease's name,
+and a missing, failed or over-120-second-old account funding read. After the
+POST it adopts one same-name Pod and deletes the rest. An ambiguous POST with
+no Pod seen stays guarded (the guardian deletes any late Pod with the name)
+until an operator checks the RunPod console and runs `resolve-ambiguous
+--checked-by "..."`. Existing unrelated pods are untouched. Before native work, observe the resident guard's fresh
 /run/phase1/search-sharing-allocation-20261013-lease-001/guard.json with
 provider_ok=true, verify the returned CPU/disk/rate, and qualify serial/parallel
 completed work using the guarded Linux runtime. Register connection.json in
 the control directory with pod_id, verified host IP, port, private_key_path,
 and remote_output=/workspace/search-sharing-allocation/run. This enables the
-guardian's bounded scp preservation. Mark worker-started.json after native
-dispatch; the resident progress.json tracks the actual worker through output
-transfer, and must not mark finished until preservation completes.
+guardian's bounded scp preservation. The guardian marks worker-started.json
+itself once the Pod's resident state shows worker-started.json or
+progress.json over SSH, so the startup timeout never ends productive work; the
+resident progress.json tracks the actual worker through output transfer, and
+must not mark finished until preservation completes.
 
 The Linux launcher must use the actual cgroup quota/cpuset, /var/lib/mtg-node/
 host-lock, and measured free disk after build/output allocation. An ephemeral
@@ -87,17 +99,21 @@ Use the imminent local smoke timings and measured cloud 1/2/4/... throughput
 to choose allocation; 32 advertised vCPUs do not establish a 32-fold speedup.
 
 On completion, cold-copy the finished records and hashes to D: before asking
-the guards to release. At the hard deadline, available output copying gets
-five minutes inside the ten-minute recovery window; failure is recorded and
-does not extend the lease.
+the guards to release. On a requested release or startup timeout, output
+copying runs once, for at most five minutes and only while 15 minutes of the
+lease remain; it never delays the DELETE. The deadline releases without
+copying.
 
 ~~~powershell
 python $cloudScript release --control $cloudControl
 Get-Content -LiteralPath ($cloudControl+'\preservation.json')
 Get-Content -LiteralPath ($cloudControl+'\external-guard-completion.json')
-python $cloudScript status --control $cloudControl
-# Only after provider_absent=true and no matching pod:
-Unregister-ScheduledTask -TaskName $cloudTaskName -Confirm:$false
+# Exit 0 only after two absent observations 30 s apart and the guardian's own
+# double-confirmed completion. Otherwise leave both tasks armed.
+python $cloudScript verify-absent --control $cloudControl
+if ($LASTEXITCODE -eq 0) {
+    foreach ($t in @($cloudTaskName, ($cloudTaskName+'-watchdog'))) { Disable-ScheduledTask -TaskName $t; Stop-ScheduledTask -TaskName $t; Unregister-ScheduledTask -TaskName $t -Confirm:$false }
+}
 ~~~
 
 Retain the preparation, create receipt, failed attempts, copied outputs,

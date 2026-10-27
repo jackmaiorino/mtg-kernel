@@ -68,9 +68,10 @@ jobs:
             [ -z "$f" ] && continue
             # Python jobs care about python sources/tools/tests, the data
             # artifacts they validate, workflow changes, and the pinned
-            # interpreter/lock config.
+            # interpreter/lock config. The lease adapter's tests run in the
+            # Python job's lease guard step.
             case "$f" in
-              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version)
+              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version|tools/search_sharing_allocation/*)
                 python_relevant=true ;;
             esac
             # Rust jobs run unless a file is provably outside the crate's
@@ -896,6 +897,15 @@ jobs:
       - name: Validate canonical Pauper manifests
         if: matrix.shard == 0
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .
+
+      # Offline RunPod lease tools: bounded fakes, no provider, network or subprocess call.
+      - name: Lease guard tests
+        if: matrix.shard == 0 && runner.os == 'Linux'
+        run: |
+          uv run --no-sync python -m unittest discover -v -s python/tools/phase1_cloud -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/search_sharing_allocation -p 'test_cloud_lease.py'
+          cd python/tools/tests && PYTHONPATH=.. uv run --no-sync python -m unittest -v \
+            test_nine_deck_cloud_v1.PackageTests.test_tooling_closure_is_complete_from_a_copy
 
       - name: Use the runner's persistent Python environment build
         if: runner.environment == 'self-hosted'
