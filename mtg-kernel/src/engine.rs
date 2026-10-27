@@ -23203,7 +23203,9 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                         trigger::TriggerCondition::ControlledCreatureWithSubtypeAttacks(_)
                     )
                 })
-        });
+        })
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_pauper_e6b_v1::observes_attacks(state));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if another_observes_attacks

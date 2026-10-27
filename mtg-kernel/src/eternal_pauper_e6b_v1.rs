@@ -1418,6 +1418,12 @@ pub(crate) fn adjust_zone_change(state: &GameState, change: &mut event::ZoneChan
     }
 }
 
+/// Whether a permanent observes declared attackers (Greatsword of Tyr's
+/// "Whenever equipped creature attacks"), so their declarations are logged.
+pub(crate) fn observes_attacks(state: &GameState) -> bool {
+    active_permanents(state, GREATSWORD_OF_TYR).next().is_some()
+}
+
 /// Ancestral Mask: "+2/+2 for each other enchantment on the battlefield."
 /// Ethereal Armor: "+1/+1 for each enchantment you control." The multiplier
 /// of the Aura's printed bonus, or `None` for every other Aura.
