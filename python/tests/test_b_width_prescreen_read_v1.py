@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS = REPO_ROOT / "python" / "tools"
@@ -28,6 +29,7 @@ SHIPPED_CONFIG = REPO_ROOT / "data" / "b_width_prescreen_v1" / "config.json"
 ANALYZER_SHA256 = hashlib.sha256((TOOLS / "b_width_prescreen_read_v1.py").read_bytes()).hexdigest()
 NOW = 1_800_000_000
 ENGINE = "e" * 40
+BINARY = "1" * 64
 DECKS = 3
 
 
@@ -114,7 +116,7 @@ class Tree:
         config_sha = sha(config_bytes)
         launch_bytes = write(self.root / "LAUNCH.json", {
             "schema": reader.LAUNCH_SCHEMA, "config_sha256": config_sha, "launched_at_unix": NOW - 3600,
-            "host": "SYNTHETIC", "binary_sha256": "1" * 64, "engine_commit": ENGINE})
+            "host": "SYNTHETIC", "binary_sha256": BINARY, "engine_commit": ENGINE})
         fitting = config["fitting"]
         section7_chains = []
         for chain in config["chains"]:
@@ -160,7 +162,8 @@ class Tree:
             (self.root / "collect" / f"k{k}" / "games.bin").write_bytes(store)
             parent_state = sha(f"parent-{k}".encode())
             collection = {"schema": reader.COLLECTION_SCHEMA, "config_sha256": config_sha, "engine_commit": ENGINE,
-                          "chain": k, "source": chain["source"], "parent_state_sha256": parent_state,
+                          "binary_sha256": BINARY, "chain": k, "source": chain["source"],
+                          "parent_state_sha256": parent_state,
                           "feature_contract_digest": config["feature_contract_digest"],
                           "feature_encoding_digest": config["feature_encoding_digest"],
                           "store_sha256": sha(store), "store_bytes": len(store), "games": games}
@@ -255,7 +258,8 @@ class Tree:
                     if arm == "w128":
                         report["heldout"][0] = evaluation(0, {g: 1.5 * base[g] for g in base})
                     fit = {"schema": reader.FIT_SCHEMA, "config_sha256": config_sha,
-                           "data_record_sha256": sha(data_bytes), "engine_commit": ENGINE, "chain": k, "seed": s,
+                           "data_record_sha256": sha(data_bytes), "engine_commit": ENGINE,
+                           "binary_sha256": BINARY, "chain": k, "seed": s,
                            "arm": arm, "minibatch_seed": minibatch_seed,
                            "widen_seed": widen_seed if arm == "w128" else None,
                            "parent_state_sha256": parent_state, "transform": transform,
@@ -264,10 +268,10 @@ class Tree:
                     write(self.root / "fits" / f"k{k}-s{s}-{arm}.json", fit)
             write(self.root / "preserve" / f"k{k}.json",
                   {"schema": reader.PRESERVATION_SCHEMA, "config_sha256": config_sha, "engine_commit": ENGINE,
-                   "chain": k, "data_record_sha256": sha(data_bytes), "parent_state_sha256": parent_state,
+                   "binary_sha256": BINARY, "chain": k, "data_record_sha256": sha(data_bytes), "parent_state_sha256": parent_state,
                    "inputs": fit_groups + holdout_groups + 7, "seeds": preservation_seeds, "pass": True})
         section7 = {"schema": reader.SECTION7_SCHEMA, "note": config["note"], "config_sha256": config_sha,
-                    "analyzer": config["analyzer"], "engine_commit": ENGINE, "binary_sha256": "1" * 64,
+                    "analyzer": config["analyzer"], "engine_commit": ENGINE, "binary_sha256": BINARY,
                     "launch": {"sha256": sha(launch_bytes), "launched_at_unix": NOW - 3600},
                     "chains": section7_chains}
         return sha(write(self.root / "data" / "SECTION7.json", section7))
@@ -618,6 +622,17 @@ class AnalyzerTests(unittest.TestCase):
             write(t.path("fits/k3-s2-w32.refused.json"), {"error": "BatchLargerThanFitSet"})
             return t.resign()
 
+        def refusal_temporary(t: Tree) -> str:
+            # A refusal whose publication was interrupted (truncated temporary file) is still a refusal.
+            (t.path("fits") / ".k3-s2-w32.refused.json.tmp-9").write_bytes(b"{")
+            return t.resign()
+
+        def launch_binary(t: Tree) -> str:
+            t.edit("LAUNCH.json", lambda v: v.__setitem__("binary_sha256", "0" * 64))
+            launch = sha(t.path("LAUNCH.json").read_bytes())
+            t.edit("data/SECTION7.json", lambda v: v["launch"].__setitem__("sha256", launch))
+            return t.resign()
+
         def missing(relative):
             def damage(t: Tree) -> str:
                 t.path(relative).unlink()
@@ -630,6 +645,8 @@ class AnalyzerTests(unittest.TestCase):
                 lambda v: v["source"]["checkpoint"].__setitem__("sha256", "0" * 64))),
             "feature digest": ("data", collection_field(lambda v: v.__setitem__("feature_contract_digest", "x"))),
             "collection engine commit": ("data", collection_field(lambda v: v.__setitem__("engine_commit", "f"))),
+            "collection binary": ("data", collection_field(lambda v: v.__setitem__("binary_sha256", "0" * 64))),
+            "launch build differs from section 7": ("data", launch_binary),
             "collection record hash": ("data", lambda t: (t.edit(
                 "collect/k1/collection.json", lambda v: v.__setitem__("store_bytes", 0)),
                 sha(t.path("data/SECTION7.json").read_bytes()))[1]),
@@ -652,6 +669,8 @@ class AnalyzerTests(unittest.TestCase):
             "missing report": ("fits", missing("fits/k3-s2-w32.json")),
             "duplicate report": ("fits", extra_file),
             "entry refusal": ("fits", refusal_file),
+            "interrupted refusal publication": ("fits", refusal_temporary),
+            "fit binary": ("fits", fit_edit("k2-s3-w32.json", lambda v: v.__setitem__("binary_sha256", "0" * 64))),
             "other config": ("fits", fit_edit("k2-s3-w32.json", lambda v: v.__setitem__("config_sha256", "0" * 64))),
             "fit engine commit": ("fits", fit_edit("k2-s3-w32.json", lambda v: v.__setitem__("engine_commit", "f"))),
             "nonzero initial Adam step": ("fits", report_edit("k1-s1-w128.json",
@@ -693,6 +712,8 @@ class AnalyzerTests(unittest.TestCase):
             "preservation not passed": ("function_preservation", preserve_edit(lambda v: v.__setitem__("pass", False))),
             "preservation engine commit": ("function_preservation", preserve_edit(
                 lambda v: v.__setitem__("engine_commit", "f"))),
+            "preservation binary": ("function_preservation", preserve_edit(
+                lambda v: v.__setitem__("binary_sha256", "0" * 64))),
             "preserved child differs": ("function_preservation", preserve_edit(
                 lambda v: v["seeds"][2].__setitem__("child_state_sha256", "0" * 64))),
             "preservation skipped inputs": ("function_preservation", preservation_inputs_short),
@@ -717,6 +738,62 @@ class AnalyzerTests(unittest.TestCase):
                 tree, section7 = self.fresh(name.replace(" ", "-"))
                 tree.path(target).write_bytes(b"changed")
                 self.assertEqual(self.void_read(tree, section7)["void_check"], "data")
+
+    def test_nested_import_inputs_bind_the_read(self) -> None:
+        tree, section7 = self.fresh("nested")
+        status, _, error = run(tree, section7)
+        self.assertEqual(status, 0, error)
+        config = load(tree.path("config.json"))
+        before = reader.inputs_sha256(config, sha(tree.path("config.json").read_bytes()), ANALYZER_SHA256, section7,
+                                      tree.root)
+        tree.path("parents/init.f32le").write_bytes(b"changed nested import input")
+        after = reader.inputs_sha256(config, sha(tree.path("config.json").read_bytes()), ANALYZER_SHA256, section7,
+                                     tree.root)
+        self.assertNotEqual(before, after)
+        status, _, error = run(tree, section7, "--rerender")
+        self.assertEqual(status, 2)
+        self.assertIn("inputs differ", error)
+
+    def test_an_interrupted_read_publication_never_yields_two_reads(self) -> None:
+        # A crash between writing the read and publishing it: the complete temporary file stays, READ.json does
+        # not exist.
+        tree = self.copy("interrupted-read")
+        with mock.patch.object(reader.os, "link", side_effect=OSError("simulated crash before publication")):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None))
+        temporaries = list(tree.root.glob(".READ.json.tmp-*"))
+        self.assertEqual(len(temporaries), 1)
+        rendered = temporaries[0].read_bytes()
+        # The next run publishes that read as is (its read time included) instead of rendering another.
+        reader.current_time = lambda: NOW + 600
+        try:
+            status, read, error = run(tree, self.template_section7)
+        finally:
+            reader.current_time = lambda: NOW
+        self.assertEqual(status, 0, error)
+        self.assertEqual(tree.path(reader.READ_NAME).read_bytes(), rendered)
+        self.assertEqual(read["read_at_unix"], NOW)
+        self.assertEqual(list(tree.root.glob(".READ.json.tmp-*")), [])
+        status, _, error = run(tree, self.template_section7)
+        self.assertEqual(status, 2)
+        self.assertIn("has been read", error)
+
+        # An unpublished read of inputs that have since changed is refused, not replaced by a new read.
+        tree = self.copy("interrupted-read-changed")
+        with mock.patch.object(reader.os, "link", side_effect=OSError("simulated crash before publication")):
+            self.assertEqual(run(tree, self.template_section7)[0], 2)
+        tree.edit("fits/k1-s1-w32.json", lambda v: v["report"]["steps"][0].__setitem__("loss", 0.25))
+        status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None))
+        self.assertIn("unpublished read of other inputs", error)
+
+        # A truncated temporary (a crash while writing) is not a read: it is removed and the root is read.
+        tree = self.copy("truncated-read")
+        tree.path(".READ.json.tmp-5").write_bytes(b'{"schema": "mtg-kernel-b-width')
+        status, read, error = run(tree, self.template_section7)
+        self.assertEqual(status, 0, error)
+        self.assertEqual(read["verdict"], "FUND_B")
+        self.assertFalse(tree.path(".READ.json.tmp-5").exists())
 
     def test_signed_zero_is_not_bit_identical(self) -> None:
         tree = self.copy("signed-zero")

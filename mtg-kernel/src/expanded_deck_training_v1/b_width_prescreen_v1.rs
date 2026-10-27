@@ -38,8 +38,15 @@
 //!   report. A chain's step-0 held-out reports of w64 and w128 must then be
 //!   bit-identical. A fit-entry refusal is recorded durably
 //!   (`fits/k<k>-s<s>-<arm>.refused.json`), which makes the screen VOID; it is
-//!   never rerun. Only publication (I/O) is retried, and a resumed fit stage
-//!   removes earlier processes' interrupted publications.
+//!   never rerun. Only publication (I/O) is retried. A resumed fit stage first
+//!   promotes any interrupted refusal publication to its refusal file (it is
+//!   refusal evidence), then removes earlier processes' other interrupted
+//!   publications.
+//!
+//! **One build per run root.** `LAUNCH.json` names the engine commit and the
+//! binary's SHA-256; every later stage refuses another build, and every
+//! attempt, game result, collection, preservation and fit record carries the
+//! build, so a resumed collection never relabels another build's games.
 //!
 //! The single read is the separate pinned analyzer
 //! (`python/tools/b_width_prescreen_read_v1.py`), whose hash the config pins.
@@ -1070,6 +1077,7 @@ pub(crate) struct CollectionRecordV1 {
     pub(crate) schema: String,
     pub(crate) config_sha256: String,
     pub(crate) engine_commit: String,
+    pub(crate) binary_sha256: String,
     pub(crate) chain: u32,
     pub(crate) chain_id: String,
     pub(crate) source: ExpandedModelSourceV1,
@@ -1100,14 +1108,35 @@ pub(crate) fn ensure_launch_v1(loaded: &LoadedConfigV1, root: &Path) -> Result<V
             "binary_sha256": binary_sha256_v1()?, "engine_commit": engine_commit_v1()});
         write_file_v1(&path, &json_bytes_v1(&record)?, false)?;
     }
-    let record: Value = serde_json::from_slice(&read_v1(&path)?).map_err(err)?;
+    launch_build_v1(loaded, root)
+}
+
+/// The run root's launch record, which must exist and name this config and
+/// this build (engine commit and binary): every stage of a run root runs one
+/// build, so a resumed or later stage under another build is refused.
+pub(crate) fn launch_build_v1(loaded: &LoadedConfigV1, root: &Path) -> Result<Value, String> {
+    let record: Value =
+        serde_json::from_slice(&read_v1(&root.join("LAUNCH.json"))?).map_err(err)?;
     ensure(
         record["schema"] == json!(LAUNCH_SCHEMA_V1)
             && record["config_sha256"] == json!(loaded.sha256)
             && record["launched_at_unix"].is_u64(),
         "LAUNCH.json belongs to another config",
     )?;
+    ensure(
+        record["engine_commit"] == json!(engine_commit_v1())
+            && record["binary_sha256"] == json!(binary_sha256_v1()?),
+        "LAUNCH.json was written by another engine build; a run root uses one build throughout",
+    )?;
     Ok(record)
+}
+
+/// The launch record's binary SHA-256, after [`launch_build_v1`].
+fn launch_binary_v1(loaded: &LoadedConfigV1, root: &Path) -> Result<String, String> {
+    launch_build_v1(loaded, root)?["binary_sha256"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "LAUNCH.json has no binary".to_owned())
 }
 
 /// A game's durable attempt record, written before it is dispatched.
@@ -1116,6 +1145,8 @@ pub(crate) fn ensure_launch_v1(loaded: &LoadedConfigV1, root: &Path) -> Result<V
 struct GameAttemptV1 {
     schema: String,
     config_sha256: String,
+    engine_commit: String,
+    binary_sha256: String,
     plan: GamePlanV1,
     host: String,
     pid: u32,
@@ -1127,6 +1158,8 @@ struct GameAttemptV1 {
 struct GameResultV1 {
     schema: String,
     config_sha256: String,
+    engine_commit: String,
+    binary_sha256: String,
     plan: GamePlanV1,
     terminal: Option<RlSessionTerminalV1>,
     failure: Option<String>,
@@ -1145,6 +1178,49 @@ fn attempt_path_v1(directory: &Path, index: usize) -> PathBuf {
 
 fn result_path_v1(directory: &Path, index: usize, extension: &str) -> PathBuf {
     directory.join(format!("result-{index:04}.{extension}"))
+}
+
+/// A scheduled game's durable records, if it was attempted: its attempt and,
+/// if published, its result must be this config's game from this build
+/// (engine commit and the launch binary). Returns the published result.
+fn resumed_game_v1(
+    loaded: &LoadedConfigV1,
+    games: &Path,
+    index: usize,
+    plan: &GamePlanV1,
+    binary: &str,
+) -> Result<Option<GameResultV1>, String> {
+    let attempt_path = attempt_path_v1(games, index);
+    if !attempt_path.exists() {
+        return Ok(None);
+    }
+    let attempt: GameAttemptV1 = serde_json::from_slice(&read_v1(&attempt_path)?).map_err(err)?;
+    ensure(
+        attempt.schema == ATTEMPT_SCHEMA_V1
+            && attempt.config_sha256 == loaded.sha256
+            && attempt.plan == *plan,
+        "a game attempt is not this config's game",
+    )?;
+    ensure(
+        attempt.engine_commit == engine_commit_v1() && attempt.binary_sha256 == binary,
+        "a game was attempted by another engine build",
+    )?;
+    let result_path = result_path_v1(games, index, "json");
+    if !result_path.exists() {
+        return Ok(None);
+    }
+    let result: GameResultV1 = serde_json::from_slice(&read_v1(&result_path)?).map_err(err)?;
+    ensure(
+        result.schema == RESULT_SCHEMA_V1
+            && result.config_sha256 == loaded.sha256
+            && result.plan == *plan,
+        "a published game result is not this config's game",
+    )?;
+    ensure(
+        result.engine_commit == engine_commit_v1() && result.binary_sha256 == binary,
+        "a published game result was produced by another engine build",
+    )?;
+    Ok(Some(result))
 }
 
 /// Writes `bytes` to a new file, failing if it exists, and syncs it.
@@ -1185,6 +1261,7 @@ pub(crate) fn collect_chain_limited_v1(
     max_new_games: Option<usize>,
 ) -> Result<Value, String> {
     ensure_launch_v1(loaded, root)?;
+    let binary = launch_binary_v1(loaded, root)?;
     let directory = collection_dir_v1(root, chain.index);
     let games = games_dir_v1(root, chain.index);
     if directory.exists() {
@@ -1199,6 +1276,10 @@ pub(crate) fn collect_chain_limited_v1(
     let parent = load_parent_v1(config, &chain.source)?;
     let plans = chain_schedule_v1(config, chain.index);
     fs::create_dir_all(&games).map_err(err)?;
+    // A resumed collection reuses only this config's and this build's games.
+    for (index, plan) in plans.iter().enumerate() {
+        resumed_game_v1(loaded, &games, index, plan, &binary)?;
+    }
     let unattempted: Vec<usize> = (0..plans.len())
         .filter(|&index| !attempt_path_v1(&games, index).exists())
         .collect();
@@ -1218,6 +1299,8 @@ pub(crate) fn collect_chain_limited_v1(
                 let attempt = GameAttemptV1 {
                     schema: ATTEMPT_SCHEMA_V1.into(),
                     config_sha256: loaded.sha256.clone(),
+                    engine_commit: engine_commit_v1().into(),
+                    binary_sha256: binary.clone(),
                     plan,
                     host: host_name_v1(),
                     pid: std::process::id(),
@@ -1230,6 +1313,8 @@ pub(crate) fn collect_chain_limited_v1(
             let result = GameResultV1 {
                 schema: RESULT_SCHEMA_V1.into(),
                 config_sha256: loaded.sha256.clone(),
+                engine_commit: engine_commit_v1().into(),
+                binary_sha256: binary.clone(),
                 plan,
                 terminal: game.terminal.clone(),
                 failure: game.failure.clone(),
@@ -1253,16 +1338,11 @@ pub(crate) fn collect_chain_limited_v1(
     let mut entries = Vec::with_capacity(plans.len());
     for (index, plan) in plans.into_iter().enumerate() {
         let offset = store.len() as u64;
-        let result_path = result_path_v1(&games, index, "json");
-        let entry = if result_path.exists() {
-            let result: GameResultV1 =
-                serde_json::from_slice(&read_v1(&result_path)?).map_err(err)?;
-            ensure(
-                result.schema == RESULT_SCHEMA_V1
-                    && result.config_sha256 == loaded.sha256
-                    && result.plan == plan,
-                "a published game result is not this config's game",
-            )?;
+        ensure(
+            attempt_path_v1(&games, index).exists(),
+            "a scheduled game was never attempted",
+        )?;
+        let entry = if let Some(result) = resumed_game_v1(loaded, &games, index, &plan, &binary)? {
             let mut length = 0;
             if let Some(digest) = &result.sha256 {
                 let bytes = read_v1(&result_path_v1(&games, index, "bin"))?;
@@ -1282,10 +1362,6 @@ pub(crate) fn collect_chain_limited_v1(
                 sha256: result.sha256,
             }
         } else {
-            ensure(
-                attempt_path_v1(&games, index).exists(),
-                "a scheduled game was never attempted",
-            )?;
             CollectedGameEntryV1 {
                 plan,
                 natural: false,
@@ -1304,6 +1380,7 @@ pub(crate) fn collect_chain_limited_v1(
         schema: COLLECTION_SCHEMA_V1.into(),
         config_sha256: loaded.sha256.clone(),
         engine_commit: engine_commit_v1().into(),
+        binary_sha256: binary.clone(),
         chain: chain.index,
         chain_id: chain.id.clone(),
         source: chain.source.clone(),
@@ -1627,6 +1704,7 @@ pub(crate) fn convert_chain_stage_v1(
     root: &Path,
     chain: &PrescreenChainV1,
 ) -> Result<Value, String> {
+    launch_build_v1(loaded, root)?;
     let data = build_chain_data_v1(loaded, root, chain)?;
     let path = data_path_v1(root, chain.index);
     let status = if path.exists() {
@@ -1673,8 +1751,8 @@ pub(crate) fn section7_stage_v1(
             "decision_source_sha256": record.decision_source_sha256,
             "fit_groups": record.fit_groups, "steps": record.steps}));
     }
+    let launch = launch_build_v1(loaded, root)?;
     let launch_bytes = read_v1(&root.join("LAUNCH.json"))?;
-    let launch: Value = serde_json::from_slice(&launch_bytes).map_err(err)?;
     let document = json!({"schema": SECTION7_SCHEMA_V1, "note": loaded.config.note,
         "config_sha256": loaded.sha256, "analyzer": loaded.config.analyzer,
         "engine_commit": engine_commit_v1(), "binary_sha256": binary_sha256_v1()?,
@@ -1926,6 +2004,7 @@ pub(crate) fn preserve_chain_stage_v1(
     chain: &PrescreenChainV1,
     workers: usize,
 ) -> Result<Value, String> {
+    let binary = launch_binary_v1(loaded, root)?;
     let path = preservation_path_v1(root, chain.index);
     let data = load_chain_data_v1(loaded, root, chain)?;
     if path.exists() {
@@ -1959,7 +2038,7 @@ pub(crate) fn preserve_chain_stage_v1(
     )?;
     let pass = seeds.iter().all(|seed| seed.mismatches == 0);
     let record = json!({"schema": PRESERVATION_SCHEMA_V1, "config_sha256": loaded.sha256,
-        "engine_commit": engine_commit_v1(), "chain": chain.index,
+        "engine_commit": engine_commit_v1(), "binary_sha256": binary, "chain": chain.index,
         "data_record_sha256": sha(&data.record_bytes),
         "parent_state_sha256": data.record.parent_state_sha256,
         "forward": "screen_fit_v1::ScreenForwardV1 (forward_with_tape_dims_v1)",
@@ -1988,6 +2067,7 @@ struct FitRecordV1<'a> {
     config_sha256: &'a str,
     data_record_sha256: &'a str,
     engine_commit: &'static str,
+    binary_sha256: &'a str,
     chain: u32,
     seed: u32,
     arm: &'a str,
@@ -2007,6 +2087,8 @@ pub(crate) struct FitInputsV1<'a> {
     pub(crate) snapshot: &'a NativePolicyValueTrainSnapshotV1,
     pub(crate) parent_state_sha256: &'a str,
     pub(crate) forward_workers: usize,
+    /// The run root's build (`LAUNCH.json`).
+    pub(crate) binary_sha256: &'a str,
 }
 
 /// Fresh Adam on `start`, then the fit entry; returns the post-fresh-Adam
@@ -2081,6 +2163,7 @@ pub(crate) fn fit_record_bytes_v1(
         config_sha256: &inputs.loaded.sha256,
         data_record_sha256: &data_record_sha256,
         engine_commit: engine_commit_v1(),
+        binary_sha256: inputs.binary_sha256,
         chain: inputs.chain,
         seed,
         arm,
@@ -2167,6 +2250,10 @@ pub(crate) fn fit_chain_stage_v1(
         "the chain needs a passed preservation record before fitting",
     )?;
     let seeds = &loaded.config.fitting.fitting_seeds;
+    let binary = launch_binary_v1(loaded, root)?;
+    // An interrupted refusal publication is still refusal evidence: it is
+    // promoted to its refusal file before other temporaries are removed.
+    let promoted = promote_refusal_temporaries_v1(&root.join("fits"))?;
     let removed = remove_stale_temporaries_v1(&root.join("fits"))?;
     let mut jobs = Vec::new();
     for &seed in seeds {
@@ -2204,6 +2291,7 @@ pub(crate) fn fit_chain_stage_v1(
             snapshot: &snapshot,
             parent_state_sha256: &parent_state_sha256,
             forward_workers,
+            binary_sha256: &binary,
         };
         let contexts = vec![(); fit_workers.clamp(1, jobs.len())];
         ordered_parallel_jobs_v1(
@@ -2225,8 +2313,8 @@ pub(crate) fn fit_chain_stage_v1(
                     Err(error) => {
                         let refusal = json!({"schema": REFUSAL_SCHEMA_V1,
                             "config_sha256": loaded.sha256, "data_record_sha256": data_sha256,
-                            "engine_commit": engine_commit_v1(), "chain": chain.index,
-                            "seed": seed, "arm": arm, "error": error});
+                            "engine_commit": engine_commit_v1(), "binary_sha256": binary,
+                            "chain": chain.index, "seed": seed, "arm": arm, "error": error});
                         write_file_v1(
                             &refusal_path_v1(root, chain.index, seed, arm),
                             &json_bytes_v1(&refusal)?,
@@ -2245,8 +2333,48 @@ pub(crate) fn fit_chain_stage_v1(
     step0_reports_identical_v1(root, chain.index, seeds)?;
     Ok(json!({"chain": chain.index, "fits_written": jobs.len(),
         "fits_present": seeds.len() * ARM_NAMES_V1.len(),
-        "stale_temporaries_removed": removed,
+        "stale_temporaries_removed": removed, "refusal_temporaries_promoted": promoted,
         "elapsed_seconds": started.elapsed().as_secs_f64()}))
+}
+
+/// The published name of an interrupted publication ([`is_temporary_name_v1`]).
+pub(crate) fn temporary_stem_v1(name: &str) -> Option<&str> {
+    name.strip_prefix('.')
+        .and_then(|rest| rest.rsplit_once(".tmp-"))
+        .filter(|(stem, pid)| {
+            !stem.is_empty() && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())
+        })
+        .map(|(stem, _)| stem)
+}
+
+/// Promotes every interrupted refusal publication in `directory`
+/// (`.<k..>.refused.json.tmp-<pid>`) to its refusal file, whatever its bytes:
+/// a refusal that began to be published is refusal evidence, so the fit is
+/// never requeued. Returns the promoted names.
+fn promote_refusal_temporaries_v1(directory: &Path) -> Result<Vec<String>, String> {
+    let mut promoted = Vec::new();
+    if !directory.is_dir() {
+        return Ok(promoted);
+    }
+    for entry in fs::read_dir(directory).map_err(err)? {
+        let name = entry
+            .map_err(err)?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        let Some(stem) = temporary_stem_v1(&name).filter(|stem| stem.ends_with(".refused.json"))
+        else {
+            continue;
+        };
+        let target = directory.join(stem);
+        if target.exists() {
+            fs::remove_file(directory.join(&name)).map_err(err)?;
+        } else {
+            fs::rename(directory.join(&name), &target).map_err(err)?;
+        }
+        promoted.push(name);
+    }
+    Ok(promoted)
 }
 
 /// A fit-entry refusal record (`fits/k<k>-s<s>-<arm>.refused.json`).
@@ -2258,11 +2386,7 @@ pub(crate) fn refusal_path_v1(root: &Path, chain: u32, seed: u32, arm: &str) -> 
 /// Whether `name` is an interrupted publication of [`write_file_v1`]:
 /// `.<name>.tmp-<pid>`.
 pub(crate) fn is_temporary_name_v1(name: &str) -> bool {
-    name.strip_prefix('.')
-        .and_then(|rest| rest.rsplit_once(".tmp-"))
-        .is_some_and(|(stem, pid)| {
-            !stem.is_empty() && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())
-        })
+    temporary_stem_v1(name).is_some()
 }
 
 /// Removes interrupted publications ([`is_temporary_name_v1`]) left in

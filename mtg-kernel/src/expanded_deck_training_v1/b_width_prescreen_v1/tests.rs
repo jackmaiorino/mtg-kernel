@@ -497,6 +497,20 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
     let mut other = loaded.clone();
     other.sha256 = "0".repeat(64);
     assert!(ensure_launch_v1(&other, root).is_err());
+    // A run root launched by another build is refused by every later stage.
+    for (field, value) in [
+        ("binary_sha256", json!("0".repeat(64))),
+        ("engine_commit", json!("another commit")),
+    ] {
+        let mut changed: Value = serde_json::from_slice(&launch).unwrap();
+        changed[field] = value;
+        fs::write(root.join("LAUNCH.json"), json_bytes_v1(&changed).unwrap()).unwrap();
+        let error = launch_build_v1(loaded, root).unwrap_err();
+        assert!(error.contains("another engine build"), "{error}");
+        assert!(collect_chain_stage_v1(loaded, root, &chain, 2).is_err());
+        assert!(convert_chain_stage_v1(loaded, root, &chain).is_err());
+    }
+    fs::write(root.join("LAUNCH.json"), &launch).unwrap();
 
     // Data, then section 7 once every chain has data.
     assert!(load_chain_data_v1(loaded, root, &chain).is_err());
@@ -665,6 +679,8 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     let attempt = GameAttemptV1 {
         schema: ATTEMPT_SCHEMA_V1.into(),
         config_sha256: loaded.sha256.clone(),
+        engine_commit: engine_commit_v1().into(),
+        binary_sha256: binary_sha256_v1().unwrap(),
         plan: plan.clone(),
         host: "interrupted".into(),
         pid: 1,
@@ -676,6 +692,15 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     .unwrap();
     assert!(create_new_v1(&attempt_path_v1(&games, 5), b"{}").is_err());
     fs::write(games.join(".result-0006.json.tmp-1"), b"{").unwrap();
+
+    // A published result from another build is never relabelled as this one's.
+    let result_path = result_path_v1(&games, 1, "json");
+    let mut foreign: Value = serde_json::from_slice(&published[1]).unwrap();
+    foreign["binary_sha256"] = json!("0".repeat(64));
+    fs::write(&result_path, json_bytes_v1(&foreign).unwrap()).unwrap();
+    let error = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap_err();
+    assert!(error.contains("another engine build"), "{error}");
+    fs::write(&result_path, &published[1]).unwrap();
 
     let resumed = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap();
     assert_eq!(resumed["collect"], json!("written"));
@@ -744,6 +769,15 @@ fn an_entry_refusal_is_recorded_and_never_rerun() {
         .contains("BatchLargerThanFitSet"));
     let again = fit_chain_stage_v1(loaded, root, &chain, 1, 1).unwrap_err();
     assert!(again.contains("records a fit-entry refusal"), "{again}");
+    assert!(!fit_path_v1(root, 1, 1, "w64").exists());
+    // A refusal whose publication was interrupted (its temporary file, even
+    // truncated) is still refusal evidence: it is promoted, never requeued.
+    fs::remove_file(&refusal).unwrap();
+    let interrupted = root.join("fits/.k1-s1-w64.refused.json.tmp-77");
+    fs::write(&interrupted, b"{").unwrap();
+    let promoted = fit_chain_stage_v1(loaded, root, &chain, 1, 1).unwrap_err();
+    assert!(promoted.contains("records a fit-entry refusal"), "{promoted}");
+    assert!(refusal.exists() && !interrupted.exists());
     assert!(!fit_path_v1(root, 1, 1, "w64").exists());
 }
 

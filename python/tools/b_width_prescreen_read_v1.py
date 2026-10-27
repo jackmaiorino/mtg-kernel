@@ -13,7 +13,11 @@ analysis is never "not funded".
 
 The read is bound to the run root: it is written once to ``<root>/READ.json`` (``--out`` only exports a copy), and
 any later run on the same root is refused unless ``--rerender`` re-renders that read from identical inputs, at its
-recorded read time, to identical bytes.
+recorded read time, to identical bytes. The read is written in full to a temporary file in the root, synced, and
+published by a hard link that never replaces an existing READ.json, so a crash leaves no read or a complete one. A
+later run that finds a complete unpublished read (a crash between writing and publishing) publishes that read
+instead of rendering another, so there are never two completed reads to choose between; an incomplete temporary is
+not a read and is removed.
 
 Exit status: 0 when a read (any verdict) was written or re-rendered, 2 when the analyzer refused to run.
 """
@@ -24,6 +28,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
 import struct
 import sys
@@ -49,6 +54,8 @@ CONSTRUCTIONS = {"w64": "identity", "w128": "net8-to-net8w128-function-preservin
                  "w32": "net8-w32-upper-half-fan-out-zeroed-control-v1"}
 # The driver's interrupted publication: ``.<name>.tmp-<pid>``.
 TEMPORARY = re.compile(r"^\.(.+)\.tmp-(\d+)$")
+# This analyzer's own unpublished read.
+READ_TEMPORARY = re.compile(r"^\.READ\.json\.tmp-\d+$")
 MASK64 = (1 << 64) - 1
 CONFIG_KEYS = {
     "": {"schema", "note", "input_generation", "feature_contract_digest", "feature_encoding_digest", "decks",
@@ -222,6 +229,24 @@ def check_pin(pin: dict, check: str, what: str) -> bytes:
     return data
 
 
+def import_closure(play_import: dict) -> list[dict]:
+    """The import pin and every file it pins, recursively through pinned JSON files, each once. (A parent
+    checkpoint is pinned on its own and never searched: it names its own, pruned, training trajectories.)"""
+    closure, seen, queue = [], set(), [play_import]
+    while queue:
+        pin = queue.pop(0)
+        key = (pin["path"], pin["sha256"])
+        if key in seen:
+            continue
+        seen.add(key)
+        closure.append(pin)
+        try:
+            queue.extend(nested_pins(json.loads(Path(pin["path"]).read_bytes())))
+        except (OSError, ValueError):
+            continue
+    return closure
+
+
 class Inputs:
     """Every input file read, with its SHA-256."""
 
@@ -265,6 +290,11 @@ def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict)
     frozen = {entry["chain"]: entry for entry in section7.get("chains", [])}
     require(sorted(frozen) == sorted(chains) and len(frozen) == len(section7.get("chains", [])), "data",
             "SECTION7.json does not list exactly the config's chains")
+    # One build throughout: the launch's engine commit and binary are section 7's (and every record's, below).
+    launch, _ = inputs.read("LAUNCH.json", "data")
+    build = (section7.get("engine_commit"), section7.get("binary_sha256"))
+    require(isinstance(build[1], str) and (launch.get("engine_commit"), launch.get("binary_sha256")) == build,
+            "data", "LAUNCH.json and SECTION7.json name different builds")
     fitting = config["fitting"]
     chain_data: dict[int, dict] = {}
     for chain in config["chains"]:
@@ -272,8 +302,8 @@ def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict)
         entry = frozen[k]
         source = chain["source"]
         check_pin(source["checkpoint"], "data", f"chain {k} parent")
-        for pin in nested_pins(json.loads(check_pin(source["play_import"], "data", f"chain {k} import"))):
-            check_pin(pin, "data", f"chain {k} import input")
+        for pin in import_closure(source["play_import"]):
+            check_pin(pin, "data", f"chain {k} import or import input")
         record, record_bytes = inputs.read(f"data/k{k}.json", "data")
         collection, collection_bytes = inputs.read(f"collect/k{k}/collection.json", "data")
         store = inputs.read_bytes(f"collect/k{k}/games.bin", "data")
@@ -286,8 +316,8 @@ def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict)
                 == record["collection_record_sha256"], "data", f"chain {k}: collection record differs from section 7")
         require(collection.get("schema") == COLLECTION_SCHEMA and collection.get("config_sha256") == config_sha256
                 and collection.get("chain") == k, "data", f"chain {k}: collection record is not this config's")
-        require(collection.get("engine_commit") == section7["engine_commit"], "data",
-                f"chain {k}: collection built by another engine commit")
+        require((collection.get("engine_commit"), collection.get("binary_sha256")) == build, "data",
+                f"chain {k}: collection built by another engine build")
         require(parent == record["parent_checkpoint_sha256"] == entry["parent_checkpoint_sha256"]
                 == collection["source"]["checkpoint"]["sha256"], "data", f"chain {k}: parent hash differs")
         require(collection["parent_state_sha256"] == record["parent_state_sha256"], "data",
@@ -378,7 +408,7 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float) -> tup
     fitting = config["fitting"]
     pairs = pairs_of(config)
     section7, _ = inputs.read("data/SECTION7.json", "data")
-    commit = section7.get("engine_commit")
+    build = (section7.get("engine_commit"), section7.get("binary_sha256"))
 
     # 1. Data.
     chain_data = check_data(config, config_sha256, inputs, section7)
@@ -431,7 +461,9 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float) -> tup
     present = sorted(path.name for path in fits_dir.iterdir()) if fits_dir.is_dir() else []
     temporaries = [name for name in present if TEMPORARY.match(name)]
     reports = [name for name in present if name not in temporaries]
-    refusals = [name for name in reports if name.endswith(".refused.json")]
+    # A refusal file, or an interrupted refusal publication, is an entry refusal: VOID.
+    refusals = [name for name in reports if name.endswith(".refused.json")] + [
+        name for name in temporaries if TEMPORARY.match(name).group(1).endswith(".refused.json")]
     require(not refusals, "fits", {"entry_refusals": refusals})
     require(set(reports) == expected and len(reports) == len(expected), "fits",
             {"missing": sorted(expected - set(reports)), "unexpected": sorted(set(reports) - expected)})
@@ -453,7 +485,8 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float) -> tup
                 require(fit.get("schema") == FIT_SCHEMA and fit.get("config_sha256") == config_sha256
                         and fit.get("data_record_sha256") == data_sha[k] and fit.get("chain") == k
                         and fit.get("seed") == s and fit.get("arm") == arm, "fits", f"{where}: not this fit's record")
-                require(fit.get("engine_commit") == commit, "fits", f"{where}: built by another engine commit")
+                require((fit.get("engine_commit"), fit.get("binary_sha256")) == build, "fits",
+                        f"{where}: built by another engine build")
                 minibatch_seed = domain_seed(fitting["minibatch_seed_domain"], k, s)
                 require(cfg.get("value_target_source") == fitting["value_target_source"]
                         == report.get("value_target_source")
@@ -528,7 +561,7 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float) -> tup
         require(preservation.get("schema") == PRESERVATION_SCHEMA
                 and preservation.get("config_sha256") == config_sha256
                 and preservation.get("data_record_sha256") == data_sha[k] and preservation.get("chain") == k
-                and preservation.get("engine_commit") == commit
+                and (preservation.get("engine_commit"), preservation.get("binary_sha256")) == build
                 and preservation.get("pass") is True and isinstance(preservation.get("inputs"), int)
                 and preservation["inputs"] >= groups, "function_preservation",
                 f"chain {k}: no passed forward comparison over every recorded input")
@@ -744,7 +777,7 @@ def inputs_sha256(config: dict, config_sha256: str, analyzer_sha256: str, sectio
                         for path in sorted(directory.rglob("*")) if path.is_file()]
     listing.append(("LAUNCH.json", file_sha(root / "LAUNCH.json")))
     for chain in config["chains"]:
-        for pin in (chain["source"]["checkpoint"], chain["source"]["play_import"]):
+        for pin in [chain["source"]["checkpoint"], *import_closure(chain["source"]["play_import"])]:
             listing.append((pin["path"], file_sha(Path(pin["path"]))))
     document = {"config": config_sha256, "analyzer": analyzer_sha256, "section7": section7_sha256, "files": listing}
     return sha256_bytes(json.dumps(document, sort_keys=True).encode("utf-8"))
@@ -763,6 +796,52 @@ def sanitized(value: object) -> object:
 
 def read_bytes(read: dict) -> bytes:
     return (json.dumps(sanitized(read), indent=1, allow_nan=False) + "\n").encode("utf-8")
+
+
+def sync_directory(directory: Path) -> None:
+    """Makes a directory entry durable where the platform supports syncing a directory (not on Windows)."""
+    if os.name != "posix":
+        return
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def publish_read(root: Path, canonical: Path, data: bytes) -> None:
+    """Writes the full read to a temporary file in the root and syncs it, then publishes it without replacing:
+    a hard link to READ.json (refused if it exists, on NTFS as on POSIX) and the temporary's removal. A crash
+    leaves either no READ.json or a complete one."""
+    temporary = root / f".{READ_NAME}.tmp-{os.getpid()}"
+    with open(temporary, "xb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    publish_temporary(temporary, canonical)
+
+
+def publish_temporary(temporary: Path, canonical: Path) -> None:
+    os.link(temporary, canonical)
+    os.unlink(temporary)
+    sync_directory(canonical.parent)
+
+
+def unpublished_reads(root: Path) -> tuple[list[Path], list[Path]]:
+    """Reads a crashed run left unpublished in the root: (complete, incomplete) temporary files. A complete one
+    is a whole read in this analyzer's exact output form."""
+    complete, incomplete = [], []
+    for path in sorted(root.glob(f".{READ_NAME}.tmp-*")):
+        if not READ_TEMPORARY.match(path.name):
+            continue
+        try:
+            data = path.read_bytes()
+            value = json.loads(data)
+            whole = value.get("schema") == READ_SCHEMA and read_bytes(value) == data
+        except (OSError, ValueError, AttributeError):
+            whole = False
+        (complete if whole else incomplete).append(path)
+    return complete, incomplete
 
 
 def inside(path: Path, folder: Path) -> bool:
@@ -802,6 +881,25 @@ def main(argv: list[str] | None = None) -> int:
             out = None
         if canonical.exists() and not arguments.rerender:
             raise Refused(f"{canonical} exists: this run root has been read (use --rerender only to re-render it)")
+        if not arguments.rerender:
+            # A run that crashed after writing its read but before publishing it already rendered the read: it is
+            # published as is (never rendered again), so an operator cannot pick between two completed reads. An
+            # incomplete temporary is not a read and is removed.
+            complete, incomplete = unpublished_reads(root)
+            if len(complete) > 1:
+                raise Refused(f"more than one unpublished read in {root}: {[path.name for path in complete]}")
+            if complete:
+                previous = json.loads(complete[0].read_bytes())
+                current = inputs_sha256(config, config_sha256, analyzer_sha256, arguments.section7_sha256, root)
+                if previous.get("inputs_sha256") != current or previous.get("config_sha256") != config_sha256:
+                    raise Refused(f"{complete[0].name} is an unpublished read of other inputs")
+                publish_temporary(complete[0], canonical)
+                print(json.dumps({"verdict": previous["verdict"], "R": previous.get("R"),
+                                  "interval": previous.get("interval"), "read": str(canonical),
+                                  "published_interrupted_read": complete[0].name}))
+                return 0
+            for path in incomplete:
+                path.unlink()
         if arguments.rerender:
             if not canonical.exists():
                 raise Refused("--rerender needs the root's existing read")
@@ -820,8 +918,7 @@ def main(argv: list[str] | None = None) -> int:
             if canonical.read_bytes() != data:
                 raise Refused("the re-rendered read differs from the existing one; nothing was written")
         else:
-            with open(canonical, "xb") as handle:
-                handle.write(data)
+            publish_read(root, canonical, data)
         if out is not None:
             if out.exists():
                 if out.read_bytes() != data:
