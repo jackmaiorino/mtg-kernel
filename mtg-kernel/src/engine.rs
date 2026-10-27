@@ -12900,13 +12900,7 @@ pub(crate) fn validate_pending_cast(
 
 fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_cast.clone()?;
-    if let Err(_error) = validate_pending_cast(state, &pending) {
-        // Temporary E5a diagnostics.
-        #[cfg(feature = "eternal-fixtures")]
-        eprintln!(
-            "E5A pending cast rejected: {_error}
-{pending:?}"
-        );
+    if validate_pending_cast(state, &pending).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,
@@ -23773,7 +23767,10 @@ fn begin_cast_ex(
     if origin_zone == Zone::Library {
         crate::eternal_e5a_v1::permissions::note_library_cast(state, player, spell_id);
     }
-    let without_mana_cost = resolution_permission.is_some()
+    // A resolving graveyard cast (Bilbo, Thief in the Night) pays its costs,
+    // X included; every other resolving instruction casts for free.
+    let without_mana_cost = resolution_permission
+        .is_some_and(|permission| permission.card.expected_zone != Zone::Graveyard)
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
     // Omniscience and Aluren: a hand cast may skip its mana cost. Aluren's
     // "as though they had flash" applies only to such a cast, so outside
