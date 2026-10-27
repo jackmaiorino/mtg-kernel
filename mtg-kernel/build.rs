@@ -22,6 +22,7 @@
 //! compilation.
 
 mod build_eternal_v1;
+mod build_eternal_vintage_v1;
 mod build_standard_v1;
 #[allow(dead_code)]
 #[path = "../build_support/native_store_build_capture_v1.rs"]
@@ -2813,6 +2814,8 @@ enum StackSpellFilter {
     Noncreature,
     Artifact,
     Creature,
+    /// "Target spell with mana value 1" (Mental Misstep).
+    ManaValueOneV1,
 }
 
 impl MillPlayer {
@@ -2834,6 +2837,7 @@ impl StackSpellFilter {
             StackSpellFilter::Noncreature => "noncreature",
             StackSpellFilter::Artifact => "artifact",
             StackSpellFilter::Creature => "creature",
+            StackSpellFilter::ManaValueOneV1 => "mana_value_1",
         }
     }
 
@@ -2848,6 +2852,7 @@ impl StackSpellFilter {
             StackSpellFilter::Noncreature => "TargetSpec::NoncreatureSpellOnStack",
             StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
             StackSpellFilter::Creature => "TargetSpec::CreatureSpellOnStack",
+            StackSpellFilter::ManaValueOneV1 => "TargetSpec::SpellWithManaValueV1(1)",
         }
     }
 }
@@ -3262,6 +3267,8 @@ enum PermanentFilterRecipe {
     ArtifactOrCreature,
     AnotherArtifact,
     Creature,
+    /// A controlled land (Edge of Autumn's "Cycling--Sacrifice a land").
+    Land,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4654,7 +4661,10 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
 fn saga_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(SagaDef { chapter_effects: &[saga_chapter_modern_age_loot, saga_chapter_modern_age_loot, saga_chapter_modern_age_transform] })",
-        _ => build_standard_v1::saga_for(name),
+        _ => match build_standard_v1::saga_for(name) {
+            "None" => build_eternal_vintage_v1::saga_for(name),
+            saga => saga,
+        },
     }
 }
 
@@ -4671,7 +4681,7 @@ fn conditional_tap_yield_for(name: &str) -> &'static str {
         "Urza's Tower" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Mine }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::PowerPlant }], amount_when_met: 3, amount_otherwise: 1 })",
         "Urza's Mine" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Tower }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::PowerPlant }], amount_when_met: 2, amount_otherwise: 1 })",
         "Urza's Power Plant" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Mine }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Tower }], amount_when_met: 2, amount_otherwise: 1 })",
-        _ => "None",
+        _ => build_eternal_vintage_v1::conditional_tap_yield_for(name),
     }
 }
 
@@ -4684,7 +4694,7 @@ fn conditional_tap_yield_program_for(name: &str) -> Option<&'static str> {
         "Urza's Tower" => Some("mana_ability_add_urzas_tower"),
         "Urza's Mine" => Some("mana_ability_add_urzas_mine"),
         "Urza's Power Plant" => Some("mana_ability_add_urzas_power_plant"),
-        _ => None,
+        _ => build_eternal_vintage_v1::conditional_tap_yield_program_for(name),
     }
 }
 
@@ -4820,7 +4830,10 @@ fn additional_cost_for(name: &str) -> &'static str {
         "Raze" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Land }])"
         }
-        _ => build_standard_v1::additional_cost_for(name),
+        _ => match build_standard_v1::additional_cost_for(name) {
+            "None" => build_eternal_vintage_v1::additional_cost_for(name),
+            cost => cost,
+        },
     }
 }
 
@@ -6321,6 +6334,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
         PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
         PermanentFilterRecipe::Creature => "PermanentFilter::Creature",
+        PermanentFilterRecipe::Land => "PermanentFilter::Land",
     }
 }
 
@@ -6331,6 +6345,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
         PermanentFilterRecipe::AnotherArtifact => "another_artifact",
         PermanentFilterRecipe::Creature => "creature",
+        PermanentFilterRecipe::Land => "land",
     }
 }
 
@@ -7297,6 +7312,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         | "Lush Portico"
         | "Underground Mortuary"
         | "Undercity Sewers"
+        | "Hedge Maze"
         | "Thundering Falls" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
@@ -11139,10 +11155,16 @@ fn subtype_variant(t: &str) -> &'static str {
         "Utrom" => "Subtype::Utrom",
         "Scientist" => "Subtype::Scientist",
         "Robot" => "Subtype::Robot",
+        "Wraith" => "Subtype::Wraith",
         "Army" => "Subtype::Army",
         "Lhurgoyf" => "Subtype::Lhurgoyf",
         "Halfling" => "Subtype::Halfling",
         "Tamiyo" => "Subtype::Tamiyo",
+        "Mutant" => "Subtype::Mutant",
+        "Jace" => "Subtype::Jace",
+        "Archon" => "Subtype::Archon",
+        "Karn" => "Subtype::Karn",
+        "Tezzeret" => "Subtype::Tezzeret",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

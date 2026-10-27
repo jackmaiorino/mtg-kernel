@@ -3120,7 +3120,8 @@ fn commit_with_entry_batch_and_source_color(
             }
             crate::standard_cards_v1::before_departure(state, z.object);
             if from == Zone::Battlefield
-                && crate::standard_cards_v1::active_aegis_copy(state, z.object)
+                && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
+                    || crate::eternal_vintage_v1::active_copy(state, z.object))
             {
                 let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                     source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -3180,6 +3181,10 @@ fn commit_with_entry_batch_and_source_color(
             #[cfg(feature = "limited-fdn-fixtures")]
             if from == Zone::Battlefield {
                 crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if from == Zone::Battlefield {
+                crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
             }
             commit_zone_change(
                 state,
@@ -3249,6 +3254,19 @@ fn commit_with_entry_batch_and_source_color(
             CommittedEvent::LifeGain {
                 player: g.player,
                 amount: g.amount,
+            }
+        }
+        ProposedEvent::Draw(d)
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::wins_instead_of_drawing_from_empty_library(
+                    state, d.player,
+                ) =>
+        {
+            // Jace, Wielder of Mysteries replaces this draw with a win.
+            crate::eternal_cards_v1::e3::replace_empty_library_draw(state, d.player);
+            CommittedEvent::Draw {
+                player: d.player,
+                object: None,
             }
         }
         ProposedEvent::Draw(d) => {
@@ -4355,7 +4373,9 @@ pub fn log_initiative_trigger(
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
         || crate::card_def::CARD_DEFS
             .get(source.card_def as usize)
-            .is_none_or(|definition| definition.name != "Avenging Hunter")
+            .is_none_or(|definition| {
+                !crate::eternal_vintage_v1::initiative_granter(definition.name)
+            })
     {
         return Err("Initiative designation source contract is malformed".to_string());
     }
@@ -4417,6 +4437,12 @@ fn permanent_enters_battlefield_tapped(
 ) -> bool {
     let def = &crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
     if def.enters_battlefield_tapped {
+        return true;
+    }
+    // Archon of Emeria: "Nonbasic lands your opponents control enter
+    // tapped."
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_v1::enters_tapped(state, object, controller) {
         return true;
     }
     if let Some(rule) = def.enters_tapped_unless_controller {

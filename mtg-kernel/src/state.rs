@@ -1243,7 +1243,7 @@ pub fn stack_target_contract_is_structurally_valid(
         }
         let matches_kind = match &contract {
             StackTargetContractV4::Object { zone, .. } => {
-                *zone == crate::standard_cards_v1::target_zone(filter)
+                crate::standard_cards_v1::target_zone_allows(filter, *zone)
             }
             StackTargetContractV4::StackItem { .. } => false,
             StackTargetContractV4::Player(_) => matches!(
@@ -1414,7 +1414,8 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureSpellOnStack
                     | TargetSpec::ArtifactSpellOnStack
                     | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
-                    | TargetSpec::SpellYouDontControl,
+                    | TargetSpec::SpellYouDontControl
+                    | TargetSpec::SpellWithManaValueV1(_),
                 0,
                 StackTargetContractV4::Object {
                     zone: Zone::Stack,
@@ -3408,6 +3409,20 @@ impl GameState {
         Ok(chosen)
     }
 
+    /// Flip a coin for `player` (Mana Crypt): true when they win the flip.
+    /// Same checked randomness transaction as `random_hand_card_v1`, over a
+    /// private two-entry projection; no zone or knowledge changes.
+    pub(crate) fn flip_coin_v1(&mut self, player: PlayerId) -> Result<bool, LibraryShuffleError> {
+        let player = library_shuffle_owner(player)?;
+        let heads = ObjectId(0);
+        let mut projected = self.clone();
+        projected.players[player.index()].library = vec![heads, ObjectId(1)];
+        projected.shuffle_library(player)?;
+        let won = projected.players[player.index()].library.first() == Some(&heads);
+        self.randomness = projected.randomness;
+        Ok(won)
+    }
+
     pub(crate) fn shuffle_library(&mut self, owner: PlayerId) -> Result<(), LibraryShuffleError> {
         let token = self.preflight_library_shuffle(owner)?;
         self.commit_library_shuffle(owner, token)
@@ -4888,6 +4903,8 @@ mod tests {
             chosen_creature_cost: None,
             convoke_chosen: Vec::new(),
             convoke_finished: false,
+            escape_exile_finished_v1: false,
+            hand_free_cast_v1: None,
             mandatory_additional_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();

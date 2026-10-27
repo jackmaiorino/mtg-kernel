@@ -10454,7 +10454,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     ordered,
                     purpose,
                 } => {
-                    let chooser_private = matches!(
+                    let chooser_private = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
                             | crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
@@ -10496,13 +10496,21 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                                 ..
                             }
-                    ) && acting_player != *player;
-                    let search_for_chooser = matches!(
+                    ) || matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
+                            if choice.chooser_private()
+                    )) && acting_player != *player;
+                    let search_for_chooser = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
-                    ) && acting_player == *player;
+                    ) || matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
+                            if choice.library_search()
+                    )) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
@@ -10677,6 +10685,9 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             crate::effect::EffectTargetSelectionPurpose::StandardCopyTargetV1 {
                                 ..
                             } => TargetSelectionPurposeV4::EffectTargets,
+                            crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice } => {
+                                choice.public_purpose()
+                            }
                         },
                     })
                 }

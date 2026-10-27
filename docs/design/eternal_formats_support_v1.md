@@ -72,8 +72,9 @@ reserved.
 | E0 | Feature, empty eternal registry, catalog test, session games, CI group, census | 0 | Infrastructure |
 | E1 | Pauper close-ins: Mono-Red Madness, Rally, Grixis Affinity, Dimir Faeries, Grixis and Dimir Control | 14 | Pauper 21% to about 53% |
 | E2 | Legacy Dimir Tempo and Izzet Delver: original duals, surveil lands, fetchlands, Wasteland, Force of Will, Daze, Thoughtseize, Fatal Push, Unholy Heat, Prismari Charm, the Baubles, Brazen Borrower, Dragon's Rage Channeler, Murktide Regent, Moonshadow, Nethergoyf, Orcish Bowmasters, Tamiyo, Bilbo | 27 and a token | Legacy 0% to 19.3% |
-| E3 | Legacy decks greedily: Doomsday, Sneak and Show, Aluren, Eldrazi, Boros Energy, then the remaining staples (Strip Mine, Negation, Mental Misstep, Swords, Dismember) | about 95 | Legacy about 50% |
-| E4 | Vintage: Initiative, Jewel and Raker Shops, then companions and the Lurrus lists | about 80 | Vintage about 50% |
+| E3 | Legacy combo decks: Doomsday, Sneak and Show, Aluren, Omni-Tell (Show and Tell, Sneak Attack, Omniscience, Aluren, Doomsday, Thassa's Oracle, Jace, Emrakul, Atraxa, Acererak and the three Forgotten Realms dungeons, Chrome Mox, Lion's Eye Diamond, The One Ring, Cavern of Souls, Misdirection, Flusterstorm, Veil of Summer) | 27 and four tokens | Legacy 19.3% to 33.5% |
+| E4 | Vintage Jewel Shops and Mono-White Initiative: Power Nine (with Mana Crypt, Mana Vault and Sol Ring), Workshop, Academy, Strip Mine, Karakas, Urza's Saga, Time Vault, Tinker, Karn, Tezzeret, Phyrexian Metamorph, Coveted Jewel, Trinisphere, the Initiative creatures, Archon of Emeria, Clarion Conqueror, Chancellor of the Annex, Anointed Peacekeeper, Witch Enchanter; six shared cards come from E3 | 36 | Vintage 0% to 28.4% |
+| E4b | Vintage: Raker Shops, then companions and the Lurrus lists | about 45 | Vintage about 50% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -103,16 +104,40 @@ New, each built once in the first wave that needs it:
   or event history; planeswalker back faces enter with their loyalty; Bilbo casts from
   the graveyard through the resolution-cast path with costs paid. Moxen, Lotus,
   restricted mana and seeded coin flips move to E4.
-- E3: storm as a general keyword (today it is keyed to Weather the Storm), Thassa's Oracle
-  and Doomsday library construction, Show and Tell's simultaneous choice, free-cast
-  permissions (Sneak Attack, Aluren, Omniscience), Chalice of the Void, Misdirection
-  retargeting, Emrakul (cast trigger, annihilator, protection), naming a card (Pithing
-  Needle, Disruptor Flute, Cavern of Souls), "can't be activated" and cost-tax statics
-  (Null Rod, Trinisphere, Thalia).
-- E4: Urza's Saga as a land Saga with Construct tokens; Karn's wish, where "outside the
-  game" is empty in best-of-one mainboard sessions; Time Vault; Coveted Jewel's control
-  change; Vexing Bauble; Archon of Emeria's cast limit; companions (reveal, pay 3, put
-  into hand) and Lurrus's graveyard casting; Workshop's artifact-only mana.
+- E3, built in `src/eternal_cards_v1/e3.rs`, `e3/dungeons.rs` and `build_eternal_v1.rs`:
+  one typed resolution choice (`E3ChoiceV1`) that the interpreter stages through
+  `EffectTargetSelectionPurpose::EternalV1`; targeted Storm copies that may choose new
+  targets (Flusterstorm); spell retargeting (Misdirection); Doomsday and Thassa's Oracle
+  library construction; Show and Tell's choices in turn order; free hand casts
+  (`HandFreeCastV1`: Omniscience, Aluren with its flash timing); Sneak Attack's haste and
+  end-step sacrifice; Emrakul's uncounterable cast trigger owning an extra turn like
+  Temporal Manipulation, protection from colored spells, annihilator and graveyard
+  shuffle; venturing through Lost Mine of Phandelver, Dungeon of the Mad Mage and Tomb
+  of Annihilation (rooms sourced by the venturing card, completed on entering the
+  bottommost room, Mad Wizard's Lair casting from hand during the resolution); modal
+  double-faced land backs (Sink into Stupor); as-enters choices (Cavern of Souls'
+  creature type and its uncounterable restricted mana, Soporific Springs); imprint
+  (Chrome Mox); Lion's Eye Diamond's instant-speed mana; The One Ring's protection and
+  burden counters. Chalice of the Void, naming a card and cost-tax statics are left to
+  later waves.
+- E4, built in `src/eternal_vintage_v1.rs` and `build_eternal_vintage_v1.rs`: fixed
+  multi-mana rocks use the conditional tap yield (Tolarian Academy adds nothing without
+  an artifact); Black Lotus and Coveted Jewel are rich mana abilities; Mana Crypt flips a
+  seeded coin; Workshop's mana becomes restricted units only artifact spells spend
+  (`ManaSpendRestrictionDef::ArtifactSpellV1`); Time Walk joins Temporal Manipulation's
+  extra-turn scheduler and Time Vault's ability is scheduled the same way, while Time
+  Vault's skip is chosen at the end step before its controller's turn and applied when
+  that turn would begin; "doesn't untap" for both Vaults; Coveted Jewel's unblocked-attack
+  trigger and Mana Vault's draw-step trigger are queued by engine hooks; Vexing Bauble and
+  Void Mirror read the mana each cast spent; Trinisphere raises a spell's total to three;
+  Archon of Emeria's cast limit and tapped nonbasic lands; Clarion Conqueror and Karn's
+  "can't be activated" statics; Karn's wish finds nothing outside the game in
+  best-of-one mainboard sessions and so chooses only from exile; Urza's Saga gains its
+  chapter abilities; Phyrexian Metamorph enters as a copy the way Assimilation Aegis
+  copies; Witch Enchanter's land face reuses E3's modal land back (Sink into Stupor);
+  Anointed Peacekeeper names any registry card by letter, then name; Chancellor of the
+  Annex's opening-hand reveal is offered as the game's first upkeep begins. Companions
+  (reveal, pay 3, put into hand) and Lurrus's graveyard casting move to E4b.
 
 ## Card contract and verification
 

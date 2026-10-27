@@ -13,6 +13,12 @@ pub enum ObjectSelectionFilterV1 {
     /// that can be cast as such a spell right now, paying its costs (Bilbo,
     /// Thief in the Night). Appended for the eternal catalog.
     CastableArtifactInstantOrSorceryV1,
+    /// An artifact or creature (Phyrexian Metamorph's copy choice).
+    /// Appended for the eternal catalog.
+    ArtifactOrCreatureV1,
+    /// A face-up artifact card the chooser owns in exile (Karn, the Great
+    /// Creator's -2). Appended for the eternal catalog.
+    OwnedFaceUpArtifactCardV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectSelectionActionV1 {
@@ -27,6 +33,9 @@ pub enum ObjectSelectionActionV1 {
     /// Cast the selected card from the graveyard during this resolution,
     /// paying its costs (608.2g). The interpreter stages the cast.
     CastFromGraveyardV1,
+    /// The resolving permanent spell enters as a copy of the selected
+    /// permanent (Phyrexian Metamorph). Appended for the eternal catalog.
+    EnterAsCopyV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ObjectSelectionRuleV1 {
@@ -45,7 +54,11 @@ fn candidates(
     rule: ObjectSelectionRuleV1,
     source: Option<crate::state::AbilitySourceContractV4>,
 ) -> Result<Vec<EffectObjectBinding>, String> {
-    if !matches!(rule.zone, Zone::Battlefield | Zone::Graveyard) || rule.min > rule.max {
+    let exile = rule.filter == ObjectSelectionFilterV1::OwnedFaceUpArtifactCardV1;
+    if exile != (rule.zone == Zone::Exile)
+        || !matches!(rule.zone, Zone::Battlefield | Zone::Graveyard | Zone::Exile)
+        || rule.min > rule.max
+    {
         return Err("object selection requires a public zone and ordered bounds".into());
     }
     let instant_or_sorcery = rule.filter == ObjectSelectionFilterV1::InstantOrSorcery;
@@ -74,6 +87,8 @@ fn candidates(
         }
         let objects = if rule.zone == Zone::Battlefield {
             &state.players[owner.index()].battlefield
+        } else if exile {
+            &state.exile
         } else {
             &state.players[owner.index()].graveyard
         };
@@ -122,6 +137,16 @@ fn candidates(
                 ObjectSelectionFilterV1::InstantOrSorcery => {
                     crate::engine::object_has_type(state, id, CardType::Instant)
                         || crate::engine::object_has_type(state, id, CardType::Sorcery)
+                }
+                ObjectSelectionFilterV1::ArtifactOrCreatureV1 => {
+                    creature || crate::engine::object_has_type(state, id, CardType::Artifact)
+                }
+                ObjectSelectionFilterV1::OwnedFaceUpArtifactCardV1 => {
+                    live.zone == Zone::Exile
+                        && live.owner == owner
+                        && live.v4.face_down_v1.is_none()
+                        && crate::card_def::CARD_DEFS[live.card_def as usize]
+                            .has_type(CardType::Artifact)
                 }
                 ObjectSelectionFilterV1::CastableArtifactInstantOrSorceryV1 => {
                     live.zone == Zone::Graveyard
@@ -307,6 +332,11 @@ pub(super) fn apply_selection(
                     &pending.ctx,
                     state,
                 );
+            }
+        }
+        ObjectSelectionActionV1::EnterAsCopyV1 => {
+            if let Some(copied) = selected.first() {
+                crate::eternal_vintage_v1::enter_as_copy(state, &pending.ctx, *copied);
             }
         }
         ObjectSelectionActionV1::MoveTo(zone) => event::propose_and_commit_batch(

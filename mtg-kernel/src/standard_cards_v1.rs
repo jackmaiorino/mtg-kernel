@@ -177,6 +177,23 @@ pub enum StandardTargetV1 {
     /// "Each of one or two targets": one or two distinct any-targets
     /// (Prismari Charm).
     OneOrTwoAnyTargetsV1,
+    /// "Target instant or sorcery spell" (Flusterstorm).
+    InstantOrSorcerySpellV1,
+    /// "Target spell with a single target" (Misdirection).
+    SpellWithSingleTargetV1,
+    /// "Target spell or nonland permanent an opponent controls" (Sink into
+    /// Stupor).
+    OpponentSpellOrNonlandPermanentV1,
+    /// "Another target artifact" (Manifold Key).
+    AnotherArtifactV1,
+    /// "Target attacking Cleric, Rogue, Warrior, or Wizard" (Seasoned
+    /// Dungeoneer).
+    AttackingClericRogueWarriorOrWizardV1,
+    /// "Any number of target nonland, nontoken permanents you control"
+    /// (Paradoxical Outcome): distinct targets, none required.
+    AnyNumberControlledNonlandNontokenPermanentsV1,
+    /// "Up to one target noncreature artifact" (Karn, the Great Creator).
+    UpToOneNoncreatureArtifactV1,
 }
 
 impl StandardTargetV1 {
@@ -187,6 +204,8 @@ impl StandardTargetV1 {
             Self::UpToOneCreature => (1, 0),
             Self::TwoCreaturesV1 => (2, 2),
             Self::OneOrTwoAnyTargetsV1 => (2, 1),
+            Self::AnyNumberControlledNonlandNontokenPermanentsV1 => (64, 0),
+            Self::UpToOneNoncreatureArtifactV1 => (1, 0),
             _ => (1, 1),
         }
     }
@@ -199,14 +218,65 @@ impl StandardTargetV1 {
             Self::InstantOrSorceryCardInOwnGraveyard | Self::CardInAGraveyard
         )
     }
+
+    /// Filters whose targets are spells on the stack.
+    fn on_stack(self) -> bool {
+        matches!(
+            self,
+            Self::InstantOrSorcerySpellV1 | Self::SpellWithSingleTargetV1
+        )
+    }
 }
 
 /// The zone a `TargetSpec::StandardV1` target is chosen in.
 pub(crate) fn target_zone(target: StandardTargetV1) -> Zone {
     if target.in_graveyard() {
         Zone::Graveyard
+    } else if target.on_stack() {
+        Zone::Stack
     } else {
         Zone::Battlefield
+    }
+}
+
+/// Whether an object target of `target` may be in `zone`. Sink into
+/// Stupor's filter takes a spell or a permanent.
+pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
+    zone == target_zone(target)
+        || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
+}
+
+/// Whether the stack spell `source` (not the one being announced) matches
+/// a spell filter for `controller`.
+fn stack_spell_matches(
+    target: StandardTargetV1,
+    controller: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> bool {
+    let announcing = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .map(|pending| pending.spell);
+    if Some(source) == announcing {
+        return false;
+    }
+    let Some(item) = state
+        .stack
+        .iter()
+        .find(|item| item.kind == crate::state::StackItemKind::Spell && item.source == source)
+    else {
+        return false;
+    };
+    match target {
+        StandardTargetV1::InstantOrSorcerySpellV1 => {
+            crate::engine::stack_spell_has_type(state, item, CardType::Instant)
+                || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery)
+        }
+        StandardTargetV1::SpellWithSingleTargetV1 => item.targets.len() == 1,
+        StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => item.controller != controller,
+        _ => false,
     }
 }
 
@@ -235,6 +305,30 @@ pub(crate) fn legal_targets(
             .map(Target::Object);
         return players
             .into_iter()
+            .chain(permanents)
+            .filter(|candidate| !prefix.contains(candidate))
+            .collect();
+    }
+    if target.on_stack() || target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 {
+        let spells = state
+            .stack
+            .iter()
+            .filter(|item| item.kind == crate::state::StackItemKind::Spell)
+            .map(|item| item.source)
+            .filter(|&spell| stack_spell_matches(target, controller, spell, state))
+            .filter(|&spell| source.is_none_or(|(id, _)| id != spell))
+            .map(Target::Object);
+        let permanents = if target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 {
+            [PlayerId::P0, PlayerId::P1]
+                .iter()
+                .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+                .filter(|&id| target_matches(target, controller, id, state))
+                .map(Target::Object)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        return spells
             .chain(permanents)
             .filter(|candidate| !prefix.contains(candidate))
             .collect();
@@ -275,7 +369,13 @@ pub(crate) fn legal_targets(
                 target,
                 StandardTargetV1::AnotherNonlegendaryControlledCreature
                     | StandardTargetV1::AnotherNonlandPermanent
+                    | StandardTargetV1::AnotherArtifactV1
             ) || Some(id) != source.map(|(id, _)| id)
+        })
+        // "Any number of target" permanents are distinct (115.3).
+        .filter(|&id| {
+            target != StandardTargetV1::AnyNumberControlledNonlandNontokenPermanentsV1
+                || !prefix.contains(&Target::Object(id))
         })
         .map(Target::Object)
         .collect()
@@ -301,7 +401,12 @@ pub(crate) fn target_matches(
             && !live.v4.is_token
             && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery));
     }
-    if live.zone != Zone::Battlefield {
+    if live.zone == Zone::Stack {
+        return (target.on_stack()
+            || target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1)
+            && stack_spell_matches(target, controller, object, state);
+    }
+    if live.zone != Zone::Battlefield || target.on_stack() {
         return false;
     }
     let has = |card_type| crate::engine::object_has_type(state, object, card_type);
@@ -343,6 +448,31 @@ pub(crate) fn target_matches(
                     .contains(&crate::card_def::Supertype::Legendary)
         }
         StandardTargetV1::InstantOrSorceryCardInOwnGraveyard => false,
+        StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => {
+            live.controller != controller && !has(CardType::Land)
+        }
+        StandardTargetV1::InstantOrSorcerySpellV1 | StandardTargetV1::SpellWithSingleTargetV1 => {
+            false
+        }
+        StandardTargetV1::AnotherArtifactV1 => has(CardType::Artifact),
+        StandardTargetV1::AttackingClericRogueWarriorOrWizardV1 => {
+            has(CardType::Creature)
+                && state.engine.combat.attackers.contains(&object)
+                && [
+                    Subtype::Cleric,
+                    Subtype::Rogue,
+                    Subtype::Warrior,
+                    Subtype::Wizard,
+                ]
+                .into_iter()
+                .any(|subtype| crate::engine::has_effective_subtype(state, object, subtype))
+        }
+        StandardTargetV1::AnyNumberControlledNonlandNontokenPermanentsV1 => {
+            live.controller == controller && !has(CardType::Land) && !live.v4.is_token
+        }
+        StandardTargetV1::UpToOneNoncreatureArtifactV1 => {
+            has(CardType::Artifact) && !has(CardType::Creature)
+        }
     }
 }
 
@@ -576,7 +706,7 @@ impl StandardOpV1 {
                 | Self::MayBecomeEverflame
                 | Self::ChooseTwoManaInAnyCombination
                 | Self::CopySpellMayChooseNewTargets { .. }
-        )
+        ) || matches!(self, Self::EternalV1(op) if op.contains_player_choice())
     }
 
     /// The exact object incarnations this leaf is bound to.
@@ -617,6 +747,9 @@ pub enum StandardPermanentFilterV1 {
     Land,
     /// An Army (amass, 701.47a).
     ArmyV1,
+    /// A creature, offered only while the chooser has completed no dungeon
+    /// (White Plume Adventurer untaps all creatures instead once they have).
+    CreatureUnlessCompletedDungeonV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -624,6 +757,8 @@ pub enum StandardChosenActionV1 {
     ReturnToOwnersHand,
     /// Put this many +1/+1 counters on it (amass, 701.47a).
     PutPlusOneCountersV1(u8),
+    /// Untap it (White Plume Adventurer).
+    UntapV1,
 }
 
 /// The exact battlefield permanents `player` controls that match `filter`,
@@ -648,6 +783,13 @@ pub(crate) fn controlled_permanent_candidates(
                     }
                     StandardPermanentFilterV1::ArmyV1 => {
                         crate::engine::has_effective_subtype(state, object, Subtype::Army)
+                    }
+                    StandardPermanentFilterV1::CreatureUnlessCompletedDungeonV1 => {
+                        crate::engine::object_has_type(state, object, CardType::Creature)
+                            && state.players[player.index()]
+                                .dungeon
+                                .completed_dungeons
+                                .is_empty()
                     }
                 }
         })
@@ -685,6 +827,9 @@ pub(crate) fn apply_chosen_permanent(
                     chosen.object,
                 ));
             }
+        }
+        StandardChosenActionV1::UntapV1 => {
+            crate::engine::attempt_untap(state, chosen.object);
         }
     }
 }
@@ -1461,6 +1606,10 @@ pub(crate) fn materialize_event(
     if *effect == crate::standard_legends_v1::jodah::template() {
         return crate::standard_legends_v1::jodah::materialize(state, event);
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(effect) = crate::eternal_vintage_v1::materialize_event(effect, event, state) {
+        return Some(effect);
+    }
     match (effect, event) {
         (
             EffectOp::StandardV1(StandardOpV1::BindEtaliPoison),
@@ -1492,6 +1641,10 @@ pub(crate) fn materialize_event(
 /// Whether `effect` is a trigger-time materialization of `template`.
 pub(crate) fn template_matches(template: &EffectOp, effect: &EffectOp) -> bool {
     if crate::standard_legends_v1::jodah::template_matches(template, effect) {
+        return true;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_v1::template_matches(template, effect) {
         return true;
     }
     matches!(
@@ -1998,6 +2151,10 @@ pub(crate) fn activation_allowed(
     if activations_locked(state, source) {
         return false;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if !crate::eternal_vintage_v1::activation_allowed(state, source, def.name, ability_index) {
+        return false;
+    }
     if def.name == ROOM {
         // A door can be unlocked only while it is locked.
         return u8::try_from(ability_index)
@@ -2032,6 +2189,11 @@ pub(crate) fn activation_allowed(
 pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &CardDef) -> bool {
     if activations_locked(state, object) {
         return false;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(active) = crate::eternal_vintage_v1::mana_abilities_active(state, object, def.name)
+    {
+        return active;
     }
     if def.name == THE_IRENCRAG {
         // Everflame loses all other abilities.
@@ -3578,6 +3740,11 @@ pub(crate) fn remove_net_counter(state: &mut GameState, object: ObjectId) {
 /// Whether Braided Net stops `object`'s activated abilities: it is the
 /// incarnation Net tapped and it is still tapped.
 pub(crate) fn activations_locked(state: &GameState, object: ObjectId) -> bool {
+    // Clarion Conqueror and Karn, the Great Creator: "can't be activated".
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_v1::activations_prohibited(state, object) {
+        return true;
+    }
     let Some(standard) = state.standard_v1.as_ref() else {
         return false;
     };
@@ -3945,6 +4112,24 @@ pub(crate) fn apply_aegis_copy(
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     standard.aegis_copies.push(record);
     for entry in had {
+        if !standard.copied_card_defs.contains(&entry) {
+            standard.copied_card_defs.push(entry);
+        }
+    }
+}
+
+/// Records definitions a battlefield incarnation has had through a copy
+/// effect other than Assimilation Aegis (Phyrexian Metamorph), so its
+/// abilities already on the stack stay valid.
+pub(crate) fn note_copied_definitions(
+    state: &mut GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+    definitions: &[u16],
+) {
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    for &definition in definitions {
+        let entry = (object, zone_change_count, definition);
         if !standard.copied_card_defs.contains(&entry) {
             standard.copied_card_defs.push(entry);
         }
