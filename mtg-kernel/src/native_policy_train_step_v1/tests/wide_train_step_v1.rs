@@ -144,7 +144,7 @@ impl GradientDecisionV1 {
             (0..len)
                 .map(|_| {
                     // A third of the inputs are exact zeros, as one-hot features give.
-                    if rng.next_u64() % 3 == 0 {
+                    if rng.next_u64().is_multiple_of(3) {
                         0.0
                     } else {
                         uniform_v1(&mut rng)
