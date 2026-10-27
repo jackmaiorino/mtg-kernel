@@ -57,8 +57,8 @@ use crate::native_policy_train_step_v1::widening_v1::{
     w32_control_from_net8_snapshot_v1, widen_net8_snapshot_v1, TORCH_DEFAULT_UNIFORM_V1,
 };
 use crate::native_policy_train_step_v1::{
-    Net8DimsV1, Net8W128DimsV1, NativePolicyValueTrainStateDimsV1,
-    NativePolicyValueTrainStateWideV1, NetDimsV1,
+    NativePolicyValueTrainStateDimsV1, NativePolicyValueTrainStateWideV1, Net8DimsV1,
+    Net8W128DimsV1, NetDimsV1,
 };
 use crate::native_policy_value_net_v1::W_MODEL_ARCHITECTURE_VERSION_V1;
 use std::io::Write;
@@ -226,7 +226,10 @@ pub(crate) struct PrescreenAnalyzerPinV1 {
 }
 
 fn is_hex64_v1(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn valid_domain_v1(domain: &str) -> bool {
@@ -273,13 +276,13 @@ impl PrescreenConfigV1 {
                 && !fit.is_empty()
                 && !holdout.is_empty()
                 && fit.is_disjoint(&holdout)
-                && fit
-                    .union(&holdout)
-                    .copied()
-                    .eq(0..c.games_per_pair),
+                && fit.union(&holdout).copied().eq(0..c.games_per_pair),
             "fit and holdout indices must partition 0..games_per_pair",
         )?;
-        ensure(valid_domain_v1(&c.seed_domain), "invalid collection seed domain")?;
+        ensure(
+            valid_domain_v1(&c.seed_domain),
+            "invalid collection seed domain",
+        )?;
         ensure(c.focal_seat < 2, "invalid focal seat")?;
         ensure(
             (1..=100_000).contains(&c.max_physical_decisions)
@@ -439,7 +442,11 @@ pub(crate) fn domain_seed_v1(domain: &str, parts: &[u64]) -> u64 {
         text.push_str(&part.to_string());
     }
     let digest = Sha256::digest(text.as_bytes());
-    u64::from_le_bytes(digest[..8].try_into().expect("a SHA-256 digest has 8 bytes"))
+    u64::from_le_bytes(
+        digest[..8]
+            .try_into()
+            .expect("a SHA-256 digest has 8 bytes"),
+    )
 }
 
 pub(crate) fn minibatch_seed_v1(config: &PrescreenConfigV1, chain: u32, seed: u32) -> u64 {
@@ -450,7 +457,10 @@ pub(crate) fn minibatch_seed_v1(config: &PrescreenConfigV1, chain: u32, seed: u3
 }
 
 pub(crate) fn widen_seed_v1(config: &PrescreenConfigV1, chain: u32, seed: u32) -> u64 {
-    domain_seed_v1(&config.fitting.widen_seed_domain, &[chain.into(), seed.into()])
+    domain_seed_v1(
+        &config.fitting.widen_seed_domain,
+        &[chain.into(), seed.into()],
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -560,7 +570,10 @@ fn put_u32_v1(out: &mut Vec<u8>, value: u32) {
 }
 
 fn put_len_v1(out: &mut Vec<u8>, len: usize) -> Result<(), String> {
-    put_u32_v1(out, u32::try_from(len).map_err(|_| "store length overflow")?);
+    put_u32_v1(
+        out,
+        u32::try_from(len).map_err(|_| "store length overflow")?,
+    );
     Ok(())
 }
 
@@ -779,7 +792,8 @@ fn preservation_path_v1(root: &Path, chain: u32) -> PathBuf {
 }
 
 pub(crate) fn fit_path_v1(root: &Path, chain: u32, seed: u32, arm: &str) -> PathBuf {
-    root.join("fits").join(format!("k{chain}-s{seed}-{arm}.json"))
+    root.join("fits")
+        .join(format!("k{chain}-s{seed}-{arm}.json"))
 }
 
 fn engine_commit_v1() -> &'static str {
@@ -952,8 +966,12 @@ pub(crate) fn collect_games_v1(
                 });
             }
             let opponent = collector.opponents.load(source)?;
-            match collect_episode(&mut collector.policy, learner, Some(opponent), &episodes[index])
-            {
+            match collect_episode(
+                &mut collector.policy,
+                learner,
+                Some(opponent),
+                &episodes[index],
+            ) {
                 Ok(trajectory) => {
                     let groups = screen_groups_from_trajectory_v1(config, &trajectory)?;
                     Ok(CollectedGameV1 {
@@ -1079,14 +1097,18 @@ pub(crate) fn collect_chain_stage_v1(
         games: entries,
     };
     // The chain directory appears whole or not at all.
-    let partial = root
-        .join("collect")
-        .join(format!(".k{}-partial-{}", chain.index, std::process::id()));
+    let partial =
+        root.join("collect")
+            .join(format!(".k{}-partial-{}", chain.index, std::process::id()));
     if partial.exists() {
         fs::remove_dir_all(&partial).map_err(err)?;
     }
     write_file_v1(&partial.join("games.bin"), &store, false)?;
-    write_file_v1(&partial.join("collection.json"), &json_bytes_v1(&record)?, false)?;
+    write_file_v1(
+        &partial.join("collection.json"),
+        &json_bytes_v1(&record)?,
+        false,
+    )?;
     fs::rename(&partial, &directory).map_err(err)?;
     let natural = record.games.iter().filter(|game| game.natural).count();
     let summary = json!({"chain": chain.index, "collect": "written", "games": record.games.len(),
@@ -1311,7 +1333,11 @@ pub(crate) fn build_chain_data_v1(
         config_sha256: loaded.sha256.clone(),
         chain: chain.index,
         chain_id: chain.id.clone(),
-        parent_checkpoint_sha256: chain.source.checkpoint.as_ref().map(|pin| pin.sha256.clone()),
+        parent_checkpoint_sha256: chain
+            .source
+            .checkpoint
+            .as_ref()
+            .map(|pin| pin.sha256.clone()),
         parent_state_sha256: collection.record.parent_state_sha256.clone(),
         collection_record_sha256: sha(&collection.record_bytes),
         store_sha256: collection.record.store_sha256.clone(),
@@ -1375,7 +1401,10 @@ pub(crate) fn convert_chain_stage_v1(
 
 /// Section 7 across every chain, once each has a data record. Returns None
 /// while a chain is missing.
-pub(crate) fn section7_stage_v1(loaded: &LoadedConfigV1, root: &Path) -> Result<Option<Value>, String> {
+pub(crate) fn section7_stage_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+) -> Result<Option<Value>, String> {
     let mut chains = Vec::new();
     for chain in &loaded.config.chains {
         let path = data_path_v1(root, chain.index);
@@ -1553,7 +1582,12 @@ fn decision_inputs_v1<'a>(
     for game in fit.iter().chain(holdout) {
         for (group_index, group) in game.groups.iter().enumerate() {
             for (substep_index, substep) in group.substeps.iter().enumerate() {
-                inputs.push((game.game_id.clone(), group_index, substep_index, &substep.tensor));
+                inputs.push((
+                    game.game_id.clone(),
+                    group_index,
+                    substep_index,
+                    &substep.tensor,
+                ));
             }
         }
     }
@@ -1581,16 +1615,18 @@ pub(crate) fn preservation_seeds_v1(
 ) -> Result<(usize, Vec<PreservationSeedV1>), String> {
     let generation = config.generation_v1();
     let inputs = decision_inputs_v1(games[0], games[1]);
-    let narrow = ScreenForwardV1::<Net8DimsV1>::of_state_v1(&narrow_state_v1(snapshot)?, generation);
-    let narrow_outputs: Vec<(Vec<u32>, u32)> = parallel_chunks_v1(inputs.len(), workers, |range| {
-        inputs[range]
-            .iter()
-            .map(|input| narrow.output_bits_v1(input.3).map_err(err))
-            .collect::<Result<Vec<_>, String>>()
-    })?
-    .into_iter()
-    .flatten()
-    .collect();
+    let narrow =
+        ScreenForwardV1::<Net8DimsV1>::of_state_v1(&narrow_state_v1(snapshot)?, generation);
+    let narrow_outputs: Vec<(Vec<u32>, u32)> =
+        parallel_chunks_v1(inputs.len(), workers, |range| {
+            inputs[range]
+                .iter()
+                .map(|input| narrow.output_bits_v1(input.3).map_err(err))
+                .collect::<Result<Vec<_>, String>>()
+        })?
+        .into_iter()
+        .flatten()
+        .collect();
     let mut results = Vec::new();
     for &seed in seeds {
         let widen_seed = widen_seed_v1(config, chain, seed);
@@ -1684,8 +1720,10 @@ pub(crate) fn preserve_chain_stage_v1(
         pass,
         &format!("chain {}: w128 differs from w64 at step 0", chain.index),
     )?;
-    Ok(json!({"chain": chain.index, "preserve": "written", "inputs": inputs,
-        "elapsed_seconds": started.elapsed().as_secs_f64()}))
+    Ok(
+        json!({"chain": chain.index, "preserve": "written", "inputs": inputs,
+        "elapsed_seconds": started.elapsed().as_secs_f64()}),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1760,7 +1798,11 @@ pub(crate) fn screen_fit_config_v1(
 }
 
 /// One (seed, arm) fit's record bytes.
-pub(crate) fn fit_record_bytes_v1(inputs: &FitInputsV1<'_>, seed: u32, arm: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn fit_record_bytes_v1(
+    inputs: &FitInputsV1<'_>,
+    seed: u32,
+    arm: &str,
+) -> Result<Vec<u8>, String> {
     let config = &inputs.loaded.config;
     let minibatch_seed = minibatch_seed_v1(config, inputs.chain, seed);
     let start = arm_start_v1(
@@ -1803,7 +1845,11 @@ pub(crate) fn fit_record_bytes_v1(inputs: &FitInputsV1<'_>, seed: u32, arm: &str
 }
 
 /// A present fit record must belong to this config and data.
-fn existing_fit_matches_v1(path: &Path, loaded: &LoadedConfigV1, data_sha256: &str) -> Result<(), String> {
+fn existing_fit_matches_v1(
+    path: &Path,
+    loaded: &LoadedConfigV1,
+    data_sha256: &str,
+) -> Result<(), String> {
     let existing: Value = serde_json::from_slice(&read_v1(path)?).map_err(err)?;
     ensure(
         existing["schema"] == json!(FIT_SCHEMA_V1)
@@ -1855,19 +1901,16 @@ pub(crate) fn fit_chain_stage_v1(
     let data_sha256 = sha(&data.record_bytes);
     ensure(
         section7["config_sha256"] == json!(loaded.sha256)
-            && section7["chains"]
-                .as_array()
-                .is_some_and(|chains| {
-                    chains.iter().any(|entry| {
-                        entry["chain"] == json!(chain.index)
-                            && entry["data_record_sha256"] == json!(data_sha256)
-                    })
-                }),
+            && section7["chains"].as_array().is_some_and(|chains| {
+                chains.iter().any(|entry| {
+                    entry["chain"] == json!(chain.index)
+                        && entry["data_record_sha256"] == json!(data_sha256)
+                })
+            }),
         "SECTION7.json does not record this chain's data",
     )?;
     let preservation: Value =
-        serde_json::from_slice(&read_v1(&preservation_path_v1(root, chain.index))?)
-            .map_err(err)?;
+        serde_json::from_slice(&read_v1(&preservation_path_v1(root, chain.index))?).map_err(err)?;
     ensure(
         preservation["pass"] == json!(true)
             && preservation["data_record_sha256"] == json!(data_sha256),
@@ -2009,7 +2052,8 @@ pub(crate) fn qualify_stage_v1(
                     contexts,
                     workers,
                     |_, job| {
-                        let seed = domain_seed_v1(&q.seed_domain, &[chain.index.into(), job as u64]);
+                        let seed =
+                            domain_seed_v1(&q.seed_domain, &[chain.index.into(), job as u64]);
                         let widened = widen_net8_snapshot_v1(
                             &snapshot,
                             &config.arms.widen_target_architecture,
@@ -2018,11 +2062,22 @@ pub(crate) fn qualify_stage_v1(
                         )
                         .map_err(err)?;
                         let mut state = fresh_adam_v1(&widened.state)?;
-                        let fit_config =
-                            screen_fit_config_v1(&config.fitting, q.fit_steps, q.fit_steps, seed, forward_workers);
-                        fit_screen_value_dims_v1(&mut state, generation, &data.fit, &holdout, &fit_config)
-                            .map(|_| ())
-                            .map_err(err)
+                        let fit_config = screen_fit_config_v1(
+                            &config.fitting,
+                            q.fit_steps,
+                            q.fit_steps,
+                            seed,
+                            forward_workers,
+                        );
+                        fit_screen_value_dims_v1(
+                            &mut state,
+                            generation,
+                            &data.fit,
+                            &holdout,
+                            &fit_config,
+                        )
+                        .map(|_| ())
+                        .map_err(err)
                     },
                     || (),
                 )?;
@@ -2146,7 +2201,10 @@ fn staging_chain_v1(config: &PrescreenConfigV1, chain: &PrescreenChainV1) -> Res
 
 /// `staging-check`: every chain's files exist at their absolute paths with
 /// their pinned hashes. Writes `staging-check.json`; fails if any chain does.
-pub(crate) fn staging_check_stage_v1(loaded: &LoadedConfigV1, root: &Path) -> Result<Value, String> {
+pub(crate) fn staging_check_stage_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+) -> Result<Value, String> {
     let mut chains = Vec::new();
     let mut pass = true;
     for chain in &loaded.config.chains {
@@ -2161,7 +2219,11 @@ pub(crate) fn staging_check_stage_v1(loaded: &LoadedConfigV1, root: &Path) -> Re
     }
     let record = json!({"schema": STAGING_SCHEMA_V1, "config_sha256": loaded.sha256,
         "host": host_name_v1(), "chains": chains, "pass": pass});
-    write_file_v1(&root.join("staging-check.json"), &json_bytes_v1(&record)?, true)?;
+    write_file_v1(
+        &root.join("staging-check.json"),
+        &json_bytes_v1(&record)?,
+        true,
+    )?;
     ensure(pass, "staging check failed; see staging-check.json")?;
     Ok(record)
 }
@@ -2176,7 +2238,11 @@ const USAGE_V1: &str = "usage: b_width_prescreen_v1 STAGE --config ABS.json --ro
 
 fn parse_list_v1<T: std::str::FromStr>(text: &str) -> Result<Vec<T>, String> {
     text.split(',')
-        .map(|part| part.trim().parse::<T>().map_err(|_| format!("invalid list item {part}")))
+        .map(|part| {
+            part.trim()
+                .parse::<T>()
+                .map_err(|_| format!("invalid list item {part}"))
+        })
         .collect()
 }
 
@@ -2224,7 +2290,10 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
         let path = qualification
             .as_ref()
             .ok_or("--qualification is required (COMPUTE-POLICY.md)")?;
-        Ok((workers, require_qualification_v1(&loaded, path, stage, workers)?))
+        Ok((
+            workers,
+            require_qualification_v1(&loaded, path, stage, workers)?,
+        ))
     };
     let mut results = Vec::new();
     let qualification_record = match stage {
@@ -2239,7 +2308,13 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
                 QualifiedStageV1::Fit
             };
             let candidates = candidates.ok_or("--candidates is required")?;
-            results.push(qualify_stage_v1(&loaded, &root, stage, &candidates, forward_workers)?);
+            results.push(qualify_stage_v1(
+                &loaded,
+                &root,
+                stage,
+                &candidates,
+                forward_workers,
+            )?);
             Value::Null
         }
         "collect" => {
@@ -2268,7 +2343,13 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
         "fit" => {
             let (workers, record) = guard(QualifiedStageV1::Fit)?;
             for chain in &selected {
-                results.push(fit_chain_stage_v1(&loaded, &root, chain, workers, forward_workers)?);
+                results.push(fit_chain_stage_v1(
+                    &loaded,
+                    &root,
+                    chain,
+                    workers,
+                    forward_workers,
+                )?);
             }
             record
         }

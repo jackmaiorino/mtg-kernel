@@ -599,7 +599,10 @@ impl<D: NetDimsV1> ScreenForwardV1<D> {
         let view = encoded_decision_view_generic_v1(tensor, self.generation);
         let tape = forward_with_tape_dims_v1::<D>(&self.parameters, self.config, view, self.math)?;
         Ok((
-            tape.logits_v1().iter().map(|value| value.to_bits()).collect(),
+            tape.logits_v1()
+                .iter()
+                .map(|value| value.to_bits())
+                .collect(),
             tape.value_v1().to_bits(),
         ))
     }

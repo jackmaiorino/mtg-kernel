@@ -47,11 +47,18 @@ fn shipped_config_is_the_frozen_note() {
         .collect();
     assert_eq!(
         names,
-        ["Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates", "Faeries"]
+        [
+            "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates",
+            "Faeries"
+        ]
     );
     let c = &config.collection;
     assert_eq!(
-        (c.games_per_pair, c.fit_indices.as_slice(), c.holdout_indices.as_slice()),
+        (
+            c.games_per_pair,
+            c.fit_indices.as_slice(),
+            c.holdout_indices.as_slice()
+        ),
         (5, &[0, 1, 2][..], &[3, 4][..])
     );
     assert_eq!(c.seed_domain, "b-width-prescreen-collect-v1");
@@ -73,8 +80,16 @@ fn shipped_config_is_the_frozen_note() {
     let expected: Vec<(u32, &str)> = (1..=8).zip(PARENT_SHA256_V1).collect();
     assert_eq!(parents, expected);
     let f = &config.fitting;
-    assert_eq!(f.learning_rate.to_bits(), 953_267_991, "OH2's learning_rate_bits");
-    assert_eq!(f.value_coefficient.to_bits(), 1_056_964_608, "OH2's value_coefficient_bits");
+    assert_eq!(
+        f.learning_rate.to_bits(),
+        953_267_991,
+        "OH2's learning_rate_bits"
+    );
+    assert_eq!(
+        f.value_coefficient.to_bits(),
+        1_056_964_608,
+        "OH2's value_coefficient_bits"
+    );
     assert_eq!(
         (f.batch_groups, f.epochs, f.heldout_curve_points),
         (256, 8, 8)
@@ -84,17 +99,28 @@ fn shipped_config_is_the_frozen_note() {
     assert_eq!(f.widen_seed_domain, "b-width-prescreen-widen-v1");
     let a = &config.analysis;
     assert_eq!(
-        (a.bootstrap_draws, a.interval_lower_index, a.interval_upper_index),
+        (
+            a.bootstrap_draws,
+            a.interval_lower_index,
+            a.interval_upper_index
+        ),
         (20_000, 500, 19_499)
     );
     assert_eq!(a.bootstrap_seed_domain, "b-width-prescreen-bootstrap-v1");
     assert_eq!((a.fund_lower_bound_above, a.fund_min_point_r), (0.0, 0.02));
     assert_eq!(
-        (a.max_chain_nonnatural_holdout, a.max_chain_nonnatural_fit, a.min_holdout_games_per_pair),
+        (
+            a.max_chain_nonnatural_holdout,
+            a.max_chain_nonnatural_fit,
+            a.min_holdout_games_per_pair
+        ),
         (16, 24, 1)
     );
     // The analyzer the config pins is the committed one.
-    assert_eq!(config.analyzer.path, "python/tools/b_width_prescreen_read_v1.py");
+    assert_eq!(
+        config.analyzer.path,
+        "python/tools/b_width_prescreen_read_v1.py"
+    );
     assert_eq!(config.analyzer.sha256, sha(ANALYZER_V1));
 }
 
@@ -134,7 +160,12 @@ fn seeds_split_and_schedule_match_the_note() {
                 plan.seed,
                 domain_seed_v1(
                     "b-width-prescreen-collect-v1",
-                    &[chain.into(), plan.focal.into(), plan.opposing.into(), plan.index.into()]
+                    &[
+                        chain.into(),
+                        plan.focal.into(),
+                        plan.opposing.into(),
+                        plan.index.into()
+                    ]
                 )
             );
             let episode = episode_v1(&config, plan, &config.chains[0].source);
@@ -161,10 +192,7 @@ fn config_refuses_unknown_fields_and_note_mismatches() {
     value["fitting"]["momentum"] = json!(0.9);
     assert!(serde_json::from_value::<PrescreenConfigV1>(value).is_err());
     let mut value: Value = serde_json::from_str(CONFIG_JSON_V1).unwrap();
-    value["fitting"]
-        .as_object_mut()
-        .unwrap()
-        .remove("epochs");
+    value["fitting"].as_object_mut().unwrap().remove("epochs");
     assert!(serde_json::from_value::<PrescreenConfigV1>(value).is_err());
     let refused = |change: &dyn Fn(&mut PrescreenConfigV1)| {
         let mut config = shipped_v1();
@@ -218,11 +246,17 @@ fn bit_image_v1(groups: &[ScreenDecisionGroupV1]) -> Vec<Vec<u32>> {
         .flat_map(|group| &group.substeps)
         .map(|substep| {
             let t = &substep.tensor;
-            [&t.state, &t.object_features, &t.edge_features, &t.action_features, &t.action_ref_features]
-                .iter()
-                .flat_map(|values| values.iter().map(|value| value.to_bits()))
-                .chain([substep.selected_action_index as u32])
-                .collect()
+            [
+                &t.state,
+                &t.object_features,
+                &t.edge_features,
+                &t.action_features,
+                &t.action_ref_features,
+            ]
+            .iter()
+            .flat_map(|values| values.iter().map(|value| value.to_bits()))
+            .chain([substep.selected_action_index as u32])
+            .collect()
         })
         .collect()
 }
@@ -322,11 +356,15 @@ fn assert_fresh_v1(
     after: &NativePolicyValueTrainSnapshotV1,
 ) {
     assert_eq!(after.adam_step, 0);
-    assert_eq!(after.scorer_bias_anchor_bits, before.scorer_bias_anchor_bits);
+    assert_eq!(
+        after.scorer_bias_anchor_bits,
+        before.scorer_bias_anchor_bits
+    );
     assert_eq!(after.parameters.len(), before.parameters.len());
     for (a, b) in after.parameters.iter().zip(&before.parameters) {
         assert_eq!((a.name, &a.shape), (b.name, &b.shape));
-        let bits = |p: &NativeNamedParameterV1| p.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+        let bits =
+            |p: &NativeNamedParameterV1| p.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
         assert_eq!(bits(a), bits(b), "{}", a.name);
     }
     for moment in after.first_moments.iter().chain(&after.second_moments) {
@@ -352,7 +390,10 @@ fn fresh_adam_touches_only_optimizer_state() {
     };
     let wide_before = wide.snapshot_v1().unwrap();
     assert_eq!(wide_before.adam_step, 9);
-    assert_fresh_v1(&wide_before, &fresh_adam_v1(wide).unwrap().snapshot_v1().unwrap());
+    assert_fresh_v1(
+        &wide_before,
+        &fresh_adam_v1(wide).unwrap().snapshot_v1().unwrap(),
+    );
     assert_eq!(widened.widen_seed, Some(77));
     let control = arm_start_v1(&shipped_v1(), &snapshot, &parent, "w32", 77).unwrap();
     let ArmStartV1::Narrow(control_state) = &control.start else {
@@ -387,8 +428,11 @@ fn fixture_v1(label: &str) -> FixtureV1 {
     let root = std::env::temp_dir().join(format!("bwps-{label}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
-    let source =
-        write_synthetic_fresh_source_with_parameters_v1(&root.join("source"), FRESH_FEATURE_IDENTITY_V4, |_| {});
+    let source = write_synthetic_fresh_source_with_parameters_v1(
+        &root.join("source"),
+        FRESH_FEATURE_IDENTITY_V4,
+        |_| {},
+    );
     let descriptor = root.join("descriptor.json");
     let bytes = serde_json::to_vec(&source).unwrap();
     fs::write(&descriptor, &bytes).unwrap();
@@ -457,7 +501,10 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
         json!("verified-existing")
     );
     let data = load_chain_data_v1(loaded, root, &chain).unwrap();
-    assert_eq!(data.record.attempted.fit.len() + data.record.attempted.holdout.len(), 8);
+    assert_eq!(
+        data.record.attempted.fit.len() + data.record.attempted.holdout.len(),
+        8
+    );
     assert_eq!(
         data.record.fit_groups,
         data.fit.iter().map(|g| g.groups.len()).sum::<usize>()
@@ -489,9 +536,18 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
         w64["report"]["initial_state_sha256"],
         w64["fresh_adam_state_sha256"]
     );
-    assert_eq!(w128["transform"]["child_state_sha256"], w128["transformed_state_sha256"]);
-    assert_eq!(w128["transform"]["parent_state_sha256"], w64["parent_state_sha256"]);
-    assert_eq!(w128["widen_seed"], json!(widen_seed_v1(&loaded.config, 1, 1)));
+    assert_eq!(
+        w128["transform"]["child_state_sha256"],
+        w128["transformed_state_sha256"]
+    );
+    assert_eq!(
+        w128["transform"]["parent_state_sha256"],
+        w64["parent_state_sha256"]
+    );
+    assert_eq!(
+        w128["widen_seed"],
+        json!(widen_seed_v1(&loaded.config, 1, 1))
+    );
     assert_eq!(
         w64["report"]["minibatch_order_sha256"],
         w128["report"]["minibatch_order_sha256"]
@@ -507,7 +563,10 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
         fit_chain_stage_v1(loaded, root, &chain, 3, 2).unwrap()["fits_written"],
         json!(1)
     );
-    assert_eq!(read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap(), w128_bytes);
+    assert_eq!(
+        read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap(),
+        w128_bytes
+    );
 
     // A rerun collection reproduces the record's bytes.
     let rerun = fixture_v1("stages-rerun");
@@ -580,7 +639,8 @@ fn staging_check_reports_missing_and_changed_files() {
     // a parent checkpoint is required.
     assert!(staging_check_stage_v1(&loaded, &fixture.root).is_err());
     let record: Value =
-        serde_json::from_slice(&read_v1(&fixture.root.join("staging-check.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_v1(&fixture.root.join("staging-check.json")).unwrap())
+            .unwrap();
     assert_eq!(record["pass"], json!(false));
     let checkpoint = fixture.root.join("checkpoint.json");
     let digests = json!({"feature_contract_digest": FEATURE_CONTRACT_DIGEST_V4,
