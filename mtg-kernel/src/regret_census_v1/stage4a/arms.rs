@@ -119,6 +119,26 @@ impl SamplerStats {
     }
 }
 
+/// Consecutive world-sampling rejections in one search: the current run
+/// (the `MAX_CONSECUTIVE_REJECTIONS` stop reads it) and the longest run seen.
+/// Recording only (mtg-kernel#380).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RejectionRun {
+    pub(crate) current: u64,
+    pub(crate) longest: u64,
+}
+
+impl RejectionRun {
+    pub(crate) fn reject(&mut self) {
+        self.current += 1;
+        self.longest = self.longest.max(self.current);
+    }
+
+    pub(crate) fn accept(&mut self) {
+        self.current = 0;
+    }
+}
+
 fn sample_world(
     ctx: &RootCtx,
     s: &FastActorSessionV1,
@@ -313,6 +333,8 @@ pub(crate) struct Selection {
     pub(crate) incomplete: bool,
     pub(crate) faults: Vec<String>,
     pub(crate) sampler: SamplerStats,
+    /// E selection only; not in `json()`, so existing rows keep their bytes.
+    pub(crate) rejection_run: RejectionRun,
     pub(crate) discovery: Discovery,
     pub(crate) d: DStats,
     /// A/D: root candidate edges (canonical bytes) and the chosen one.
@@ -1192,7 +1214,6 @@ impl Roles {
         let mut tree = Tree::default();
         let mut meter = Meter::new(ctx.limits.select_cap);
         let mut c = Counters::default();
-        let mut consecutive = 0u64;
         let mut i = 0u64;
         loop {
             if options.work_limit.is_some_and(|limit| i >= limit) {
@@ -1213,7 +1234,7 @@ impl Roles {
                     _ => {}
                 }
             }
-            if consecutive >= MAX_CONSECUTIVE_REJECTIONS {
+            if sel.rejection_run.current >= MAX_CONSECUTIVE_REJECTIONS {
                 sel.incomplete = true;
                 break;
             }
@@ -1227,7 +1248,7 @@ impl Roles {
             let world = match world {
                 Ok(w) => w,
                 Err(_) => {
-                    consecutive += 1;
+                    sel.rejection_run.reject();
                     if let Some(t) = trace.as_deref_mut() {
                         t.sim_rejected(index);
                     }
@@ -1240,7 +1261,7 @@ impl Roles {
                     continue;
                 }
             };
-            consecutive = 0;
+            sel.rejection_run.accept();
             let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Reseed);
             self.reset_main(ctx, "E", index, "select");
             drop(span);
