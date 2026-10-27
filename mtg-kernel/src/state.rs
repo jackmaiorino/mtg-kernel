@@ -1243,7 +1243,7 @@ pub fn stack_target_contract_is_structurally_valid(
         }
         let matches_kind = match &contract {
             StackTargetContractV4::Object { zone, .. } => {
-                *zone == crate::standard_cards_v1::target_zone(filter)
+                crate::standard_cards_v1::target_zone_allows(filter, *zone)
             }
             StackTargetContractV4::StackItem { .. } => false,
             StackTargetContractV4::Player(_) => matches!(
@@ -4888,6 +4888,8 @@ mod tests {
             chosen_creature_cost: None,
             convoke_chosen: Vec::new(),
             convoke_finished: false,
+            escape_exile_finished_v1: false,
+            hand_free_cast_v1: None,
             mandatory_additional_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();

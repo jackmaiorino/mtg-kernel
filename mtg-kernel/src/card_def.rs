@@ -359,6 +359,11 @@ pub enum Subtype {
     Lhurgoyf,
     Halfling,
     Tamiyo,
+    /// Appended for the eternal catalog's wave-E3 cards (Street Wraith, Raph
+    /// & Mikey, Jace). Jace is a planeswalker type.
+    Wraith,
+    Mutant,
+    Jace,
 }
 
 impl Subtype {
@@ -671,6 +676,10 @@ impl Subtype {
         Subtype::Lhurgoyf,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Halfling,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Wraith,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Mutant,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -766,6 +775,8 @@ impl Subtype {
                     | Subtype::Army
                     | Subtype::Lhurgoyf
                     | Subtype::Halfling
+                    | Subtype::Wraith
+                    | Subtype::Mutant
             )
         {
             return true;
@@ -1707,6 +1718,11 @@ pub enum ManaAbilityCostDef {
     /// needs at least N life (119.4). Appended; existing discriminants
     /// remain fixed.
     TapSelfPayLife(u8),
+    /// "Discard your hand, Sacrifice this artifact" with "Activate only as
+    /// an instant" (Lion's Eye Diamond): only while its controller holds
+    /// priority with nothing being cast, activated or resolved. Appended for
+    /// the eternal catalog.
+    DiscardHandAndSacrificeSelfV1,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -1846,6 +1862,10 @@ pub enum ManaSpendRestrictionDef {
     LegendarySpell,
     Unrestricted,
     CreatureSpellOrCreatureAbility,
+    /// "Spend this mana only to cast a creature spell of the chosen type"
+    /// (Cavern of Souls): the creature type chosen as the source entered.
+    /// Appended for the eternal catalog.
+    CreatureSpellOfChosenTypeV1,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
@@ -3036,7 +3056,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x2c29_b36c_17aa_bd16;
+        const EXPECTED_ETERNAL: u64 = 0xcef9_b272_218b_a862;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

@@ -35,6 +35,30 @@ pub fn recipe() -> EffectOp {
     EffectOp::TakeExtraTurnAfterThisOneV1
 }
 
+/// Emrakul, the Aeons Torn: "When you cast this spell, take an extra turn
+/// after this one." Its trigger owns an extra turn like a resolving
+/// Temporal Manipulation.
+const EMRAKUL: &str = "Emrakul, the Aeons Torn";
+
+fn cast_trigger(item: &StackItem) -> bool {
+    item.kind == StackItemKind::TriggeredAbility
+        && !item.is_copy
+        && item.inline_effect == Some(recipe())
+        && item
+            .v4
+            .source_contract
+            .and_then(|source| card_def::CARD_DEFS.get(usize::from(source.card_def)))
+            .is_some_and(|definition| definition.name == EMRAKUL)
+}
+
+/// Publishes a just-placed extra-turn trigger, as `record_publication` does
+/// for a paid spell.
+pub(crate) fn record_trigger_publication(state: &mut GameState, item: &StackItem) {
+    if cast_trigger(item) {
+        record_publication(state, item.v4.stack_item_id);
+    }
+}
+
 pub(crate) fn selected_definition(id: u16) -> bool {
     card_def::CARD_DEFS
         .get(usize::from(id))
@@ -42,6 +66,9 @@ pub(crate) fn selected_definition(id: u16) -> bool {
 }
 
 fn selected(item: &StackItem, state: &GameState) -> bool {
+    if item.kind == StackItemKind::TriggeredAbility {
+        return cast_trigger(item);
+    }
     [
         item.v4.source_contract.map(|source| source.card_def),
         state
@@ -61,6 +88,12 @@ fn exact_recipe(item: &StackItem) -> bool {
         .is_none_or(|source| source.source != item.source || source.controller != item.controller)
     {
         return false;
+    }
+    if item.kind == StackItemKind::TriggeredAbility {
+        return cast_trigger(item)
+            && item.targets.is_empty()
+            && item.v4.target_contracts.is_empty()
+            && item.mode_chosen == 0;
     }
     item.v4
         .source_contract
@@ -527,7 +560,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                                     if *object==item.source && *controller_before==item.controller)
                             }
                         }).count();
-                        if departures != 1 {
+                        // An ability has no physical stack departure.
+                        if item.kind != StackItemKind::TriggeredAbility && departures != 1 {
                             return Err("removed Temporal spell lacks its unique independent actual Stack departure".into());
                         }
                     }

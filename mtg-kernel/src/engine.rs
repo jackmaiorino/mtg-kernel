@@ -936,7 +936,29 @@ pub struct PendingCast {
     pub convoke_chosen: Vec<EffectObjectBinding>,
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub convoke_finished: bool,
+    /// Nethergoyf's escape exiles "any number of other cards": true once the
+    /// caster stops exiling more after the card-type requirement is met.
+    /// Only the eternal catalog sets it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub escape_exile_finished_v1: bool,
+    /// Whether this hand cast is made without paying its mana cost under a
+    /// free-cast permission (Omniscience, Aluren). `None` when no such
+    /// permission applied as the cast began. Only the eternal catalog sets
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hand_free_cast_v1: Option<HandFreeCastV1>,
 }
+
+/// The pay-or-skip choice of a hand cast under a free-cast permission
+/// (Omniscience, Aluren).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HandFreeCastV1 {
+    /// Not chosen yet; quotes assume the cost can be skipped.
+    Undecided,
+    WithoutManaCost,
+    PayManaCost,
+}
+
 impl std::hash::Hash for PendingCast {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::hash::Hash::hash(&self.spell, state);
@@ -967,6 +989,13 @@ impl std::hash::Hash for PendingCast {
             std::hash::Hash::hash(&0x636f6e766f6b6531_u64, state);
             std::hash::Hash::hash(&self.convoke_chosen, state);
             std::hash::Hash::hash(&self.convoke_finished, state);
+        }
+        if self.escape_exile_finished_v1 {
+            std::hash::Hash::hash(&"escape-exile-finished/v1", state);
+        }
+        if let Some(choice) = self.hand_free_cast_v1 {
+            std::hash::Hash::hash(&"hand-free-cast/v1", state);
+            std::hash::Hash::hash(&choice, state);
         }
     }
 }
@@ -2153,12 +2182,16 @@ fn validate_physical_spell_cast_origin(
     }
     let route_supports_method = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
-            // A resolving instruction casts from exile for free, or (Bilbo)
-            // from the caster's graveyard paying its costs.
+            // A resolving instruction casts from exile for free, (Bilbo)
+            // from the caster's graveyard paying its costs, or (Mad Wizard's
+            // Lair) from the caster's hand for free.
             let from_graveyard = cfg!(feature = "eternal-fixtures")
                 && origin.origin_zone == Zone::Graveyard
                 && source.owner == item.controller;
-            (origin.origin_zone == Zone::Exile || from_graveyard)
+            let from_hand = cfg!(feature = "eternal-fixtures")
+                && origin.origin_zone == Zone::Hand
+                && source.owner == item.controller;
+            (origin.origin_zone == Zone::Exile || from_graveyard || from_hand)
                 && holder == item.controller
                 && (from_graveyard || item.v4.x_value == 0)
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
@@ -2657,6 +2690,8 @@ fn validate_creature_upgrade_trigger_contract(
 /// keyed here; `rules_vector_v1` reads this instead of the card's name.
 pub(crate) fn has_storm(definition: &card_def::CardDef) -> bool {
     definition.name == "Weather the Storm"
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::e3::has_storm(definition.name))
 }
 
 /// Authenticates Weather the Storm's historical producing cast contract.
@@ -2678,7 +2713,8 @@ fn storm_source_contract_is_structurally_valid(
     let route_is_valid = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
             (origin.origin_zone == Zone::Exile
-                || (cfg!(feature = "eternal-fixtures") && origin.origin_zone == Zone::Graveyard))
+                || (cfg!(feature = "eternal-fixtures")
+                    && matches!(origin.origin_zone, Zone::Graveyard | Zone::Hand)))
                 && holder == contract.controller
         }
         SpellCastRouteV4::Hand => {
@@ -4115,12 +4151,33 @@ fn legal_targets_for_controller_from_source_unframed(
     };
     targets.retain(|target| {
         if let Target::Player(player) = *target {
+            #[cfg(feature = "eternal-fixtures")]
+            if !crate::eternal_cards_v1::e3::player_targetable(
+                state,
+                player,
+                controller,
+                source.map(|source| source.object),
+            ) {
+                return false;
+            }
             return player == controller
                 || !crate::crystal_barricade_v1::controller_has_hexproof(state, player);
         }
         let Target::Object(object) = *target else {
             return true;
         };
+        #[cfg(feature = "eternal-fixtures")]
+        if !crate::eternal_cards_v1::e3::object_targetable(
+            state,
+            object,
+            controller,
+            source.map(|source| source.object),
+        ) || source.is_some_and(|source| {
+            source.zone == Zone::Stack
+                && crate::eternal_cards_v1::e3::protected_from_spell(state, object, source.object)
+        }) {
+            return false;
+        }
         let live = state.objects.get(object);
         live.zone != Zone::Battlefield
             || (!has_effective_keyword(state, object, Keywords::SHROUD)
@@ -7133,6 +7190,108 @@ fn graveyard_exile_cards_needed(
         .unwrap_or(0)
 }
 
+/// Nethergoyf's escape exiles "any number of other cards from your
+/// graveyard with four or more card types among them". Once the chosen
+/// cards cover the card types, the caster may keep choosing other graveyard
+/// cards until they finish: `Some` with the remaining candidates while that
+/// choice is open.
+fn escape_extra_exile_candidates(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+) -> Option<Vec<ObjectId>> {
+    if !cfg!(feature = "eternal-fixtures")
+        || pending.escape_exile_finished_v1
+        || pending.source_contract.cast_method != CastMethodV4::Escape
+    {
+        return None;
+    }
+    let minimum = def
+        .escape
+        .as_ref()?
+        .cost
+        .iter()
+        .find_map(|component| match component {
+            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => Some(*minimum),
+            _ => None,
+        })?;
+    if crate::eternal_cards_v1::card_type_count(state, &pending.sacrifice_chosen)
+        < usize::from(minimum)
+    {
+        return None;
+    }
+    let candidates = checked_graveyard_exile_candidates(
+        pending.controller,
+        pending.spell,
+        state,
+        &pending.sacrifice_chosen,
+    )?;
+    (!candidates.is_empty()).then_some(candidates)
+}
+
+/// Exiles one more graveyard card for Nethergoyf's escape after its card
+/// types are covered.
+fn choose_escape_extra_exile(state: &mut GameState, target: Target) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .clone()
+        .ok_or("no cast is choosing escape cards")?;
+    validate_pending_cast(state, &pending)?;
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let candidates = escape_extra_exile_candidates(&pending, def, state)
+        .ok_or("the escape exile choice is not open")?;
+    let Target::Object(object) = target else {
+        return Err("an escape exile choice is a graveyard card".to_string());
+    };
+    if !candidates.contains(&object) {
+        return Err(format!("{object} is not a legal escape exile card"));
+    }
+    state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("validated cast remains pending")
+        .sacrifice_chosen
+        .push(object);
+    Ok(())
+}
+
+/// Stops exiling further cards for Nethergoyf's escape.
+fn finish_escape_extra_exile(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .clone()
+        .ok_or("no cast is choosing escape cards")?;
+    validate_pending_cast(state, &pending)?;
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    if escape_extra_exile_candidates(&pending, def, state).is_none() {
+        return Err("the escape exile choice is not open".to_string());
+    }
+    state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("validated cast remains pending")
+        .escape_exile_finished_v1 = true;
+    Ok(())
+}
+
+/// Whether the pending cast is offering Nethergoyf's further escape exiles.
+fn escape_extra_exile_open(state: &GameState) -> bool {
+    state.engine.pending_cast.as_ref().is_some_and(|pending| {
+        state.objects.try_get(pending.spell).is_some_and(|spell| {
+            escape_extra_exile_candidates(
+                pending,
+                &card_def::CARD_DEFS[spell.card_def as usize],
+                state,
+            )
+            .is_some()
+        })
+    })
+}
+
 /// The cards of `color` in `player`'s hand other than `source`: the
 /// candidates for "exile a blue card from your hand" (Force of Will).
 pub(crate) fn hand_exile_cost_candidates(
@@ -7923,6 +8082,10 @@ fn pending_cast_form_timing_ok(
     state: &GameState,
 ) -> bool {
     resolution_cast_v1::timing_override(state, pending.spell)
+        || (cfg!(feature = "eternal-fixtures")
+            && pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
+            && types.contains(&CardType::Creature)
+            && crate::eternal_cards_v1::e3::aluren_flash(state, pending.spell))
         || spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
         || (!types.contains(&CardType::Land)
@@ -8174,6 +8337,76 @@ fn pending_cast_quote_v1(
         state,
         &reserved_graveyard,
     )
+}
+
+/// Records the pay-or-skip answer of a hand cast under a free-cast
+/// permission. Skipping the mana cost makes X zero.
+fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
+    let pending = state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("a pending cast is choosing its free cast");
+    pending.hand_free_cast_v1 = Some(choice);
+    if choice == HandFreeCastV1::WithoutManaCost && pending.x_value.is_none() {
+        pending.x_value = Some(0);
+    }
+}
+
+/// Quotes `pending` as it would stand with its free-cast answer replaced.
+fn free_cast_projection_quote(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    kicked: bool,
+    state: &GameState,
+) -> bool {
+    let mut projected = state.clone();
+    projected.engine.pending_cast = Some(pending.clone());
+    pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, 0, &projected).is_some()
+}
+
+/// Whether the hand card `id` can be cast without paying its mana cost
+/// under Omniscience or Aluren in any of its printed forms.
+fn hand_free_cast_quote_ok(
+    def: &card_def::CardDef,
+    id: ObjectId,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    if !crate::eternal_cards_v1::e3::hand_free_permission_any_form(state, id, player) {
+        return false;
+    }
+    let mut projected = state.clone();
+    crate::eternal_cards_v1::e3::set_free_quote(&mut projected, Some(id));
+    if normal_cast_cost_depends_on_targets(def) {
+        return normal_cast_target_prefix_is_payable(
+            def,
+            id,
+            def.target_spec,
+            player,
+            &[],
+            &projected,
+        );
+    }
+    viable_printed_spell_modes(def, id, player, &projected)
+        .into_iter()
+        .any(|mode| {
+            spell_costs_v1::selected_spell_quote_v1(
+                def,
+                id,
+                Zone::Hand,
+                CastMethodV4::Normal,
+                false,
+                mode,
+                0,
+                &[],
+                &[],
+                player,
+                &projected,
+                &[],
+            )
+            .is_some()
+        })
 }
 
 /// Scoped quote adapter for the exact printed Divine successor. It returns
@@ -8449,12 +8682,30 @@ fn is_castable_now(
                     .is_some()
                 })
             };
+            // Omniscience and Aluren may waive the mana cost of a hand cast;
+            // Aluren's flash timing needs that waiver.
+            let free_ok = || {
+                cfg!(feature = "eternal-fixtures")
+                    && state.objects.get(id).zone == Zone::Hand
+                    && hand_free_cast_quote_ok(def, id, player, state)
+            };
+            let aluren_timing = cfg!(feature = "eternal-fixtures")
+                && !main_timing_ok
+                && state.objects.get(id).zone == Zone::Hand
+                && crate::eternal_cards_v1::e3::aluren_flash(state, id);
+            let paid_or_free = || {
+                if main_timing_ok {
+                    normal_ok() || alt_ok() || free_ok()
+                } else {
+                    free_ok()
+                }
+            };
             let main_ok = (state.objects.get(id).zone != Zone::Graveyard
                 || graveyard_permission_zone_change_count(player, id, state).is_some())
-                && main_timing_ok
-                && (((normal_ok() || alt_ok())
+                && (main_timing_ok || aluren_timing)
+                && ((paid_or_free()
                     && !viable_printed_spell_modes(def, id, player, state).is_empty())
-                    || kicked_ok());
+                    || (main_timing_ok && kicked_ok()));
             let omen_ok = || {
                 supported_omen(def).is_some_and(|omen| {
                     matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
@@ -8812,6 +9063,9 @@ fn rich_mana_ability_is_payable(
         ManaAbilityCostDef::SacrificeSelf
         | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
         | ManaAbilityCostDef::None => true,
+        ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+            crate::eternal_cards_v1::e3::instant_speed_mana_ability_allowed(state, player)
+        }
         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
             // The allocating candidate enumeration must stay behind the two
             // cheap checks: the flat-encode zero-allocation contract counts
@@ -9367,6 +9621,13 @@ fn activate_mana_ability_for_with_checkpoint(
                 event::propose_and_commit(state, ProposedEvent::life_loss(player, i32::from(life)));
             }
             ManaAbilityCostDef::None => {}
+            ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+                let hand = state.players[player.index()].hand.clone();
+                for card in hand {
+                    commit_discarded_card(state, card);
+                }
+                commit_sacrifice(state, &[source]);
+            }
         }
         if let Some(colors) = bundle {
             if !colors.is_empty() {
@@ -9589,6 +9850,8 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         .copied()
         .filter(|&id| {
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_playable_land()
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cards_v1::e3::playable_land_back_face(state, id))
         })
         .collect();
     // Impulse-drawn lands (Clockwork Percussionist/Experimental
@@ -9612,6 +9875,10 @@ pub(crate) fn can_attack(state: &GameState, id: ObjectId) -> bool {
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_statics_v1::cant_attack_or_block(state, id) {
+        return false;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cards_v1::e3::cant_attack(state, id) {
         return false;
     }
     def.is_executable()
@@ -10158,6 +10425,10 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
                 source: pending.source,
                 option_count: 4,
             };
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        if let Some(decision) = crate::eternal_cards_v1::e3::entry_choice_decision(state) {
+            return decision;
         }
 
         if let Some(d) = drain_pending_spell_copy_or_decide(state) {
@@ -12410,6 +12681,35 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         state.engine.pending_cast.as_mut().unwrap().cast_mode = Some(mode);
         return drain_pending_cast_or_decide(state);
     }
+    if pending.cast_mode == Some(CastMode::Normal)
+        && pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)
+    {
+        let kicked = pending.kicked == Some(true);
+        let mut paying = pending.clone();
+        paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
+        let pay = free_cast_projection_quote(def, &paying, kicked, state);
+        let free =
+            pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state).is_some();
+        let choice = match (pay, free) {
+            (true, true) => {
+                return Some(Decision::ChooseEffectOption {
+                    player: pending.controller,
+                    source: pending.spell,
+                    option_count: 2,
+                });
+            }
+            (true, false) => HandFreeCastV1::PayManaCost,
+            (false, true) => HandFreeCastV1::WithoutManaCost,
+            (false, false) => {
+                let cast_method = finalized_cast_method(&pending, staged_method, def);
+                let pending = state.engine.pending_cast.take().unwrap();
+                abort_cast(state, pending, cast_method);
+                return None;
+            }
+        };
+        set_hand_free_cast(state, choice);
+        return drain_pending_cast_or_decide(state);
+    }
 
     let sacrifice_needed = sacrifice_lands_needed(&pending, def);
     if (pending.sacrifice_chosen.len() as u8) < sacrifice_needed {
@@ -12499,6 +12799,18 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             cost_kind: CostKind::ExileFromGraveyard,
             remaining,
             candidates,
+        });
+    }
+    if let Some(candidates) = escape_extra_exile_candidates(&pending, def, state) {
+        let chosen = pending.sacrifice_chosen.len();
+        return Some(Decision::ChooseEffectTargets {
+            player: pending.controller,
+            source: pending.spell,
+            selected_count: u16::try_from(chosen).unwrap_or(u16::MAX),
+            min_targets: 0,
+            max_targets: u16::try_from(chosen + candidates.len()).unwrap_or(u16::MAX),
+            legal_targets: candidates.into_iter().map(Target::Object).collect(),
+            can_finish: true,
         });
     }
 
@@ -14291,6 +14603,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
+    crate::extra_turn_v1::record_trigger_publication(state, &finalized);
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -15431,8 +15744,10 @@ pub(crate) fn counter_stack_item_by_id(
     effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
-        && card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize]
+        && (card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize]
             .spell_cannot_be_countered
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::spell_cannot_be_countered(state, item.source)))
     {
         // Some means the bound target still exists. A protected spell remains
         // on the stack after the attempt, so callers finish the effect normally.
@@ -16544,6 +16859,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     }
 
+    if item.kind == StackItemKind::TriggeredAbility
+        && item.inline_effect == Some(crate::extra_turn_v1::recipe())
+    {
+        // Emrakul, the Aeons Torn's cast trigger owns its extra turn the way
+        // a resolving Temporal Manipulation does.
+        let scheduled = temporal_owner
+            .is_some_and(|owner| crate::extra_turn_v1::schedule_owned(state, owner).is_ok());
+        if !scheduled {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(effect) = item.inline_effect.clone() {
         let effect_history_start = state.engine.event_history.len();
         if item
@@ -17836,6 +18165,10 @@ pub fn damage_is_prevented_by_protection(
     source: ObjectId,
     target: Target,
 ) -> bool {
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cards_v1::e3::damage_prevented_by_protection(state, source, target) {
+        return true;
+    }
     let Target::Object(target) = target else {
         return false;
     };
@@ -17857,6 +18190,10 @@ pub fn object_mana_value(state: &GameState, id: ObjectId) -> u16 {
     let object = state.objects.get(id);
     if object.v4.face_down_v1.is_some() {
         return 0;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(value) = crate::eternal_cards_v1::e3::back_face_mana_value(state, id) {
+        return value;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if let Some((_, value, _)) = crate::standard_cards_v1::room_characteristics(state, id) {
@@ -18030,6 +18367,12 @@ fn checked_effective_stat(
     };
     add(bestow_host_counter_bonus(state, id))?;
     add(select(controlled_subtype_boost(state, id)))?;
+    #[cfg(feature = "eternal-fixtures")]
+    if !toughness {
+        add(i128::from(crate::eternal_cards_v1::e3::power_modifier(
+            state, id,
+        )))?;
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     {
         add(crate::standard_keywords_v1::controlled_forest_boost(
@@ -19548,6 +19891,11 @@ enum PendingCastActionStage {
     AwaitEngineAdvance,
     ChooseConvoke,
     ChooseMandatoryAdditionalCost,
+    /// Nethergoyf's escape: more graveyard cards after its card types are
+    /// covered, or finish.
+    ChooseEscapeExileV1,
+    /// Omniscience or Aluren: pay the mana cost (option 0) or not (1).
+    ChooseFreeCastV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19604,6 +19952,11 @@ fn pending_cast_action_stage(
     if pending.cast_mode.is_none() {
         return Ok(PendingCastActionStage::ChooseCastMode);
     }
+    if pending.cast_mode == Some(CastMode::Normal)
+        && pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)
+    {
+        return Ok(PendingCastActionStage::ChooseFreeCastV1);
+    }
     if pending
         .mandatory_additional_cost
         .is_some_and(|choice| choice.pay_mana.is_none())
@@ -19617,6 +19970,9 @@ fn pending_cast_action_stage(
         < usize::from(graveyard_exile_cards_needed(pending, def, state))
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
+    }
+    if escape_extra_exile_candidates(pending, def, state).is_some() {
+        return Ok(PendingCastActionStage::ChooseEscapeExileV1);
     }
     if pending.sacrifice_chosen.len()
         < controlled_permanent_sacrifice_needed(pending, def)
@@ -19672,7 +20028,7 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
     matches!(
         (stage, action),
         (
-            PendingCastActionStage::ChooseConvoke,
+            PendingCastActionStage::ChooseConvoke | PendingCastActionStage::ChooseEscapeExileV1,
             Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
         ) | (
             PendingCastActionStage::ChooseKicker,
@@ -19706,7 +20062,7 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
                 | PendingCastActionStage::ChooseMandatoryAdditionalCost,
             Action::ChooseEffectOption(_)
         ) | (
-            PendingCastActionStage::ChooseXValue,
+            PendingCastActionStage::ChooseXValue | PendingCastActionStage::ChooseFreeCastV1,
             Action::ChooseEffectOption(_)
         ) | (PendingCastActionStage::Discard, Action::Discard(_))
     )
@@ -19981,6 +20337,16 @@ pub(crate) fn step_without_linked_aura_v1(
             if !land_drop_candidates(p, state).contains(&id) {
                 return Err(format!("{id} is not a legal land drop for {p:?}"));
             }
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::eternal_cards_v1::e3::playable_land_back_face(state, id) {
+                crate::eternal_cards_v1::e3::play_land_back_face(state, p, id);
+                state.players[p.index()].lands_played_this_turn += 1;
+                crate::eternal_cards_v1::e3::note_land_played(state, p, id);
+                collect_and_queue_triggers(state);
+                state.engine.priority_passes = [false, false];
+                state.priority_player = p;
+                return Ok(());
+            }
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
             if let Some(excluded_color) = def.as_enters_choose_color_other_than {
                 state.engine.pending_land_play = Some(PendingLandPlay {
@@ -20142,7 +20508,13 @@ pub(crate) fn step_without_linked_aura_v1(
             Ok(())
         }
         Action::ChooseEffectOption(option_index) => {
-            if state.engine.pending_land_play.is_some() {
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::entry_choice_pending(state)
+            {
+                crate::eternal_cards_v1::e3::answer_entry_choice(state, option_index)?;
+                collect_and_queue_triggers(state);
+                Ok(())
+            } else if state.engine.pending_land_play.is_some() {
                 apply_choose_land_color(state, option_index)
             } else if state.engine.pending_cast.is_some() {
                 apply_pending_cast_effect_option(state, option_index)
@@ -20161,6 +20533,8 @@ pub(crate) fn step_without_linked_aura_v1(
         Action::ChooseEffectTarget(target) => {
             if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.x_value.is_some() && !p.convoke_finished) {
                 standard_cast_convoke::choose(state, target)
+            } else if escape_extra_exile_open(state) {
+                choose_escape_extra_exile(state, target)
             } else if state.engine.pending_cast.is_some() {
                 apply_choose_collect_evidence_target(state, target)
             } else if state.engine.pending_activation.is_some() {
@@ -20174,6 +20548,8 @@ pub(crate) fn step_without_linked_aura_v1(
         Action::FinishEffectSelection => {
             if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.x_value.is_some() && !p.convoke_finished) {
                 standard_cast_convoke::finish(state)
+            } else if escape_extra_exile_open(state) {
+                finish_escape_extra_exile(state)
             } else if state.engine.pending_cast.is_some() {
                 finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
@@ -21341,6 +21717,60 @@ pub(crate) fn spell_copy_retarget_candidates(
     )
 }
 
+/// The new targets a spell with a single target may be changed to
+/// (Misdirection, 115.7a): every legal target for its one target word other
+/// than its current target and the spell itself, chosen as if by its
+/// controller from its source. Empty when it has no other legal target.
+pub(crate) fn spell_retarget_candidates_v1(
+    state: &GameState,
+    stack_item: StackItemId,
+) -> Vec<Target> {
+    let Some(item) = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == stack_item && item.kind == StackItemKind::Spell)
+    else {
+        return Vec::new();
+    };
+    let Some(spec) = item.v4.target_spec else {
+        return Vec::new();
+    };
+    let [current] = item.targets.as_slice() else {
+        return Vec::new();
+    };
+    legal_targets_for_controller_from_source(
+        spec,
+        &[],
+        item.controller,
+        targeting_source_for_object(state, item.source),
+        state,
+    )
+    .into_iter()
+    .filter(|target| target != current && *target != Target::Object(item.source))
+    .collect()
+}
+
+/// Changes the one target of a spell on the stack to `target`, capturing
+/// its new incarnation contract and logging the new targeting.
+pub(crate) fn retarget_spell_v1(
+    state: &mut GameState,
+    stack_item: StackItemId,
+    target: Target,
+) -> Result<(), String> {
+    if !spell_retarget_candidates_v1(state, stack_item).contains(&target) {
+        return Err(format!("{target:?} is not a legal new target"));
+    }
+    let contract = StackTargetContractV4::capture(state, target);
+    let item = state
+        .stack
+        .iter_mut()
+        .find(|item| item.v4.stack_item_id == stack_item)
+        .ok_or("the retargeted spell left the stack")?;
+    item.targets = vec![target];
+    item.v4.target_contracts = vec![contract];
+    log_final_targeting_events(state, stack_item)
+}
+
 /// The spell copy's current targets.
 pub(crate) fn spell_copy_targets(state: &GameState, copy_stack_item: StackItemId) -> Vec<Target> {
     state
@@ -21503,6 +21933,85 @@ pub(crate) fn create_storm_spell_copies(
     }
     *state = staged;
     Ok(())
+}
+
+/// Storm copies of a targeted spell (Flusterstorm): each copy keeps the
+/// original's targets and target contracts as it was cast. Returns the
+/// copies' stack ids in creation order. Copies are not cast.
+pub(crate) fn create_targeted_storm_copies_v1(
+    state: &mut GameState,
+    binding: StormCopyBindingV1,
+    targets: &[Target],
+    target_contracts: &[StackTargetContractV4],
+    target_spec: TargetSpec,
+) -> Result<Vec<StackItemId>, String> {
+    let copy_count = storm_copy_count_from_binding(state, binding)?;
+    let parent_name = state
+        .objects
+        .get(binding.source_contract.source)
+        .name
+        .clone();
+    let mut staged = state.clone();
+    let mut created = Vec::new();
+    for _ in 0..copy_count {
+        let copy_source = staged.objects.push(crate::state::GameObject {
+            card_def: binding.source_contract.card_def,
+            name: parent_name.clone(),
+            owner: binding.source_contract.owner,
+            controller: binding.source_contract.controller,
+            zone: Zone::Stack,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(binding.source_contract.card_def),
+            spell_copy_origin: Some(SpellCopyOriginV4 {
+                parent: binding.source_contract.source,
+                parent_card_def: binding.source_contract.card_def,
+                parent_owner: binding.source_contract.owner,
+                parent_controller: binding.source_contract.controller,
+                parent_stack_zone_change_count: binding.source_contract.zone_change_count,
+                parent_was_copy: false,
+                source_types_v1: crate::source_type_hexproof_v1::copy_projection(
+                    binding.source_contract.card_def,
+                    binding.source_contract.cast_method,
+                ),
+            }),
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        let stack_item_id = next_stack_item_id(&mut staged);
+        let source_contract =
+            StackSourceContractV4::capture(&staged, copy_source, CastMethodV4::Normal);
+        let copy = StackItem {
+            kind: StackItemKind::Spell,
+            source: copy_source,
+            controller: binding.source_contract.controller,
+            targets: targets.to_vec(),
+            is_copy: true,
+            inline_effect: None,
+            discarded: Vec::new(),
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: StackStateV4 {
+                stack_item_id,
+                cast_method: Some(CastMethodV4::Normal),
+                source_contract: Some(source_contract),
+                target_spec: Some(target_spec),
+                target_contracts: target_contracts.to_vec(),
+                ..StackStateV4::default()
+            },
+        };
+        staged.stack.push(copy.clone());
+        validate_spell_stack_source(&staged, &copy)?;
+        validated_stack_item_target_spec(&copy, &staged)?;
+        created.push(stack_item_id);
+    }
+    *state = staged;
+    Ok(created)
 }
 
 fn pending_spell_copy_parent(
@@ -22333,6 +22842,15 @@ fn apply_pending_cast_effect_option(
         PendingCastActionStage::ChooseOptionalAdditionalCost => {
             apply_choose_optional_additional_cost(state, option_index)
         }
+        PendingCastActionStage::ChooseFreeCastV1 => {
+            let choice = match option_index {
+                0 => HandFreeCastV1::PayManaCost,
+                1 => HandFreeCastV1::WithoutManaCost,
+                _ => return Err("the free-cast choice has two options".to_string()),
+            };
+            set_hand_free_cast(state, choice);
+            Ok(())
+        }
         PendingCastActionStage::ChooseMandatoryAdditionalCost => {
             mandatory_cast_cost_v1::answer(state, &pending, option_index)
         }
@@ -22424,6 +22942,8 @@ fn play_land(
     }
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn += 1;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::note_land_played(state, player, id);
     if resolution_cast_v1::finish_child(state)? {
         return Ok(());
     }
@@ -22595,9 +23115,25 @@ fn begin_cast_ex(
     };
     let without_mana_cost = resolution_permission.is_some()
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
+    // Omniscience and Aluren: a hand cast may skip its mana cost. Aluren's
+    // "as though they had flash" applies only to such a cast, so outside
+    // sorcery timing the choice is already made.
+    let hand_free_cast_v1 = (cfg!(feature = "eternal-fixtures")
+        && origin_zone == Zone::Hand
+        && cast_method == CastMethodV4::Normal
+        && resolution_permission.is_none()
+        && crate::eternal_cards_v1::e3::hand_free_permission_any_form(state, spell_id, player))
+    .then(|| {
+        if cast_form_timing_ok(def.types, def.keywords, player, state) {
+            HandFreeCastV1::Undecided
+        } else {
+            HandFreeCastV1::WithoutManaCost
+        }
+    });
     let free_room_door_choice = without_mana_cost
         && crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative).is_some();
     let cast_mode = if (without_mana_cost && !free_room_door_choice)
+        || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
         || cast_method != CastMethodV4::Normal
         || def.alt_cost.is_none()
     {
@@ -22726,6 +23262,8 @@ fn begin_cast_ex(
         chosen_creature_cost: None,
         convoke_chosen: Vec::new(),
         convoke_finished: false,
+        escape_exile_finished_v1: false,
+        hand_free_cast_v1,
         mandatory_additional_cost: mandatory_cast_cost_v1::seed(def),
     });
 }
@@ -22829,9 +23367,13 @@ fn finalize_owned_cast(
     let mandatory_payment_input = mandatory_cast_cost_v1::record_input(state, &pending);
     #[cfg(feature = "eternal-fixtures")]
     let delve_exiled = payment.delve_exiled().to_vec();
+    #[cfg(feature = "eternal-fixtures")]
+    let mana_taps = payment.mana_taps().to_vec();
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::note_delve_exile(state, pending.spell, &delve_exiled);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::note_spell_payment(state, pending.spell, &mana_taps);
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
@@ -22976,6 +23518,8 @@ fn finalize_owned_cast(
     log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::extra_turn_v1::record_publication(state, stack_item_id);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     crate::fake_your_own_death_v50::spell_custody::publish_spell(state, stack_item_id)?;
     if matches!(

@@ -216,6 +216,9 @@ pub enum LibraryCardFilter {
     /// fetchlands). Only lands carry land subtypes, so any match is a land,
     /// basic or not. Appended for the eternal catalog.
     CardWithAnySubtypeV1([Subtype; 2]),
+    /// A card with this card type ("a sorcery card", Personal Tutor).
+    /// Appended for the eternal catalog.
+    CardWithTypeV1(CardType),
 }
 
 impl LibraryCardFilter {
@@ -2201,6 +2204,11 @@ pub enum EffectFrame {
         choice: discard_payment_v1::DiscardPaymentChoiceV1,
         selected: Vec<EffectObjectBinding>,
     },
+    /// An answered eternal-catalog choice, applied by its module.
+    EternalSelectionV1 {
+        choice: Box<crate::eternal_cards_v1::e3::E3ChoiceV1>,
+        selected: Vec<Target>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2556,6 +2564,11 @@ pub enum EffectTargetSelectionPurpose {
     },
     DiscardPaymentV1 {
         choice: discard_payment_v1::DiscardPaymentChoiceV1,
+    },
+    /// A resolution choice of the eternal catalog's wave-E3 cards. Appended
+    /// so existing purpose discriminants remain fixed.
+    EternalV1 {
+        choice: Box<crate::eternal_cards_v1::e3::E3ChoiceV1>,
     },
 }
 
@@ -3123,6 +3136,11 @@ impl std::hash::Hash for ExecCtx {
 pub fn contains_player_choice(op: &EffectOp) -> bool {
     if crate::high_society_hunter_custody_v45::binding(op).is_some() {
         return true;
+    }
+    // Storm copies of a targeted spell may choose new targets (Flusterstorm).
+    if let EffectOp::CreateStormCopies { binding } = op {
+        return cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::e3::targeted_storm(binding);
     }
     if matches!(op, EffectOp::ExileTopChooseOneUntilNextTurn { .. }) {
         return true;
@@ -4402,6 +4420,20 @@ fn complete_resumable_target_selection(
         });
         return Ok(());
     }
+    if let EffectTargetSelectionPurpose::EternalV1 { choice } = purpose {
+        let frame = EffectFrame::EternalSelectionV1 {
+            choice,
+            selected: selected
+                .into_iter()
+                .map(|candidate| candidate.target)
+                .collect(),
+        };
+        continuation.answered_choice_guard = Some(EffectAnsweredChoiceGuard::StandardSelection {
+            frame: Box::new(frame.clone()),
+        });
+        continuation.frames.push(frame);
+        return Ok(());
+    }
     if let EffectTargetSelectionPurpose::CopyTarget { choice } = purpose {
         if selected.len() > 1 {
             return Err("too many replacement targets".into());
@@ -4438,7 +4470,8 @@ fn complete_resumable_target_selection(
             }
             exile_top_choose_v1::stage_answer(continuation, binding, objects[0])?;
         }
-        EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. } => {
+        EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. }
+        | EffectTargetSelectionPurpose::EternalV1 { .. } => {
             unreachable!("answered above without object bindings")
         }
         EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
@@ -5995,6 +6028,9 @@ fn validate_counter_target_unless_pays_program(
             | crate::card_def::TargetSpec::NoncreatureSpellOnStack
             | crate::card_def::TargetSpec::CreatureSpellOnStack
             | crate::card_def::TargetSpec::ArtifactSpellOnStack
+            | crate::card_def::TargetSpec::StandardV1(
+                crate::standard_cards_v1::StandardTargetV1::InstantOrSorcerySpellV1
+            )
     ) {
         return Err("counter-unless-pay resolving spell has a nonspell target filter".to_string());
     }
@@ -7660,6 +7696,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
+                        | EffectFrame::EternalSelectionV1 { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterUnlessPaysLife { .. }
@@ -7697,6 +7734,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
+                        | EffectFrame::EternalSelectionV1 { .. }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -8512,6 +8550,20 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::EternalV1 { choice } => {
+                    crate::eternal_cards_v1::e3::validate_selection(
+                        state,
+                        pending,
+                        choice,
+                        *chooser,
+                        path,
+                        selected,
+                        legal,
+                        *min_targets,
+                        *max_targets,
+                        *ordered,
+                    )?;
+                }
                 EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. } => {
                     exile_top_choose_v1::validate_choice(state, pending)?;
                 }
@@ -10479,6 +10531,11 @@ pub(crate) fn validate_resolution_play_authorization(
     answer: &EffectFrame,
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
+    if let EffectFrame::EternalSelectionV1 { choice, selected } = answer {
+        return crate::eternal_cards_v1::e3::dungeons::validate_resolution_cast(
+            suspended, choice, selected, permission,
+        );
+    }
     if let EffectFrame::ApplySelectedObjectsV1 {
         rule,
         original_candidates,
@@ -10562,6 +10619,7 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 | EffectFrame::ExileBatchSelect { .. }
                 | EffectFrame::DiscardDraw { .. }
                 | EffectFrame::DiscardPaymentV1 { .. }
+                | EffectFrame::EternalSelectionV1 { .. }
         ) && continuation.answered_choice_guard.take()
             != Some(EffectAnsweredChoiceGuard::StandardSelection {
                 frame: Box::new(frame.clone()),
@@ -10571,6 +10629,33 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::EternalSelectionV1 { choice, selected } => {
+                    // Mad Wizard's Lair: a chosen card is cast during this
+                    // resolution (608.2g).
+                    if let Some(card) = crate::eternal_cards_v1::e3::dungeons::resolution_cast_card(
+                        &choice, &selected,
+                    ) {
+                        let answer = EffectFrame::EternalSelectionV1 { choice, selected };
+                        crate::engine::resolution_cast_v1::stage(
+                            state,
+                            continuation,
+                            card,
+                            None,
+                            false,
+                            answer,
+                        )?;
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                    if crate::eternal_cards_v1::e3::finish_selection(
+                        state,
+                        &mut continuation,
+                        &choice,
+                        &selected,
+                    )? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
                 EffectFrame::DiscardPaymentV1 { choice, selected } => {
                     discard_payment_v1::finish(state, &mut continuation, &choice, &selected)?;
                 }
@@ -14134,6 +14219,28 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::CreateStormCopies { binding }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cards_v1::e3::targeted_storm(&binding) =>
+            {
+                if crate::eternal_cards_v1::e3::storm_copies(
+                    state,
+                    &mut continuation,
+                    binding,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(op))
+                if op.contains_player_choice() =>
+            {
+                if crate::eternal_cards_v1::e3::drive(state, &mut continuation, &op, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             leaf => {
                 if let EffectOp::DiscardCards { player, count } = &leaf {
                     if !continuation.frames.is_empty() {
@@ -15916,6 +16023,7 @@ fn library_filter_matches(
         LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
             .iter()
             .any(|subtype| subtype.is_in_subtype_ids(subtype_ids)),
+        LibraryCardFilter::CardWithTypeV1(card_type) => def.has_type(card_type),
     })
 }
 
@@ -15956,6 +16064,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             .fold(fnv1a_u64(0xcbf2_9ce4_8422_2325, 11), |hash, subtype| {
                 fnv1a_u64(hash, u64::from(subtype.stable_id()))
             }),
+        LibraryCardFilter::CardWithTypeV1(card_type) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 12), card_type as u64)
+        }
     }
 }
 
@@ -20899,8 +21010,12 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             eval_cond(&EffectCond::TargetInZone(*index, Zone::Stack), ctx, state)
                 && match ctx.targets.get(usize::from(*index)) {
                     Some(Target::Object(object)) => {
-                        !crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
+                        !(crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
                             .spell_cannot_be_countered
+                            || (cfg!(feature = "eternal-fixtures")
+                                && crate::eternal_cards_v1::e3::spell_cannot_be_countered(
+                                    state, *object,
+                                )))
                     }
                     _ => false,
                 }

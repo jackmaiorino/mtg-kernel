@@ -29,6 +29,13 @@ use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zon
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
+pub mod e3;
+pub use e3::{
+    dark_ritual, doomsday, edge_of_autumn, flusterstorm, jace_minus_eight, jace_plus_one,
+    misdirection, personal_tutor, show_and_tell, sink_into_stupor, sneak_attack, the_one_ring_draw,
+    veil_of_summer,
+};
+
 /// Per-game state for this module's cards. Absent until one of them needs
 /// it, so every other catalog keeps its snapshots and hashes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -61,6 +68,9 @@ pub struct EternalStateV1 {
     /// Emblems with "You have no maximum hand size", per player.
     #[serde(default, skip_serializing_if = "is_no_emblem")]
     pub no_maximum_hand_size: [bool; 2],
+    /// State of the wave-E3 cards (`e3::E3StateV1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e3: Option<Box<e3::E3StateV1>>,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -101,6 +111,15 @@ pub enum EternalTriggerV1 {
     /// "Whenever an opponent draws a card except the first one they draw in
     /// each of their draw steps" (Orcish Bowmasters).
     OpponentDrawsExceptFirstInDrawStep,
+    /// "When this enters, if you cast it" (The One Ring): it entered from
+    /// the stack as a resolving permanent spell.
+    EntersAfterCastV1,
+    /// "When this is put into a graveyard from anywhere" (Emrakul, the
+    /// Aeons Torn). Functions from the graveyard.
+    PutIntoGraveyardFromAnywhereV1,
+    /// "When this enters, if you haven't completed Tomb of Annihilation"
+    /// (Acererak the Archlich).
+    EntersIfTombNotCompletedV1,
 }
 
 /// Effect leaves owned by this module, carried as
@@ -160,6 +179,84 @@ pub enum EternalOpV1 {
     /// library, rounded up. You get an emblem with 'You have no maximum hand
     /// size.'"
     DrawHalfLibraryThenNoMaximumHandSizeV1,
+    /// The controller gains protection from everything until their next
+    /// turn (The One Ring).
+    ProtectionFromEverythingUntilYourNextTurnV1,
+    /// The controller loses 1 life for each burden counter on this
+    /// ability's source incarnation (The One Ring).
+    LoseLifePerBurdenCounterV1,
+    /// Put a burden counter on the source, then draw a card for each burden
+    /// counter on it (The One Ring).
+    BurdenCounterThenDrawV1,
+    /// "You may exile a nonartifact, nonland card from your hand" linked to
+    /// the source (Chrome Mox's imprint). A choice.
+    MayImprintFromHandV1,
+    /// "Change the target of target spell with a single target"
+    /// (Misdirection). A choice.
+    ChangeTargetOfTargetSpellV1,
+    /// "If you control `lands` or fewer lands, search your library for a
+    /// basic land card, put it onto the battlefield tapped, then shuffle"
+    /// (Edge of Autumn). A choice.
+    SearchBasicLandIfAtMostLandsV1 { lands: u8 },
+    /// Sacrifice this ability's source incarnation if its controller still
+    /// controls it (City of Traitors).
+    SacrificeSourceV1,
+    /// Veil of Summer's effect.
+    VeilOfSummerV1,
+    /// Doomsday's pile: exactly five (or all) cards of the controller's
+    /// library and graveyard become the library in a chosen order; the rest
+    /// are exiled. A choice.
+    DoomsdayPileV1,
+    /// Thassa's Oracle's entry look and devotion win. A choice.
+    ThassasOracleV1,
+    /// "If your library has no cards in it, you win the game" (Jace's -8).
+    WinIfLibraryEmptyV1,
+    /// Show and Tell's effect. A choice.
+    ShowAndTellV1,
+    /// Sneak Attack's ability. A choice.
+    SneakAttackV1,
+    /// "Defending player sacrifices `count` permanents" (annihilator). A
+    /// choice.
+    AnnihilatorV1 { count: u8 },
+    /// Atraxa, Grand Unifier's entry reveal. A choice.
+    AtraxaRevealV1,
+    /// Raph & Mikey, Troublemakers' attack trigger.
+    RevealUntilCreatureAttackingV1,
+    /// Move the controller's venture marker into a dungeon room
+    /// (`e3::dungeons`).
+    EnterRoomV1 { dungeon: u16, room: u16 },
+    /// A dungeon room's ability. May be a choice.
+    RoomAbilityV1 { dungeon: u16, room: u16 },
+    /// Acererak the Archlich's entry trigger. A choice.
+    AcererakEntersV1,
+    /// Acererak the Archlich's attack trigger. A choice.
+    AcererakAttacksV1,
+}
+
+/// Whether `condition` triggers on its source's own arrival in the zone it
+/// now occupies (entering the battlefield, or Emrakul put into a
+/// graveyard), so the trigger's source is that new incarnation rather than
+/// the one that left.
+pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && matches!(
+            condition,
+            crate::trigger::TriggerCondition::StandardV1(
+                crate::standard_cards_v1::StandardTriggerV1::EternalV1(
+                    EternalTriggerV1::EntersAfterCastV1
+                        | EternalTriggerV1::EntersIfTombNotCompletedV1
+                        | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1
+                )
+            )
+        )
+}
+
+impl EternalOpV1 {
+    /// Whether this leaf can yield a player decision, so its program must use
+    /// the resumable interpreter.
+    pub(crate) fn contains_player_choice(&self) -> bool {
+        e3::contains_player_choice(self)
+    }
 }
 
 /// The number of energy counters `player` has.
@@ -447,7 +544,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         ORCISH_BOWMASTERS => &ORCISH_BOWMASTERS_TRIGGERS,
         TAMIYO => &TAMIYO_TRIGGERS,
         BILBO => &BILBO_TRIGGERS,
-        _ => &[],
+        _ => e3::triggers_for(name),
     }
 }
 
@@ -471,7 +568,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         | URZAS_BAUBLE
         | TAMIYO
         | BILBO => Some(TargetSpec::None),
-        _ => None,
+        _ => e3::trigger_target_spec(name, effect),
     }
 }
 
@@ -940,6 +1037,26 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 .get_or_insert_with(Default::default)
                 .no_maximum_hand_size[ctx.controller.index()] = true;
         }
+        EternalOpV1::ProtectionFromEverythingUntilYourNextTurnV1
+        | EternalOpV1::LoseLifePerBurdenCounterV1
+        | EternalOpV1::BurdenCounterThenDrawV1
+        | EternalOpV1::MayImprintFromHandV1
+        | EternalOpV1::ChangeTargetOfTargetSpellV1
+        | EternalOpV1::SearchBasicLandIfAtMostLandsV1 { .. }
+        | EternalOpV1::SacrificeSourceV1
+        | EternalOpV1::VeilOfSummerV1
+        | EternalOpV1::DoomsdayPileV1
+        | EternalOpV1::ThassasOracleV1
+        | EternalOpV1::WinIfLibraryEmptyV1
+        | EternalOpV1::ShowAndTellV1
+        | EternalOpV1::SneakAttackV1
+        | EternalOpV1::AnnihilatorV1 { .. }
+        | EternalOpV1::AtraxaRevealV1
+        | EternalOpV1::RevealUntilCreatureAttackingV1
+        | EternalOpV1::EnterRoomV1 { .. }
+        | EternalOpV1::RoomAbilityV1 { .. }
+        | EternalOpV1::AcererakEntersV1
+        | EternalOpV1::AcererakAttacksV1 => e3::execute(op, ctx, state),
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
@@ -1076,8 +1193,9 @@ pub(crate) fn combat_static_rules(
 
 /// Brazen Borrower: "This creature can block only creatures with flying."
 pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
-    !printed_battlefield_source(state, blocker, BRAZEN_BORROWER)
-        || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING)
+    (!printed_battlefield_source(state, blocker, BRAZEN_BORROWER)
+        || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING))
+        && e3::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1250,10 +1368,10 @@ pub(crate) fn delayed_triggers(
         .iter()
         .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }));
     let active = state.active_player;
+    let mut triggers = e3::delayed_triggers(state, events);
     let Some(eternal_state) = state.eternal_v1.as_mut() else {
-        return Vec::new();
+        return triggers;
     };
-    let mut triggers = Vec::new();
     if upkeep {
         triggers.extend(
             std::mem::take(&mut eternal_state.upkeep_draws)
@@ -1280,6 +1398,9 @@ pub(crate) fn delayed_triggers(
 
 /// Delayed triggers this module creates, owned by their source's card.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    if e3::delayed_effect_matches(name, effect) {
+        return true;
+    }
     match name {
         MISHRAS_BAUBLE | URZAS_BAUBLE => *effect == delayed_upkeep_draw(),
         TAMIYO => matches!(
@@ -1327,6 +1448,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
             .attack_shrinks
             .retain(|shrink| shrink.controller != player);
     }
+    e3::begin_turn(state, player);
 }
 
 /// Whether `player` has an emblem with "You have no maximum hand size".
@@ -1395,6 +1517,9 @@ pub(crate) fn trigger_matches(
     source: ObjectId,
     state: &GameState,
 ) -> bool {
+    if condition == EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 {
+        return e3::trigger_matches(condition, events, index, source, state);
+    }
     let Some(name) = definition_name(state, source) else {
         return false;
     };
@@ -1426,6 +1551,11 @@ pub(crate) fn trigger_matches(
                 && !events[..index]
                     .iter()
                     .any(|event| permanent_card_to_graveyard(state, event, controller))
+        }
+        EternalTriggerV1::EntersAfterCastV1
+        | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1
+        | EternalTriggerV1::EntersIfTombNotCompletedV1 => {
+            e3::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::OpponentDrawsExceptFirstInDrawStep => {
             let CommittedEvent::Draw {
