@@ -47,6 +47,48 @@ pub(crate) enum V4SearchSampleMode {
     FutureChanceV3,
 }
 
+/// Why a resampled world's actor boundary failed to encode: the encoder
+/// stage and its own error. Recording only (mtg-kernel#380); the sampler's
+/// decision still reads only `V4SearchStateErrorV1::SampleBoundaryEncodingFailed`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct V4BoundaryEncodingFailureV1 {
+    /// Bounded kind: `<stage>:<inner error variant>`.
+    pub(crate) kind: String,
+    /// Short description of the failing state (inner error with its payload,
+    /// decision shape and the first live candidate that differs from the root's).
+    pub(crate) detail: String,
+}
+
+/// Char-bounded copy of a diagnostic string.
+fn clip(text: &str, limit: usize) -> String {
+    text.chars().take(limit).collect()
+}
+
+/// Variant name of an error's `Debug` form, without payload fields.
+fn variant_name(debug: &str) -> String {
+    let end = debug.find([' ', '{']).unwrap_or(debug.len());
+    clip(debug[..end].trim_end(), 80)
+}
+
+/// `boundary`'s failure: the error the sampler acts on, plus the stage and
+/// the inner encoder error that the mapping used to discard.
+#[derive(Debug)]
+struct BoundaryFailure {
+    error: Error,
+    stage: &'static str,
+    inner: String,
+}
+
+impl BoundaryFailure {
+    fn at(stage: &'static str, error: Error) -> impl FnOnce(String) -> Self {
+        move |inner| Self {
+            error,
+            stage,
+            inner,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct Boundary {
     visible: Vec<u8>,
@@ -60,21 +102,26 @@ fn boundary(
     s: &FastActorSessionV1,
     d: FastActorDecisionV1,
     mode: V4SearchSampleMode,
-) -> Result<Boundary, Error> {
+) -> Result<Boundary, BoundaryFailure> {
+    let invalid = |stage| BoundaryFailure::at(stage, Error::InvalidVisibleBinding);
     let (observation, semantics) = s
         .diagnostic_current_decision_input_v4(d)
-        .map_err(|_| Error::InvalidVisibleBinding)?;
+        .map_err(|e| invalid("decision_input")(format!("{e:?}")))?;
     if mode == V4SearchSampleMode::Legacy && observation.extensions.decision_local_library.is_some()
     {
-        return Err(Error::DecisionLocalLibrary);
+        return Err(BoundaryFailure {
+            error: Error::DecisionLocalLibrary,
+            stage: "decision_local_library",
+            inner: "DecisionLocalLibrary".into(),
+        });
     }
     // Match the scorer's frozen-source semantics, not a relabeled hidden card.
     let semantics: Vec<_> = semantics
         .into_iter()
         .map(|x| frozen_pending_trigger_semantic_v4(&s.state, x))
         .collect();
-    let visible =
-        serde_json::to_vec(&(observation, semantics)).map_err(|_| Error::InvalidVisibleBinding)?;
+    let visible = serde_json::to_vec(&(observation, semantics))
+        .map_err(|e| invalid("visible_json")(format!("Serialize {e}")))?;
     let (
         mut scoring_objects,
         mut relations,
@@ -115,11 +162,11 @@ fn boundary(
                 action_refs: &mut action_refs,
             },
         )
-        .map_err(|_| Error::InvalidVisibleBinding)?;
+        .map_err(|e| invalid("scoring")(format!("{e:?}")))?;
     let count = d.legal_action_count as usize;
     let capacity = count
         .checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
-        .ok_or(Error::InvalidVisibleBinding)?
+        .ok_or_else(|| invalid("capacity")("CheckedIntegerRange".into()))?
         .max(256);
     let mut actions = vec![FlatActionCoreV1::default(); count];
     let mut refs = vec![FlatActionRefV2::default(); capacity];
@@ -133,7 +180,7 @@ fn boundary(
                 objects: &mut objects,
             },
         )
-        .map_err(|_| Error::InvalidVisibleBinding)?;
+        .map_err(|e| invalid("action_slice")(format!("{e:?}")))?;
     actions.truncate(slice.active_action_count as usize);
     refs.truncate(slice.active_ref_count as usize);
     objects.truncate(slice.active_object_count as usize);
@@ -188,20 +235,24 @@ impl FastActorSessionV1 {
         seed: u64,
         mode: V4SearchSampleMode,
     ) -> Result<Self, Error> {
-        self.search_clone_v4_mode_inner(seed, mode, |_, _| Ok(()))
+        self.search_clone_v4_mode_inner(seed, mode, |_, _| Ok(()), None)
     }
     /// `kernel_search_redeterminized_clone_mode_v4` with a fallible hook that
     /// edits the sampled hidden state after the whole-object shuffle and the
     /// fresh future chance, before the live candidates are rebuilt and the
     /// actor's boundary is compared. A hook that changes anything the actor
-    /// observes therefore fails with `SampleBoundaryChanged`.
+    /// observes therefore fails with `SampleBoundaryChanged`. When the
+    /// sampled world's boundary fails to encode, `encoding_failure` receives
+    /// the encoder stage and inner error (recording only; the returned error
+    /// is still `SampleBoundaryEncodingFailed`).
     pub(crate) fn kernel_search_redeterminized_clone_hooked_v4(
         &self,
         seed: u64,
         mode: V4SearchSampleMode,
         hook: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
+        encoding_failure: &mut Option<V4BoundaryEncodingFailureV1>,
     ) -> Result<Self, Error> {
-        self.search_clone_v4_mode_inner(seed, mode, hook)
+        self.search_clone_v4_mode_inner(seed, mode, hook, Some(encoding_failure))
     }
     #[cfg(test)]
     pub(crate) fn kernel_search_redeterminized_clone_library_v2(
@@ -216,16 +267,22 @@ impl FastActorSessionV1 {
         seed: u64,
         after_sample: impl FnOnce(&mut GameState, PlayerId),
     ) -> Result<Self, Error> {
-        self.search_clone_v4_mode_inner(seed, V4SearchSampleMode::Legacy, |state, actor| {
-            after_sample(state, actor);
-            Ok(())
-        })
+        self.search_clone_v4_mode_inner(
+            seed,
+            V4SearchSampleMode::Legacy,
+            |state, actor| {
+                after_sample(state, actor);
+                Ok(())
+            },
+            None,
+        )
     }
     fn search_clone_v4_mode_inner(
         &self,
         seed: u64,
         mode: V4SearchSampleMode,
         after_sample: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
+        encoding_failure: Option<&mut Option<V4BoundaryEncodingFailureV1>>,
     ) -> Result<Self, Error> {
         if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
             return Err(Error::UnsupportedActionContract);
@@ -233,7 +290,7 @@ impl FastActorSessionV1 {
         let FastActorResponseV1::Decision(d) = self.current_response() else {
             return Err(Error::NoLiveDecision);
         };
-        let before = boundary(self, d, mode)?;
+        let before = boundary(self, d, mode).map_err(|f| f.error)?;
         let actor = self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
         let plan = if mode == V4SearchSampleMode::FutureChanceV3 {
             crate::effect::library_choice_search_v2::plan_future_v3(&self.state, actor)
@@ -325,11 +382,94 @@ impl FastActorSessionV1 {
         copy.flat_action_cache_spare = None;
         copy.flat_action_cache_spare_v2 = None;
         copy.current = Some(current);
-        let after = boundary(&copy, d, mode).map_err(|_| Error::SampleBoundaryEncodingFailed)?;
+        let after = match boundary(&copy, d, mode) {
+            Ok(after) => after,
+            Err(failure) => {
+                // Recording only (mtg-kernel#380): keep the inner error that
+                // the sampler's rejection kind does not carry.
+                let dump = std::env::var_os("MTG_V4_SEARCH_BOUNDARY_FAILURE_STATE");
+                if encoding_failure.is_some() || dump.is_some() {
+                    let candidates = &copy.current.as_ref().expect("installed above").candidates;
+                    let failure =
+                        boundary_encoding_failure_v1(&failure, d, original_candidates, candidates);
+                    if let Some(path) = dump {
+                        write_boundary_failure_state_v1(path, actor, seed, &failure, self, &copy);
+                    }
+                    if let Some(sink) = encoding_failure {
+                        *sink = Some(failure);
+                    }
+                }
+                return Err(Error::SampleBoundaryEncodingFailed);
+            }
+        };
         if before != after {
             return Err(Error::SampleBoundaryChanged);
         }
         Ok(copy)
+    }
+}
+
+/// The recorded form of a resampled world's boundary encoding failure: the
+/// stage and inner error variant as its kind, and a short detail naming the
+/// decision and the first live candidate that differs from the root's.
+fn boundary_encoding_failure_v1(
+    failure: &BoundaryFailure,
+    d: FastActorDecisionV1,
+    original: &[CorePolicyActionCandidateV1],
+    live: &[CorePolicyActionCandidateV1],
+) -> V4BoundaryEncodingFailureV1 {
+    let kind = format!("{}:{}", failure.stage, variant_name(&failure.inner));
+    let differs = original
+        .iter()
+        .zip(live)
+        .position(|(a, b)| a.semantic != b.semantic)
+        .or_else(|| (original.len() != live.len()).then(|| original.len().min(live.len())));
+    let candidate = match differs {
+        None => "candidates unchanged".to_string(),
+        Some(i) => format!(
+            "first differing candidate {i}: root {:?} sampled {:?}",
+            original.get(i).map(|c| &c.semantic),
+            live.get(i).map(|c| &c.semantic)
+        ),
+    };
+    let detail = format!(
+        "{}; {:?} legal={} root_candidates={} sampled_candidates={}; {}",
+        clip(&failure.inner, 160),
+        d.decision_kind,
+        d.legal_action_count,
+        original.len(),
+        live.len(),
+        candidate
+    );
+    V4BoundaryEncodingFailureV1 {
+        kind,
+        detail: clip(&detail, 480),
+    }
+}
+
+/// Opt-in local correctness diagnostics only (like
+/// `MTG_V4_SEARCH_FAILURE_STATE`): the first boundary encoding failure's
+/// root and sampled states. Never overwrites a file or resumes play.
+fn write_boundary_failure_state_v1(
+    path: std::ffi::OsString,
+    actor: PlayerId,
+    seed: u64,
+    failure: &V4BoundaryEncodingFailureV1,
+    root: &FastActorSessionV1,
+    sampled: &FastActorSessionV1,
+) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        let record = serde_json::json!({"schema":"v4-search-boundary-failure-state/v1",
+            "actor":actor,"seed":seed,"kind":failure.kind,"detail":failure.detail,
+            "root_state":root.state,"sampled_state":sampled.state});
+        if let Ok(bytes) = serde_json::to_vec(&record) {
+            let _ = file.write_all(&bytes).and_then(|_| file.sync_all());
+        }
     }
 }
 
@@ -451,6 +591,65 @@ mod tests {
         assert!(matches!(
             s.search_clone_v4_inner(8172, |state, actor| state.players[actor.index()].life -= 1),
             Err(Error::SampleBoundaryChanged)
+        ));
+    }
+    #[test]
+    fn boundary_encoding_failure_keeps_stage_and_inner_error() {
+        assert_eq!(
+            variant_name("InsufficientRefCapacity { required: 9, available: 3 }"),
+            "InsufficientRefCapacity"
+        );
+        assert_eq!(
+            variant_name("Action(HiddenActionReference)"),
+            "Action(HiddenActionReference)"
+        );
+        let s = FastActorSessionV1::from_v3_fixture_state(state(PlayerId::P0));
+        let FastActorResponseV1::Decision(d) = s.current_response() else {
+            panic!("fixture")
+        };
+        let root = &s.current.as_ref().unwrap().candidates;
+        assert!(root.len() >= 2);
+        let failure = BoundaryFailure {
+            error: Error::InvalidVisibleBinding,
+            stage: "action_slice",
+            inner: "HiddenActionReference".into(),
+        };
+        let same = boundary_encoding_failure_v1(&failure, d, root, root);
+        assert_eq!(same.kind, "action_slice:HiddenActionReference");
+        assert!(same.detail.starts_with("HiddenActionReference; "));
+        assert!(same.detail.ends_with("candidates unchanged"));
+        let fewer = boundary_encoding_failure_v1(&failure, d, root, &root[..root.len() - 1]);
+        let last = root.len() - 1;
+        assert!(fewer
+            .detail
+            .contains(&format!("first differing candidate {last}: root Some(")));
+        assert!(fewer.detail.ends_with("sampled None"));
+        // A sampled world whose live menu no longer matches the decision fails
+        // to encode: the error is unchanged and the sink names the stage.
+        let unencodable = |state: &mut GameState, actor: PlayerId| {
+            for mana in state.players[actor.index()].mana_pool.iter_mut() {
+                *mana = 0;
+            }
+            Ok(())
+        };
+        let mut sink = None;
+        let result = s.kernel_search_redeterminized_clone_hooked_v4(
+            8172,
+            V4SearchSampleMode::Legacy,
+            unencodable,
+            &mut sink,
+        );
+        assert!(matches!(result, Err(Error::SampleBoundaryEncodingFailed)));
+        let recorded = sink.expect("encoding failure recorded");
+        assert!(recorded.kind.contains(':'), "{recorded:?}");
+        assert!(
+            recorded.detail.contains("first differing candidate"),
+            "{recorded:?}"
+        );
+        // Without a sink the same sample gives the same error.
+        assert!(matches!(
+            s.search_clone_v4_mode_inner(8172, V4SearchSampleMode::Legacy, unencodable, None),
+            Err(Error::SampleBoundaryEncodingFailed)
         ));
     }
     #[test]

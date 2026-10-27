@@ -100,6 +100,7 @@ use crate::state::Zone;
 pub(crate) use search_state::V4SearchActionTokenV1;
 pub(crate) use search_state::V4SearchSampleMode;
 pub(crate) use search_state::V4SearchStateErrorV1;
+pub(crate) use search_state::V4BoundaryEncodingFailureV1;
 
 /// Local (V4-only) analog of `FlatResolvedActionObjectV2`. Two real defects
 /// were found in real gameplay by conflating `arena_id` and `position` in

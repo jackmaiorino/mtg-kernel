@@ -14,7 +14,7 @@ use super::tree::{
     canon, canon_values, child_key, live_index, raw_decision, Found, Key, Mapping, Node, Tree,
     MAX_DEPTH,
 };
-use super::world::{sample, DeckPrior};
+use super::world::{sample_recorded, DeckPrior};
 use crate::ids::PlayerId;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
@@ -111,11 +111,48 @@ pub(crate) struct SamplerStats {
     pub(crate) rejected: u64,
     pub(crate) kinds: BTreeMap<String, u64>,
     pub(crate) seconds: f64,
+    /// Inner errors behind `SampleBoundaryEncodingFailed`; not in `json()`.
+    pub(crate) boundary_encoding: BoundaryEncodingFailures,
 }
 
 impl SamplerStats {
     pub(crate) fn json(&self) -> Value {
         json!({"ok":self.ok,"rejected":self.rejected,"kinds":self.kinds})
+    }
+}
+
+/// Distinct inner-error kinds recorded per search, beyond which failures
+/// only count toward `other`.
+pub(crate) const MAX_BOUNDARY_ENCODING_KINDS: usize = 8;
+
+/// Recording only (mtg-kernel#380): the inner encoder errors behind a
+/// search's `SampleBoundaryEncodingFailed` rejections. Per distinct kind
+/// (`<stage>:<variant>`), a count and the first occurrence's detail; at most
+/// `MAX_BOUNDARY_ENCODING_KINDS` kinds, later new kinds count in `other`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BoundaryEncodingFailures {
+    pub(crate) kinds: BTreeMap<String, (u64, String)>,
+    pub(crate) other: u64,
+}
+
+impl BoundaryEncodingFailures {
+    pub(crate) fn add(&mut self, kind: &str, detail: &str) {
+        if let Some((count, _)) = self.kinds.get_mut(kind) {
+            *count += 1;
+        } else if self.kinds.len() < MAX_BOUNDARY_ENCODING_KINDS {
+            self.kinds.insert(kind.to_string(), (1, detail.to_string()));
+        } else {
+            self.other += 1;
+        }
+    }
+
+    pub(crate) fn json(&self) -> Value {
+        let kinds: serde_json::Map<String, Value> = self
+            .kinds
+            .iter()
+            .map(|(k, (n, first))| (k.clone(), json!({"count":n,"first":first})))
+            .collect();
+        json!({"kinds":kinds,"other":self.other})
     }
 }
 
@@ -146,8 +183,12 @@ fn sample_world(
     stats: &mut SamplerStats,
 ) -> Result<FastActorSessionV1, String> {
     let t = Instant::now();
-    let r = sample(s, seed, ctx.prior);
+    let mut encoding_failure = None;
+    let r = sample_recorded(s, seed, ctx.prior, &mut encoding_failure);
     stats.seconds += t.elapsed().as_secs_f64();
+    if let Some(f) = &encoding_failure {
+        stats.boundary_encoding.add(&f.kind, &f.detail);
+    }
     match r {
         Ok(x) => {
             stats.ok += 1;
