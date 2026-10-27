@@ -1749,3 +1749,31 @@ fn force_of_will_pitched_against_brain_freeze_counters_it() {
     assert_eq!(zone(&state, pitch), Zone::Exile);
     assert_eq!(state.players[0].library.len(), 20, "nothing milled");
 }
+
+#[test]
+fn vexing_bauble_counters_a_pitched_force_of_will() {
+    let mut state = islands();
+    put(&mut state, P1, "Vexing Bauble", Zone::Battlefield);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let force = put(&mut state, P0, "Force of Will", Zone::Hand);
+    let pitch = put(&mut state, P0, "Stifle", Zone::Hand);
+    run_until(&mut state, |state| state.priority_player == P0, |_, _| None);
+    act(&mut state, Action::CastSpell(force));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Alternative),
+        Decision::ChooseTargets { legal_targets, .. } => {
+            if legal_targets.contains(&Target::Object(bolt)) {
+                Action::ChooseTarget(Target::Object(bolt))
+            } else {
+                Action::ChooseTarget(legal_targets[0])
+            }
+        }
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert!(candidates.contains(&pitch));
+            Action::ChooseCostTarget(pitch)
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, force), Zone::Graveyard);
+    assert_eq!(state.players[0].life, 20 - 1 - 3, "the Bolt resolved");
+}
