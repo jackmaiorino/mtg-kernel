@@ -396,6 +396,10 @@ pub enum Subtype {
     Lair,
     Locus,
     Planet,
+    /// Appended for the eternal catalog's Pauper Rakdos Madness and Bogles
+    /// lists (Kitchen Imp, Cartouche of Solidarity's enchantment type).
+    Imp,
+    Cartouche,
 }
 
 impl Subtype {
@@ -730,6 +734,8 @@ impl Subtype {
         Subtype::Crab,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Kor,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Imp,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -836,6 +842,7 @@ impl Subtype {
                     | Subtype::Scion
                     | Subtype::Crab
                     | Subtype::Kor
+                    | Subtype::Imp
             )
         {
             return true;
@@ -1387,6 +1394,16 @@ pub enum PermanentFilterDef {
     /// "return an artifact you control" ETB cost without changing any
     /// existing filter identity.
     Artifact,
+    /// A creature (Ramosian Rally's "tap an untapped creature you
+    /// control"). Appended for the eternal catalog.
+    CreatureV1,
+    /// A tapped creature (web-slinging's "return a tapped creature you
+    /// control to its owner's hand"). Appended for the eternal catalog.
+    TappedCreatureV1,
+    /// An attacking creature no creature blocks (sneak's "return an
+    /// unblocked attacker you control to hand"). Appended for the eternal
+    /// catalog.
+    UnblockedAttackingCreatureV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1573,6 +1590,15 @@ pub enum CostComponent {
         count: u8,
         filter: PermanentFilterDef,
     },
+    /// "Tap three untapped white creatures you control" (Battle Screech's
+    /// flashback): `count` distinct untapped permanents the payer controls
+    /// matching `filter`, chosen one at a time through
+    /// `Decision::ChooseCostTargets`. Creatures tap regardless of summoning
+    /// sickness, since this is not {T}. Appended for the eternal catalog.
+    TapUntappedControlledPermanentsV1 {
+        count: u8,
+        filter: PermanentFilterDef,
+    },
 }
 
 impl CostComponent {
@@ -1696,6 +1722,19 @@ pub enum AltCostCondition {
     /// quote hook in `eternal_pauper_e6a_v1` ties it to the foretold card.
     /// Appended for the eternal catalog.
     ForetoldV1,
+    /// Web-slinging (702.188): cast from hand for this cost, returning a
+    /// tapped creature you control (Spider-Man, Web-Slinger). Appended for
+    /// the eternal catalog.
+    WebSlingingV1,
+    /// Sneak (702.190): cast from hand for this cost during the declare
+    /// blockers step, returning an unblocked attacker you control; the
+    /// permanent enters tapped and attacking (Leonardo, Big Brother,
+    /// `eternal_pauper_e6b_v1`). Appended for the eternal catalog.
+    SneakV1,
+    /// Disturb (702.146): cast from the graveyard transformed for this cost
+    /// (Lunarch Veteran, `eternal_pauper_e6b_v1`). Appended for the eternal
+    /// catalog.
+    DisturbV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -3158,7 +3197,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xba7e_cabc_a244_8b3e;
+        const EXPECTED_ETERNAL: u64 = 0x4e92_28fc_7cba_152f;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

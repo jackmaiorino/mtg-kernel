@@ -675,6 +675,11 @@ pub(crate) fn permanent_filter_def(filter: PermanentFilterDef) -> (ObjF, Option<
             (ObjF::Typed(CardTypeF::Creature), None)
         }
         PermanentFilterDef::Artifact => (ObjF::Typed(CardTypeF::Artifact), None),
+        PermanentFilterDef::CreatureV1 => (ObjF::Typed(CardTypeF::Creature), None),
+        PermanentFilterDef::TappedCreatureV1 | PermanentFilterDef::UnblockedAttackingCreatureV1 => {
+            // Vocabulary gap: ObjF has no tapped or combat refinement.
+            (ObjF::Typed(CardTypeF::Creature), None)
+        }
     }
 }
 

@@ -5735,6 +5735,13 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 tap_filtered_permanent_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::TapUntappedControlledPermanentsV1 { count, .. } => {
+                if *count == 0 {
+                    return false;
+                }
+                tap_filtered_permanent_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 reveal_hand_condition_count += 1;
             }
@@ -5829,6 +5836,7 @@ fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
                         | CostComponent::ExileCardFromHandWithColorV1(_)
                         | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
                         | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
+                        | CostComponent::TapUntappedControlledPermanentsV1 { .. }
                 )
         })
 }
@@ -5937,6 +5945,22 @@ fn permanent_matches_return_filter(
                 && object_color_mask(state, object_id) & card_def::mana_color_mask(color) != 0
         }
         PermanentFilterDef::Artifact => object_has_type(state, object_id, CardType::Artifact),
+        PermanentFilterDef::CreatureV1 => object_has_type(state, object_id, CardType::Creature),
+        PermanentFilterDef::TappedCreatureV1 => {
+            object.tapped && object_has_type(state, object_id, CardType::Creature)
+        }
+        PermanentFilterDef::UnblockedAttackingCreatureV1 => {
+            object_has_type(state, object_id, CardType::Creature)
+                && state.engine.combat.blockers_declared
+                && state.engine.combat.attackers.contains(&object_id)
+                && !state
+                    .engine
+                    .combat
+                    .blocked_by
+                    .iter()
+                    .any(|(blocked, _)| *blocked == object_id)
+                && matches!(state.step, Step::DeclareBlockers | Step::CombatDamage)
+        }
     }
 }
 
@@ -6087,6 +6111,10 @@ fn can_pay_components(
             }
             CostComponent::TapUntappedControlledPermanent(filter) => {
                 !tap_permanent_cost_candidates(player, state, *filter, &[]).is_empty()
+            }
+            CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+                tap_permanent_cost_candidates(player, state, *filter, &[]).len()
+                    >= usize::from(*count)
             }
             CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
                 controlled_plus_one_counter_removals(player, state, *amount).is_some()
@@ -6502,6 +6530,25 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
+    let taps_permanents = components.iter().find_map(|component| match component {
+        CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+            Some((usize::from(*count), *filter))
+        }
+        _ => None,
+    });
+    if let Some((needed, filter)) = taps_permanents {
+        let candidates = tap_permanent_cost_candidates(player, state, filter, &[]);
+        let duplicate = object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        if object_cost_chosen.len() != needed
+            || duplicate
+            || object_cost_chosen.iter().any(|id| !candidates.contains(id))
+        {
+            return None;
+        }
+    }
     let craft_material = has_craft_material_cost(components);
     if craft_material
         && (object_cost_chosen.len() != 1
@@ -6522,6 +6569,7 @@ fn validate_cost_component_choices_v1(
         && !returns_unblocked_attacker
         && tap_other_subtype.is_none()
         && tap_filter.is_none()
+        && taps_permanents.is_none()
         && !craft_material
         && crew_requirement(components).is_none()
         && counter_removal_cost(components).is_none()
@@ -6541,6 +6589,7 @@ fn validate_cost_component_choices_v1(
         reserved.extend(object_cost_chosen.iter().copied());
     }
     if tap_filter.is_some()
+        || taps_permanents.is_some()
         || tap_controlled.is_some()
         || craft_material
         || crew_requirement(components).is_some()
@@ -6712,6 +6761,11 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::TapUntappedControlledPermanent(_) => {
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
+            }
+            CostComponent::TapUntappedControlledPermanentsV1 { .. } => {
+                for &object in object_cost_chosen {
+                    event::propose_and_commit(state, ProposedEvent::tap(object));
+                }
             }
             CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*amount));
@@ -7116,6 +7170,14 @@ fn alt_cost_condition_met(
         // Which card was foretold is checked at the quote boundary
         // (`eternal_pauper_e6a_v1::foretell_quote_allowed`).
         card_def::AltCostCondition::ForetoldV1 => origin_zone == Zone::Exile,
+        card_def::AltCostCondition::WebSlingingV1 => origin_zone == Zone::Hand,
+        // "Any time you have priority during the declare blockers step."
+        card_def::AltCostCondition::SneakV1 => {
+            origin_zone == Zone::Hand
+                && state.step == Step::DeclareBlockers
+                && player == state.active_player
+        }
+        card_def::AltCostCondition::DisturbV1 => origin_zone == Zone::Graveyard,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -7553,13 +7615,17 @@ enum CastSingleObjectCostV1 {
     ReturnPermanent(PermanentFilterDef),
     ExileHandCard(mana::ManaColor),
     ReturnPermanents(PermanentFilterDef, u8),
+    /// A flashback cost that taps `count` matching permanents (Battle
+    /// Screech).
+    TapPermanents(PermanentFilterDef, u8),
 }
 
 impl CastSingleObjectCostV1 {
     /// How many objects the cost takes.
     fn count(self) -> u8 {
         match self {
-            CastSingleObjectCostV1::ReturnPermanents(_, count) => count,
+            CastSingleObjectCostV1::ReturnPermanents(_, count)
+            | CastSingleObjectCostV1::TapPermanents(_, count) => count,
             CastSingleObjectCostV1::ReturnPermanent(_)
             | CastSingleObjectCostV1::ExileHandCard(_) => 1,
         }
@@ -7570,7 +7636,20 @@ fn cast_single_object_cost_needed(
     pending: &PendingCast,
     def: &card_def::CardDef,
 ) -> Option<CastSingleObjectCostV1> {
-    if pending.is_flashback || pending.cast_mode != Some(CastMode::Alternative) {
+    if pending.is_flashback {
+        return def
+            .flashback
+            .as_ref()?
+            .cost
+            .iter()
+            .find_map(|component| match component {
+                CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+                    Some(CastSingleObjectCostV1::TapPermanents(*filter, *count))
+                }
+                _ => None,
+            });
+    }
+    if pending.cast_mode != Some(CastMode::Alternative) {
         return None;
     }
     def.alt_cost?
@@ -7612,6 +7691,12 @@ fn cast_single_object_cost_candidates(
                 .filter(|object| !pending.sacrifice_chosen.contains(object))
                 .collect()
         }
+        CastSingleObjectCostV1::TapPermanents(filter, _) => tap_permanent_cost_candidates(
+            pending.controller,
+            state,
+            filter,
+            &pending.sacrifice_chosen,
+        ),
     }
 }
 
@@ -7695,8 +7780,32 @@ fn controlled_permanent_sacrifice_needed(
     {
         return Some((1, PermanentFilter::Creature));
     }
+    // An alternative cost that sacrifices permanents (Demand Answers).
+    #[cfg(feature = "eternal-fixtures")]
+    if pending.cast_mode == Some(CastMode::Alternative) {
+        if let Some(sacrifice) = def
+            .alt_cost
+            .and_then(|alt| controlled_permanent_sacrifice_in(alt.components))
+        {
+            return Some(sacrifice);
+        }
+    }
     def.additional_cost
         .and_then(controlled_permanent_sacrifice_in)
+}
+
+/// The number of cards `def`'s additional cost discards in `pending`'s
+/// cast. Demand Answers' alternative cost replaces its discard.
+fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> Option<u8> {
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_e6b_v1::alternative_skips_additional_cost(
+        def,
+        pending.cast_mode == Some(CastMode::Alternative),
+    ) {
+        return None;
+    }
+    let _ = pending;
+    def.additional_cost.and_then(discard_count_in)
 }
 
 fn has_chosen_creature_additional_cost(def: &card_def::CardDef) -> bool {
@@ -8337,6 +8446,8 @@ fn pending_cast_form_timing_ok(
     state: &GameState,
 ) -> bool {
     resolution_cast_v1::timing_override(state, pending.spell)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_pauper_e6b_v1::sneak_pending_window(state, pending))
         || (cfg!(feature = "eternal-fixtures")
             && pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
             && types.contains(&CardType::Creature)
@@ -9024,16 +9135,22 @@ fn is_castable_now(
                 && !main_timing_ok
                 && state.objects.get(id).zone == Zone::Hand
                 && crate::eternal_cards_v1::e3::aluren_flash(state, id);
+            // Sneak: cast from hand for its sneak cost during the declare
+            // blockers step.
+            let sneak_timing = cfg!(feature = "eternal-fixtures")
+                && !main_timing_ok
+                && state.objects.get(id).zone == Zone::Hand
+                && crate::eternal_pauper_e6b_v1::sneak_window(state, id, player);
             let paid_or_free = || {
                 if main_timing_ok {
                     normal_ok() || alt_ok() || free_ok()
                 } else {
-                    free_ok()
+                    free_ok() || (sneak_timing && alt_ok())
                 }
             };
             let main_ok = (state.objects.get(id).zone != Zone::Graveyard
                 || graveyard_permission_zone_change_count(player, id, state).is_some())
-                && (main_timing_ok || aluren_timing)
+                && (main_timing_ok || aluren_timing || sneak_timing)
                 && ((paid_or_free()
                     && !viable_printed_spell_modes(def, id, player, state).is_empty())
                     || (main_timing_ok && kicked_ok()));
@@ -9792,6 +9909,8 @@ fn activate_mana_ability_for_with_checkpoint(
         }
         event::propose_and_commit(state, ProposedEvent::tap(source));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![choice]));
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, source);
         state.engine.priority_passes = [false, false];
         state.engine.mana_ability_activations += 1;
         state.engine.last_mana_ability_activator = Some(player);
@@ -10065,6 +10184,10 @@ fn activate_mana_ability_for_with_checkpoint(
     crate::eternal_vintage_v1::restrict_produced_mana(state, player, source, choice);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
+    #[cfg(feature = "eternal-fixtures")]
+    if state.objects.get(source).tapped {
+        crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, source);
+    }
     if state.objects.get(source).zone_change_count == source_zone_change_count {
         state
             .objects
@@ -12750,7 +12873,7 @@ pub(crate) fn validate_pending_cast(
         }
     }
 
-    let interactive_discard = def.additional_cost.and_then(discard_count_in);
+    let interactive_discard = additional_discard_count(def, pending);
     let seeded_mode = if has_spell_form_choice(def) {
         None
     } else {
@@ -13400,6 +13523,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                         CostKind::ReturnPermanentsToHand
                     }
                     CastSingleObjectCostV1::ExileHandCard(_) => CostKind::ExileFromHandV1,
+                    CastSingleObjectCostV1::TapPermanents(..) => CostKind::TapPermanents,
                 },
                 remaining,
                 candidates,
@@ -13646,7 +13770,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         let add = def.additional_cost.expect(
             "additional_cost_discarded is None only when begin_cast saw an additional_cost",
         );
-        match discard_count_in(add) {
+        let _ = add;
+        match additional_discard_count(def, &pending) {
             Some(n) => {
                 state.engine.pending_discard = Some(PendingDiscard {
                     player: pending.controller,
@@ -19740,6 +19865,10 @@ fn static_aura_multiplier(
     aura: ObjectId,
     profile: card_def::AuraCreatureStaticDef,
 ) -> i128 {
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(multiplier) = crate::eternal_pauper_e6b_v1::aura_multiplier(state, aura) {
+        return multiplier;
+    }
     let Some(subtype) = profile.per_controlled_subtype else {
         return 1;
     };
@@ -23191,7 +23320,9 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                         trigger::TriggerCondition::ControlledCreatureWithSubtypeAttacks(_)
                     )
                 })
-        });
+        })
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_pauper_e6b_v1::observes_attacks(state));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if another_observes_attacks
@@ -24946,6 +25077,8 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![color]));
         #[cfg(feature = "eternal-fixtures")]
         crate::eternal_e5a_v1::note_tapped_for_mana(state, player, id);
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, id);
     }
     // A multi-yield source (an assembled Urza land) added more than the one
     // mana its own tap paid for. `PaymentPlan::surplus` is exactly the part
