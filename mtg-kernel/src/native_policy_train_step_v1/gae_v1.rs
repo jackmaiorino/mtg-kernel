@@ -114,135 +114,6 @@ impl NativePolicyValueTrainStateV1 {
             false,
         )
     }
-    /// Canonical CPU GAE update under the flat-V3 input contract. V3
-    /// sibling of `train_step_gae_feature_transfer_v4`.
-    pub(crate) fn train_step_gae_feature_transfer_v3(
-        &mut self,
-        groups: &[NativePolicyPhysicalDecisionV1<'_>],
-        value_targets: &[f32],
-        advantages: &[f32],
-        value_coefficient: f32,
-        learning_rate: f32,
-    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        let input_config = self.model.feature_transfer_config_v3();
-        self.train_step_gae_with_input_config_v1(
-            groups,
-            value_targets,
-            advantages,
-            value_coefficient,
-            learning_rate,
-            BackwardExecutionV1::Sequential,
-            input_config,
-            false,
-        )
-    }
-
-    /// V4 sibling of `train_step_gae_feature_transfer_v3`, for the
-    /// fresh-lineage (V7 observation-schema) successor contract.
-    pub(crate) fn train_step_gae_feature_transfer_v4(
-        &mut self,
-        groups: &[NativePolicyPhysicalDecisionV1<'_>],
-        value_targets: &[f32],
-        advantages: &[f32],
-        value_coefficient: f32,
-        learning_rate: f32,
-    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        let input_config = self.model.feature_transfer_config_v4();
-        self.train_step_gae_with_input_config_v1(
-            groups,
-            value_targets,
-            advantages,
-            value_coefficient,
-            learning_rate,
-            BackwardExecutionV1::Sequential,
-            input_config,
-            false,
-        )
-    }
-
-    /// Config-driven fixed-partition sibling of
-    /// `train_step_gae_feature_transfer_v4`, mirroring
-    /// `train_step_feature_transfer_v4_fixed_partition_v1`. No V3 sibling
-    /// exists; callers must reject any non-sequential value for a
-    /// V3-generation batch before reaching this function, same as the
-    /// unweighted and weighted paths.
-    pub(crate) fn train_step_gae_feature_transfer_v4_fixed_partition_v1(
-        &mut self,
-        groups: &[NativePolicyPhysicalDecisionV1<'_>],
-        value_targets: &[f32],
-        advantages: &[f32],
-        value_coefficient: f32,
-        learning_rate: f32,
-        backward_worker_limit: usize,
-    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        let input_config = self.model.feature_transfer_config_v4();
-        self.train_step_gae_with_input_config_v1(
-            groups,
-            value_targets,
-            advantages,
-            value_coefficient,
-            learning_rate,
-            BackwardExecutionV1::FixedPartitions {
-                worker_limit: backward_worker_limit,
-            },
-            input_config,
-            false,
-        )
-    }
-
-    /// Explicit supervised imitation seam. Unit coefficients give mean
-    /// selected-action cross entropy; no value target is fitted. This does not
-    /// relax the positive value-coefficient contract of any GAE entry point.
-    pub(crate) fn train_step_terminal_winner_imitation_v4(
-        &mut self,
-        groups: &[NativePolicyPhysicalDecisionV1<'_>],
-        learning_rate: f32,
-        backward_worker_limit: usize,
-    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        let input_config = self.model.feature_transfer_config_v4();
-        self.train_step_gae_with_input_config_v1(
-            groups,
-            &vec![0.0; groups.len()],
-            &vec![1.0; groups.len()],
-            0.0,
-            learning_rate,
-            BackwardExecutionV1::FixedPartitions {
-                worker_limit: backward_worker_limit,
-            },
-            input_config,
-            true,
-        )
-    }
-
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "keeps the existing explicit input contract"
-    )]
-    fn train_step_gae_with_input_config_v1(
-        &mut self,
-        groups: &[NativePolicyPhysicalDecisionV1<'_>],
-        value_targets: &[f32],
-        advantages: &[f32],
-        value_coefficient: f32,
-        learning_rate: f32,
-        backward_execution: BackwardExecutionV1,
-        input_config: NativePolicyValueModelConfigV1,
-        imitation: bool,
-    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        self.train_step_gae_core_v1(
-            groups,
-            value_targets,
-            advantages,
-            value_coefficient,
-            learning_rate,
-            backward_execution,
-            input_config,
-            imitation,
-            None,
-            None,
-        )
-        .map(|(result, _, _)| result)
-    }
 
     /// Line (b) CPU update: the GAE objective plus the auxiliary term,
     /// combined before the single Adam step. `backward_worker_limit` selects
@@ -409,6 +280,100 @@ impl NativePolicyValueTrainStateV1 {
         Ok((result, report.expect("recovery report requested")))
     }
 
+    /// Canonical CPU GAE update under the flat-V3 input contract.
+    pub(crate) fn train_step_gae_feature_transfer_v3(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_gae_feature_transfer_v3_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+        )
+    }
+
+    pub(crate) fn train_step_gae_feature_transfer_v4(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_gae_feature_transfer_v4_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+        )
+    }
+
+    pub(crate) fn train_step_gae_feature_transfer_v4_fixed_partition_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_gae_feature_transfer_v4_fixed_partition_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_worker_limit,
+        )
+    }
+
+    pub(crate) fn train_step_terminal_winner_imitation_v4(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        learning_rate: f32,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_terminal_winner_imitation_v4_dims_v1(
+            groups,
+            learning_rate,
+            backward_worker_limit,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
+    fn train_step_gae_with_input_config_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_execution: BackwardExecutionV1,
+        input_config: NativePolicyValueModelConfigV1,
+        imitation: bool,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_gae_with_input_config_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_execution,
+            input_config,
+            imitation,
+        )
+    }
+
     /// Profile the actual CPU GAE route without changing its arithmetic.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn train_step_gae_feature_transfer_profiled_v1(
@@ -423,33 +388,17 @@ impl NativePolicyValueTrainStateV1 {
         forward_workers: usize,
         recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-        let config = match generation {
-            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
-                self.model.feature_transfer_config_v3()
-            }
-            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
-                self.model.feature_transfer_config_v4()
-            }
-        };
-        let execution = match backward_worker_limit {
-            None => BackwardExecutionV1::Sequential,
-            Some(worker_limit) => BackwardExecutionV1::FixedPartitions { worker_limit },
-        };
-        self.train_step_gae_core_profiled_v1(
+        self.train_step_gae_feature_transfer_profiled_dims_v1(
+            generation,
             groups,
             value_targets,
             advantages,
             value_coefficient,
             learning_rate,
-            execution,
-            config,
-            false,
-            None,
-            None,
+            backward_worker_limit,
             forward_workers,
             recorder,
         )
-        .map(|(result, _, _)| result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -473,7 +422,7 @@ impl NativePolicyValueTrainStateV1 {
         ),
         NativePolicyTrainErrorV1,
     > {
-        self.train_step_gae_core_profiled_v1(
+        self.train_step_gae_core_dims_v1(
             groups,
             value_targets,
             advantages,
@@ -484,8 +433,6 @@ impl NativePolicyValueTrainStateV1 {
             imitation,
             line_b,
             exploration,
-            1,
-            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
         )
     }
 
@@ -512,6 +459,288 @@ impl NativePolicyValueTrainStateV1 {
         ),
         NativePolicyTrainErrorV1,
     > {
+        self.train_step_gae_core_profiled_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_execution,
+            input_config,
+            imitation,
+            line_b,
+            exploration,
+            forward_workers,
+            phase_recorder,
+        )
+    }
+}
+
+/// The GAE CPU update at the dims `D`; the narrow names above are these at
+/// `Net8DimsV1`. Line (b), external auxiliary, recovery, packed inputs, the
+/// no-state-digest contract and the portable math are net-8 only (design
+/// section 2.1).
+impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
+    /// Canonical CPU GAE update under the flat-V3 input contract. V3
+    /// sibling of `train_step_gae_feature_transfer_v4`.
+    pub(crate) fn train_step_gae_feature_transfer_v3_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let input_config = self.model.feature_transfer_config_v3();
+        self.train_step_gae_with_input_config_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            BackwardExecutionV1::Sequential,
+            input_config,
+            false,
+        )
+    }
+
+    /// V4 sibling of `train_step_gae_feature_transfer_v3`, for the
+    /// fresh-lineage (V7 observation-schema) successor contract.
+    pub(crate) fn train_step_gae_feature_transfer_v4_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_gae_with_input_config_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            BackwardExecutionV1::Sequential,
+            input_config,
+            false,
+        )
+    }
+
+    /// Config-driven fixed-partition sibling of
+    /// `train_step_gae_feature_transfer_v4`, mirroring
+    /// `train_step_feature_transfer_v4_fixed_partition_v1`. No V3 sibling
+    /// exists; callers must reject any non-sequential value for a
+    /// V3-generation batch before reaching this function, same as the
+    /// unweighted and weighted paths.
+    pub(crate) fn train_step_gae_feature_transfer_v4_fixed_partition_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_gae_with_input_config_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            BackwardExecutionV1::FixedPartitions {
+                worker_limit: backward_worker_limit,
+            },
+            input_config,
+            false,
+        )
+    }
+
+    /// Explicit supervised imitation seam. Unit coefficients give mean
+    /// selected-action cross entropy; no value target is fitted. This does not
+    /// relax the positive value-coefficient contract of any GAE entry point.
+    pub(crate) fn train_step_terminal_winner_imitation_v4_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        learning_rate: f32,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_gae_with_input_config_dims_v1(
+            groups,
+            &vec![0.0; groups.len()],
+            &vec![1.0; groups.len()],
+            0.0,
+            learning_rate,
+            BackwardExecutionV1::FixedPartitions {
+                worker_limit: backward_worker_limit,
+            },
+            input_config,
+            true,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
+    fn train_step_gae_with_input_config_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_execution: BackwardExecutionV1,
+        input_config: NativePolicyValueModelConfigV1,
+        imitation: bool,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_gae_core_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_execution,
+            input_config,
+            imitation,
+            None,
+            None,
+        )
+        .map(|(result, _, _)| result)
+    }
+
+    /// Profile the actual CPU GAE route without changing its arithmetic.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_feature_transfer_profiled_dims_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        forward_workers: usize,
+        recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let config = match generation {
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
+                self.model.feature_transfer_config_v3()
+            }
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
+                self.model.feature_transfer_config_v4()
+            }
+        };
+        let execution = match backward_worker_limit {
+            None => BackwardExecutionV1::Sequential,
+            Some(worker_limit) => BackwardExecutionV1::FixedPartitions { worker_limit },
+        };
+        self.train_step_gae_core_profiled_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            execution,
+            config,
+            false,
+            None,
+            None,
+            forward_workers,
+            recorder,
+        )
+        .map(|(result, _, _)| result)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn train_step_gae_core_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_execution: BackwardExecutionV1,
+        input_config: NativePolicyValueModelConfigV1,
+        imitation: bool,
+        line_b: Option<AuxiliaryTermsSourceV1<'_>>,
+        exploration: Option<(f32, u64, bool)>,
+    ) -> Result<
+        (
+            NativePolicyTrainStepResultV1,
+            Option<LineBAuxiliaryResultV1>,
+            Option<serde_json::Value>,
+        ),
+        NativePolicyTrainErrorV1,
+    > {
+        self.train_step_gae_core_profiled_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_execution,
+            input_config,
+            imitation,
+            line_b,
+            exploration,
+            1,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn train_step_gae_core_profiled_dims_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_execution: BackwardExecutionV1,
+        input_config: NativePolicyValueModelConfigV1,
+        imitation: bool,
+        line_b: Option<AuxiliaryTermsSourceV1<'_>>,
+        exploration: Option<(f32, u64, bool)>,
+        forward_workers: usize,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<
+        (
+            NativePolicyTrainStepResultV1,
+            Option<LineBAuxiliaryResultV1>,
+            Option<serde_json::Value>,
+        ),
+        NativePolicyTrainErrorV1,
+    > {
+        // The wide refusal list (design section 2.1), before any forward work.
+        if !is_net8_dims_v1::<D>() {
+            if let Some(source) = line_b {
+                refuse_for_architecture_v1::<D>(match source {
+                    AuxiliaryTermsSourceV1::InBatch(_) => "in-batch line (b)",
+                    AuxiliaryTermsSourceV1::External(_) => "external auxiliary",
+                })?;
+            }
+            if exploration.is_some() {
+                refuse_for_architecture_v1::<D>("exploration and recovery")?;
+            }
+            if groups
+                .iter()
+                .flat_map(|group| group.substeps)
+                .any(|substep| {
+                    matches!(&substep.forward, NativePolicyForwardInputV1::Packed { .. })
+                })
+            {
+                refuse_for_architecture_v1::<D>("packed forward input")?;
+            }
+            if self.no_state_digest_columns.is_some() {
+                refuse_for_architecture_v1::<D>("no-state-digest install")?;
+            }
+            if !self.training_math.is_platform_libm() {
+                refuse_for_architecture_v1::<D>("portable math")?;
+            }
+        }
         let setup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::SetupValidation);
         let math = self.training_math;
         if !math.is_platform_libm() {
@@ -547,7 +776,7 @@ impl NativePolicyValueTrainStateV1 {
                 });
             }
         }
-        let mxcsr = self.thread_mxcsr_check_v1();
+        let mxcsr = self.thread_mxcsr_check_dims_v1();
         mxcsr.verify_v1()?;
         validate_gae_inputs_v1(groups, value_targets, advantages)?;
         if !value_coefficient.is_finite()
@@ -559,8 +788,12 @@ impl NativePolicyValueTrainStateV1 {
             return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
         }
         let parameters = self.model.parameter_snapshot_v1();
-        validate_parameter_manifest(&parameters)?;
-        validate_optimizer_state(&parameters, &self.first_moments, &self.second_moments)?;
+        validate_parameter_manifest_dims_v1::<D>(&parameters)?;
+        validate_optimizer_state_dims_v1::<D>(
+            &parameters,
+            &self.first_moments,
+            &self.second_moments,
+        )?;
         validate_canonical_gauge_state(
             &parameters,
             &self.first_moments,
@@ -569,8 +802,8 @@ impl NativePolicyValueTrainStateV1 {
         )?;
         phase_recorder.finish_v1(setup_timer);
         let forward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
-        let input_major = InputMajorWeightsV1::of_v1(&parameters);
-        let mut precomputed_tapes = precompute_encoded_forward_tapes_v1(
+        let input_major = InputMajorWeightsV1::of_dims_v1::<D>(&parameters);
+        let mut precomputed_tapes = precompute_encoded_forward_tapes_dims_v1::<D>(
             &parameters,
             &input_major,
             input_config,
@@ -596,7 +829,7 @@ impl NativePolicyValueTrainStateV1 {
                     Some(tapes) => tapes
                         .next()
                         .expect("one precomputed forward tape per substep")?,
-                    None => Box::new(forward_with_tape_input_major_v1(
+                    None => Box::new(forward_with_tape_input_major_dims_v1::<D>(
                         &parameters,
                         Some(&input_major),
                         input_config,
@@ -717,7 +950,7 @@ impl NativePolicyValueTrainStateV1 {
         // exact parallel form; it runs on the update's forward workers.
         let parallel = match backward_execution {
             BackwardExecutionV1::Sequential if beta == 0.0 => {
-                exact_parallel_backward_v1::exact_parallel_backward_v1(
+                exact_parallel_backward_v1::exact_parallel_backward_dims_v1::<D>(
                     &parameters,
                     &group_tapes,
                     group_count,
@@ -794,7 +1027,7 @@ impl NativePolicyValueTrainStateV1 {
                             selected.selected_action_index,
                             d_joint_log_probability,
                         )?;
-                        reverse_decision(
+                        reverse_decision_dims_v1::<D>(
                             &parameters,
                             &mut gradients,
                             &selected.tape,
@@ -819,7 +1052,7 @@ impl NativePolicyValueTrainStateV1 {
                 let gauge_accumulator =
                     observe_scorer_bias_gauge_v1(&group_tapes, &coefficients, math)?;
                 let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
-                let gradients = fixed_partition_backward_gradients_v1(
+                let gradients = fixed_partition_backward_gradients_dims_v1::<D>(
                     &parameters,
                     &group_tapes,
                     &coefficients,
@@ -906,14 +1139,18 @@ impl NativePolicyValueTrainStateV1 {
             phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
         let mut candidate_model = self.model.clone();
         candidate_model.replace_parameter_snapshot_v1(&next_parameters)?;
-        validate_optimizer_state(&next_parameters, &next_first_moments, &next_second_moments)?;
+        validate_optimizer_state_dims_v1::<D>(
+            &next_parameters,
+            &next_first_moments,
+            &next_second_moments,
+        )?;
         validate_canonical_gauge_state(
             &next_parameters,
             &next_first_moments,
             &next_second_moments,
             self.scorer_bias_anchor_bits,
         )?;
-        self.check_no_state_digest_candidate_v1(
+        self.check_no_state_digest_candidate_dims_v1(
             &next_parameters,
             &next_first_moments,
             &next_second_moments,
@@ -973,6 +1210,27 @@ fn precompute_encoded_forward_tapes_v1(
     math: TrainingMathV1,
     mxcsr: ThreadMxcsrCheckV1,
 ) -> Option<impl Iterator<Item = Result<Box<DecisionTapeV1>, NativePolicyTrainErrorV1>>> {
+    precompute_encoded_forward_tapes_dims_v1::<Net8DimsV1>(
+        parameters,
+        input_major,
+        config,
+        groups,
+        forward_workers,
+        math,
+        mxcsr,
+    )
+}
+
+/// [`precompute_encoded_forward_tapes_v1`] at the dims `D`.
+fn precompute_encoded_forward_tapes_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    input_major: &InputMajorWeightsV1,
+    config: NativePolicyValueModelConfigV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    forward_workers: usize,
+    math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
+) -> Option<impl Iterator<Item = Result<Box<DecisionTapeV1>, NativePolicyTrainErrorV1>>> {
     let mut tasks = Vec::new();
     for group in groups {
         for substep in group.substeps.iter() {
@@ -1005,7 +1263,13 @@ fn precompute_encoded_forward_tapes_v1(
                                 .map(|_| GaeForwardOutcomeV1::Completed(Err(error.clone())))
                                 .collect();
                         }
-                        forward_encoded_chunk_v1(parameters, input_major, config, chunk, math)
+                        forward_encoded_chunk_dims_v1::<D>(
+                            parameters,
+                            input_major,
+                            config,
+                            chunk,
+                            math,
+                        )
                     });
                 (spawned, chunk)
             })
@@ -1024,7 +1288,7 @@ fn precompute_encoded_forward_tapes_v1(
                     }
                     Err(payload) => resume_unwind(payload),
                 },
-                Err(_) => outcomes.extend(forward_encoded_chunk_v1(
+                Err(_) => outcomes.extend(forward_encoded_chunk_dims_v1::<D>(
                     parameters,
                     input_major,
                     config,
@@ -1048,11 +1312,21 @@ fn forward_encoded_chunk_v1(
     chunk: &[NativeEncodedDecisionViewV1<'_>],
     math: TrainingMathV1,
 ) -> Vec<GaeForwardOutcomeV1> {
+    forward_encoded_chunk_dims_v1::<Net8DimsV1>(parameters, input_major, config, chunk, math)
+}
+
+fn forward_encoded_chunk_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    input_major: &InputMajorWeightsV1,
+    config: NativePolicyValueModelConfigV1,
+    chunk: &[NativeEncodedDecisionViewV1<'_>],
+    math: TrainingMathV1,
+) -> Vec<GaeForwardOutcomeV1> {
     chunk
         .iter()
         .map(|encoded| {
             match catch_unwind(AssertUnwindSafe(|| {
-                forward_with_tape_input_major_v1(
+                forward_with_tape_input_major_dims_v1::<D>(
                     parameters,
                     Some(input_major),
                     config,
