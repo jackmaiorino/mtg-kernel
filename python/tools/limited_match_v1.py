@@ -283,12 +283,17 @@ def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4, g
     contents = {f.stem: {c["name"] for c in json.loads(f.read_text())["cards"]} for f in decks.glob("*.json")}
     seen: dict[str, list[int]] = {}
     inconclusive = 0
+    # Games whose decks hold only Full cards: their halts are engine faults no admission can cause.
+    full_only = [0, 0]
     for g in games:
         cards = set().union(*(contents[d] for d in g["decks"]))
         if g["result"] == "hang" and cards & KNOWN_SLOW_FULL.keys():
             inconclusive += 1
             continue
         halted = g["result"] in ("error", "hang")
+        if not cards & non_full:
+            full_only[0] += 1
+            full_only[1] += halted
         for name in cards & non_full:
             tally = seen.setdefault(name, [0, 0])
             tally[0] += 1
@@ -302,10 +307,7 @@ def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4, g
                       "errors": sorted({g.get("error", "")[:200] for g in games if g["result"] == "error"}),
                       "hangs": [{"split": g["split"], "pair": g["pair"], "decks": g["decks"]}
                                 for g in games if g["result"] == "hang"]}
-    # Games whose decks hold only Full cards: their halts are engine faults no admission can cause.
-    full_only = [g for g in games if not set().union(*(contents[d] for d in g["decks"])) & non_full]
-    report["full_only_baseline"] = {"games": len(full_only),
-                                    "halted_games": sum(g["result"] in ("error", "hang") for g in full_only)}
+    report["full_only_baseline"] = {"games": full_only[0], "halted_games": full_only[1]}
     report["known_slow_full"] = {"cards": KNOWN_SLOW_FULL, "hung_games_not_counted": inconclusive}
     report["unplayed_non_full"] = sorted(non_full - set(seen))
     base_rate = report["full_only_baseline"]["halted_games"] / max(1, report["full_only_baseline"]["games"])

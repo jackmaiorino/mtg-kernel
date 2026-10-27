@@ -23,41 +23,47 @@ with a 60 s timeout.
 
 Halts only catch refusals. Rules correctness rests on #308's own per-card rules tests.
 
-## Evidence (2026-10-27, branch head 04c0b166d plus this list)
+## Evidence (2026-10-27, games from branch head 04c0b166d)
 
 1,200 games: 560 and 546 wins, 29 errors, 65 hangs (all with Drake Hatcher), 625 s on 8 cores.
-Full-only baseline: 18 halts in 303 games (5.9%).
+Full-only baseline, without the Drake Hatcher hangs: 6 halts in 291 games (2.1%). The admission
+list does not change play under `rules-only-all`, so these games stand for the final list.
 
 | Card | Games | Halts | Tail p | |
 | --- | ---: | ---: | ---: | --- |
-| Curator of Destinies | 226 | 3 | 1.00 | admitted |
-| Imprisoned in the Moon | 213 | 3 | 1.00 | admitted |
-| Blasphemous Edict | 142 | 4 | 0.97 | admitted |
-| Leyline Axe | 107 | 2 | 0.99 | admitted |
-| Kykar, Zephyr Awakener | 96 | 1 | 1.00 | admitted |
-| Lathril, Blade of the Elves | 87 | 5 | 0.59 | admitted |
-| Perforating Artist | 85 | 6 | 0.39 | admitted |
-| Liliana, Dreadhorde General | 82 | 5 | 0.54 | admitted |
-| Zimone, Paradox Sculptor | 76 | 2 | 0.94 | admitted |
-| Consuming Aberration | 63 | 3 | 0.73 | admitted |
-| Alesha, Who Laughs at Fate | 59 | 11 | 0.0006 | held |
-| Abyssal Harvester | 54 | 3 | 0.63 | admitted |
-| Tinybones, Bauble Burglar | 52 | 2 | 0.82 | admitted |
+| Curator of Destinies | 226 | 3 | 0.85 | admitted |
+| Imprisoned in the Moon | 213 | 3 | 0.82 | admitted |
+| Blasphemous Edict | 142 | 4 | 0.34 | admitted |
+| Leyline Axe | 107 | 2 | 0.65 | admitted |
+| Kykar, Zephyr Awakener | 96 | 1 | 0.86 | admitted |
+| Lathril, Blade of the Elves | 87 | 5 | 0.034 | held |
+| Perforating Artist | 85 | 6 | 0.008 | held |
+| Liliana, Dreadhorde General | 82 | 5 | 0.028 | held |
+| Zimone, Paradox Sculptor | 76 | 2 | 0.47 | admitted |
+| Consuming Aberration | 63 | 3 | 0.14 | admitted |
+| Alesha, Who Laughs at Fate | 59 | 11 | <0.0001 | held |
+| Abyssal Harvester | 54 | 3 | 0.10 | admitted |
+| Tinybones, Bauble Burglar | 52 | 2 | 0.29 | admitted |
 | Loot, Exuberant Explorer | 48 | 0 | 1.00 | admitted |
 | Thousand-Year Storm | 43 | 0 | 1.00 | admitted |
-| Muldrotha, the Gravetide | 36 | 2 | 0.64 | admitted |
-| Quilled Greatwurm | 32 | 1 | 0.86 | admitted |
+| Muldrotha, the Gravetide | 36 | 2 | 0.17 | admitted |
+| Quilled Greatwurm | 32 | 1 | 0.49 | admitted |
 | Drakuseth, Maw of Flames | 30 | 0 | 1.00 | admitted |
-| Vivien Reid | 30 | 1 | 0.84 | admitted |
+| Vivien Reid | 30 | 1 | 0.46 | admitted |
 | Embercleave | 29 | 0 | 1.00 | admitted |
-| Chandra, Flameshaper | 27 | 2 | 0.48 | admitted |
+| Chandra, Flameshaper | 27 | 2 | 0.11 | admitted |
 | Sphinx of Forgotten Lore | 27 | 0 | 1.00 | admitted |
-| Valkyrie's Call | 26 | 1 | 0.80 | admitted |
+| Valkyrie's Call | 26 | 1 | 0.42 | admitted |
+
+With these 19, 70 of the 80 sample decks play under `-session rules-only` (33 train, 37 eval),
+against 34 under Prepared.
 
 "Games" counts games where the card was in a deck, not games where it was cast.
 
-Alesha's halts are mostly in games with Flamewake Phoenix's deck, whose forced attack the
-inclusion menu gets wrong (#376). Readmit it once #376 is fixed and a rerun clears it.
+The held cards' halts are mostly the engine-wide errors below, in games those cards happen to
+share: Alesha sits in Flamewake Phoenix's deck, whose forced attack the inclusion menu gets wrong
+(#376), and Lathril's Elf Warrior tokens hit the token-roster refusal. Rerun the report once #376
+and the token refusal are fixed; the rule may then admit them.
 
 The errors are engine-wide, not card-specific: attacker or blocker inclusion options the surface
 refuses (#376), tokens left in a graveyard without a roster entry (Food, Soldier, Insect, Treasure,
