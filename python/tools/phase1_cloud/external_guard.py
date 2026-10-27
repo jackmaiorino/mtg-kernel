@@ -271,6 +271,10 @@ def known_pods(root, errors=None):
 _BOUNDARY = contextvars.ContextVar('lease_provider_boundary', default=False)
 
 
+class AlertError(RuntimeError):
+    """Owned Pods were neither handed off nor verified absent; ALERT-pod-not-released.json names them."""
+
+
 def require_boundary(what):
     """Runtime half of the provider boundary: the raw clients run only inside a LeaseClient call."""
     if not _BOUNDARY.get():
@@ -322,11 +326,15 @@ class LeaseClient:
         """Runs on every exit, BaseException included (KeyboardInterrupt, SystemExit): release and
         verify every open obligation, or write an ALERT naming every unresolved ID. An exception that
         was already propagating is re-raised unchanged; otherwise a failed resolution raises."""
+        open_ids = sorted(self.unpersisted - self.verified_absent)
         try:
             try:
                 resolve_or_alert(self, self.release_deadline(), self.alert_path, self.sleep)
+            except AlertError:
+                if exc is None:   # the ALERT record naming the unresolved IDs is already written
+                    raise
             except BaseException:
-                self.alert(sorted(self.unpersisted - self.verified_absent), 'interrupted or failed before release')
+                self.alert(open_ids, 'interrupted before release completed')
                 if exc is None:
                     raise
         finally:
@@ -478,7 +486,7 @@ def resolve_or_alert(client, deadline, alert_path, sleep=None, also=()):
                                'epoch': client.clock()}, replace=True)
         except Exception:  # noqa: BLE001 - the raised error still names them
             pass
-        raise RuntimeError('ALERT: Pods ' + ','.join(pending) + ' were neither handed off nor verified absent')
+        raise AlertError('ALERT: Pods ' + ','.join(pending) + ' were neither handed off nor verified absent')
     return targets
 
 
