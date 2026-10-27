@@ -158,6 +158,9 @@ pub(super) struct SelectedSpellManaCostsV1 {
     /// The spell's sorted creature subtype ids, for mana restricted to a
     /// chosen creature type (Cavern of Souls).
     pub(super) spell_subtype_ids: Vec<u16>,
+    /// Whether this is a colorless Eldrazi spell, for Eldrazi Temple's
+    /// restricted mana.
+    pub(super) colorless_eldrazi: bool,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -392,6 +395,7 @@ impl SelectedSpellManaCostsV1 {
                 self.legendary_spell,
                 self.types.contains(&CardType::Artifact),
                 &self.spell_subtype_ids,
+                self.colorless_eldrazi,
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -469,6 +473,8 @@ pub(super) fn selected_spell_mana_costs_v1(
         convoke: false,
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
         spell_subtype_ids: spell_subtype_ids(definition),
+        colorless_eldrazi: definition.colors.is_empty()
+            && definition.subtypes.contains(&card_def::Subtype::Eldrazi),
     };
     match method {
         CastMethodV4::Normal => {
@@ -603,6 +609,10 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
         // Anointed Peacekeeper: spells with the chosen name cost {2} more.
         selected.own_generic_increase =
             crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player);
+        // Eye of Ugin, It That Heralds the End, Leyline Binding's domain.
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_legacy_e5b_v1::spell_cost_reduction(state, definition, player),
+        );
     }
     if super::resolution_cast_v1::free_cast_for(state, source, player) {
         if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {

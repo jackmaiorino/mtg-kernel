@@ -22,6 +22,7 @@
 //! compilation.
 
 mod build_eternal_e5a_v1;
+mod build_eternal_e5b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -3274,6 +3275,8 @@ enum PermanentFilterRecipe {
     Creature,
     /// A controlled land (Edge of Autumn's "Cycling--Sacrifice a land").
     Land,
+    /// A controlled Desert (Lazotep Quarry's "Sacrifice a Desert").
+    Desert,
     /// A controlled nonland permanent (Bolas's Citadel).
     Nonland,
 }
@@ -4613,7 +4616,8 @@ fn additional_mana_abilities_for(name: &str) -> String {
         // (`ManaAbilityCostDef::None`); the per-turn cap reuses Wall of
         // Roots' existing `max_activations_per_turn` enforcement.
         "Barrels of Blasting Jelly" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::None, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) } }]",
-        _ => build_eternal_e5a_v1::additional_mana_abilities_for(name).unwrap_or("&[]"),
+        _ => build_eternal_e5a_v1::additional_mana_abilities_for(name)
+            .unwrap_or_else(|| build_eternal_e5b_v1::additional_mana_abilities_for(name)),
     }
     .to_string()
 }
@@ -6351,6 +6355,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
         PermanentFilterRecipe::Creature => "PermanentFilter::Creature",
         PermanentFilterRecipe::Land => "PermanentFilter::Land",
+        PermanentFilterRecipe::Desert => "PermanentFilter::DesertV1",
         PermanentFilterRecipe::Nonland => "PermanentFilter::NonlandV1",
     }
 }
@@ -6363,6 +6368,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::AnotherArtifact => "another_artifact",
         PermanentFilterRecipe::Creature => "creature",
         PermanentFilterRecipe::Land => "land",
+        PermanentFilterRecipe::Desert => "desert",
         PermanentFilterRecipe::Nonland => "nonland",
     }
 }
@@ -7154,7 +7160,9 @@ fn optional_additional_cost_for(name: &str) -> &'static str {
 }
 
 fn changeling_for(name: &str) -> bool {
-    name == "Masked Vandal" || name == "Webweaver Changeling"
+    name == "Masked Vandal"
+        || name == "Webweaver Changeling"
+        || build_eternal_e5b_v1::changeling_for(name)
 }
 
 /// True iff this card has Delve (702.65) -- see `CardDef::delve`'s doc.
@@ -11189,6 +11197,10 @@ fn subtype_variant(t: &str) -> &'static str {
         "Tezzeret" => "Subtype::Tezzeret",
         "Frog" => "Subtype::Frog",
         "Sorcerer" => "Subtype::Sorcerer",
+        "Bard" => "Subtype::Bard",
+        "Sphinx" => "Subtype::Sphinx",
+        "Sand" => "Subtype::Sand",
+        "Scion" => "Subtype::Scion",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

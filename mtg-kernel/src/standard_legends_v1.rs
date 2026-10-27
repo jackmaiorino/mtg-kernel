@@ -300,6 +300,12 @@ pub(crate) fn katilda_mana_colors(
         if !colors.is_empty() {
             return colors;
         }
+        // Petrified Hamlet: 'Lands with the chosen name have "{T}: Add
+        // {C}."'
+        let colors = crate::eternal_legacy_e5b_v1::granted_mana_colors(state, object);
+        if !colors.is_empty() {
+            return colors;
+        }
     }
     let Some(live) = state.objects.try_get(object) else {
         return Vec::new();

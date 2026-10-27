@@ -83,6 +83,13 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_lurrus_v1::LurrusStateV1::is_empty"
     )]
     pub lurrus: crate::eternal_lurrus_v1::LurrusStateV1,
+    /// The Legacy aggro, Eldrazi and control lists' state
+    /// (`eternal_legacy_e5b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_legacy_e5b_v1::E5bStateV1::is_empty"
+    )]
+    pub e5b: crate::eternal_legacy_e5b_v1::E5bStateV1,
     /// Wave E5a's state (`eternal_e5a_v1`).
     #[serde(
         default,
@@ -142,6 +149,9 @@ pub enum EternalTriggerV1 {
     VintageV1(crate::eternal_vintage_v1::VintageTriggerV1),
     /// A condition owned by the Vintage Lurrus lists' module.
     LurrusV1(crate::eternal_lurrus_v1::LurrusTriggerV1),
+    /// A condition owned by the Legacy aggro, Eldrazi and control lists'
+    /// module.
+    E5bV1(crate::eternal_legacy_e5b_v1::E5bTriggerV1),
     /// A condition owned by wave E5a's module.
     E5aV1(crate::eternal_e5a_v1::E5aTriggerV1),
 }
@@ -259,6 +269,8 @@ pub enum EternalOpV1 {
     VintageV1(crate::eternal_vintage_v1::VintageOpV1),
     /// A leaf owned by the Vintage Lurrus lists' module.
     LurrusV1(crate::eternal_lurrus_v1::LurrusOpV1),
+    /// A leaf owned by the Legacy aggro, Eldrazi and control lists' module.
+    E5bV1(crate::eternal_legacy_e5b_v1::E5bOpV1),
     /// A leaf owned by wave E5a's module.
     E5aV1(crate::eternal_e5a_v1::E5aOpV1),
 }
@@ -269,16 +281,20 @@ pub enum EternalOpV1 {
 /// the one that left.
 pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> bool {
     cfg!(feature = "eternal-fixtures")
-        && matches!(
-            condition,
+        && match condition {
             crate::trigger::TriggerCondition::StandardV1(
-                crate::standard_cards_v1::StandardTriggerV1::EternalV1(
-                    EternalTriggerV1::EntersAfterCastV1
-                        | EternalTriggerV1::EntersIfTombNotCompletedV1
-                        | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1
-                )
-            )
-        )
+                crate::standard_cards_v1::StandardTriggerV1::EternalV1(condition),
+            ) => match condition {
+                EternalTriggerV1::EntersAfterCastV1
+                | EternalTriggerV1::EntersIfTombNotCompletedV1
+                | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 => true,
+                EternalTriggerV1::E5bV1(condition) => {
+                    crate::eternal_legacy_e5b_v1::arrival_condition(condition)
+                }
+                _ => false,
+            },
+            _ => false,
+        }
 }
 
 impl EternalOpV1 {
@@ -321,7 +337,7 @@ pub fn replicate_cost(name: &str) -> Option<Cost> {
             generic: 0,
             x_count: 0,
         }),
-        _ => None,
+        _ => crate::eternal_legacy_e5b_v1::replicate_cost(name),
     }
 }
 
@@ -771,6 +787,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         EternalOpV1::VintageV1(op) => crate::eternal_vintage_v1::execute(op, ctx, state),
         EternalOpV1::LurrusV1(op) => crate::eternal_lurrus_v1::execute(op, ctx, state),
+        EternalOpV1::E5bV1(op) => crate::eternal_legacy_e5b_v1::execute(op, ctx, state),
         EternalOpV1::E5aV1(op) => crate::eternal_e5a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
@@ -1413,6 +1430,9 @@ pub(crate) fn delayed_triggers(
     let mut triggers = legacy_delayed_triggers(state, events);
     triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_lurrus_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_legacy_e5b_v1::delayed_triggers(
+        state, events,
+    ));
     triggers.extend(crate::eternal_e5a_v1::delayed_triggers(state, events));
     triggers
 }
@@ -1502,6 +1522,7 @@ pub(crate) fn note_attackers_declared(state: &mut GameState) {
 pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_vintage_v1::begin_turn(state, player);
     crate::eternal_lurrus_v1::begin_turn(state, player);
+    crate::eternal_legacy_e5b_v1::begin_turn(state, player);
     crate::eternal_e5a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
@@ -1580,6 +1601,13 @@ pub(crate) fn trigger_matches(
     if condition == EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 {
         return e3::trigger_matches(condition, events, index, source, state);
     }
+    if let EternalTriggerV1::E5bV1(condition) = condition {
+        if crate::eternal_legacy_e5b_v1::functions_on_stack(condition) {
+            return crate::eternal_legacy_e5b_v1::trigger_matches(
+                condition, events, index, source, state,
+            );
+        }
+    }
     let Some(name) = definition_name(state, source) else {
         return false;
     };
@@ -1593,6 +1621,9 @@ pub(crate) fn trigger_matches(
         }
         EternalTriggerV1::LurrusV1(condition) => {
             crate::eternal_lurrus_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::E5bV1(condition) => {
+            crate::eternal_legacy_e5b_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::E5aV1(condition) => {
             crate::eternal_e5a_v1::trigger_matches(condition, events, index, source, state)

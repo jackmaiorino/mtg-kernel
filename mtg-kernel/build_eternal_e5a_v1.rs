@@ -163,7 +163,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Oko, Thief of Crowns" => &OKO,
         "Ugin, Eye of the Storms" => &UGIN,
         "Talon Gates of Madara" => &TALON_GATES,
-        _ => &[],
+        _ => super::build_eternal_e5b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -217,7 +217,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_e5a_v1::yawgmoths_will",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e5b_v1::special_for(name),
     })
 }
 
@@ -226,7 +226,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Kozilek's Command" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1), effect: crate::eternal_e5a_v1::kozilek_spawn_creature })",
         "Suplex" => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: crate::eternal_e5a_v1::suplex_exile })",
-        _ => "None",
+        _ => super::build_eternal_e5b_v1::mode2_for(name),
     }
 }
 
@@ -234,7 +234,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Kozilek's Command" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::PlayerThenGraveyardCardsV1), effect: crate::eternal_e5a_v1::kozilek_spawn_cards })",
-        _ => "None",
+        _ => super::build_eternal_e5b_v1::mode3_for(name),
     }
 }
 
@@ -242,7 +242,7 @@ pub(super) fn mode3_for(name: &str) -> &'static str {
 pub(super) fn additional_modes_for(name: &str) -> &'static str {
     match name {
         "Kozilek's Command" => "&[ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1), effect: crate::eternal_e5a_v1::kozilek_scry_creature }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::PlayerThenGraveyardCardsV1), effect: crate::eternal_e5a_v1::kozilek_scry_cards }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1), effect: crate::eternal_e5a_v1::kozilek_creature_cards }]",
-        _ => "&[]",
+        _ => super::build_eternal_e5b_v1::additional_modes_for(name),
     }
 }
 
@@ -251,7 +251,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Serra's Emissary" | "The Fantasticar" => &["Keywords::FLYING"],
         "Fantasticar Construct Token" => &["Keywords::FLYING", "Keywords::HASTE"],
-        _ => &[],
+        _ => super::build_eternal_e5b_v1::keywords_for(name),
     }
 }
 
@@ -320,7 +320,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Yawgmoth's Will" => {
             "spell:until_end_of_turn_play_lands_and_cast_spells_from_graveyard;replacement:cards_to_graveyard_exiled_instead"
         }
-        _ => "none",
+        _ => super::build_eternal_e5b_v1::trigger_recipe_for(name),
     }
 }
 

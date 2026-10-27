@@ -250,7 +250,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Force of Negation" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::NotYourTurnV1 })",
         "Gush" => "Some(AltCostDef { components: &[CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count: 2, filter: PermanentFilterDef::LandWithSubtype(Subtype::Island) }], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_e5b_v1::alt_cost_for(name),
     }
 }
 
@@ -263,7 +263,7 @@ pub(super) fn delve_for(name: &str) -> bool {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Thundertrap Trainer" => Some("{4}"),
-        _ => None,
+        _ => super::build_eternal_e5b_v1::kicker_cost_for(name),
     }
 }
 

@@ -259,7 +259,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         // "{T}: Add {C}{C}{C}. Spend this mana only to cast artifact
         // spells." The runtime turns the three mana into restricted units.
         "Mishra's Workshop" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(3), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_e5b_v1::mana_ability_def_for(name),
     }
 }
 
@@ -315,13 +315,13 @@ pub(super) fn saga_for(name: &str) -> &'static str {
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Witch Enchanter" => "Some(TransformFaceDef { name: \"Witch-Blessed Meadow\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
-        _ => "None",
+        _ => super::build_eternal_e5b_v1::transform_face_for(name),
     }
 }
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Witch Enchanter" => Some("Witch-Blessed Meadow"),
-        _ => None,
+        _ => super::build_eternal_e5b_v1::transform_face_name_for(name),
     }
 }

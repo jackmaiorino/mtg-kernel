@@ -1133,6 +1133,7 @@ pub(crate) fn activation_allowed(
 ) -> bool {
     (name != URZAS_SAGA || saga_level(state, source) >= 2)
         && crate::eternal_lurrus_v1::activation_allowed(state, source)
+        && crate::eternal_legacy_e5b_v1::activation_allowed(state, source)
         && crate::eternal_e5a_v1::statics::activation_allowed(state, source, name)
 }
 
@@ -1685,10 +1686,11 @@ pub(crate) fn trinisphere_increase(state: &GameState, pips: usize, generic: u32)
 
 /// Archon of Emeria: "Each player can't cast more than one spell each turn."
 pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
-    state.players[player.index()].spells_cast_this_turn >= 1
+    (state.players[player.index()].spells_cast_this_turn >= 1
         && active_permanents(state, ARCHON_OF_EMERIA, None)
             .next()
-            .is_some()
+            .is_some())
+        || crate::eternal_legacy_e5b_v1::cast_prohibited(state, player)
 }
 
 /// Archon of Emeria: "Nonbasic lands your opponents control enter tapped."

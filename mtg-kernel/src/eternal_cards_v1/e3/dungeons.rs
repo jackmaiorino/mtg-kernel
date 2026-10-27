@@ -702,6 +702,9 @@ pub(crate) fn resolution_cast_card(
 ) -> Option<EffectObjectBinding> {
     match &choice.kind {
         E3ChoiceKindV1::MadWizardV1 { .. } => {}
+        E3ChoiceKindV1::E5bV1(_) => {
+            return crate::eternal_legacy_e5b_v1::resolution_cast_card(choice, selected);
+        }
         // Beseech the Mirror casts the found card from its owner's hand.
         E3ChoiceKindV1::E5aV1(kind) => {
             return crate::eternal_e5a_v1::choices::resolution_cast_card(kind, choice, selected)
@@ -720,6 +723,11 @@ pub(crate) fn validate_resolution_cast(
     selected: &[Target],
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
+    if let E3ChoiceKindV1::E5bV1(_) = choice.kind {
+        return crate::eternal_legacy_e5b_v1::validate_resolution_cast(
+            suspended, choice, selected, permission,
+        );
+    }
     if resolution_cast_card(choice, selected) != Some(permission.card)
         || selected.len() != 1
         || permission.card.expected_zone != Zone::Hand
