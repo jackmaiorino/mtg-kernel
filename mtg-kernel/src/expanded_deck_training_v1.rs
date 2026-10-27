@@ -3,6 +3,7 @@
 //! or resumes its own checkpoint. It never reads or writes a legacy Store.
 
 pub mod archive_distillation_v1;
+pub mod b_width_prescreen_v1;
 pub mod e_supported_teacher_v1;
 pub mod exploration_probe_v1;
 pub mod no_state_digest_v1;

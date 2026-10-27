@@ -37,7 +37,8 @@
 //! swap `i` and `j`). Batches are consecutive runs of `batch_groups` groups
 //! of the concatenated epochs, so a batch may straddle an epoch boundary.
 //!
-//! The screen driver calls this entry point; until it lands only tests do.
+//! The screen driver (`expanded_deck_training_v1::b_width_prescreen_v1`)
+//! calls this entry point.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::*;
@@ -415,7 +416,7 @@ fn hash_i64s_v1(hasher: &mut Sha256, values: &[i64]) {
 
 /// The outcome source: per split, per game in order, its id, canonical
 /// outcome JSON and each group's acting seat.
-fn outcome_source_sha256_v1(splits: [(&str, &[ScreenGameRecordV1]); 2]) -> String {
+pub(crate) fn outcome_source_sha256_v1(splits: [(&str, &[ScreenGameRecordV1]); 2]) -> String {
     let mut hasher = Sha256::new();
     hash_bytes_v1(&mut hasher, OUTCOME_SOURCE_DOMAIN_V1);
     for (split, games) in splits {
@@ -434,7 +435,7 @@ fn outcome_source_sha256_v1(splits: [(&str, &[ScreenGameRecordV1]); 2]) -> Strin
 
 /// The decision inputs: per split, per game, per group and substep, every
 /// tensor field's bits and the selected action.
-fn decision_source_sha256_v1(splits: [(&str, &[ScreenGameRecordV1]); 2]) -> String {
+pub(crate) fn decision_source_sha256_v1(splits: [(&str, &[ScreenGameRecordV1]); 2]) -> String {
     let mut hasher = Sha256::new();
     hash_bytes_v1(&mut hasher, DECISION_SOURCE_DOMAIN_V1);
     for (split, games) in splits {
@@ -562,6 +563,46 @@ pub(crate) fn evaluate_screen_heldout_dims_v1<D: NetDimsV1>(
         policy_nll_mean: policy_total / total_groups as f64,
         games: per_game,
     })
+}
+
+/// The entry's forward (`forward_with_tape_dims_v1`) on one state's current
+/// parameters, for the screen driver's step-0 function-preservation check:
+/// the same parameters, input configuration and math the held-out
+/// evaluation uses.
+pub(crate) struct ScreenForwardV1<D: NetDimsV1> {
+    parameters: Vec<NativeNamedParameterV1>,
+    config: NativePolicyValueModelConfigV1,
+    math: TrainingMathV1,
+    generation: FreshLineageGenerationV1,
+    dims: std::marker::PhantomData<D>,
+}
+
+impl<D: NetDimsV1> ScreenForwardV1<D> {
+    pub(crate) fn of_state_v1(
+        state: &NativePolicyValueTrainStateDimsV1<D>,
+        generation: FreshLineageGenerationV1,
+    ) -> Self {
+        Self {
+            parameters: state.model_dims_v1().parameter_snapshot_v1(),
+            config: input_config_v1(state.model_dims_v1(), generation),
+            math: state.training_math_dims_v1(),
+            generation,
+            dims: std::marker::PhantomData,
+        }
+    }
+
+    /// The raw policy logit bits and the value bits of one decision input.
+    pub(crate) fn output_bits_v1(
+        &self,
+        tensor: &NativeFlatDecisionTensorV2,
+    ) -> Result<(Vec<u32>, u32), ScreenFitErrorV1> {
+        let view = encoded_decision_view_generic_v1(tensor, self.generation);
+        let tape = forward_with_tape_dims_v1::<D>(&self.parameters, self.config, view, self.math)?;
+        Ok((
+            tape.logits_v1().iter().map(|value| value.to_bits()).collect(),
+            tape.value_v1().to_bits(),
+        ))
+    }
 }
 
 /// The pre-screen fit (module documentation): `config.steps` updates of the
