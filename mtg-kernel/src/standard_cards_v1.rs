@@ -4677,6 +4677,16 @@ fn exile_card_with_source(ctx: &ExecCtx, state: &mut GameState) {
     let Some(source) = ctx.ability_source_contract else {
         return;
     };
+    // Eternal catalog: a Cauldron that left before its ability resolved
+    // (sacrificed, or swapped by Goblin Welder) links nothing; a mark on its
+    // past incarnation would be unreadable.
+    if cfg!(feature = "eternal-fixtures")
+        && state.objects.try_get(source.source).is_none_or(|live| {
+            live.zone != Zone::Battlefield || live.zone_change_count != source.zone_change_count
+        })
+    {
+        return;
+    }
     if state.objects.get(card).zone == Zone::Exile {
         state.objects.get_mut(card).v4.exiled_by = Some(crate::state::ObjectLinkV4 {
             object: source.source,

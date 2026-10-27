@@ -4267,7 +4267,8 @@ fn legal_targets_for_controller_from_source_unframed(
             controller,
             source.map(|source| source.object),
         ) || source.is_some_and(|source| {
-            source.zone == Zone::Stack
+            // A spell on the stack, or a card whose cast is being checked.
+            source.zone != Zone::Battlefield
                 && crate::eternal_cards_v1::e3::protected_from_spell(state, object, source.object)
         }) {
             return false;
