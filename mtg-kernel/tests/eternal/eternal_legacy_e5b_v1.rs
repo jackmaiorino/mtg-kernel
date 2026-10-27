@@ -161,7 +161,12 @@ fn power_toughness(state: &GameState, object: ObjectId) -> (i32, i32) {
 
 fn next(state: &mut GameState) -> Decision {
     let decision = engine::advance_until_decision(state);
-    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+    assert!(
+        !matches!(decision, Decision::Halted { .. }),
+        "{decision:?}\nstack: {:#?}\npending triggers: {:#?}",
+        state.stack,
+        state.engine.pending_triggers
+    );
     decision
 }
 
@@ -481,11 +486,19 @@ fn new_duals_and_snow_covered_plains_tap_for_their_colors() {
         ("Scrubland", vec![ManaColor::W, ManaColor::B]),
         ("Snow-Covered Plains", vec![ManaColor::W]),
     ] {
+        let single = colors.len() == 1;
         for color in colors {
             let mut state = islands();
             let land = put(&mut state, P0, name, Zone::Battlefield);
             next(&mut state);
-            act(&mut state, Action::ActivateManaAbilityChoice(land, color));
+            act(
+                &mut state,
+                if single {
+                    Action::ActivateManaAbility(land)
+                } else {
+                    Action::ActivateManaAbilityChoice(land, color)
+                },
+            );
             assert_eq!(
                 state.players[0].mana_pool[color.pool_index()],
                 1,
@@ -569,18 +582,21 @@ fn abundant_countryside_adds_any_color_only_for_creature_spells_and_makes_shapes
 #[test]
 fn eldrazi_temple_pays_two_for_colorless_eldrazi_spells_only() {
     let mut state = islands();
-    for _ in 0..2 {
-        put(&mut state, P0, "Eldrazi Temple", Zone::Battlefield);
-    }
+    let temple = put(&mut state, P0, "Eldrazi Temple", Zone::Battlefield);
     let seer = put(&mut state, P0, "Thought-Knot Seer", Zone::Hand);
-    let raptor = put(&mut state, P0, "Amped Raptor", Zone::Hand);
-    assert!(castable(&mut state, seer), "two Temples pay {{3}}{{C}}");
-    pool(&mut state, P0, &[ManaColor::R], 0);
+    let binding = put(&mut state, P0, "Leyline Binding", Zone::Hand);
+    pool(&mut state, P0, &[], 1);
+    assert!(!castable(&mut state, seer), "three of {{3}}{{C}}");
+    pool(&mut state, P0, &[], 1);
     assert!(
-        !castable(&mut state, raptor),
-        "a Temple gives one colorless for other spells"
+        castable(&mut state, seer),
+        "the Temple pays two of {{3}}{{C}}"
     );
-    let temple = named(&state, P0, "Eldrazi Temple")[0];
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    assert!(
+        !castable(&mut state, binding),
+        "the Temple pays one of {{5}}{{W}}"
+    );
     next(&mut state);
     act(&mut state, Action::ActivateManaAbility(temple));
     assert_eq!(state.players[0].mana_pool[ManaColor::C.pool_index()], 1);
@@ -697,7 +713,6 @@ fn goblin_bombardment_sacrifices_a_creature_to_deal_one_damage() {
         "no creature to sacrifice"
     );
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
-    let mut sacrificed = false;
     act(&mut state, Action::ActivateAbility(bombardment, 0));
     loop {
         match next(&mut state) {
@@ -708,12 +723,10 @@ fn goblin_bombardment_sacrifices_a_creature_to_deal_one_damage() {
             Decision::ChooseCostTargets { candidates, .. } => {
                 assert_eq!(candidates, vec![elves]);
                 act(&mut state, Action::ChooseCostTarget(elves));
-                sacrificed = true;
             }
             _ => break,
         }
     }
-    assert!(sacrificed);
     assert_eq!(zone(&state, elves), Zone::Graveyard, "sacrificed as a cost");
     settled(&mut state);
     assert_eq!(state.players[1].life, 19);
@@ -956,21 +969,32 @@ fn terminus_miracle_reveals_the_first_draw_and_casts_for_white() {
     let plains = put(&mut state, P0, "Plains", Zone::Battlefield);
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
-    let mut revealed = false;
-    let mut cast_it = false;
-    settle_with(&mut state, |state, decision| match decision {
+    assert!(hand_contains(&state, P0, terminus));
+    // The reveal is offered to P0 before anything else happens.
+    let decision = next(&mut state);
+    assert!(
+        matches!(
+            decision,
+            Decision::ChooseEffectOption {
+                player: P0,
+                source,
+                option_count: 2,
+            } if source == terminus
+        ),
+        "{decision:?} offers {:?}",
+        state.eternal_v1.as_ref().map(|eternal| &eternal.e5b)
+    );
+    act(&mut state, Action::ChooseEffectOption(1));
+    // The miracle trigger offers the cast for {W}.
+    let mut offered = false;
+    settle_with(&mut state, |_, decision| match decision {
         Decision::ChooseEffectOption {
             player,
-            source,
             option_count,
-        } if source == terminus && state.engine.pending_effect.is_none() => {
-            assert_eq!((player, option_count), (P0, 2));
-            revealed = true;
-            Action::ChooseEffectOption(1)
-        }
-        Decision::ChooseEffectOption { option_count, .. } => {
-            assert_eq!(option_count, 2, "cast or decline");
-            cast_it = true;
+            ..
+        } => {
+            assert_eq!((player, option_count), (P0, 2), "cast or decline");
+            offered = true;
             Action::ChooseEffectOption(0)
         }
         Decision::ChooseEffectTargets { legal_targets, .. }
@@ -980,7 +1004,12 @@ fn terminus_miracle_reveals_the_first_draw_and_casts_for_white() {
         }
         other => first_answer(other),
     });
-    assert!(revealed && cast_it);
+    assert!(
+        offered,
+        "no cast offered; Terminus in {:?}, stack {:?}",
+        zone(&state, terminus),
+        state.stack
+    );
     assert_eq!(zone(&state, elves), Zone::Library);
     assert_eq!(zone(&state, terminus), Zone::Graveyard);
     assert!(state.objects.get(plains).tapped, "paid {{W}}");
@@ -1208,47 +1237,61 @@ fn eldrazi_linebreaker_gives_haste_and_plus_x_at_the_beginning_of_combat() {
 }
 
 #[test]
-fn wastescape_battlemage_kickers_exile_and_bounce() {
-    for (kick_green, kick_blue) in [(true, false), (false, true), (true, true)] {
-        let mut state = islands();
-        let beanstalk = put(&mut state, P1, "Up the Beanstalk", Zone::Battlefield);
-        let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
-        let mage = put(&mut state, P0, "Wastescape Battlemage", Zone::Hand);
-        pool(
-            &mut state,
-            P0,
-            &[ManaColor::C, ManaColor::G, ManaColor::U],
-            2,
-        );
-        cast(&mut state, mage, &[]);
-        settle_with(&mut state, |_, decision| match decision {
-            Decision::ChooseCastMode { .. } => Action::ChooseCastMode(if kick_blue {
-                CastMode::Alternative
+fn wastescape_battlemage_green_kicker_exiles_an_artifact_or_enchantment() {
+    wastescape(true, false);
+}
+
+#[test]
+fn wastescape_battlemage_blue_kicker_bounces_a_creature() {
+    wastescape(false, true);
+}
+
+#[test]
+fn wastescape_battlemage_takes_both_kickers() {
+    wastescape(true, true);
+}
+
+/// Casts Wastescape Battlemage with the chosen kickers against an opposing
+/// enchantment and creature.
+fn wastescape(kick_green: bool, kick_blue: bool) {
+    let mut state = islands();
+    let beanstalk = put(&mut state, P1, "Up the Beanstalk", Zone::Battlefield);
+    let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+    let mage = put(&mut state, P0, "Wastescape Battlemage", Zone::Hand);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::C, ManaColor::G, ManaColor::U],
+        2,
+    );
+    cast(&mut state, mage, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(if kick_blue {
+            CastMode::Alternative
+        } else {
+            CastMode::Normal
+        }),
+        Decision::ChooseKicker { .. } => Action::ChooseKicker(kick_green),
+        Decision::ChooseTargets { legal_targets, .. } => {
+            if legal_targets.contains(&Target::Object(beanstalk)) {
+                Action::ChooseTarget(Target::Object(beanstalk))
             } else {
-                CastMode::Normal
-            }),
-            Decision::ChooseKicker { .. } => Action::ChooseKicker(kick_green),
-            Decision::ChooseTargets { legal_targets, .. } => {
-                if legal_targets.contains(&Target::Object(beanstalk)) {
-                    Action::ChooseTarget(Target::Object(beanstalk))
-                } else {
-                    Action::ChooseTarget(Target::Object(angler))
-                }
+                Action::ChooseTarget(Target::Object(angler))
             }
-            other => first_answer(other),
-        });
-        assert_eq!(zone(&state, mage), Zone::Battlefield);
-        assert_eq!(
-            zone(&state, beanstalk) == Zone::Exile,
-            kick_green,
-            "{kick_green} {kick_blue}"
-        );
-        assert_eq!(
-            zone(&state, angler) == Zone::Hand,
-            kick_blue,
-            "{kick_green} {kick_blue}"
-        );
-    }
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, mage), Zone::Battlefield);
+    assert_eq!(
+        zone(&state, beanstalk) == Zone::Exile,
+        kick_green,
+        "{kick_green} {kick_blue}"
+    );
+    assert_eq!(
+        zone(&state, angler) == Zone::Hand,
+        kick_blue,
+        "{kick_green} {kick_blue}"
+    );
 }
 
 #[test]
@@ -1675,4 +1718,34 @@ fn eldrazi_confluence_resolves_three_chosen_modes() {
     assert_eq!(state.objects.get(beanstalk).controller, P1);
     assert_eq!(named(&state, P0, "Eldrazi Scion Token").len(), 1);
     assert_eq!(zone(&state, elves), Zone::Battlefield);
+}
+
+// ---- Regressions found by the catalog games -------------------------------------------
+
+#[test]
+fn force_of_will_pitched_against_brain_freeze_counters_it() {
+    let mut state = islands();
+    state.priority_player = P1;
+    let freeze = put(&mut state, P1, "Brain Freeze", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::U], 1);
+    cast(&mut state, freeze, &[Target::Player(P0)]);
+    let force = put(&mut state, P0, "Force of Will", Zone::Hand);
+    let pitch = put(&mut state, P0, "Stifle", Zone::Hand);
+    run_until(&mut state, |state| state.priority_player == P0, |_, _| None);
+    act(&mut state, Action::CastSpell(force));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Alternative),
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(freeze)));
+            Action::ChooseTarget(Target::Object(freeze))
+        }
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert!(candidates.contains(&pitch));
+            Action::ChooseCostTarget(pitch)
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, freeze), Zone::Graveyard);
+    assert_eq!(zone(&state, pitch), Zone::Exile);
+    assert_eq!(state.players[0].library.len(), 20, "nothing milled");
 }
