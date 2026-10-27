@@ -113,6 +113,49 @@ thread_local! {
     static ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1: RefCell<Option<Arc<PackedRecomputeTestControlV1>>> = const { RefCell::new(None) };
     static ACTIVE_FIXED_PARTITION_BACKWARD_TEST_CONTROL_V1: RefCell<Option<Arc<FixedPartitionBackwardTestControlV1>>> = const { RefCell::new(None) };
     static EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    static LINEAR_BACKWARD_CAPTURE_V1: RefCell<Option<Vec<LinearBackwardCaptureV1>>> = const { RefCell::new(None) };
+}
+
+/// Test-only: one `linear_backward_into` call's operands and results, the
+/// weight and bias gradients before and after its accumulation.
+#[cfg(test)]
+struct LinearBackwardCaptureV1 {
+    weight_index: usize,
+    bias_index: usize,
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    weight: Vec<f32>,
+    input: Vec<f32>,
+    d_output: Vec<f32>,
+    d_input: Vec<f32>,
+    d_weight_before: Vec<f32>,
+    d_weight_after: Vec<f32>,
+    d_bias_before: Vec<f32>,
+    d_bias_after: Vec<f32>,
+}
+
+/// Test-only: runs `work` with every `linear_backward_into` call on this
+/// thread captured, and returns the captures in call order. Capturing only
+/// copies operands and results; it changes no arithmetic.
+#[cfg(test)]
+fn capture_linear_backward_for_test_v1<R>(
+    work: impl FnOnce() -> R,
+) -> (R, Vec<LinearBackwardCaptureV1>) {
+    struct ResetV1;
+    impl Drop for ResetV1 {
+        fn drop(&mut self) {
+            LINEAR_BACKWARD_CAPTURE_V1.with(|capture| *capture.borrow_mut() = None);
+        }
+    }
+    LINEAR_BACKWARD_CAPTURE_V1.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    let reset = ResetV1;
+    let result = work();
+    let captured = LINEAR_BACKWARD_CAPTURE_V1
+        .with(|capture| capture.borrow_mut().take())
+        .expect("the capture stays installed while work runs");
+    drop(reset);
+    (result, captured)
 }
 
 /// Test-only: the effective GAE forward and exact-backward worker counts the
@@ -5475,6 +5518,15 @@ fn linear_backward_into(
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
     resize_zeroed_v1(d_input, rows * input_dim);
+    #[cfg(test)]
+    let captured_before = LINEAR_BACKWARD_CAPTURE_V1.with(|capture| {
+        capture.borrow().is_some().then(|| {
+            (
+                gradients[weight_index].clone(),
+                gradients[bias_index].clone(),
+            )
+        })
+    });
     linear_backward_rows_v1(
         &LinearBackwardRowsV1 {
             weight,
@@ -5501,6 +5553,31 @@ fn linear_backward_into(
                 gradients[bias_index][output_index] += d_output[row * output_dim + output_index];
             }
         }
+    }
+    #[cfg(test)]
+    if let Some((d_weight_before, d_bias_before)) = captured_before {
+        let capture = LinearBackwardCaptureV1 {
+            weight_index,
+            bias_index,
+            rows,
+            input_dim,
+            output_dim,
+            weight: weight.to_vec(),
+            input: input.to_vec(),
+            d_output: d_output.to_vec(),
+            d_input: d_input.clone(),
+            d_weight_before,
+            d_weight_after: gradients[weight_index].clone(),
+            d_bias_before,
+            d_bias_after: gradients[bias_index].clone(),
+        };
+        LINEAR_BACKWARD_CAPTURE_V1.with(|captures| {
+            captures
+                .borrow_mut()
+                .as_mut()
+                .expect("a capture is installed")
+                .push(capture);
+        });
     }
     Ok(())
 }

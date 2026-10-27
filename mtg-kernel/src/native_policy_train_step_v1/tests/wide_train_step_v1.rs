@@ -13,6 +13,7 @@ use crate::native_train_state_payload_v1::{
 };
 use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
 use crate::state::SplitMix64;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Write;
 
@@ -1075,13 +1076,114 @@ fn wide_gradients_match_f64_central_differences_with_detection_power() {
             weak.is_empty(),
             "wide {objective:?} blocks without detection power (enlarge the fixture): {weak:?}"
         );
-        assert!(
-            wide_report.max_ratio <= FD_NARROW_RATIO_FACTOR_V1 * r_n,
-            "wide {objective:?} max ratio {} above {FD_NARROW_RATIO_FACTOR_V1} r_n = {}",
-            wide_report.max_ratio,
-            FD_NARROW_RATIO_FACTOR_V1 * r_n
+        let bound = FD_NARROW_RATIO_FACTOR_V1 * r_n;
+        let over: Vec<&WitnessV1> = wide_report
+            .witness_list
+            .iter()
+            .filter(|witness| witness.ratio > bound)
+            .collect();
+        // The clause 2 waiver's capture: r_n and every witness above 4 r_n
+        // by round-trip value and bits, and the wide gradient's digest.
+        let mut capture = format!(
+            "WIDE_FD_GATE_V1 {objective:?}: r_n={r_n:e} r_n_bits={:#018x} \
+             wide_gradient_sha256={} over_4_r_n={}",
+            r_n.to_bits(),
+            gradient_sha256_v1(&wide_report.gradients),
+            over.len(),
         );
+        for witness in &over {
+            capture.push_str(&format!(
+                " ({} [{}] tensor={} g_rust={:e} g_rust_bits={:#010x} g_fd={:e} \
+                 g_fd_bits={:#018x} ratio={:e})",
+                witness.block,
+                witness.index,
+                witness.tensor,
+                witness.rust,
+                (witness.rust as f32).to_bits(),
+                witness.oracle,
+                witness.oracle.to_bits(),
+                witness.ratio,
+            ));
+        }
+        writeln!(std::io::stderr().lock(), "{capture}").unwrap();
+        match clause_2_waiver_v1(objective) {
+            None => assert!(
+                wide_report.max_ratio <= bound,
+                "wide {objective:?} max ratio {} above {FD_NARROW_RATIO_FACTOR_V1} r_n = {bound}",
+                wide_report.max_ratio,
+            ),
+            Some(waiver) => {
+                assert_eq!(
+                    r_n.to_bits(),
+                    waiver.r_n_bits,
+                    "wide {objective:?}: the clause 2 waiver lapsed (r_n changed)"
+                );
+                let recorded: Vec<(usize, usize, u32, u64)> = over
+                    .iter()
+                    .map(|witness| {
+                        (
+                            witness.tensor,
+                            witness.index,
+                            (witness.rust as f32).to_bits(),
+                            witness.oracle.to_bits(),
+                        )
+                    })
+                    .collect();
+                assert_eq!(
+                    recorded.as_slice(),
+                    waiver.witnesses,
+                    "wide {objective:?}: the clause 2 waiver lapsed (the witnesses above \
+                     {FD_NARROW_RATIO_FACTOR_V1} r_n or their bits changed)"
+                );
+            }
+        }
     }
+}
+
+/// Amendment 5.1-A1 v2 section 4.2: clause 2 is waived only in the Windows
+/// (msvc) terminal cell at the arithmetic of 11053a11d, the frozen v2
+/// fixture, seed and model. There, every witness above 4 r_n must be on this
+/// list, bit for bit, and r_n must keep its bits; anything else fails, so
+/// the waiver lapses on any change of that arithmetic.
+#[cfg_attr(not(all(windows, target_env = "msvc")), allow(dead_code))]
+struct Clause2WaiverV1 {
+    r_n_bits: u64,
+    /// `(tensor, index, g_rust f32 bits, g_fd f64 bits)` in draw order.
+    witnesses: &'static [(usize, usize, u32, u64)],
+}
+
+/// Recorded from CI run 40454873435 (head 11053a11d, Windows workspace-lib
+/// and workspace-targets): r_n = 1.2562741952193324e-3; edge_encoder.0.bias
+/// [100] with g_rust = 4.699220880866051e-5 and g_fd = 4.669843955973363e-5.
+#[cfg(all(windows, target_env = "msvc"))]
+static TERMINAL_CLAUSE_2_WAIVER_V1: Option<Clause2WaiverV1> = Some(Clause2WaiverV1 {
+    r_n_bits: 0x3f54_9532_2554_63d2,
+    witnesses: &[(EDGE_FIRST_BIAS, 100, 0x3845_1980, 0x3f08_7bc2_2a5c_0000)],
+});
+#[cfg(not(all(windows, target_env = "msvc")))]
+static TERMINAL_CLAUSE_2_WAIVER_V1: Option<Clause2WaiverV1> = None;
+
+fn clause_2_waiver_v1(objective: ObjectiveV1) -> Option<&'static Clause2WaiverV1> {
+    match objective {
+        ObjectiveV1::Terminal => TERMINAL_CLAUSE_2_WAIVER_V1.as_ref(),
+        ObjectiveV1::Gae => None,
+    }
+}
+
+/// SHA-256 over every gradient element's f32 bits, little-endian, in
+/// parameter order.
+fn gradient_sha256_v1(gradients: &[NativeNamedParameterV1]) -> String {
+    let mut digest = Sha256::new();
+    for gradient in gradients {
+        for value in &gradient.values {
+            digest.update(value.to_bits().to_le_bytes());
+        }
+    }
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,8 +1204,6 @@ const DIAGNOSED_WITNESSES_V1: usize = 10;
 struct TermsV1 {
     count: usize,
     sum_abs: f64,
-    /// Each term, signed, in substep then row order.
-    values: Vec<f64>,
 }
 
 /// `(group, decision, selected action)` per substep, in batch order.
@@ -1196,7 +1296,6 @@ fn contribution_terms_v1(
     let mut terms = TermsV1 {
         count: 0,
         sum_abs: 0.0,
-        values: Vec::new(),
     };
     for (substep, &(_, decision, _)) in substeps.iter().enumerate() {
         let decision = &decisions[decision];
@@ -1234,7 +1333,6 @@ fn contribution_terms_v1(
             };
             terms.count += 1;
             terms.sum_abs += contribution.abs();
-            terms.values.push(contribution);
         }
     }
     terms
@@ -1409,59 +1507,39 @@ fn wide_fd_roundoff_diagnostic_receipt() {
 }
 
 // ---------------------------------------------------------------------------
-// Amendment 5.1-A1 receipts (sections 3 and 4). They print only: the section
-// 5.1 gate above and its pass rule are unchanged until the reviewers rule.
+// Amendment 5.1-A1 receipts (v2 section 3, with the round-2 direction). The
+// rho receipt prints only; D2 prints only until its v3 pass rule is frozen,
+// and is ignored until the reviewers agree. Neither changes the train step,
+// the oracle, the fixture or the witness draw.
 // ---------------------------------------------------------------------------
 
-/// The proposed replacement clause's bound on rho, printed against.
-const RHO_BOUND_V1: f64 = 1.0e-4;
-/// D1 examines the witnesses above this e; its pre-declared pass is e_f at
-/// most this.
-const D1_THRESHOLD_V1: f64 = 8.0;
-/// The wide state encoder bias row the amendment names.
-const D1_STATE_BIAS_ROW_V1: usize = 103;
 /// f32 unit roundoff, 2^-24.
 const UNIT_ROUNDOFF_V1: f64 = 1.0 / 16_777_216.0;
+/// rho is information only; the count above this is printed.
+const RHO_PRINTED_BOUND_V1: f64 = 1.0e-4;
 const RHO_LISTED_V1: usize = 5;
-
-/// One dot product's value and its cancellation ratio
-/// `(|b| + sum |w_k x_k|) / |b + sum w_k x_k|`.
-fn dot_condition_v1(weight: &[f64], bias: f64, input: &[f64]) -> (f64, f64) {
-    assert_eq!(weight.len(), input.len());
-    let mut value = bias;
-    let mut mass = bias.abs();
-    for (weight, input) in weight.iter().zip(input) {
-        value += weight * input;
-        mass += (weight * input).abs();
-    }
-    (value, mass / value.abs())
-}
-
-/// The input rows one weight tensor sees in one decision's oracle forward.
-fn captured_rows_v1(
-    parameters: &[Vec<f64>],
-    hidden: usize,
-    embedding: usize,
-    decision: &GradientDecisionV1,
-    weight: usize,
-) -> Vec<Vec<f64>> {
-    let mut run = OracleRunV1 {
-        parameters,
-        hook: None,
-        capture: Some((weight, Vec::new())),
-    };
-    oracle_forward_run_v1(&mut run, hidden, embedding, &decision.view_v1(false));
-    run.capture.take().unwrap().1
-}
-
-/// Whether `substep` is its group's first, the one whose value enters the
-/// loss.
-fn is_value_substep_v1(substeps: &[(usize, usize, usize)], substep: usize) -> bool {
-    substeps
-        .iter()
-        .position(|&(group, _, _)| group == substeps[substep].0)
-        == Some(substep)
-}
+/// D2's two oracle steps for an upstream gradient (the second is primary),
+/// and the relative agreement it requires between them.
+const D2_STEPS_V1: [f64; 2] = [1.0e-4, 1.0e-5];
+const D2_STEP_AGREEMENT_V1: f64 = 1.0e-6;
+/// Check (a): reconstruction, relative to the oracle term mass.
+const D2_RECONSTRUCTION_V1: f64 = 1.0e-8;
+/// W1, and the W3 witnesses by width: `(tensor, index)`.
+const D2_W1_V1: (usize, usize) = (EDGE_FIRST_BIAS, 100);
+const D2_W3_WIDE_V1: [(usize, usize); 6] = [
+    (VALUE_SECOND_WEIGHT, 101),
+    (VALUE_SECOND_WEIGHT, 93),
+    (VALUE_SECOND_WEIGHT, 78),
+    (VALUE_SECOND_WEIGHT, 77),
+    (VALUE_SECOND_WEIGHT, 5),
+    (STATE_FIRST_BIAS, 103),
+];
+const D2_W3_NARROW_V1: [(usize, usize); 4] = [
+    (STATE_SECOND_BIAS, 2),
+    (VALUE_SECOND_WEIGHT, 59),
+    (VALUE_SECOND_WEIGHT, 25),
+    (VALUE_SECOND_WEIGHT, 22),
+];
 
 /// One witness with its oracle terms and roundoff measures.
 struct MeasuredV1 {
@@ -1483,180 +1561,9 @@ impl MeasuredV1 {
     }
 }
 
-/// D1 for one `value_head.2.weight` witness: per sample, the cancellation of
-/// `h_j`'s pre-activation, of `v`, and of the value residual `v - t` (the
-/// target is the terminal return on the terminal objective), the predicted
-/// per-term relative error `r_s`, and the forward-aware `e_f`.
-#[allow(clippy::too_many_arguments)]
-fn d1_value_head_v1(
-    out: &mut impl Write,
-    header: &str,
-    parameters: &[Vec<f64>],
-    hidden: usize,
-    embedding: usize,
-    decisions: &[GradientDecisionV1; 2],
-    targets: &[f64],
-    measured: &MeasuredV1,
-) {
-    let column = measured.witness.index;
-    let substeps = flattened_substeps_v1();
-    assert_eq!(measured.terms.count, substeps.len());
-    let group_count = GRADIENT_BATCH_V1.len() as f64;
-    let mut forward = 0.0;
-    for (substep, &(group, decision, _)) in substeps.iter().enumerate() {
-        let decision = &decisions[decision];
-        let state_hidden =
-            &captured_rows_v1(parameters, hidden, embedding, decision, VALUE_FIRST_WEIGHT)[0];
-        let value_hidden =
-            &captured_rows_v1(parameters, hidden, embedding, decision, VALUE_SECOND_WEIGHT)[0];
-        let m_h = state_hidden.len();
-        let (_, kappa_h) = dot_condition_v1(
-            &parameters[VALUE_FIRST_WEIGHT][column * m_h..(column + 1) * m_h],
-            parameters[VALUE_FIRST_BIAS][column],
-            state_hidden,
-        );
-        let m_v = value_hidden.len();
-        let (value, kappa_v) = dot_condition_v1(
-            &parameters[VALUE_SECOND_WEIGHT],
-            parameters[VALUE_SECOND_BIAS][0],
-            value_hidden,
-        );
-        let target = targets[group];
-        let enters = is_value_substep_v1(&substeps, substep);
-        let kappa_d = if enters {
-            (value.abs() + target.abs()) / (value - target).abs()
-        } else {
-            0.0
-        };
-        let term = measured.terms.values[substep];
-        let analytic = if enters {
-            2.0 * f64::from(VC) * (value - target) / group_count * value_hidden[column]
-        } else {
-            0.0
-        };
-        let r = (kappa_h * (m_h as f64).sqrt() + kappa_v * (m_v as f64).sqrt() + kappa_d)
-            * UNIT_ROUNDOFF_V1;
-        forward += term.abs() * r;
-        writeln!(
-            out,
-            "WIDE_FD_D1_V1 {header} sample={substep} term={term:.6e} analytic_term={analytic:.6e} \
-             h_j={:.6e} kappa_h={kappa_h:.4e} m_h={m_h} v={value:.6e} kappa_v={kappa_v:.4e} \
-             m_v={m_v} t={target:.4} kappa_d={kappa_d:.4e} r_s={r:.4e}",
-            value_hidden[column],
-        )
-        .unwrap();
-    }
-    let accumulation =
-        measured.terms.sum_abs * (measured.terms.count as f64).sqrt() * UNIT_ROUNDOFF_V1;
-    let e_f = measured.abs_error / (forward + accumulation);
-    writeln!(
-        out,
-        "WIDE_FD_D1_V1 {header} e={:.4} e_f={e_f:.4} e_f<=8={}",
-        measured.e,
-        e_f <= D1_THRESHOLD_V1,
-    )
-    .unwrap();
-}
-
-/// The upstream conditioning D1 can attribute to one `state_encoder.0.bias`
-/// witness. Its term per sample is `(1 - h_j^2) * sum_k W2[k, j] g_k`, with
-/// `g_k` the loss gradient at the state layer's second pre-activation (by
-/// central differences). Printed: the cancellation of `h_j`'s pre-activation
-/// `p` and its amplification `2 |h_j p|` into `1 - h_j^2`, the rounding
-/// sensitivity `2 h_j^2 / (1 - h_j^2)` of `1 - h_j^2`, and the cancellation of
-/// the backward dot product. `g_k`'s own error is not attributed.
-#[allow(clippy::too_many_arguments)]
-fn d1_state_bias_v1(
-    out: &mut impl Write,
-    header: &str,
-    parameters: &[Vec<f64>],
-    hidden: usize,
-    embedding: usize,
-    decisions: &[GradientDecisionV1; 2],
-    targets: &[f64],
-    advantages: &[f64],
-    measured: &MeasuredV1,
-) {
-    let row = measured.witness.index;
-    let substeps = flattened_substeps_v1();
-    assert_eq!(measured.terms.count, substeps.len());
-    let base: Vec<(Vec<f64>, f64)> = substeps
-        .iter()
-        .map(|&(_, decision, _)| {
-            substep_output_v1(parameters, hidden, embedding, &decisions[decision], None)
-        })
-        .collect();
-    let mut forward = 0.0;
-    for (substep, &(_, decision, _)) in substeps.iter().enumerate() {
-        let decision = &decisions[decision];
-        let state_input =
-            &captured_rows_v1(parameters, hidden, embedding, decision, STATE_FIRST_WEIGHT)[0];
-        let m_pre = state_input.len();
-        let (pre, kappa_pre) = dot_condition_v1(
-            &parameters[STATE_FIRST_WEIGHT][row * m_pre..(row + 1) * m_pre],
-            parameters[STATE_FIRST_BIAS][row],
-            state_input,
-        );
-        let h = pre.tanh();
-        let amplification = 2.0 * (h * pre).abs();
-        let kappa_t = 2.0 * h * h / (1.0 - h * h);
-        let mut back = 0.0;
-        let mut back_mass = 0.0;
-        for k in 0..hidden {
-            let loss = |epsilon: f64| {
-                let mut outputs = base.clone();
-                outputs[substep] = substep_output_v1(
-                    parameters,
-                    hidden,
-                    embedding,
-                    decision,
-                    Some(OracleHookV1 {
-                        weight: STATE_SECOND_WEIGHT,
-                        row: 0,
-                        site: OracleSiteV1::PreActivation(k),
-                        epsilon,
-                    }),
-                );
-                loss_from_outputs_v1(&outputs, targets, advantages)
-            };
-            let upstream = (loss(TERM_STEP_V1) - loss(-TERM_STEP_V1)) / (2.0 * TERM_STEP_V1);
-            let contribution = parameters[STATE_SECOND_WEIGHT][k * hidden + row] * upstream;
-            back += contribution;
-            back_mass += contribution.abs();
-        }
-        let kappa_back = back_mass / back.abs();
-        let term = measured.terms.values[substep];
-        let r = (amplification * kappa_pre * (m_pre as f64).sqrt()
-            + kappa_t
-            + kappa_back * (hidden as f64).sqrt())
-            * UNIT_ROUNDOFF_V1;
-        forward += term.abs() * r;
-        writeln!(
-            out,
-            "WIDE_FD_D1_V1 {header} sample={substep} term={term:.6e} analytic_term={:.6e} \
-             h_j={h:.6e} pre={pre:.6e} kappa_pre={kappa_pre:.4e} m_pre={m_pre} \
-             amplification={amplification:.4e} kappa_t={kappa_t:.4e} \
-             kappa_back={kappa_back:.4e} m_back={hidden} r_s={r:.4e}",
-            (1.0 - h * h) * back,
-        )
-        .unwrap();
-    }
-    let accumulation =
-        measured.terms.sum_abs * (measured.terms.count as f64).sqrt() * UNIT_ROUNDOFF_V1;
-    let e_f = measured.abs_error / (forward + accumulation);
-    writeln!(
-        out,
-        "WIDE_FD_D1_V1 {header} e={:.4} e_f(attributed)={e_f:.4} (no pass rule)",
-        measured.e,
-    )
-    .unwrap();
-}
-
-/// rho over every witness of one width and objective, then D1 on the
-/// `value_head.2.weight` witnesses with e above 8 and the attributable
-/// conditioning of the `state_encoder.0.bias` witnesses with e above 8 (and
-/// always wide row 103).
-fn rho_and_d1_dims_v1<D: NetDimsV1>(
+/// rho over every drawn witness of one width and objective (information
+/// only), with the zero-mass witnesses listed separately.
+fn rho_receipt_dims_v1<D: NetDimsV1>(
     label: &str,
     model: &D::Net,
     objective: ObjectiveV1,
@@ -1705,19 +1612,19 @@ fn rho_and_d1_dims_v1<D: NetDimsV1>(
     writeln!(
         out,
         "WIDE_FD_RHO_V1 {objective:?} {label}: witnesses={} max_rho={:.4e} at ({}) e={:.4} \
-         above_{RHO_BOUND_V1:e}={} zero_mass={} zero_mass_max_abs_error={:.4e}",
+         above_{RHO_PRINTED_BOUND_V1:e}={} zero_mass={} zero_mass_max_abs_g_rust={:.4e}",
         measured.len(),
         worst.rho().unwrap(),
         worst.name(),
         worst.e,
         ranked
             .iter()
-            .filter(|measured| measured.rho().unwrap() > RHO_BOUND_V1)
+            .filter(|measured| measured.rho().unwrap() > RHO_PRINTED_BOUND_V1)
             .count(),
         zero_mass.len(),
         zero_mass
             .iter()
-            .map(|measured| measured.abs_error)
+            .map(|measured| measured.witness.rust.abs())
             .fold(0.0, f64::max),
     )
     .unwrap();
@@ -1735,61 +1642,775 @@ fn rho_and_d1_dims_v1<D: NetDimsV1>(
         )
         .unwrap();
     }
-    let wide = !is_net8_dims_v1::<D>();
-    for entry in &measured {
-        let tensor = entry.witness.tensor;
-        let header = format!("{objective:?} {label} ({})", entry.name());
-        if tensor == VALUE_SECOND_WEIGHT && entry.e > D1_THRESHOLD_V1 {
-            d1_value_head_v1(
-                out,
-                &header,
-                &parameters,
-                D::HIDDEN,
-                D::CARD_EMBEDDING,
-                &decisions,
-                &report.targets,
-                entry,
-            );
-        }
-        if tensor == STATE_FIRST_BIAS
-            && (entry.e > D1_THRESHOLD_V1 || (wide && entry.witness.index == D1_STATE_BIAS_ROW_V1))
-        {
-            d1_state_bias_v1(
-                out,
-                &header,
-                &parameters,
-                D::HIDDEN,
-                D::CARD_EMBEDDING,
-                &decisions,
-                &report.targets,
-                &report.advantages,
-                entry,
-            );
-        }
+    for measured in &zero_mass {
+        writeln!(
+            out,
+            "WIDE_FD_RHO_V1 {objective:?} {label} zero_mass witness=({}) g_rust={:.4e}",
+            measured.name(),
+            measured.witness.rust,
+        )
+        .unwrap();
     }
 }
 
 /// Both widths of one objective, written to stderr in one piece so parallel
 /// receipts do not interleave.
-fn rho_and_d1_receipt_v1(objective: ObjectiveV1) {
+fn rho_receipt_v1(objective: ObjectiveV1) {
     let narrow = perturbed_dims_v1::<Net8DimsV1>(narrow_model_v1(), 0xA11C_E5ED);
     let wide = perturbed_dims_v1::<Net8W128DimsV1>(wide_model_v1(), 0xA11C_E5ED);
     let mut out = Vec::new();
-    rho_and_d1_dims_v1::<Net8DimsV1>("net-8", &narrow, objective, &mut out);
-    rho_and_d1_dims_v1::<Net8W128DimsV1>("net-8w128", &wide, objective, &mut out);
+    rho_receipt_dims_v1::<Net8DimsV1>("net-8", &narrow, objective, &mut out);
+    rho_receipt_dims_v1::<Net8W128DimsV1>("net-8w128", &wide, objective, &mut out);
     std::io::stderr().lock().write_all(&out).unwrap();
 }
 
-/// Amendment 5.1-A1 receipt, GAE objective (prints only, never gates).
+/// Amendment 5.1-A1 v2 rho receipt, GAE objective (information only).
 #[test]
-fn wide_fd_rho_and_d1_receipt_gae() {
-    rho_and_d1_receipt_v1(ObjectiveV1::Gae);
+fn wide_fd_rho_receipt_gae() {
+    rho_receipt_v1(ObjectiveV1::Gae);
 }
 
-/// Amendment 5.1-A1 receipt, terminal objective (prints only, never gates).
+/// Amendment 5.1-A1 v2 rho receipt, terminal objective (information only).
 #[test]
-fn wide_fd_rho_and_d1_receipt_terminal() {
-    rho_and_d1_receipt_v1(ObjectiveV1::Terminal);
+fn wide_fd_rho_receipt_terminal() {
+    rho_receipt_v1(ObjectiveV1::Terminal);
+}
+
+/// The step's `linear_backward_into` calls, grouped by the substep whose
+/// reverse pass made them, in batch order. The step visits groups and their
+/// substeps in reverse, and each reverse pass starts at the scorer's second
+/// layer.
+fn captures_by_substep_v1(
+    captures: Vec<LinearBackwardCaptureV1>,
+) -> Vec<Vec<LinearBackwardCaptureV1>> {
+    let mut visits: Vec<Vec<LinearBackwardCaptureV1>> = Vec::new();
+    for capture in captures {
+        if capture.weight_index == SCORER_SECOND_WEIGHT {
+            visits.push(Vec::new());
+        }
+        visits
+            .last_mut()
+            .expect("each reverse pass starts at the scorer")
+            .push(capture);
+    }
+    let mut first_substep = 0;
+    let mut visit_order = Vec::new();
+    let mut starts = Vec::new();
+    for group in GRADIENT_BATCH_V1 {
+        starts.push((first_substep, group.len()));
+        first_substep += group.len();
+    }
+    for &(start, len) in starts.iter().rev() {
+        visit_order.extend((start..start + len).rev());
+    }
+    assert_eq!(visits.len(), first_substep);
+    let mut by_substep: Vec<Option<Vec<LinearBackwardCaptureV1>>> =
+        (0..first_substep).map(|_| None).collect();
+    for (substep, captures) in visit_order.into_iter().zip(visits) {
+        by_substep[substep] = Some(captures);
+    }
+    by_substep.into_iter().map(Option::unwrap).collect()
+}
+
+/// One term `a_s b_s` of a gradient coordinate: the Rust f32 factors from
+/// the step's own backward and the oracle's, the oracle upstream gradient at
+/// each of [`D2_STEPS_V1`].
+struct D2TermV1 {
+    a32: f64,
+    b32: f64,
+    a64: [f64; 2],
+    b64: f64,
+}
+
+/// Every term of `(tensor, index)`, substep then row, the step's captured
+/// factors beside the oracle's.
+#[allow(clippy::too_many_arguments)]
+fn d2_terms_dims_v1<D: NetDimsV1>(
+    parameters: &[Vec<f64>],
+    decisions: &[GradientDecisionV1; 2],
+    targets: &[f64],
+    advantages: &[f64],
+    captures: &[Vec<LinearBackwardCaptureV1>],
+    tensor: usize,
+    index: usize,
+) -> Vec<D2TermV1> {
+    let substeps = flattened_substeps_v1();
+    assert_eq!(captures.len(), substeps.len());
+    let base: Vec<(Vec<f64>, f64)> = substeps
+        .iter()
+        .map(|&(_, decision, _)| {
+            substep_output_v1(
+                parameters,
+                D::HIDDEN,
+                D::CARD_EMBEDDING,
+                &decisions[decision],
+                None,
+            )
+        })
+        .collect();
+    let embedding = tensor == CARD_EMBEDDING;
+    let bias = !embedding && D::PARAMETER_SHAPES[tensor].len() == 1;
+    // The layer whose applications are the terms, the oracle site of each
+    // term's upstream gradient, the element read for `a` (an output of the
+    // layer, or for an embedding element an input), and the input column read
+    // for `b` (none for a bias or an embedding element: b = 1).
+    let (layer, site, element, column, token) = if embedding {
+        let element = OBJECT_FEATURE_DIM_V1 + index % D::CARD_EMBEDDING;
+        (
+            OBJECT_FIRST_WEIGHT,
+            OracleSiteV1::Input(element),
+            element,
+            None,
+            Some(index / D::CARD_EMBEDDING),
+        )
+    } else if bias {
+        (
+            tensor - 1,
+            OracleSiteV1::PreActivation(index),
+            index,
+            None,
+            None,
+        )
+    } else {
+        let input_dim = D::PARAMETER_SHAPES[tensor][1];
+        let output = index / input_dim;
+        (
+            tensor,
+            OracleSiteV1::PreActivation(output),
+            output,
+            Some(index % input_dim),
+            None,
+        )
+    };
+    let mut terms = Vec::new();
+    for (substep, &(_, decision, _)) in substeps.iter().enumerate() {
+        let decision = &decisions[decision];
+        let rows = captured_rows_v1(parameters, D::HIDDEN, D::CARD_EMBEDDING, decision, layer);
+        let calls: Vec<&LinearBackwardCaptureV1> = captures[substep]
+            .iter()
+            .filter(|call| call.weight_index == layer)
+            .collect();
+        assert_eq!(calls.len(), 1, "one backward call per layer and substep");
+        let call = calls[0];
+        assert_eq!(call.rows, rows.len());
+        for (row, input) in rows.iter().enumerate() {
+            if token.is_some_and(|token| decision.object_card_ids[row] as usize != token) {
+                continue;
+            }
+            let (a32, b32) = if embedding {
+                (call.d_input[row * call.input_dim + element], 1.0)
+            } else {
+                (
+                    call.d_output[row * call.output_dim + element],
+                    column.map_or(1.0, |column| call.input[row * call.input_dim + column]),
+                )
+            };
+            let upstream = |step: f64| {
+                let loss = |epsilon: f64| {
+                    let mut outputs = base.clone();
+                    outputs[substep] = substep_output_v1(
+                        parameters,
+                        D::HIDDEN,
+                        D::CARD_EMBEDDING,
+                        decision,
+                        Some(OracleHookV1 {
+                            weight: layer,
+                            row,
+                            site,
+                            epsilon,
+                        }),
+                    );
+                    loss_from_outputs_v1(&outputs, targets, advantages)
+                };
+                (loss(step) - loss(-step)) / (2.0 * step)
+            };
+            terms.push(D2TermV1 {
+                a32: f64::from(a32),
+                b32: f64::from(b32),
+                a64: D2_STEPS_V1.map(upstream),
+                b64: column.map_or(1.0, |column| input[column]),
+            });
+        }
+    }
+    terms
+}
+
+/// The investigated witnesses of one width and objective: `(sets, tensor,
+/// index)`, W2 being every witness above 4 r_n of this cell.
+fn d2_witnesses_v1(report: &FdReportV1, r_n: f64, wide: bool) -> Vec<(String, usize, usize)> {
+    let mut witnesses: Vec<(String, usize, usize)> = Vec::new();
+    let mut add = |set: &str, tensor: usize, index: usize| {
+        match witnesses
+            .iter_mut()
+            .find(|(_, t, i)| (*t, *i) == (tensor, index))
+        {
+            Some((sets, _, _)) => {
+                sets.push('+');
+                sets.push_str(set);
+            }
+            None => witnesses.push((set.to_string(), tensor, index)),
+        }
+    };
+    if wide {
+        add("W1", D2_W1_V1.0, D2_W1_V1.1);
+    }
+    for witness in &report.witness_list {
+        if witness.ratio > FD_NARROW_RATIO_FACTOR_V1 * r_n {
+            add("W2", witness.tensor, witness.index);
+        }
+    }
+    let named: &[(usize, usize)] = if wide {
+        &D2_W3_WIDE_V1
+    } else {
+        &D2_W3_NARROW_V1
+    };
+    for &(tensor, index) in named {
+        add("W3", tensor, index);
+    }
+    witnesses
+}
+
+/// `(g_rust, g_fd)` of one coordinate: the drawn witness's when drawn, or the
+/// step's gradient and the gate's own central difference.
+fn d2_gradients_dims_v1<D: NetDimsV1>(
+    report: &FdReportV1,
+    parameters: &[Vec<f64>],
+    decisions: &[GradientDecisionV1; 2],
+    tensor: usize,
+    index: usize,
+) -> (f64, f64) {
+    if let Some(witness) = report
+        .witness_list
+        .iter()
+        .find(|witness| (witness.tensor, witness.index) == (tensor, index))
+    {
+        return (witness.rust, witness.oracle);
+    }
+    let mut parameters = parameters.to_vec();
+    let original = parameters[tensor][index];
+    let mut loss = |value: f64| {
+        parameters[tensor][index] = value;
+        oracle_loss_v1(
+            &parameters,
+            D::HIDDEN,
+            D::CARD_EMBEDDING,
+            decisions,
+            &report.targets,
+            &report.advantages,
+        )
+    };
+    let numerical =
+        (loss(original + FD_STEP_V1) - loss(original - FD_STEP_V1)) / (2.0 * FD_STEP_V1);
+    (
+        f64::from(report.gradients[tensor].values[index]),
+        numerical,
+    )
+}
+
+/// `gamma_m = m u / (1 - m u)`.
+fn gamma_v1(m: usize) -> f64 {
+    let mu = m as f64 * UNIT_ROUNDOFF_V1;
+    mu / (1.0 - mu)
+}
+
+/// The spacing of f32 values just above `|value|`.
+fn ulp_f32_v1(value: f32) -> f64 {
+    let magnitude = value.abs();
+    f64::from(f32::from_bits(magnitude.to_bits() + 1)) - f64::from(magnitude)
+}
+
+/// `error / allowance`, zero for an exact result.
+fn bound_ratio_v1(error: f64, allowance: f64) -> f64 {
+    if error == 0.0 {
+        0.0
+    } else {
+        error / allowance
+    }
+}
+
+/// The largest error-to-local-bound ratio per `(tensor, kind)`.
+type LocalMaximaV1 = BTreeMap<(usize, &'static str), f64>;
+
+fn note_local_v1(maxima: &mut LocalMaximaV1, tensor: usize, kind: &'static str, ratio: f64) {
+    let maximum = maxima.entry((tensor, kind)).or_insert(0.0);
+    *maximum = maximum.max(ratio);
+}
+
+/// The second layers of the two-layer stacks (scorer and value heads
+/// included); each one's first layer is two tensors before it, with a tanh
+/// between them.
+const SECOND_LAYER_WEIGHTS_V1: [usize; 8] = [
+    OBJECT_SECOND_WEIGHT,
+    EDGE_SECOND_WEIGHT,
+    NODE_SECOND_WEIGHT,
+    STATE_SECOND_WEIGHT,
+    ACTION_REF_SECOND_WEIGHT,
+    ACTION_SECOND_WEIGHT,
+    SCORER_SECOND_WEIGHT,
+    VALUE_SECOND_WEIGHT,
+];
+
+/// Local bounds on one captured backward call: its input gradient (dot
+/// length `output_dim`), and its weight and bias gradient accumulations
+/// (length `rows`, the prior value counted in the mass), against f64 sums of
+/// the captured f32 operands.
+fn backward_local_bounds_v1(call: &LinearBackwardCaptureV1, maxima: &mut LocalMaximaV1) {
+    let (rows, input_dim, output_dim) = (call.rows, call.input_dim, call.output_dim);
+    for row in 0..rows {
+        for column in 0..input_dim {
+            let mut reference = 0.0;
+            let mut mass = 0.0;
+            for output in 0..output_dim {
+                let term = f64::from(call.d_output[row * output_dim + output])
+                    * f64::from(call.weight[output * input_dim + column]);
+                reference += term;
+                mass += term.abs();
+            }
+            let error = (f64::from(call.d_input[row * input_dim + column]) - reference).abs();
+            let ratio = bound_ratio_v1(error, gamma_v1(output_dim) * mass);
+            note_local_v1(maxima, call.weight_index, "backward d_input", ratio);
+        }
+    }
+    for output in 0..output_dim {
+        for column in 0..input_dim {
+            let element = output * input_dim + column;
+            let mut reference = f64::from(call.d_weight_before[element]);
+            let mut mass = reference.abs();
+            for row in 0..rows {
+                let term = f64::from(call.d_output[row * output_dim + output])
+                    * f64::from(call.input[row * input_dim + column]);
+                reference += term;
+                mass += term.abs();
+            }
+            let error = (f64::from(call.d_weight_after[element]) - reference).abs();
+            let ratio = bound_ratio_v1(error, gamma_v1(rows) * mass);
+            note_local_v1(maxima, call.weight_index, "backward d_weight", ratio);
+        }
+        let mut reference = f64::from(call.d_bias_before[output]);
+        let mut mass = reference.abs();
+        for row in 0..rows {
+            let term = f64::from(call.d_output[row * output_dim + output]);
+            reference += term;
+            mass += term.abs();
+        }
+        let error = (f64::from(call.d_bias_after[output]) - reference).abs();
+        let ratio = bound_ratio_v1(error, gamma_v1(rows) * mass);
+        note_local_v1(maxima, call.bias_index, "backward d_bias", ratio);
+    }
+}
+
+/// The tanh-gradient step between a stack's second and first layers: the
+/// first layer's upstream gradient against the f64 product of the second
+/// layer's input gradient and `1 - h^2` at the captured activation, with a
+/// 2 ulp allowance.
+fn tanh_gradient_local_bounds_v1(
+    substep: &[LinearBackwardCaptureV1],
+    maxima: &mut LocalMaximaV1,
+) {
+    for &second_weight in &SECOND_LAYER_WEIGHTS_V1 {
+        let second = substep
+            .iter()
+            .find(|call| call.weight_index == second_weight);
+        let first = substep
+            .iter()
+            .find(|call| call.weight_index == second_weight - 2);
+        let (Some(second), Some(first)) = (second, first) else {
+            continue;
+        };
+        assert_eq!(first.d_output.len(), second.d_input.len());
+        for ((&upstream, &d_input), &activation) in first
+            .d_output
+            .iter()
+            .zip(&second.d_input)
+            .zip(&second.input)
+        {
+            let activation = f64::from(activation);
+            let reference = f64::from(d_input) * (1.0 - activation * activation);
+            let error = (f64::from(upstream) - reference).abs();
+            let ratio = bound_ratio_v1(error, 2.0 * ulp_f32_v1(upstream));
+            note_local_v1(maxima, first.weight_index, "backward tanh gradient", ratio);
+        }
+    }
+}
+
+/// Local bounds on one forward layer application from the tape: each output
+/// against the f64 dot product of its f32 operands (length `input_dim`, the
+/// bias counted in the mass), through tanh with a 2 ulp allowance when the
+/// layer has one.
+#[allow(clippy::too_many_arguments)]
+fn forward_local_bounds_v1(
+    parameters: &[NativeNamedParameterV1],
+    weight_index: usize,
+    input: &[f32],
+    output: &[f32],
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    tanh: bool,
+    maxima: &mut LocalMaximaV1,
+) {
+    let weight = &parameters[weight_index].values;
+    assert_eq!(input.len(), rows * input_dim);
+    assert_eq!(output.len(), rows * output_dim);
+    for row in 0..rows {
+        for index in 0..output_dim {
+            let mut reference = f64::from(parameters[weight_index + 1].values[index]);
+            let mut mass = reference.abs();
+            for column in 0..input_dim {
+                let term = f64::from(weight[index * input_dim + column])
+                    * f64::from(input[row * input_dim + column]);
+                reference += term;
+                mass += term.abs();
+            }
+            let actual = output[row * output_dim + index];
+            let linear = gamma_v1(input_dim) * mass;
+            let (error, allowance) = if tanh {
+                (
+                    (f64::from(actual) - reference.tanh()).abs(),
+                    linear + 2.0 * ulp_f32_v1(actual),
+                )
+            } else {
+                ((f64::from(actual) - reference).abs(), linear)
+            };
+            let ratio = bound_ratio_v1(error, allowance);
+            note_local_v1(maxima, weight_index, "forward", ratio);
+        }
+    }
+}
+
+/// The input a two-layer stack's first (`first`) or second layer reads.
+fn stack_input_v1<'a>(
+    tape: &'a DecisionTapeV1,
+    stack: Option<&TwoLayerTapeV1>,
+    first: usize,
+    weight: usize,
+) -> Option<&'a [f32]> {
+    let stack = stack?;
+    if weight == first {
+        Some(tape.f32_values_v1(stack.input))
+    } else if weight == first + 2 {
+        Some(tape.f32_values_v1(stack.first_output))
+    } else {
+        None
+    }
+}
+
+/// The tape span a backward call of `weight` reads as its input.
+fn tape_input_v1(tape: &DecisionTapeV1, weight: usize) -> Option<&[f32]> {
+    stack_input_v1(tape, Some(&tape.object_encoder), OBJECT_FIRST_WEIGHT, weight)
+        .or_else(|| stack_input_v1(tape, tape.edge_encoder.as_ref(), EDGE_FIRST_WEIGHT, weight))
+        .or_else(|| stack_input_v1(tape, Some(&tape.node_update), NODE_FIRST_WEIGHT, weight))
+        .or_else(|| stack_input_v1(tape, Some(&tape.state_encoder), STATE_FIRST_WEIGHT, weight))
+        .or_else(|| {
+            stack_input_v1(
+                tape,
+                tape.action_ref_encoder.as_ref(),
+                ACTION_REF_FIRST_WEIGHT,
+                weight,
+            )
+        })
+        .or_else(|| stack_input_v1(tape, Some(&tape.action_encoder), ACTION_FIRST_WEIGHT, weight))
+        .or_else(|| match weight {
+            SCORER_FIRST_WEIGHT => Some(tape.f32_values_v1(tape.scorer_input)),
+            SCORER_SECOND_WEIGHT => Some(tape.f32_values_v1(tape.scorer_hidden)),
+            VALUE_FIRST_WEIGHT => Some(tape.f32_values_v1(tape.state_encoder.second_output)),
+            VALUE_SECOND_WEIGHT => Some(tape.f32_values_v1(tape.value_hidden)),
+            _ => None,
+        })
+}
+
+/// Forward local bounds over every layer application of each decision's
+/// tape forward, and whether that tape is bit for bit the one the step's
+/// backward read (every captured call's input against the tape's span).
+fn forward_local_bounds_dims_v1<D: NetDimsV1>(
+    model: &D::Net,
+    decisions: &[GradientDecisionV1; 2],
+    captures: &[Vec<LinearBackwardCaptureV1>],
+    maxima: &mut LocalMaximaV1,
+) -> bool
+where
+    D::Net: RecordingNetV1,
+{
+    let parameters = model.parameter_snapshot_v1();
+    let config = model.feature_transfer_config_v3();
+    let math = NativePolicyValueTrainStateDimsV1::<D>::new_dims_v1(model.clone())
+        .unwrap()
+        .training_math_dims_v1();
+    let tapes: Vec<DecisionTapeV1> = decisions
+        .iter()
+        .map(|decision| {
+            forward_with_tape_dims_v1::<D>(&parameters, config, decision.view_v1(false), math)
+                .unwrap()
+        })
+        .collect();
+    let mut matches = true;
+    for (substep, &(_, decision, _)) in flattened_substeps_v1().iter().enumerate() {
+        for call in &captures[substep] {
+            let span = tape_input_v1(&tapes[decision], call.weight_index)
+                .expect("every backward layer reads a tape span");
+            matches &= span.iter().map(|value| value.to_bits()).eq(call
+                .input
+                .iter()
+                .map(|value| value.to_bits()));
+        }
+    }
+    for tape in &tapes {
+        let stacks = [
+            (OBJECT_FIRST_WEIGHT, Some(&tape.object_encoder)),
+            (EDGE_FIRST_WEIGHT, tape.edge_encoder.as_ref()),
+            (NODE_FIRST_WEIGHT, Some(&tape.node_update)),
+            (STATE_FIRST_WEIGHT, Some(&tape.state_encoder)),
+            (ACTION_REF_FIRST_WEIGHT, tape.action_ref_encoder.as_ref()),
+            (ACTION_FIRST_WEIGHT, Some(&tape.action_encoder)),
+        ];
+        for (first, stack) in stacks {
+            let Some(stack) = stack else {
+                continue;
+            };
+            let first_output = tape.f32_values_v1(stack.first_output);
+            forward_local_bounds_v1(
+                &parameters,
+                first,
+                tape.f32_values_v1(stack.input),
+                first_output,
+                stack.rows,
+                D::PARAMETER_SHAPES[first][1],
+                D::HIDDEN,
+                true,
+                maxima,
+            );
+            forward_local_bounds_v1(
+                &parameters,
+                first + 2,
+                first_output,
+                tape.f32_values_v1(stack.second_output),
+                stack.rows,
+                D::HIDDEN,
+                D::HIDDEN,
+                true,
+                maxima,
+            );
+        }
+        let actions = tape.logits_v1().len();
+        let scorer_hidden = tape.f32_values_v1(tape.scorer_hidden);
+        forward_local_bounds_v1(
+            &parameters,
+            SCORER_FIRST_WEIGHT,
+            tape.f32_values_v1(tape.scorer_input),
+            scorer_hidden,
+            actions,
+            D::SCORER_INPUT,
+            D::HIDDEN,
+            true,
+            maxima,
+        );
+        forward_local_bounds_v1(
+            &parameters,
+            SCORER_SECOND_WEIGHT,
+            scorer_hidden,
+            tape.logits_v1(),
+            actions,
+            D::HIDDEN,
+            1,
+            false,
+            maxima,
+        );
+        let value_hidden = tape.f32_values_v1(tape.value_hidden);
+        forward_local_bounds_v1(
+            &parameters,
+            VALUE_FIRST_WEIGHT,
+            tape.f32_values_v1(tape.state_encoder.second_output),
+            value_hidden,
+            1,
+            D::HIDDEN,
+            D::HIDDEN,
+            true,
+            maxima,
+        );
+        forward_local_bounds_v1(
+            &parameters,
+            VALUE_SECOND_WEIGHT,
+            value_hidden,
+            tape.f32_values_v1(tape.value),
+            1,
+            D::HIDDEN,
+            1,
+            false,
+            maxima,
+        );
+    }
+    matches
+}
+
+/// D2 over one width and objective, printed only (the v3 pass rule is not
+/// yet frozen): per investigated witness the reconstruction (a) and
+/// accumulation (b) checks and the two-step agreement of the oracle's
+/// upstream gradients, then the local bounds of every layer application.
+#[allow(clippy::too_many_arguments)]
+fn d2_dims_v1<D: NetDimsV1>(
+    label: &str,
+    model: &D::Net,
+    objective: ObjectiveV1,
+    report: &FdReportV1,
+    captures: Vec<LinearBackwardCaptureV1>,
+    r_n: f64,
+    out: &mut impl Write,
+) where
+    D::Net: RecordingNetV1,
+{
+    let decisions = gradient_decisions_v1();
+    let parameters = parameters_f64_v1(&model.parameter_snapshot_v1());
+    let captures = captures_by_substep_v1(captures);
+    let wide = !is_net8_dims_v1::<D>();
+    for (sets, tensor, index) in d2_witnesses_v1(report, r_n, wide) {
+        let (g_rust, g_fd) =
+            d2_gradients_dims_v1::<D>(report, &parameters, &decisions, tensor, index);
+        let terms = d2_terms_dims_v1::<D>(
+            &parameters,
+            &decisions,
+            &report.targets,
+            &report.advantages,
+            &captures,
+            tensor,
+            index,
+        );
+        let total = terms.len();
+        // Only loss-connected terms: a term with a structurally zero upstream
+        // gradient (the value branch of a group's later substeps) is dropped.
+        let connected: Vec<&D2TermV1> = terms
+            .iter()
+            .filter(|term| term.a32 != 0.0 || term.a64.iter().any(|a| *a != 0.0))
+            .collect();
+        let n = connected.len() as f64;
+        let mut sum64 = 0.0;
+        let mut mass64 = 0.0;
+        let mut sum32 = 0.0;
+        let mut mass32 = 0.0;
+        let mut max_rel_a = 0.0f64;
+        let mut max_rel_b = 0.0f64;
+        let mut max_step_disagreement = 0.0f64;
+        for term in &connected {
+            let a64 = term.a64[1];
+            let p64 = a64 * term.b64;
+            let p32 = term.a32 * term.b32;
+            sum64 += p64;
+            mass64 += p64.abs();
+            sum32 += p32;
+            mass32 += p32.abs();
+            if a64 != 0.0 {
+                max_rel_a = max_rel_a.max((term.a32 - a64).abs() / a64.abs());
+            }
+            if term.b64 != 0.0 {
+                max_rel_b = max_rel_b.max((term.b32 - term.b64).abs() / term.b64.abs());
+            }
+            max_step_disagreement =
+                max_step_disagreement.max((term.a64[0] - a64).abs() / a64.abs());
+        }
+        let reconstruction = (sum64 - g_fd).abs();
+        let reconstruction_bound = D2_RECONSTRUCTION_V1 * mass64;
+        let accumulation = (g_rust - sum32).abs();
+        let accumulation_bound = 2.0 * n * UNIT_ROUNDOFF_V1 * mass32;
+        writeln!(
+            out,
+            "WIDE_FD_D2_V1 {objective:?} {label} {} [{index}] sets={sets} n={n} terms={total} \
+             g_rust={g_rust:.10e} g_fd={g_fd:.10e} sum64={sum64:.10e} sum32={sum32:.10e} \
+             (a) {reconstruction:.4e}<={reconstruction_bound:.4e} {} \
+             (b) {accumulation:.4e}<={accumulation_bound:.4e} {} \
+             steps max_rel={max_step_disagreement:.4e}<={D2_STEP_AGREEMENT_V1:e} {} \
+             max_rel_a={max_rel_a:.4e} max_rel_b={max_rel_b:.4e}",
+            EXPECTED_PARAMETER_NAMES[tensor],
+            reconstruction <= reconstruction_bound,
+            accumulation <= accumulation_bound,
+            max_step_disagreement <= D2_STEP_AGREEMENT_V1,
+        )
+        .unwrap();
+    }
+    let mut maxima = LocalMaximaV1::new();
+    for substep in &captures {
+        for call in substep {
+            backward_local_bounds_v1(call, &mut maxima);
+        }
+        tanh_gradient_local_bounds_v1(substep, &mut maxima);
+    }
+    let tape_matches = forward_local_bounds_dims_v1::<D>(model, &decisions, &captures, &mut maxima);
+    writeln!(
+        out,
+        "WIDE_FD_D2_LOCAL_V1 {objective:?} {label} tape_matches_step={tape_matches}"
+    )
+    .unwrap();
+    for ((tensor, kind), ratio) in &maxima {
+        writeln!(
+            out,
+            "WIDE_FD_D2_LOCAL_V1 {objective:?} {label} {} {kind} max_ratio={ratio:.4e}",
+            EXPECTED_PARAMETER_NAMES[*tensor]
+        )
+        .unwrap();
+    }
+}
+
+/// D2 for both widths of one objective, the step run under the backward
+/// capture.
+fn d2_receipt_v1(objective: ObjectiveV1) {
+    let narrow = perturbed_dims_v1::<Net8DimsV1>(narrow_model_v1(), 0xA11C_E5ED);
+    let wide = perturbed_dims_v1::<Net8W128DimsV1>(wide_model_v1(), 0xA11C_E5ED);
+    let (narrow_report, narrow_captures) = capture_linear_backward_for_test_v1(|| {
+        fd_check_dims_v1::<Net8DimsV1>(&narrow, objective)
+    });
+    let (wide_report, wide_captures) = capture_linear_backward_for_test_v1(|| {
+        fd_check_dims_v1::<Net8W128DimsV1>(&wide, objective)
+    });
+    let r_n = narrow_report.max_ratio;
+    let mut out = Vec::new();
+    d2_dims_v1::<Net8DimsV1>(
+        "net-8",
+        &narrow,
+        objective,
+        &narrow_report,
+        narrow_captures,
+        r_n,
+        &mut out,
+    );
+    d2_dims_v1::<Net8W128DimsV1>(
+        "net-8w128",
+        &wide,
+        objective,
+        &wide_report,
+        wide_captures,
+        r_n,
+        &mut out,
+    );
+    std::io::stderr().lock().write_all(&out).unwrap();
+}
+
+/// Amendment 5.1-A1 D2, GAE objective (prints only until v3).
+#[test]
+#[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
+fn wide_fd_d2_attribution_gae() {
+    d2_receipt_v1(ObjectiveV1::Gae);
+}
+
+/// Amendment 5.1-A1 D2, terminal objective (prints only until v3).
+#[test]
+#[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
+fn wide_fd_d2_attribution_terminal() {
+    d2_receipt_v1(ObjectiveV1::Terminal);
+}
+
+/// The input rows one weight tensor sees in one decision's oracle forward.
+fn captured_rows_v1(
+    parameters: &[Vec<f64>],
+    hidden: usize,
+    embedding: usize,
+    decision: &GradientDecisionV1,
+    weight: usize,
+) -> Vec<Vec<f64>> {
+    let mut run = OracleRunV1 {
+        parameters,
+        hook: None,
+        capture: Some((weight, Vec::new())),
+    };
+    oracle_forward_run_v1(&mut run, hidden, embedding, &decision.view_v1(false));
+    run.capture.take().unwrap().1
 }
 
 // ---------------------------------------------------------------------------
