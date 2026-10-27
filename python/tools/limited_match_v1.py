@@ -17,6 +17,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -230,10 +231,11 @@ def smoke(binary: Path) -> dict:
 DRAFTZERO_SAMPLE = REPO_ROOT / "data/limited/draftzero_sample_v1"
 
 
-def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4) -> dict:
+def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4, game_timeout_s: float = 60.0) -> dict:
     """DraftZero's 80 sample decks: playable decks per session, then `pairs` random rules-only games on each of
-    the train and eval splits with every executable card admitted. A halted game counts against every non-Full card in its two
-    decks, so a card that appears only in natural games is a candidate for the admission list."""
+    the train and eval splits with every executable card admitted. Each game runs in its own process; one that
+    passes `game_timeout_s` is killed and counted as a hang. A halted or hung game counts against every
+    non-Full card in its two decks, so a card that appears only in natural games is an admission candidate."""
     decks, pool = DRAFTZERO_SAMPLE / "decks", DRAFTZERO_SAMPLE / "pool.tsv"
     report: dict = {"coverage": {}}
     non_full: set[str] = set()
@@ -244,30 +246,51 @@ def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4) -
         if session == "prepared":
             non_full = set(cov["unsupported"])
     kernel = MtgKernel(binary, decks, pool, session="rules-only-all", max_decisions=6000)
-    games: list[dict] = []
-    wall = 0.0
+    # A zero decision cap stops at the first decision: it only reads a pair's deal.
+    dealer = MtgKernel(binary, decks, pool, session="rules-only-all", max_decisions=0)
+    started = time.monotonic()
+
+    def one(job: tuple[str, int, Path]) -> dict:
+        split, pair, tmp = job
+        out = tmp / f"{split}-{pair}"
+        try:
+            row = kernel.play("random", "random", pairs=1, seed=seed, out_dir=out, split=split, first_pair=pair,
+                              workers=1, single=True, timeout_s=game_timeout_s).games[0]
+        except subprocess.TimeoutExpired:
+            deal = dealer.play("random", "random", pairs=1, seed=seed, out_dir=out / "deal", split=split,
+                               first_pair=pair, workers=1, single=True).games[0]
+            row = {"pair": pair, "decks": deal["decks"], "result": "hang", "decisions": 0}
+        return {**row, "split": split}
+
     with tempfile.TemporaryDirectory(prefix="mkdz-") as tmp:
-        for split in ("train", "eval"):
-            result = kernel.play("random", "random", pairs=pairs, seed=seed, out_dir=Path(tmp) / split,
-                                 split=split, workers=workers, single=True)
-            games += result.games
-            wall += result.summary["wall_s"]
+        jobs = [(split, pair, Path(tmp)) for split in ("train", "eval") for pair in range(pairs)]
+        with ThreadPoolExecutor(max(1, workers)) as pool_ex:
+            games = list(pool_ex.map(one, jobs))
+    wall = time.monotonic() - started
     contents = {f.stem: {c["name"] for c in json.loads(f.read_text())["cards"]} for f in decks.glob("*.json")}
     seen: dict[str, list[int]] = {}
     for g in games:
-        halted = g["result"] == "error"
+        halted = g["result"] in ("error", "hang")
         for name in set().union(*(contents[d] for d in g["decks"])) & non_full:
             tally = seen.setdefault(name, [0, 0])
             tally[0] += 1
             tally[1] += halted
     decisions = sum(g.get("decisions", 0) for g in games)
-    report["play"] = {"games": len(games), "results": {r: sum(g["result"] == r for g in games) for r in sorted(RESULTS)},
-                      "decisions": decisions, "wall_s": wall,
+    report["play"] = {"games": len(games),
+                      "results": {r: sum(g["result"] == r for g in games) for r in sorted(RESULTS | {"hang"})},
+                      "decisions": decisions, "wall_s": wall, "game_timeout_s": game_timeout_s,
                       "decisions_per_s": decisions / wall if wall else 0,
                       "games_per_hour": len(games) / wall * 3600 if wall else 0,
-                      "errors": sorted({g.get("error", "")[:200] for g in games if g["result"] == "error"})}
+                      "errors": sorted({g.get("error", "")[:200] for g in games if g["result"] == "error"}),
+                      "hangs": [{"split": g["split"], "pair": g["pair"], "decks": g["decks"]}
+                                for g in games if g["result"] == "hang"]}
+    # Games whose decks hold only Full cards: their halts are engine faults no admission can cause.
+    full_only = [g for g in games if not set().union(*(contents[d] for d in g["decks"])) & non_full]
+    report["full_only_baseline"] = {"games": len(full_only),
+                                    "halted_games": sum(g["result"] in ("error", "hang") for g in full_only)}
     report["unplayed_non_full"] = sorted(non_full - set(seen))
     report["partial_cards"] = {name: {"games": n, "halted_games": h} for name, (n, h) in sorted(seen.items())}
+    report["games"] = [[g["split"], g["pair"], *g["decks"], g["result"], g.get("error", "")[:120]] for g in games]
     report["admission_candidates"] = sorted(name for name, (n, h) in seen.items() if n and not h)
     return report
 
@@ -284,12 +307,13 @@ def main(argv: list[str] | None = None) -> int:
     dz.add_argument("--pairs", type=int, default=200)
     dz.add_argument("--seed", type=int, default=1)
     dz.add_argument("--workers", type=int, default=4)
+    dz.add_argument("--game-timeout", type=float, default=60.0)
     args = parser.parse_args(argv)
     if args.command == "fixture-pool":
         decks, pool = write_fixture_pool(args.out)
         print(json.dumps({"decks": str(decks), "pool": str(pool)}))
     elif args.command == "draftzero":
-        print(json.dumps(draftzero(args.binary, args.pairs, args.seed, args.workers), indent=1))
+        print(json.dumps(draftzero(args.binary, args.pairs, args.seed, args.workers, args.game_timeout), indent=1))
     else:
         print(json.dumps(smoke(args.binary), indent=1))
     return 0

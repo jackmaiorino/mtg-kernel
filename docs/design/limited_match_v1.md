@@ -94,6 +94,14 @@ gorge's two line formats, which `draftzero.engine.Gorge.coverage()` parses.
 command runs coverage, a random match and a fair-search match on the two original fixture decks
 and replays each with another worker count; CI runs it in the Limited V5 group.
 
+Its `draftzero` command plays DraftZero's 80 sample decks (`data/limited/draftzero_sample_v1`):
+coverage per session, then random rules-only games on both splits, one process per game. A game
+that passes `--game-timeout` (default 60 s) is killed and reported as a `hang`, with its deal read
+back by replaying the pair with a zero decision cap. Halted and hung games count against every
+non-Full card in their decks; `full_only_baseline` counts the halts in games with only Full cards,
+which no admission can cause. Setting `MTG_LIMITED_MATCH_TRACE` makes every step print its chosen
+action to stderr first, so the last line of a hung game names the step that never returned.
+
 ## Throughput (first measurement)
 
 CI smoke on a hosted 4-vCPU Ubuntu runner, two workers, the two fixture decks, release build

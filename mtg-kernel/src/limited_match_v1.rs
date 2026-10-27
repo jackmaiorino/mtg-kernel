@@ -660,6 +660,13 @@ pub struct GameResultV1 {
     pub first_rollout_error: Option<String>,
 }
 
+/// `MTG_LIMITED_MATCH_TRACE` set: every step of `play_game_v1` prints its
+/// chosen action to stderr first.
+fn trace_enabled_v1() -> bool {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var_os("MTG_LIMITED_MATCH_TRACE").is_some())
+}
+
 /// One game: `decks[seat]`, `policies[seat]`, `beliefs[seat]` (the corpus a
 /// `closedlist` seat samples its opponent from).
 pub fn play_game_v1(
@@ -777,6 +784,20 @@ pub fn play_game_v1(
                 }
             }
         };
+        if trace_enabled_v1() {
+            // The last line before a stall names the step that never returned.
+            let action = session
+                .diagnostic_current_action_semantics()
+                .and_then(|menu| menu.get(index as usize).map(|a| format!("{a:?}")))
+                .unwrap_or_default();
+            eprintln!(
+                "trace turn {} decision {} action {index}/{}: {}",
+                result.turns,
+                result.decisions,
+                decision.legal_action_count,
+                action.chars().take(600).collect::<String>()
+            );
+        }
         let stepped = if limits.full_validation {
             session.step(decision.episode_id, decision.step, index)
         } else {
