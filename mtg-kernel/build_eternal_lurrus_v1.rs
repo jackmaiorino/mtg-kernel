@@ -90,7 +90,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Aether Spellbomb" => &AETHER_SPELLBOMB,
         "Soul-Guide Lantern" => &SOUL_GUIDE_LANTERN,
         "Psychic Frog" => &PSYCHIC_FROG,
-        _ => &[],
+        _ => super::build_eternal_e5b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -162,7 +162,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::AnyPlayer",
             "crate::eternal_lurrus_v1::flame_of_anor_draw",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e5b_v1::special_for(name),
     })
 }
 
@@ -198,7 +198,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Lurrus of the Dream-Den" => &["Keywords::LIFELINK"],
         "Snapcaster Mage" => &["Keywords::FLASH"],
         "Human Knight Token" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
-        _ => &[],
+        _ => super::build_eternal_e5b_v1::keywords_for(name),
     }
 }
 
@@ -238,7 +238,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Flame of Anor" => "modes:choose_one_or_two_if_controls_wizard_as_cast",
         "Prismatic Ending" => "converge:colors_spent_bound_target_mana_value",
         "Brain Freeze" => "cast:storm:copies_may_choose_new_targets",
-        _ => "none",
+        _ => super::build_eternal_e5b_v1::trigger_recipe_for(name),
     }
 }
 

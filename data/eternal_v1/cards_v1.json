@@ -4607,6 +4607,311 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/HumanKnightToken.java",
    "is_token": true
+  },
+  {
+   "name": "Plateau",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Mountain",
+    "Plains"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R",
+    "W"
+   ],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-sewer-cam-combo",
+    "legacy-mardu-energy"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/Plateau.java"
+  },
+  {
+   "name": "Savannah",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Forest",
+    "Plains"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "G",
+    "W"
+   ],
+   "decks": [
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-selesnya-depths",
+    "legacy-bant-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Savannah.java"
+  },
+  {
+   "name": "Scrubland",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Plains",
+    "Swamp"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "B"
+   ],
+   "decks": [
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-mardu-energy",
+    "legacy-esper-control",
+    "legacy-death-and-taxes-60-card",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Scrubland.java"
+  },
+  {
+   "name": "Snow-Covered Plains",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Plains"
+   ],
+   "supertypes": [
+    "Basic",
+    "Snow"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W"
+   ],
+   "decks": [
+    "pauper-familiars",
+    "pauper-jeskai-ephemerate",
+    "pauper-azorius-faeries",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SnowCoveredPlains.java"
+  },
+  {
+   "name": "Arid Mesa",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-sewer-cam-combo",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-stiflenought",
+    "legacy-mardu-energy",
+    "legacy-death-and-taxes-60-card",
+    "vintage-abzan-initiative",
+    "vintage-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AridMesa.java"
+  },
+  {
+   "name": "Windswept Heath",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-selesnya-depths",
+    "legacy-elves",
+    "legacy-azorius-tempo",
+    "legacy-cradle-control",
+    "legacy-nic-fit",
+    "legacy-bant-control",
+    "vintage-fastbond-lands",
+    "vintage-abzan-initiative",
+    "vintage-goblins"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pay_life_cost",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WindsweptHeath.java"
+  },
+  {
+   "name": "Goblin Bombardment",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-mardu-energy"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinBombardment.java"
+  },
+  {
+   "name": "Up the Beanstalk",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beanstalk-control-non-yorion"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "cast_trigger",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UpTheBeanstalk.java"
+  },
+  {
+   "name": "Stifle",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-azorius-tempo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "counter_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Stifle.java"
   }
  ]
 }

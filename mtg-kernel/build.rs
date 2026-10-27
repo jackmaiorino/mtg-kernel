@@ -21,6 +21,7 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+mod build_eternal_e5b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;

@@ -828,6 +828,9 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        EternalOpV1::E5bV1(op) => {
+            crate::eternal_legacy_e5b_v1::drive(state, continuation, op, path)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -851,7 +854,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::RoomAbilityV1 { .. }
             | EternalOpV1::AcererakEntersV1
             | EternalOpV1::AcererakAttacksV1
-    )
+    ) || matches!(op, EternalOpV1::E5bV1(op) if op.contains_player_choice())
 }
 
 /// The cards (not tokens or copies) in `player`'s graveyard, in order.
