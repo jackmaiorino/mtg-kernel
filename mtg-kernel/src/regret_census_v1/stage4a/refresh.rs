@@ -23,7 +23,7 @@
 //! anchor, never refreshed) is the parity arm that must reproduce the bank's
 //! S guide.
 
-use super::arms::{Limits, Roles};
+use super::arms::{Limits, Roles, Selection};
 use super::bank::{
     act_plain, bank_roles, err, guide_ctx, guide_record, outcome, plain_logged, source_session,
     walk, BankShared, SourceSpec,
@@ -512,6 +512,9 @@ impl Searches<'_> {
             "transitions":sel.transitions,"completed_natural":sel.completed,"attempted":sel.attempted,
             "nonnatural":sel.nonnatural,"incomplete":sel.incomplete,"faults":sel.faults,
             "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()}));
+        if let Some(r) = self.records.last_mut() {
+            add_rejections(r, &sel);
+        }
         if !diag.key_memo.is_null() {
             if let Some(r) = self.records.last_mut() {
                 r["key_memo"] = diag.key_memo;
@@ -533,6 +536,14 @@ impl Searches<'_> {
         }
         Ok((!failed).then_some(tree))
     }
+}
+
+/// Recording only (mtg-kernel#380): the search's sampler counts with their
+/// rejection kinds, and its longest run of consecutive rejections (the
+/// `MAX_CONSECUTIVE_REJECTIONS` stop fires when a run reaches that limit).
+fn add_rejections(record: &mut Value, sel: &Selection) {
+    record["sampler"] = sel.sampler.json();
+    record["longest_rejection_run"] = json!(sel.rejection_run.longest);
 }
 
 /// One arm's guide from the anchor. Returns the arm record.
@@ -1321,6 +1332,49 @@ pub(super) fn source_arms(
 pub(super) mod tests {
     use super::super::tree::canon;
     use super::*;
+
+    #[test]
+    fn search_records_carry_rejection_kinds_and_longest_run() {
+        let mut sel = Selection::default();
+        for (ok, kind) in [
+            (false, "SampleBoundaryChanged"),
+            (false, "SampleBoundaryChanged"),
+            (true, ""),
+            (false, "DeckPrior"),
+            (false, "SampleBoundaryChanged"),
+            (false, "SampleBoundaryChanged"),
+            (true, ""),
+        ] {
+            if ok {
+                sel.sampler.ok += 1;
+                sel.rejection_run.accept();
+            } else {
+                sel.sampler.rejected += 1;
+                *sel.sampler.kinds.entry(kind.into()).or_default() += 1;
+                sel.rejection_run.reject();
+            }
+        }
+        assert_eq!(sel.rejection_run.current, 0);
+        assert_eq!(sel.rejection_run.longest, 3);
+        let before = json!({"search":2,"step":49,"attempted":7});
+        let mut record = before.clone();
+        add_rejections(&mut record, &sel);
+        assert_eq!(
+            record["sampler"],
+            json!({"ok":2,"rejected":5,"kinds":{"DeckPrior":1,"SampleBoundaryChanged":4}})
+        );
+        assert_eq!(record["longest_rejection_run"], 3);
+        // Only the two fields are added.
+        let fields = record.as_object_mut().unwrap();
+        fields.remove("sampler");
+        fields.remove("longest_rejection_run");
+        assert_eq!(record, before);
+        // A search with no rejections records an empty run.
+        let mut clean = json!({});
+        add_rejections(&mut clean, &Selection::default());
+        assert_eq!(clean["longest_rejection_run"], 0);
+        assert_eq!(clean["sampler"], json!({"ok":0,"rejected":0,"kinds":{}}));
+    }
 
     #[test]
     fn supported_actions_execute_without_refresh() {
