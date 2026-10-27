@@ -1240,8 +1240,8 @@ fn contribution_terms_v1(
 /// accumulation roundoff, `abs error / (sum |c_i| * 2^-24 * sqrt(n))`.
 fn roundoff_v1(terms: &TermsV1, rust: f64, oracle: f64) -> (f64, f64) {
     let kappa = terms.sum_abs / oracle.abs();
-    let normalized = (rust - oracle).abs()
-        / (terms.sum_abs * 2f64.powi(-24) * (terms.count as f64).sqrt());
+    let normalized =
+        (rust - oracle).abs() / (terms.sum_abs * 2f64.powi(-24) * (terms.count as f64).sqrt());
     (kappa, normalized)
 }
 
