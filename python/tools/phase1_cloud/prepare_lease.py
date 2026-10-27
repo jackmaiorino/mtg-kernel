@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
 from lease_guard import validate
-from external_guard import remember_in, valid_id
+from external_guard import handoff_in, valid_id
 from runtime_observation import IMAGE_REFERENCE
 
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
@@ -39,6 +39,7 @@ KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
 PODS_URL = 'https://rest.runpod.io/v1/pods'
 USER_AGENT = 'Mozilla/5.0 g115-lease-execute/1'
 CREATED_SCHEMA = 'phase1-cloud-pod-created/v1'
+MIN_RELEASE_SECONDS = 120   # a creator's own release loop always gets time for two spaced absences
 FAILURE_SCHEMA = 'phase1-cloud-pod-create-failure/v1'
 # A pinned reference is "<repo>@sha256:<64 hex>"; a mutable tag (e.g. the
 # "python:3.12-slim-bookworm" historical default) never matches this shape.
@@ -243,7 +244,7 @@ def _require_execute_key():
 
 
 def execute_create(template, output, funding_snapshot_path, volume_id, api=None, now=None,
-                   allow_mutable_image=False):
+                   allow_mutable_image=False, release=None):
     """Live Pod-create call. Reachable only when RUNPOD_API_KEY is set, a
     funding snapshot no older than thirty minutes is supplied, and the
     pre-created --volume-id matches what the saved template already targets.
@@ -252,6 +253,10 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
 
     On a non-2xx or malformed response, records a sanitized failure receipt
     (never the raw body or the key) and re-raises so the caller exits nonzero.
+    A returned Pod ID is handed off to the external guard first (known-pods,
+    read back); if that fails this process deletes the Pod and verifies its
+    absence before raising. `release` passes provider/pods/clock/sleep fakes
+    to that release loop in tests.
     """
     now = time.time() if now is None else now
     key = _require_execute_key()
@@ -288,24 +293,34 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     # refusal as a create that may have allocated a Pod no receipt names.
     write(output / 'create-attempt.json', {'epoch': now, 'exact_name': body.get('name')})
     api = api or Provider(key)
-    pod_id = None
+    returned = None; error = None
     try:
-        raw = api.create(body)
-        # I1: a valid raw ID (a string, never coerced) is retained for the external
-        # guard before sanitization or any receipt write can fail.
-        if isinstance(raw, dict) and raw.get('name') == body.get('name') and valid_id(raw.get('id')):
-            pod_id = raw['id']
-            try:
-                remember_in(output / 'known-pods', pod_id, 'receipt', now)
-            except Exception:  # noqa: BLE001 - the receipts below also carry the ID
-                pass
-        sanitized = sanitize_pod(raw)
-    except Exception as error:
-        # Only an explicit provider refusal (HTTP 4xx) proves no Pod exists. A
-        # timeout, 5xx, transport error or malformed response is ambiguous: the
-        # external guard keeps deleting any Pod with the lease's name and never
+        returned = api.create(body)
+    except Exception as post_error:  # noqa: BLE001 - classified below
+        error = post_error
+    # I1: the raw POST ID is validated as a string (never coerced, whatever the
+    # name or other fields) and handed off before anything else is examined.
+    pod_id = returned.get('id') if isinstance(returned, dict) and valid_id(returned.get('id')) else None
+    if pod_id is not None:
+        try:
+            handoff_in(output / 'known-pods', pod_id, 'receipt', now)
+        except Exception:  # noqa: BLE001
+            # I4: without a durable handoff this process releases the Pod itself.
+            _release_or_fail(key, pod_id, body.get('name'), output, release)
+            raise RuntimeError('create handoff failed; the Pod was deleted and verified absent') from None
+    sanitized = None
+    if error is None:
+        try:
+            sanitized = sanitize_pod(returned)
+        except Exception as sanitize_error:  # noqa: BLE001
+            error = sanitize_error
+    if error is not None:
+        # Only an explicit provider refusal (HTTP 4xx, no ID returned) proves no Pod
+        # exists. A timeout, 5xx, transport error or malformed response is ambiguous:
+        # the external guard keeps deleting any Pod with the lease's name and never
         # completes until an operator writes ambiguous-resolved-by-operator.json.
-        definite = isinstance(error, RuntimeError) and re.fullmatch(r'provider HTTP 4\d\d', str(error)) is not None
+        definite = (pod_id is None and isinstance(error, RuntimeError)
+                    and re.fullmatch(r'provider HTTP 4\d\d', str(error)) is not None)
         for path, value in ((output / 'create-pod-failure.json', {'schema': FAILURE_SCHEMA,
                              'failed_epoch': now, 'error_type': type(error).__name__,
                              'error': str(error), 'definite': definite, 'pod_id': pod_id}),
@@ -317,18 +332,31 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
                     write(path, value, replace=True)
                 except Exception:  # noqa: BLE001 - create-attempt.json already blocks guard completion
                     pass
-        raise
+        raise error
     result = {'schema': CREATED_SCHEMA, 'created_epoch': now, **sanitized}
+    # The ID is already handed off (known-pods); a failed receipt write still fails the create.
+    write(output / 'created-pod.json', result, replace=True)
+    return result
+
+
+def _release_or_fail(key, pod_id, name, output, release=None):
+    """I4: DELETE the Pod and verify its absence before this creator exits; fail loudly otherwise."""
+    from external_guard import release_unhanded
+    options = dict(release or {})
+    clock = options.get('clock', time.time)
     try:
-        write(output / 'created-pod.json', result, replace=True)
-    except Exception:
-        try:   # the ID stays recoverable for the guard even when the receipt cannot be written
-            write(output / 'create-ambiguous.json', {'epoch': now, 'exact_name': body.get('name'),
-                  'error_type': 'ReceiptWriteFailed', 'pod_id': pod_id}, replace=True)
+        deadline = float(read(Path(output) / 'lease.json')['deadline_epoch'])
+    except Exception:  # noqa: BLE001
+        deadline = 0.0
+    deadline = max(deadline, clock() + MIN_RELEASE_SECONDS)
+    pending = release_unhanded(key, [pod_id], name, deadline, **options)
+    if pending:
+        try:
+            write(Path(output) / 'ALERT-pod-not-released.json', {'pod_ids': pending, 'reason': 'handoff_failed'},
+                  replace=True)
         except Exception:  # noqa: BLE001
             pass
-        raise
-    return result
+        raise RuntimeError('ALERT: Pod ' + pod_id + ' could not be handed off or verified released')
 
 
 def main():

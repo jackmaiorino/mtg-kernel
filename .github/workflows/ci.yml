@@ -68,9 +68,10 @@ jobs:
             [ -z "$f" ] && continue
             # Python jobs care about python sources/tools/tests, the data
             # artifacts they validate, workflow changes, and the pinned
-            # interpreter/lock config.
+            # interpreter/lock config. The lease adapter's tests run in the
+            # Python job's lease guard step.
             case "$f" in
-              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version)
+              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version|tools/search_sharing_allocation/*)
                 python_relevant=true ;;
             esac
             # Rust jobs run unless a file is provably outside the crate's

@@ -408,8 +408,8 @@ class ReviewR1CreateTests(Base):
             return pod("A")
         self.assertEqual(self.create(root, world, poster)["id"], "A")
         self.assertEqual(world.deletes, ["B"])
-        self.assertEqual(lease.external_guard.known_pods(root)["B"]["role"], "duplicate")
-        self.assertEqual(lease.external_guard.known_pods(root)["A"]["role"], "receipt")
+        self.assertEqual(lease.external_guard.known_pods(root)["B"], "duplicate")
+        self.assertEqual(lease.external_guard.known_pods(root)["A"], "receipt")
 
     def test_post_creation_diagnostics_never_gate_the_delete(self):
         failing = {"post-census-error.json", "duplicates-deleted.json", "created-pod.json",
@@ -513,6 +513,76 @@ class InvariantTests(Base):
         clock = FakeClock(1000.0)
         self.assertFalse(lease.verify_absent(root, key="k", pods=world.list, provider=world.provider,
                                              clock=clock, sleep=clock.advance))
+
+
+class ResponsibilityTests(Base):
+    """Round 4: I1 retains the raw POST ID and each valid census entry first; I4 keeps responsibility."""
+
+    def create_with(self, root, world, poster, failing_ids=(), **options):
+        real = lease.external_guard.handoff
+
+        def handoff(root, pod_id, role, epoch):
+            if pod_id in failing_ids:
+                raise OSError("read-only store")
+            return real(root, pod_id, role, epoch)
+        prepared = lease.read(root / "lease/lease.json")
+        clock = FakeClock(prepared["created_epoch"] + 10)
+
+        def slow_poster(body):   # the POST returns near the deadline, which bounds any release loop
+            result = poster(body); clock.t = prepared["deadline_epoch"] - 60
+            return result
+        with patch.object(lease.external_guard, "handoff", side_effect=handoff):
+            return lease.create(root, True, key="k", pods=world.list, poster=slow_poster, funds=funds_ok,
+                                provider=world.provider, clock=clock, sleep=clock.sleep, **options)
+
+    def two(self, world):
+        def poster(body):
+            world.pods["A"] = pod("A"); world.pods["B"] = pod("B"); return pod("A")
+        return poster
+
+    def test_unhanded_duplicate_is_deleted_and_verified_by_the_creator(self):
+        # finding 2: B's retention fails; the creator releases B itself before returning
+        root = self.control(); world = World()
+        self.assertEqual(self.create_with(root, world, self.two(world), failing_ids=("B",))["id"], "A")
+        self.assertNotIn("B", world.pods)
+        self.assertNotIn("B", lease.external_guard.known_pods(root))
+        self.assertIn("A", world.pods)
+
+    def test_unhanded_duplicate_that_cannot_be_released_fails_loudly(self):
+        root = self.control(); world = World(); world.delete_failures = -1
+        with self.assertRaisesRegex(RuntimeError, "ALERT"):
+            self.create_with(root, world, self.two(world), failing_ids=("B",))
+        self.assertEqual(lease.read(root / "ALERT-pod-not-released.json")["pod_ids"], ["B"])
+
+    def test_unhanded_primary_is_deleted_and_verified_before_the_create_fails(self):
+        # finding 3: no durable handoff for the only ID: the creator deletes it and verifies absence
+        root = self.control(); world = World()
+
+        def poster(body):
+            world.pods["A"] = pod("A"); return pod("A")
+        with self.assertRaisesRegex(RuntimeError, "deleted and verified absent"):
+            self.create_with(root, world, poster, failing_ids=("A",))
+        self.assertNotIn("A", world.pods)
+
+    def test_mixed_validity_census_keeps_each_valid_entry(self):
+        # finding 4: a malformed entry never discards valid duplicate B
+        root = self.control(); world = World()
+        world.census = lambda current: current + ([{"name": NAME, "id": None}] if current else [])
+        self.assertEqual(self.create_with(root, world, self.two(world))["id"], "A")
+        self.assertEqual(lease.external_guard.known_pods(root)["B"], "duplicate")
+        self.assertNotIn("B", world.pods)
+
+    def test_post_id_is_retained_whatever_the_name(self):
+        # finding 5: {"id": "A"} with no name is retained, then rejected and deleted
+        root = self.control(); world = World()
+
+        def poster(body):
+            world.pods["A"] = pod("A"); return {"id": "A"}
+        world.census = lambda current: []
+        with self.assertRaisesRegex(ValueError, "allocation invalid"):
+            self.create_with(root, world, poster)
+        self.assertEqual(lease.external_guard.known_pods(root)["A"], "receipt")
+        self.assertEqual(world.deletes, ["A"])
 
 
 if __name__ == "__main__":
