@@ -196,7 +196,10 @@ impl GradientDecisionV1 {
 }
 
 fn gradient_decisions_v1() -> [GradientDecisionV1; 2] {
-    [GradientDecisionV1::new_v1(11), GradientDecisionV1::new_v1(29)]
+    [
+        GradientDecisionV1::new_v1(11),
+        GradientDecisionV1::new_v1(29),
+    ]
 }
 
 /// The gradient batch: `(decision, selected action)` per substep, per group.
@@ -261,11 +264,13 @@ fn gradient_groups_v1<'a>(
     steps
         .iter()
         .zip(GRADIENT_TERMINAL_RETURNS_V1)
-        .map(|(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
-            substeps,
-            terminal_return,
-            baseline_bits: 0,
-        })
+        .map(
+            |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
+                substeps,
+                terminal_return,
+                baseline_bits: 0,
+            },
+        )
         .collect()
 }
 
@@ -621,13 +626,20 @@ fn narrow_to_wide_layout_map_is_injective_and_shape_consistent() {
         let mut seen = vec![false; wide_count];
         for index in 0..narrow_count {
             let wide = narrow_to_wide_index_v1(tensor, index);
-            assert!(wide < wide_count && !seen[wide], "tensor {tensor} index {index}");
+            assert!(
+                wide < wide_count && !seen[wide],
+                "tensor {tensor} index {index}"
+            );
             seen[wide] = true;
         }
         // Each segment's column count adds up to the layer input width.
         if EXPECTED_PARAMETER_SHAPES[tensor].len() == 2 {
             for (shape, hidden, embedding) in [
-                (EXPECTED_PARAMETER_SHAPES[tensor], HIDDEN_DIM_V1, CARD_EMBEDDING_DIM_V1),
+                (
+                    EXPECTED_PARAMETER_SHAPES[tensor],
+                    HIDDEN_DIM_V1,
+                    CARD_EMBEDDING_DIM_V1,
+                ),
                 (
                     W_EXPECTED_PARAMETER_SHAPES[tensor],
                     W_HIDDEN_DIM_V1,
@@ -724,7 +736,11 @@ fn witness_blocks_v1(hidden: usize, embedding: usize) -> Vec<BlockV1> {
         let all_columns: Vec<usize> = old_columns
             .iter()
             .copied()
-            .chain(new_segments.iter().flat_map(|(_, columns)| columns.iter().copied()))
+            .chain(
+                new_segments
+                    .iter()
+                    .flat_map(|(_, columns)| columns.iter().copied()),
+            )
             .collect();
         blocks.push(BlockV1 {
             name: format!("{name} old"),
@@ -868,7 +884,10 @@ where
         outside: Vec::new(),
     };
     for block in witness_blocks_v1(D::HIDDEN, D::CARD_EMBEDDING) {
-        let width = D::PARAMETER_SHAPES[block.tensor].get(1).copied().unwrap_or(1);
+        let width = D::PARAMETER_SHAPES[block.tensor]
+            .get(1)
+            .copied()
+            .unwrap_or(1);
         let draws = match (wide, block.new) {
             (true, true) => NEW_BLOCK_DRAWS_V1,
             (true, false) => OLD_BLOCK_DRAWS_V1,
@@ -977,7 +996,8 @@ fn zero_padded_wide_v1(narrow: &NativePolicyValueNetV1) -> NativePolicyValueNetW
             parameters[tensor].values[narrow_to_wide_index_v1(tensor, index)] = value;
         }
     }
-    wide.replace_parameter_snapshot_wide_v1(&parameters).unwrap();
+    wide.replace_parameter_snapshot_wide_v1(&parameters)
+        .unwrap();
     wide
 }
 
@@ -1021,12 +1041,23 @@ fn assert_results_zero_padded_v1(
     wide: &NativePolicyTrainStepResultV1,
 ) {
     assert_eq!(narrow.loss.to_bits(), wide.loss.to_bits(), "{label} loss");
-    assert_eq!(narrow.policy_sum.to_bits(), wide.policy_sum.to_bits(), "{label}");
-    assert_eq!(narrow.value_sum.to_bits(), wide.value_sum.to_bits(), "{label}");
+    assert_eq!(
+        narrow.policy_sum.to_bits(),
+        wide.policy_sum.to_bits(),
+        "{label}"
+    );
+    assert_eq!(
+        narrow.value_sum.to_bits(),
+        wide.value_sum.to_bits(),
+        "{label}"
+    );
     assert_eq!(narrow.adam_step, wide.adam_step, "{label}");
     assert_eq!(narrow.selected_outputs, wide.selected_outputs, "{label}");
     assert_eq!(narrow.physical_terms, wide.physical_terms, "{label}");
-    assert_eq!(narrow.scorer_bias_gauge, wide.scorer_bias_gauge, "{label} gauge");
+    assert_eq!(
+        narrow.scorer_bias_gauge, wide.scorer_bias_gauge,
+        "{label} gauge"
+    );
     assert_zero_padded_v1(label, &narrow.gradients, &wide.gradients, false);
 }
 
@@ -1359,7 +1390,10 @@ fn wide_resume_through_snapshot_and_payload_equals_straight_updates() {
             state.state_sha256_v1().unwrap(),
             straight.state_sha256_v1().unwrap()
         );
-        assert_eq!(state.snapshot_v1().unwrap(), straight.snapshot_v1().unwrap());
+        assert_eq!(
+            state.snapshot_v1().unwrap(),
+            straight.snapshot_v1().unwrap()
+        );
     }
 }
 
@@ -1438,8 +1472,9 @@ fn timing_probe_gae_update_wide_v1() {
 #[test]
 #[ignore = "awaits data/native_policy_train_step_wide_v1 from the Torch authority tuple"]
 fn wide_torch_authority_grouped_loss_backward_and_multistep_adam_match_declared_witnesses() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../data/native_policy_train_step_wide_v1/runner_fixed_train_step_goldens_wide_v1.json");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../data/native_policy_train_step_wide_v1/runner_fixed_train_step_goldens_wide_v1.json",
+    );
     let golden: GoldenFixture =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let forward: ForwardFixture = serde_json::from_str(include_str!(
@@ -1559,9 +1594,11 @@ fn wide_torch_authority_grouped_loss_backward_and_multistep_adam_match_declared_
                 golden.authority.optimizer_relative_tolerance,
             );
         }
-        assert!(snapshot.parameters[CARD_EMBEDDING].values[..W_CARD_EMBEDDING_DIM_V1]
-            .iter()
-            .all(|value| value.to_bits() == 0));
+        assert!(
+            snapshot.parameters[CARD_EMBEDDING].values[..W_CARD_EMBEDDING_DIM_V1]
+                .iter()
+                .all(|value| value.to_bits() == 0)
+        );
     }
     assert!(high_precision_shrink_witness);
 }

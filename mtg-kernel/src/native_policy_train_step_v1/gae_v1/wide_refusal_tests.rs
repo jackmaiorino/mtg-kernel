@@ -72,9 +72,7 @@ fn group_v1<'a>(
 fn assert_refused_v1(
     mut state: NativePolicyValueTrainStateWideV1,
     path: &'static str,
-    step: impl FnOnce(
-        &mut NativePolicyValueTrainStateWideV1,
-    ) -> Result<(), NativePolicyTrainErrorV1>,
+    step: impl FnOnce(&mut NativePolicyValueTrainStateWideV1) -> Result<(), NativePolicyTrainErrorV1>,
 ) {
     let before = (
         state.state_sha256_v1().unwrap(),
@@ -89,7 +87,11 @@ fn assert_refused_v1(
             path,
         })
     );
-    assert_eq!(forward_with_tape_call_count_for_test_v1(), forwards, "{path}");
+    assert_eq!(
+        forward_with_tape_call_count_for_test_v1(),
+        forwards,
+        "{path}"
+    );
     assert_eq!(
         (
             state.state_sha256_v1().unwrap(),
@@ -218,7 +220,11 @@ fn wide_refuses_packed_inputs_on_both_drivers() {
         ..encoded_decision_view_v3(&tensor)
     };
     let tape = builder.forward_v1(encoded).unwrap();
-    let logits: Vec<u32> = tape.logits_v1().iter().map(|value| value.to_bits()).collect();
+    let logits: Vec<u32> = tape
+        .logits_v1()
+        .iter()
+        .map(|value| value.to_bits())
+        .collect();
     let substeps = [NativePolicySubstepV1 {
         forward: NativePolicyForwardInputV1::Packed {
             encoded: Box::new(encoded),

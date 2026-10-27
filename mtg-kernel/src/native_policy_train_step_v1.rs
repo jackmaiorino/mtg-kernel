@@ -807,8 +807,7 @@ impl NetDimsV1 for Net8DimsV1 {
     const HIDDEN: usize = HIDDEN_DIM_V1;
     const CARD_EMBEDDING: usize = CARD_EMBEDDING_DIM_V1;
     const PARAMETER_COUNT: usize = PARAMETER_COUNT_V1;
-    const PARAMETER_SHAPES: [&'static [usize]; PARAMETER_TENSOR_COUNT] =
-        EXPECTED_PARAMETER_SHAPES;
+    const PARAMETER_SHAPES: [&'static [usize]; PARAMETER_TENSOR_COUNT] = EXPECTED_PARAMETER_SHAPES;
 }
 
 /// `kernel-policy-value-net-8w128`, the wide capacity architecture.
@@ -4588,10 +4587,7 @@ fn forward_with_tape_input_major_dims_v1<D: NetDimsV1>(
                 .second_output
                 .checked_subspan_v1(begin, D::HIDDEN)?,
         )?;
-        append_external_f32_v1(
-            &mut f32_arena,
-            &pooling_scratch[begin..begin + D::HIDDEN],
-        )?;
+        append_external_f32_v1(&mut f32_arena, &pooling_scratch[begin..begin + D::HIDDEN])?;
     }
     let node_input = TapeSpanV1::checked_v1(node_input_start, f32_arena.len() - node_input_start)?;
     let node_update = two_layer_forward_into_arena_dims_v1::<D>(
@@ -4885,12 +4881,7 @@ fn reverse_decision(
     workspace: &mut ReverseDecisionWorkspaceV1,
 ) -> Result<(), NativePolicyTrainErrorV1> {
     reverse_decision_dims_v1::<Net8DimsV1>(
-        parameters,
-        gradients,
-        tape,
-        d_logits,
-        d_value,
-        workspace,
+        parameters, gradients, tape, d_logits, d_value, workspace,
     )
 }
 
@@ -4922,12 +4913,7 @@ fn reverse_decision_into_v1<'t>(
     workspace: &mut ReverseDecisionWorkspaceV1,
 ) -> Result<(), NativePolicyTrainErrorV1> {
     reverse_decision_into_dims_v1::<Net8DimsV1>(
-        parameters,
-        sink,
-        tape,
-        d_logits,
-        d_value,
-        workspace,
+        parameters, sink, tape, d_logits, d_value, workspace,
     )
 }
 
@@ -5742,11 +5728,7 @@ fn validate_parameter_manifest_dims_v1<D: NetDimsV1>(
     if parameters.len() != PARAMETER_TENSOR_COUNT
         || parameters
             .iter()
-            .zip(
-                EXPECTED_PARAMETER_NAMES
-                    .iter()
-                    .zip(D::PARAMETER_SHAPES),
-            )
+            .zip(EXPECTED_PARAMETER_NAMES.iter().zip(D::PARAMETER_SHAPES))
             .any(|(parameter, (expected_name, expected_shape))| {
                 parameter.name != *expected_name
                     || parameter.shape.as_slice() != expected_shape

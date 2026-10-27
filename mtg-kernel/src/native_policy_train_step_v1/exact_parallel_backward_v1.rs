@@ -578,11 +578,11 @@ fn replay_block_body_dims_v1<D: NetDimsV1>(
     let first = block_rows.start;
     for substep in terms {
         if tensor == CARD_EMBEDDING {
-            for (token, d_embedding) in substep.card_tokens.iter().zip(
-                substep
-                    .d_card_embeddings
-                    .chunks_exact(D::CARD_EMBEDDING),
-            ) {
+            for (token, d_embedding) in substep
+                .card_tokens
+                .iter()
+                .zip(substep.d_card_embeddings.chunks_exact(D::CARD_EMBEDDING))
+            {
                 if block_rows.contains(token) {
                     let offset = (token - first) * width;
                     for (gradient, d_value) in
