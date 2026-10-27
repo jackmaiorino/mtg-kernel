@@ -21,6 +21,7 @@ use crate::native_policy_train_step_v1::widening_v1::{
     column_segments_v1, narrow_to_wide_index_v1, segment_width_v1, SegmentV1,
 };
 
+mod screen_fit_v1_tests;
 mod widening_v1_tests;
 
 const VC: f32 = 0.75;
