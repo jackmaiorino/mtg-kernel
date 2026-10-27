@@ -104,6 +104,7 @@ pub(crate) use line_b_auxiliary_v1::{
 mod no_state_digest_tests;
 pub(crate) mod retention_v1;
 mod weighted_v3;
+pub(crate) mod widening_v1;
 
 #[cfg(test)]
 thread_local! {
