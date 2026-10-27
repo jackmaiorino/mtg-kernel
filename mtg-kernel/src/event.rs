@@ -4416,12 +4416,13 @@ pub fn log_monarch_trigger(
     // left the battlefield is its own card again; the copied definition it
     // had stays recorded for that incarnation.
     let card_def_matches = live.card_def == source.card_def
-        || crate::standard_cards_v1::had_card_def(
-            state,
-            source.source,
-            source.zone_change_count,
-            source.card_def,
-        );
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::standard_cards_v1::had_card_def(
+                state,
+                source.source,
+                source.zone_change_count,
+                source.card_def,
+            ));
     if !card_def_matches
         || live.owner != source.owner
         || live.zone_change_count < source.zone_change_count
