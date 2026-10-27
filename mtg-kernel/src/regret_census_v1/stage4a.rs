@@ -132,6 +132,35 @@ pub(super) fn is_mode(mode: &str) -> bool {
     )
 }
 
+/// Per-thread digest memo budget (MiB) that the fixed-work play modes use
+/// when `MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB` is unset.
+const DIGEST_MEMO_DEFAULT_MIB: usize = 64;
+
+/// The fixed-work play modes that get the exact cost defaults: the searched
+/// budget player (the seat-clock games) and the two paths that check its
+/// records. Their searches stop on transitions, never on CPU time. Every
+/// other mode, the profile modes included, runs exactly as before.
+const EXACT_COST_DEFAULT_MODES: [&str; 3] = ["s4a-budget", "s4a-budget-replay", "s4a-root-rebuild"];
+
+/// Whether `mode` gets the exact cost defaults.
+pub(super) fn exact_cost_defaults_apply_v1(mode: &str) -> bool {
+    EXACT_COST_DEFAULT_MODES.contains(&mode)
+}
+
+/// Exact cost defaults for the fixed-work play modes, set before the policy
+/// loads: the tensorizer's whole-message digest memo and the quiet key memo
+/// are on unless their variables say otherwise, and the vector tanh proof
+/// is settled now (its record read, or the proof run), so it never lands
+/// inside a timed search. None changes a result bit or a record field.
+pub(super) fn exact_cost_defaults_v1(mode: &str) {
+    if !exact_cost_defaults_apply_v1(mode) {
+        return;
+    }
+    crate::native_flat_tensorizer_v2::set_default_digest_memo_mib_v1(DIGEST_MEMO_DEFAULT_MIB);
+    arms::set_key_memo_default_on();
+    crate::vector_tanh_v1::prepare_v1();
+}
+
 const SPY_DECK: &str = "Spy";
 
 fn hex(bytes: &[u8]) -> String {

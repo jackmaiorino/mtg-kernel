@@ -6158,7 +6158,13 @@ fn validate_cost_component_choices_v1(
     }) {
         return None;
     }
-    if crate::doubling_season_v48::requires_successor(state) && components.iter().any(|component| {
+    // The cheap component test first: `requires_successor` scans every
+    // object, and only a loyalty cost can make this check fail.
+    if components
+        .iter()
+        .any(|component| matches!(component, CostComponent::Loyalty(_)))
+        && crate::doubling_season_v48::requires_successor(state)
+        && components.iter().any(|component| {
         matches!(component, CostComponent::Loyalty(delta) if crate::planeswalker_v1::quote_loyalty_change_v48(
             state, source, *delta, crate::doubling_season_v48::CounterOriginV48::Cost).is_err())
     }) {
@@ -7674,12 +7680,17 @@ fn checked_graveyard_exile_candidates(
     // but are removed from every live zone index. Require reverse membership
     // only for non-token cards, and reject an indexed token outright: normal
     // SBA-clean decision states cannot expose one as an Escape candidate.
-    if state.objects.iter().any(|(id, object)| {
-        object.owner == player
-            && object.zone == Zone::Graveyard
-            && !object.v4.is_token
-            && !indexed.contains(&id)
-    }) {
+    // Every indexed id is a distinct arena object meeting the same three
+    // conditions, so some such object is unindexed exactly when there are
+    // more of them than indexed ids (a count, not a search per object).
+    let owned_cards_in_graveyard = state
+        .objects
+        .iter()
+        .filter(|(_, object)| {
+            object.owner == player && object.zone == Zone::Graveyard && !object.v4.is_token
+        })
+        .count();
+    if owned_cards_in_graveyard != indexed.len() {
         return None;
     }
     if already_chosen.iter().enumerate().any(|(index, id)| {
@@ -25399,6 +25410,111 @@ mod tests {
             &chosen,
         ));
         assert_eq!(state, before, "failed payment must be exactly nonmutating");
+    }
+
+    /// The counting reverse-membership check gives what the per-object
+    /// search it replaced gave, on clean and on desynchronized graveyards.
+    #[test]
+    fn graveyard_exile_candidates_match_the_per_object_search() {
+        fn reference(
+            player: PlayerId,
+            source: ObjectId,
+            state: &GameState,
+            already_chosen: &[ObjectId],
+        ) -> Option<Vec<ObjectId>> {
+            let mut indexed = Vec::new();
+            for &id in &state.players[player.index()].graveyard {
+                let object = state.objects.try_get(id)?;
+                if object.owner != player
+                    || object.zone != Zone::Graveyard
+                    || object.v4.is_token
+                    || indexed.contains(&id)
+                {
+                    return None;
+                }
+                indexed.push(id);
+            }
+            if state.objects.iter().any(|(id, object)| {
+                object.owner == player
+                    && object.zone == Zone::Graveyard
+                    && !object.v4.is_token
+                    && !indexed.contains(&id)
+            }) {
+                return None;
+            }
+            if already_chosen.iter().enumerate().any(|(index, id)| {
+                *id == source || !indexed.contains(id) || already_chosen[..index].contains(id)
+            }) {
+                return None;
+            }
+            Some(
+                indexed
+                    .into_iter()
+                    .filter(|id| *id != source && !already_chosen.contains(id))
+                    .collect(),
+            )
+        }
+        let mut clean = ready_game_in_main1(0);
+        let source = put_in_graveyard(&mut clean, PlayerId::P0, "Sleep of the Dead");
+        let cards = [
+            put_in_graveyard(&mut clean, PlayerId::P0, "Lightning Bolt"),
+            put_in_graveyard(&mut clean, PlayerId::P0, "Fireblast"),
+            put_in_graveyard(&mut clean, PlayerId::P0, "Counterspell"),
+        ];
+        put_in_graveyard(&mut clean, PlayerId::P1, "Lightning Bolt");
+        // An owned card marked in the graveyard but missing from its index.
+        let mut unindexed = clean.clone();
+        let stray = put_in_graveyard(&mut unindexed, PlayerId::P0, "Fireblast");
+        unindexed.players[0].graveyard.retain(|&id| id != stray);
+        // A token in the index, and a token marked there but unindexed.
+        let mut indexed_token = clean.clone();
+        indexed_token.objects.get_mut(cards[1]).v4.is_token = true;
+        let mut stray_token = clean.clone();
+        let token = put_in_graveyard(&mut stray_token, PlayerId::P0, "Fireblast");
+        stray_token.objects.get_mut(token).v4.is_token = true;
+        stray_token.players[0].graveyard.retain(|&id| id != token);
+        // A duplicated index entry, and an index entry owned by the opponent.
+        let mut duplicate = clean.clone();
+        duplicate.players[0].graveyard.push(cards[0]);
+        let mut foreign = clean.clone();
+        let theirs = foreign.players[1].graveyard[0];
+        foreign.players[0].graveyard.push(theirs);
+        let chosen_sets: [&[ObjectId]; 5] = [
+            &[],
+            &[cards[0]],
+            &[cards[2], cards[0]],
+            &[cards[0], cards[0]],
+            &[source],
+        ];
+        let mut some = 0;
+        for state in [
+            &clean,
+            &unindexed,
+            &indexed_token,
+            &stray_token,
+            &duplicate,
+            &foreign,
+        ] {
+            for player in [PlayerId::P0, PlayerId::P1] {
+                for chosen in chosen_sets {
+                    let expected = reference(player, source, state, chosen);
+                    some += usize::from(expected.is_some());
+                    assert_eq!(
+                        checked_graveyard_exile_candidates(player, source, state, chosen),
+                        expected
+                    );
+                }
+            }
+        }
+        assert!(some > 0, "some cases must have candidates");
+        assert_eq!(
+            checked_graveyard_exile_candidates(PlayerId::P0, source, &unindexed, &[]),
+            None
+        );
+        assert_eq!(
+            checked_graveyard_exile_candidates(PlayerId::P0, source, &clean, &[cards[1]]),
+            Some(vec![cards[0], cards[2]])
+        );
     }
 
     #[test]

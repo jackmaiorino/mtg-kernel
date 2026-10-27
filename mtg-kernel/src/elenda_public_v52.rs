@@ -18,6 +18,20 @@ pub(crate) fn require_legacy_visible(
     actor: Option<crate::ids::PlayerId>,
 ) -> Result<(), String> {
     for (id, object) in state.objects.iter() {
+        if object.v4.face_index != 0 {
+            continue;
+        }
+        // Only an absent definition or one with these mechanics can refuse,
+        // so visibility is worked out for those objects alone: the same
+        // first refusal, in the same object order.
+        let definition = crate::card_def::CARD_DEFS.get(usize::from(object.card_def));
+        if definition.is_some_and(|definition| {
+            !(definition.is_executable()
+                && (!definition.starting_life_self_bonuses_v1.is_empty()
+                    || definition.source_type_hexproof_v1.is_some()))
+        }) {
+            continue;
+        }
         let visible = match object.zone {
             Zone::Hand => actor.is_some_and(|actor| {
                 actor == object.owner
@@ -46,18 +60,9 @@ pub(crate) fn require_legacy_visible(
                     .face_down_v1
                     .is_some_and(|face| face.lookers & (1 << actor.index()) != 0)
             });
-        if visible && known_form && object.v4.face_index == 0 {
-            let definition = crate::card_def::CARD_DEFS
-                .get(usize::from(object.card_def))
-                .ok_or("visible Elenda boundary definition absent")?;
-            if definition.is_executable()
-                && (!definition.starting_life_self_bonuses_v1.is_empty()
-                    || definition.source_type_hexproof_v1.is_some())
-            {
-                return Err(
-                    "starting-life bonuses and source-type hexproof require Elenda V52".into(),
-                );
-            }
+        if visible && known_form {
+            definition.ok_or("visible Elenda boundary definition absent")?;
+            return Err("starting-life bonuses and source-type hexproof require Elenda V52".into());
         }
     }
     Ok(())
