@@ -295,16 +295,79 @@ fn oracle_linear_v1(weight: &[f64], bias: &[f64], input: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-/// `nn.Sequential(Linear, Tanh, Linear, Tanh)` from the tensor at `first`.
-fn oracle_two_layer_v1(parameters: &[Vec<f64>], first: usize, input: &[f64]) -> Vec<f64> {
-    let hidden: Vec<f64> = oracle_linear_v1(&parameters[first], &parameters[first + 1], input)
-        .into_iter()
-        .map(f64::tanh)
-        .collect();
-    oracle_linear_v1(&parameters[first + 2], &parameters[first + 3], &hidden)
-        .into_iter()
-        .map(f64::tanh)
-        .collect()
+/// Where the roundoff diagnostic perturbs the oracle: one application of
+/// one layer (its `weight` tensor at `row`), at one pre-activation output or
+/// one input element.
+#[derive(Clone, Copy)]
+struct OracleHookV1 {
+    weight: usize,
+    row: usize,
+    site: OracleSiteV1,
+    epsilon: f64,
+}
+
+#[derive(Clone, Copy)]
+enum OracleSiteV1 {
+    PreActivation(usize),
+    Input(usize),
+}
+
+/// One oracle evaluation: the parameters, an optional hook, and an optional
+/// capture of every input row one weight tensor sees, in row order. Without
+/// a hook the arithmetic is the plain forward's.
+struct OracleRunV1<'a> {
+    parameters: &'a [Vec<f64>],
+    hook: Option<OracleHookV1>,
+    capture: Option<(usize, Vec<Vec<f64>>)>,
+}
+
+impl OracleRunV1<'_> {
+    fn linear(&mut self, weight: usize, row: usize, input: &[f64]) -> Vec<f64> {
+        let hook = self
+            .hook
+            .filter(|hook| hook.weight == weight && hook.row == row);
+        let mut input = input.to_vec();
+        if let Some(OracleHookV1 {
+            site: OracleSiteV1::Input(column),
+            epsilon,
+            ..
+        }) = hook
+        {
+            input[column] += epsilon;
+        }
+        if let Some((tensor, rows)) = &mut self.capture {
+            if *tensor == weight {
+                rows.push(input.clone());
+            }
+        }
+        let mut output = oracle_linear_v1(
+            &self.parameters[weight],
+            &self.parameters[weight + 1],
+            &input,
+        );
+        if let Some(OracleHookV1 {
+            site: OracleSiteV1::PreActivation(output_index),
+            epsilon,
+            ..
+        }) = hook
+        {
+            output[output_index] += epsilon;
+        }
+        output
+    }
+
+    /// `nn.Sequential(Linear, Tanh, Linear, Tanh)` from the tensor at `first`.
+    fn two_layer(&mut self, first: usize, row: usize, input: &[f64]) -> Vec<f64> {
+        let hidden: Vec<f64> = self
+            .linear(first, row, input)
+            .into_iter()
+            .map(f64::tanh)
+            .collect();
+        self.linear(first + 2, row, &hidden)
+            .into_iter()
+            .map(f64::tanh)
+            .collect()
+    }
 }
 
 fn widen_v1(values: &[f32]) -> Vec<f64> {
@@ -318,6 +381,22 @@ fn oracle_forward_v1(
     embedding: usize,
     view: &NativeEncodedDecisionViewV1<'_>,
 ) -> (Vec<f64>, f64) {
+    let mut run = OracleRunV1 {
+        parameters,
+        hook: None,
+        capture: None,
+    };
+    oracle_forward_run_v1(&mut run, hidden, embedding, view)
+}
+
+/// [`oracle_forward_v1`] through `run`'s hook and capture.
+fn oracle_forward_run_v1(
+    run: &mut OracleRunV1<'_>,
+    hidden: usize,
+    embedding: usize,
+    view: &NativeEncodedDecisionViewV1<'_>,
+) -> (Vec<f64>, f64) {
+    let parameters = run.parameters;
     let objects = view.object_card_ids.len();
     let base: Vec<Vec<f64>> = (0..objects)
         .map(|object| {
@@ -329,7 +408,7 @@ fn oracle_forward_v1(
             input.extend_from_slice(
                 &parameters[CARD_EMBEDDING][token * embedding..(token + 1) * embedding],
             );
-            oracle_two_layer_v1(parameters, OBJECT_FIRST_WEIGHT, &input)
+            run.two_layer(OBJECT_FIRST_WEIGHT, object, &input)
         })
         .collect();
     let mut edge_pooled = vec![vec![0.0f64; hidden]; objects];
@@ -341,7 +420,7 @@ fn oracle_forward_v1(
         );
         input.extend_from_slice(&base[source]);
         input.extend_from_slice(&base[target]);
-        let edge_hidden = oracle_two_layer_v1(parameters, EDGE_FIRST_WEIGHT, &input);
+        let edge_hidden = run.two_layer(EDGE_FIRST_WEIGHT, edge, &input);
         for row in [source, target] {
             for (pooled, value) in edge_pooled[row].iter_mut().zip(&edge_hidden) {
                 *pooled += value;
@@ -352,7 +431,7 @@ fn oracle_forward_v1(
         .map(|object| {
             let mut input = base[object].clone();
             input.extend_from_slice(&edge_pooled[object]);
-            oracle_two_layer_v1(parameters, NODE_FIRST_WEIGHT, &input)
+            run.two_layer(NODE_FIRST_WEIGHT, object, &input)
         })
         .collect();
     let mut pooled = vec![0.0f64; OBJECT_GROUP_COUNT_V1 * hidden];
@@ -367,7 +446,7 @@ fn oracle_forward_v1(
     }
     let mut state_input = widen_v1(view.state);
     state_input.extend_from_slice(&pooled);
-    let state_hidden = oracle_two_layer_v1(parameters, STATE_FIRST_WEIGHT, &state_input);
+    let state_hidden = run.two_layer(STATE_FIRST_WEIGHT, 0, &state_input);
 
     let actions = view.action_features.len() / ACTION_FEATURE_DIM_V1;
     let mut action_ref_pooled = vec![vec![0.0f64; hidden]; actions];
@@ -377,7 +456,7 @@ fn oracle_forward_v1(
                 ..(action_ref + 1) * ACTION_REF_FEATURE_DIM_V1],
         );
         input.extend_from_slice(&object_hidden[view.action_ref_node_indices[action_ref] as usize]);
-        let ref_hidden = oracle_two_layer_v1(parameters, ACTION_REF_FIRST_WEIGHT, &input);
+        let ref_hidden = run.two_layer(ACTION_REF_FIRST_WEIGHT, action_ref, &input);
         let action = view.action_ref_action_indices[action_ref] as usize;
         for (pooled, value) in action_ref_pooled[action].iter_mut().zip(&ref_hidden) {
             *pooled += value;
@@ -390,37 +469,23 @@ fn oracle_forward_v1(
                     [action * ACTION_FEATURE_DIM_V1..(action + 1) * ACTION_FEATURE_DIM_V1],
             );
             input.extend_from_slice(&action_ref_pooled[action]);
-            let action_hidden = oracle_two_layer_v1(parameters, ACTION_FIRST_WEIGHT, &input);
+            let action_hidden = run.two_layer(ACTION_FIRST_WEIGHT, action, &input);
             let mut scorer_input = state_hidden.clone();
             scorer_input.extend_from_slice(&action_hidden);
-            let scorer_hidden: Vec<f64> = oracle_linear_v1(
-                &parameters[SCORER_FIRST_WEIGHT],
-                &parameters[SCORER_FIRST_BIAS],
-                &scorer_input,
-            )
-            .into_iter()
-            .map(f64::tanh)
-            .collect();
-            oracle_linear_v1(
-                &parameters[SCORER_SECOND_WEIGHT],
-                &parameters[SCORER_SECOND_BIAS],
-                &scorer_hidden,
-            )[0]
+            let scorer_hidden: Vec<f64> = run
+                .linear(SCORER_FIRST_WEIGHT, action, &scorer_input)
+                .into_iter()
+                .map(f64::tanh)
+                .collect();
+            run.linear(SCORER_SECOND_WEIGHT, action, &scorer_hidden)[0]
         })
         .collect();
-    let value_hidden: Vec<f64> = oracle_linear_v1(
-        &parameters[VALUE_FIRST_WEIGHT],
-        &parameters[VALUE_FIRST_BIAS],
-        &state_hidden,
-    )
-    .into_iter()
-    .map(f64::tanh)
-    .collect();
-    let value = oracle_linear_v1(
-        &parameters[VALUE_SECOND_WEIGHT],
-        &parameters[VALUE_SECOND_BIAS],
-        &value_hidden,
-    )[0];
+    let value_hidden: Vec<f64> = run
+        .linear(VALUE_FIRST_WEIGHT, 0, &state_hidden)
+        .into_iter()
+        .map(f64::tanh)
+        .collect();
+    let value = run.linear(VALUE_SECOND_WEIGHT, 0, &value_hidden)[0];
     (logits, value)
 }
 
@@ -810,6 +875,24 @@ struct FdReportV1 {
     max_witness: String,
     counted_new: BTreeMap<String, usize>,
     outside: Vec<String>,
+    /// Every witness, for the roundoff diagnostic.
+    witness_list: Vec<WitnessV1>,
+    /// The step's gradients and the oracle loss's targets and advantages.
+    gradients: Vec<NativeNamedParameterV1>,
+    targets: Vec<f64>,
+    advantages: Vec<f64>,
+}
+
+/// One drawn coordinate: Rust's gradient, the oracle's central difference
+/// and their error ratio.
+#[derive(Clone)]
+struct WitnessV1 {
+    block: String,
+    tensor: usize,
+    index: usize,
+    rust: f64,
+    oracle: f64,
+    ratio: f64,
 }
 
 /// Rust's gradient for one update at `model` against central differences of
@@ -885,6 +968,10 @@ where
         max_witness: String::new(),
         counted_new: BTreeMap::new(),
         outside: Vec::new(),
+        witness_list: Vec::new(),
+        gradients: result.gradients.clone(),
+        targets: targets.clone(),
+        advantages: advantages.clone(),
     };
     for block in witness_blocks_v1(D::HIDDEN, D::CARD_EMBEDDING) {
         let width = D::PARAMETER_SHAPES[block.tensor]
@@ -911,6 +998,14 @@ where
             let allowance = FD_ABSOLUTE_V1 + FD_RELATIVE_V1 * numerical.abs();
             let ratio = (analytic - numerical).abs() / allowance;
             report.witnesses += 1;
+            report.witness_list.push(WitnessV1 {
+                block: block.name.clone(),
+                tensor: block.tensor,
+                index,
+                rust: analytic,
+                oracle: numerical,
+                ratio,
+            });
             if ratio > report.max_ratio {
                 report.max_ratio = ratio;
                 report.max_witness = format!(
@@ -986,6 +1081,326 @@ fn wide_gradients_match_f64_central_differences_with_detection_power() {
             wide_report.max_ratio,
             FD_NARROW_RATIO_FACTOR_V1 * r_n
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Roundoff diagnostic beside the section 5.1 gate (throughput lead ruling,
+// 2026-10-27). It never gates: it prints, for the worst witnesses, how large
+// each error is against the f32 accumulation roundoff its terms allow.
+// ---------------------------------------------------------------------------
+
+/// Central-difference step on one pre-activation or input element.
+const TERM_STEP_V1: f64 = 1.0e-5;
+const DIAGNOSED_WITNESSES_V1: usize = 10;
+
+/// The per-term contributions to one gradient coordinate in the f64
+/// oracle: each application of the coordinate's layer (substep, row) is one
+/// term, its upstream pre-activation gradient for a bias, that times the
+/// row's input for a weight, and the object input's gradient for an
+/// embedding element.
+struct TermsV1 {
+    count: usize,
+    sum_abs: f64,
+}
+
+/// `(group, decision, selected action)` per substep, in batch order.
+fn flattened_substeps_v1() -> Vec<(usize, usize, usize)> {
+    GRADIENT_BATCH_V1
+        .iter()
+        .enumerate()
+        .flat_map(|(group, substeps)| {
+            substeps
+                .iter()
+                .map(move |&(decision, selected)| (group, decision, selected))
+        })
+        .collect()
+}
+
+fn substep_output_v1(
+    parameters: &[Vec<f64>],
+    hidden: usize,
+    embedding: usize,
+    decision: &GradientDecisionV1,
+    hook: Option<OracleHookV1>,
+) -> (Vec<f64>, f64) {
+    let mut run = OracleRunV1 {
+        parameters,
+        hook,
+        capture: None,
+    };
+    oracle_forward_run_v1(&mut run, hidden, embedding, &decision.view_v1(false))
+}
+
+/// [`oracle_loss_v1`] from per-substep outputs.
+fn loss_from_outputs_v1(outputs: &[(Vec<f64>, f64)], targets: &[f64], advantages: &[f64]) -> f64 {
+    let substeps = flattened_substeps_v1();
+    let group_count = GRADIENT_BATCH_V1.len() as f64;
+    (0..GRADIENT_BATCH_V1.len())
+        .map(|group| {
+            let members: Vec<usize> = (0..substeps.len())
+                .filter(|&substep| substeps[substep].0 == group)
+                .collect();
+            let joint = members
+                .iter()
+                .map(|&substep| oracle_log_softmax_v1(&outputs[substep].0, substeps[substep].2))
+                .sum::<f64>();
+            let error = outputs[members[0]].1 - targets[group];
+            (-advantages[group] * joint + f64::from(VC) * error * error) / group_count
+        })
+        .sum()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn contribution_terms_v1(
+    parameters: &[Vec<f64>],
+    hidden: usize,
+    embedding: usize,
+    shapes: &[&[usize]],
+    decisions: &[GradientDecisionV1; 2],
+    targets: &[f64],
+    advantages: &[f64],
+    tensor: usize,
+    index: usize,
+) -> TermsV1 {
+    let substeps = flattened_substeps_v1();
+    let base: Vec<(Vec<f64>, f64)> = substeps
+        .iter()
+        .map(|&(_, decision, _)| {
+            substep_output_v1(parameters, hidden, embedding, &decisions[decision], None)
+        })
+        .collect();
+    // The layer whose applications are the terms, and where each term is
+    // read.
+    let (weight, site, column, token) = if tensor == CARD_EMBEDDING {
+        let element = index % embedding;
+        (
+            OBJECT_FIRST_WEIGHT,
+            OracleSiteV1::Input(OBJECT_FEATURE_DIM_V1 + element),
+            None,
+            Some(index / embedding),
+        )
+    } else if shapes[tensor].len() == 1 {
+        (tensor - 1, OracleSiteV1::PreActivation(index), None, None)
+    } else {
+        let input_dim = shapes[tensor][1];
+        (
+            tensor,
+            OracleSiteV1::PreActivation(index / input_dim),
+            Some(index % input_dim),
+            None,
+        )
+    };
+    let mut terms = TermsV1 {
+        count: 0,
+        sum_abs: 0.0,
+    };
+    for (substep, &(_, decision, _)) in substeps.iter().enumerate() {
+        let decision = &decisions[decision];
+        let mut run = OracleRunV1 {
+            parameters,
+            hook: None,
+            capture: Some((weight, Vec::new())),
+        };
+        oracle_forward_run_v1(&mut run, hidden, embedding, &decision.view_v1(false));
+        let rows = run.capture.take().unwrap().1;
+        for (row, input) in rows.iter().enumerate() {
+            if token.is_some_and(|token| decision.object_card_ids[row] as usize != token) {
+                continue;
+            }
+            let loss = |epsilon: f64| {
+                let mut outputs = base.clone();
+                outputs[substep] = substep_output_v1(
+                    parameters,
+                    hidden,
+                    embedding,
+                    decision,
+                    Some(OracleHookV1 {
+                        weight,
+                        row,
+                        site,
+                        epsilon,
+                    }),
+                );
+                loss_from_outputs_v1(&outputs, targets, advantages)
+            };
+            let upstream = (loss(TERM_STEP_V1) - loss(-TERM_STEP_V1)) / (2.0 * TERM_STEP_V1);
+            let contribution = match column {
+                Some(column) => upstream * input[column],
+                None => upstream,
+            };
+            terms.count += 1;
+            terms.sum_abs += contribution.abs();
+        }
+    }
+    terms
+}
+
+/// `kappa = sum |c_i| / |g_fd|` and the error normalized by the expected f32
+/// accumulation roundoff, `abs error / (sum |c_i| * 2^-24 * sqrt(n))`.
+fn roundoff_v1(terms: &TermsV1, rust: f64, oracle: f64) -> (f64, f64) {
+    let kappa = terms.sum_abs / oracle.abs();
+    let normalized = (rust - oracle).abs()
+        / (terms.sum_abs * 2f64.powi(-24) * (terms.count as f64).sqrt());
+    (kappa, normalized)
+}
+
+fn median_v1(values: &mut [f64]) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values[values.len() / 2]
+}
+
+/// The ten worst witnesses of one objective and width, with their terms.
+fn diagnose_dims_v1<D: NetDimsV1>(
+    label: &str,
+    model: &D::Net,
+    objective: ObjectiveV1,
+    report: &FdReportV1,
+    out: &mut impl Write,
+) {
+    let decisions = gradient_decisions_v1();
+    let parameters = parameters_f64_v1(&model.parameter_snapshot_v1());
+    let mut ranked = report.witness_list.clone();
+    ranked.sort_by(|left, right| right.ratio.total_cmp(&left.ratio));
+    for (rank, witness) in ranked.iter().take(DIAGNOSED_WITNESSES_V1).enumerate() {
+        let terms = contribution_terms_v1(
+            &parameters,
+            D::HIDDEN,
+            D::CARD_EMBEDDING,
+            &D::PARAMETER_SHAPES,
+            &decisions,
+            &report.targets,
+            &report.advantages,
+            witness.tensor,
+            witness.index,
+        );
+        let (kappa, normalized) = roundoff_v1(&terms, witness.rust, witness.oracle);
+        writeln!(
+            out,
+            "WIDE_FD_DIAG_V1 {objective:?} {label} rank={rank} ratio={:.4e} witness=({} [{}]) \
+             g_rust={:.10e} g_fd={:.10e} abs_error={:.4e} kappa={kappa:.4e} n={} e={normalized:.4}",
+            witness.ratio,
+            witness.block,
+            witness.index,
+            witness.rust,
+            witness.oracle,
+            (witness.rust - witness.oracle).abs(),
+            terms.count,
+        )
+        .unwrap();
+    }
+}
+
+/// `edge_encoder.0.bias` (the Windows terminal worst witness is wide row 100)
+/// at FD steps 1e-4 and 1e-5, and its kappa and e over every row of both
+/// widths.
+fn diagnose_edge_bias_dims_v1<D: NetDimsV1>(
+    label: &str,
+    model: &D::Net,
+    report: &FdReportV1,
+    out: &mut impl Write,
+) {
+    let decisions = gradient_decisions_v1();
+    let mut parameters = parameters_f64_v1(&model.parameter_snapshot_v1());
+    let fd = |parameters: &mut Vec<Vec<f64>>, row: usize, step: f64| {
+        let original = parameters[EDGE_FIRST_BIAS][row];
+        parameters[EDGE_FIRST_BIAS][row] = original + step;
+        let plus = oracle_loss_v1(
+            parameters,
+            D::HIDDEN,
+            D::CARD_EMBEDDING,
+            &decisions,
+            &report.targets,
+            &report.advantages,
+        );
+        parameters[EDGE_FIRST_BIAS][row] = original - step;
+        let minus = oracle_loss_v1(
+            parameters,
+            D::HIDDEN,
+            D::CARD_EMBEDDING,
+            &decisions,
+            &report.targets,
+            &report.advantages,
+        );
+        parameters[EDGE_FIRST_BIAS][row] = original;
+        (plus - minus) / (2.0 * step)
+    };
+    let mut summaries: BTreeMap<&str, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
+    for row in 0..D::HIDDEN {
+        let rust = f64::from(report.gradients[EDGE_FIRST_BIAS].values[row]);
+        let coarse = fd(&mut parameters, row, 1.0e-4);
+        let terms = contribution_terms_v1(
+            &parameters,
+            D::HIDDEN,
+            D::CARD_EMBEDDING,
+            &D::PARAMETER_SHAPES,
+            &decisions,
+            &report.targets,
+            &report.advantages,
+            EDGE_FIRST_BIAS,
+            row,
+        );
+        let (kappa, normalized) = roundoff_v1(&terms, rust, coarse);
+        let group = if row < HIDDEN_DIM_V1 {
+            "rows 0-63"
+        } else {
+            "rows 64-127"
+        };
+        let entry = summaries.entry(group).or_default();
+        entry.0.push(kappa);
+        entry.1.push(normalized);
+        if row == 100 {
+            let fine = fd(&mut parameters, row, 1.0e-5);
+            writeln!(
+                out,
+                "WIDE_FD_DIAG_V1 Terminal {label} edge_encoder.0.bias [{row}] g_rust={rust:.10e} \
+                 g_fd(1e-4)={coarse:.10e} g_fd(1e-5)={fine:.10e} abs_error={:.4e} \
+                 kappa={kappa:.4e} n={} e={normalized:.4}",
+                (rust - coarse).abs(),
+                terms.count,
+            )
+            .unwrap();
+        }
+    }
+    for (group, (kappas, normalized)) in &mut summaries {
+        writeln!(
+            out,
+            "WIDE_FD_DIAG_V1 Terminal {label} edge_encoder.0.bias {group}: kappa min={:.4e} \
+             median={:.4e} max={:.4e}; e median={:.4} max={:.4}",
+            kappas.iter().copied().fold(f64::INFINITY, f64::min),
+            median_v1(kappas),
+            kappas.iter().copied().fold(0.0, f64::max),
+            median_v1(normalized),
+            normalized.iter().copied().fold(0.0, f64::max),
+        )
+        .unwrap();
+    }
+}
+
+/// The section 5.1 roundoff diagnostic (never gates): per objective and
+/// width, the ten worst witnesses with their abs error, cancellation ratio
+/// kappa, term count n and normalized error e, plus the edge encoder bias
+/// rows of both widths for the terminal objective. Written past the test
+/// harness's capture so CI logs carry it on every target.
+#[test]
+fn wide_fd_roundoff_diagnostic_receipt() {
+    let narrow = perturbed_dims_v1::<Net8DimsV1>(narrow_model_v1(), 0xA11C_E5ED);
+    let wide = perturbed_dims_v1::<Net8W128DimsV1>(wide_model_v1(), 0xA11C_E5ED);
+    let mut out = std::io::stderr().lock();
+    for objective in [ObjectiveV1::Gae, ObjectiveV1::Terminal] {
+        let narrow_report = fd_check_dims_v1::<Net8DimsV1>(&narrow, objective);
+        diagnose_dims_v1::<Net8DimsV1>("net-8", &narrow, objective, &narrow_report, &mut out);
+        let wide_report = fd_check_dims_v1::<Net8W128DimsV1>(&wide, objective);
+        diagnose_dims_v1::<Net8W128DimsV1>("net-8w128", &wide, objective, &wide_report, &mut out);
+        if matches!(objective, ObjectiveV1::Terminal) {
+            diagnose_edge_bias_dims_v1::<Net8DimsV1>("net-8", &narrow, &narrow_report, &mut out);
+            diagnose_edge_bias_dims_v1::<Net8W128DimsV1>(
+                "net-8w128",
+                &wide,
+                &wide_report,
+                &mut out,
+            );
+        }
     }
 }
 
