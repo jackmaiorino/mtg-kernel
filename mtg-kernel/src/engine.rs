@@ -2255,6 +2255,22 @@ fn validate_physical_spell_cast_origin(
                 )
                 && def.escape.is_none()
         }
+        SpellCastRouteV4::LibraryPermissionV1 {
+            holder,
+            permission_zone_change_count,
+        } => {
+            origin.origin_zone == Zone::Library
+                && source.owner == item.controller
+                && holder == item.controller
+                && permission_zone_change_count == origin.origin_zone_change_count
+                && cast_method == CastMethodV4::Normal
+                && crate::eternal_e5a_v1::permissions::library_permission(
+                    state,
+                    item.source,
+                    holder,
+                    permission_zone_change_count,
+                )
+        }
         SpellCastRouteV4::GraveyardPermissionV1 {
             holder,
             permission_zone_change_count,
@@ -2747,6 +2763,14 @@ fn storm_source_contract_is_structurally_valid(
             origin.origin_zone == Zone::Exile
                 && holder == contract.controller
                 && permission_zone_change_count == origin.origin_zone_change_count
+        }
+        SpellCastRouteV4::GraveyardPermissionV1 { holder, .. }
+            if cfg!(feature = "eternal-fixtures") =>
+        {
+            origin.origin_zone == Zone::Graveyard && holder == contract.controller
+        }
+        SpellCastRouteV4::LibraryPermissionV1 { holder, .. } => {
+            origin.origin_zone == Zone::Library && holder == contract.controller
         }
         SpellCastRouteV4::GraveyardFlashback
         | SpellCastRouteV4::Plotted { .. }
@@ -4959,6 +4983,9 @@ pub(crate) fn evaluate_dynamic_value(
     let count = match value {
         DynamicValueDef::Fixed(value) => return value,
         DynamicValueDef::ControllerLifeTotal => return state.players[controller.index()].life,
+        DynamicValueDef::UrzasLandsIfMetalcraftV1 => {
+            return crate::eternal_e5a_v1::statics::urzas_workshop_yield(state, controller)
+        }
         DynamicValueDef::BattlefieldPermanentsWithSubtype(subtype) => state
             .objects
             .iter()
@@ -7150,6 +7177,7 @@ pub(crate) fn permanent_matches_filter(
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_land
         }
         PermanentFilter::AnotherArtifact => object_has_type(state, id, CardType::Artifact),
+        PermanentFilter::NonlandV1 => !object_has_type(state, id, CardType::Land),
     }
 }
 
@@ -7575,7 +7603,8 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         }
         PermanentFilter::ArtifactOrCreature
         | PermanentFilter::Token
-        | PermanentFilter::Creature => CostKind::SacrificePermanents,
+        | PermanentFilter::Creature
+        | PermanentFilter::NonlandV1 => CostKind::SacrificePermanents,
         PermanentFilter::Land => CostKind::SacrificeLands,
     }
 }
@@ -9076,6 +9105,15 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
             }
         }
     }
+    // Mystic Forge and Bolas's Citadel: the top card of the library.
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(&top) = state.players[player.index()].library.first() {
+        if crate::eternal_e5a_v1::permissions::library_top_cast(state, player, top).is_some()
+            && is_castable_now(player, top, CastMethodV4::Normal, state)
+        {
+            out.push(top);
+        }
+    }
     for &id in &state.exile {
         if state.objects.get(id).owner == player && is_plotted_castable_now(player, id, state) {
             out.push(id);
@@ -9896,6 +9934,8 @@ fn activate_mana_ability_for_with_checkpoint(
     crate::standard_cards_v1::record_floating_mana(state, player, source, choice);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_v1::restrict_produced_mana(state, player, source, choice);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
     if state.objects.get(source).zone_change_count == source_zone_change_count {
         state
             .objects
@@ -10106,6 +10146,10 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
             }
         }
     }
+    #[cfg(feature = "eternal-fixtures")]
+    out.extend(crate::eternal_e5a_v1::permissions::extra_land_candidates(
+        state, player,
+    ));
     out
 }
 
@@ -13133,9 +13177,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
                         CostKind::SacrificeArtifacts
                     }
-                    PermanentFilter::ArtifactOrCreature | PermanentFilter::Token => {
-                        CostKind::SacrificePermanents
-                    }
+                    PermanentFilter::ArtifactOrCreature
+                    | PermanentFilter::Token
+                    | PermanentFilter::NonlandV1 => CostKind::SacrificePermanents,
                     PermanentFilter::Land => CostKind::SacrificeLands,
                 },
                 remaining,
@@ -17735,6 +17779,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                         && (state.extra_turn_v1.is_some() || goad.expires_at_turn <= state.turn))
                 });
             }
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_e5a_v1::phasing::phase_in(state, p);
             // Battlefield zone vectors are ownership-oriented. Untap is
             // controller-oriented, so inspect live objects to cover control
             // changes without consuming another player's skip marker.
@@ -20730,6 +20776,7 @@ pub(crate) fn step_without_linked_aura_v1(
                 crate::eternal_cards_v1::e3::play_land_back_face(state, p, id);
                 state.players[p.index()].lands_played_this_turn += 1;
                 crate::eternal_cards_v1::e3::note_land_played(state, p, id);
+                crate::eternal_e5a_v1::note_land_played(state, p);
                 collect_and_queue_triggers(state);
                 state.engine.priority_passes = [false, false];
                 state.priority_player = p;
@@ -23363,6 +23410,8 @@ fn play_land(
     state.players[player.index()].lands_played_this_turn += 1;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_land_played(state, player, id);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_e5a_v1::note_land_played(state, player);
     if resolution_cast_v1::finish_child(state)? {
         return Ok(());
     }
@@ -23537,6 +23586,12 @@ fn begin_cast_ex(
                 }
             }
         }
+        CastMethodV4::Normal if origin_zone == Zone::Library => {
+            SpellCastRouteV4::LibraryPermissionV1 {
+                holder: player,
+                permission_zone_change_count: origin_zone_change_count,
+            }
+        }
         _ => unreachable!("begin_cast_ex only announces supported cast routes"),
     };
     let cast_origin = SpellCastOriginV4 {
@@ -23545,6 +23600,17 @@ fn begin_cast_ex(
         route: cast_route,
         finalized_method: None,
     };
+    // Mystic Forge and Bolas's Citadel: the announced library card keeps
+    // its permission, and a Citadel cast pays life rather than its mana
+    // cost, with X 0.
+    let citadel_cast = cfg!(feature = "eternal-fixtures")
+        && origin_zone == Zone::Library
+        && crate::eternal_e5a_v1::permissions::library_top_cast(state, player, spell_id)
+            == Some(true);
+    #[cfg(feature = "eternal-fixtures")]
+    if origin_zone == Zone::Library {
+        crate::eternal_e5a_v1::permissions::note_library_cast(state, player, spell_id);
+    }
     let without_mana_cost = resolution_permission.is_some()
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
     // Omniscience and Aluren: a hand cast may skip its mana cost. Aluren's
@@ -23565,6 +23631,7 @@ fn begin_cast_ex(
     let free_room_door_choice = without_mana_cost
         && crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative).is_some();
     let cast_mode = if (without_mana_cost && !free_room_door_choice)
+        || citadel_cast
         || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
         || cast_method != CastMethodV4::Normal
         || def.alt_cost.is_none()
@@ -23682,6 +23749,7 @@ fn begin_cast_ex(
         optional_additional_cost_selection_finished: false,
         // Replicate's payment count is announced like X (601.2b).
         x_value: if without_mana_cost
+            || citadel_cast
             || (def.cost.x_count == 0
                 && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
                 && crate::eternal_cards_v1::replicate_cost(def.name).is_none())
@@ -23830,6 +23898,8 @@ fn finalize_owned_cast(
     crate::eternal_cards_v1::e3::note_spell_payment(state, pending.spell, &mana_taps);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_v1::note_cast_mana(state, pending.spell, mana_spent, colored_mana_spent);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_e5a_v1::permissions::pay_citadel_life(state, pending.spell, pending.controller);
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
@@ -24132,7 +24202,14 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         Zone::Hand => state.players[owner.index()].hand.push(pending.spell),
         Zone::Graveyard => state.players[owner.index()].graveyard.push(pending.spell),
         Zone::Exile => state.exile.push(pending.spell),
-        _ => unreachable!("origin_zone is always Hand, Graveyard, or Exile"),
+        // A card announced from the top of a library returns there.
+        Zone::Library => {
+            state.players[owner.index()]
+                .library
+                .insert(0, pending.spell);
+            state.note_library_insertion(owner, 0);
+        }
+        _ => unreachable!("origin_zone is always Hand, Graveyard, Exile, or Library"),
     }
     state.forget_hand_object(pending.spell);
     state.clear_object_relations(pending.spell);
@@ -24164,6 +24241,12 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
             // an aborted Adventure-exile cast returns to the exact exile
             // incarnation it started from and must retain its permission.
             object.v4.on_adventure = true;
+        }
+    }
+    if to_zone == Zone::Library {
+        // The spell was public on the stack.
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            state.reveal_library_position(observer, owner, 0);
         }
     }
     match resolution_cast_v1::finish_child(state) {
@@ -24630,6 +24713,14 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
     match from_zone {
         Zone::Graveyard => state.players[owner.index()].graveyard.retain(|&x| x != id),
         Zone::Exile => state.exile.retain(|&x| x != id),
+        // Mystic Forge and Bolas's Citadel cast the top card of a library.
+        Zone::Library => {
+            let library = &mut state.players[owner.index()].library;
+            if let Some(position) = library.iter().position(|&x| x == id) {
+                library.remove(position);
+                state.note_library_removal(owner, position);
+            }
+        }
         _ => state.players[owner.index()].hand.retain(|&x| x != id),
     }
     state.forget_hand_object(id);
@@ -24652,6 +24743,8 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
     for &(id, color) in &plan.taps {
         event::propose_and_commit(state, ProposedEvent::tap(id));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![color]));
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_e5a_v1::note_tapped_for_mana(state, player, id);
     }
     // A multi-yield source (an assembled Urza land) added more than the one
     // mana its own tap paid for. `PaymentPlan::surplus` is exactly the part

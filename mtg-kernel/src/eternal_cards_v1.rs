@@ -83,6 +83,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_lurrus_v1::LurrusStateV1::is_empty"
     )]
     pub lurrus: crate::eternal_lurrus_v1::LurrusStateV1,
+    /// Wave E5a's state (`eternal_e5a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_e5a_v1::E5aStateV1::is_empty"
+    )]
+    pub e5a: crate::eternal_e5a_v1::E5aStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -136,6 +142,8 @@ pub enum EternalTriggerV1 {
     VintageV1(crate::eternal_vintage_v1::VintageTriggerV1),
     /// A condition owned by the Vintage Lurrus lists' module.
     LurrusV1(crate::eternal_lurrus_v1::LurrusTriggerV1),
+    /// A condition owned by wave E5a's module.
+    E5aV1(crate::eternal_e5a_v1::E5aTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -251,6 +259,8 @@ pub enum EternalOpV1 {
     VintageV1(crate::eternal_vintage_v1::VintageOpV1),
     /// A leaf owned by the Vintage Lurrus lists' module.
     LurrusV1(crate::eternal_lurrus_v1::LurrusOpV1),
+    /// A leaf owned by wave E5a's module.
+    E5aV1(crate::eternal_e5a_v1::E5aOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -275,7 +285,10 @@ impl EternalOpV1 {
     /// Whether this leaf can yield a player decision, so its program must use
     /// the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
-        e3::contains_player_choice(self)
+        match self {
+            EternalOpV1::E5aV1(op) => op.contains_player_choice(),
+            _ => e3::contains_player_choice(self),
+        }
     }
 }
 
@@ -758,6 +771,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         EternalOpV1::VintageV1(op) => crate::eternal_vintage_v1::execute(op, ctx, state),
         EternalOpV1::LurrusV1(op) => crate::eternal_lurrus_v1::execute(op, ctx, state),
+        EternalOpV1::E5aV1(op) => crate::eternal_e5a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1223,6 +1237,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING))
         && e3::blocker_allowed(state, attacker, blocker)
         && crate::eternal_vintage_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_e5a_v1::statics::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1398,6 +1413,7 @@ pub(crate) fn delayed_triggers(
     let mut triggers = legacy_delayed_triggers(state, events);
     triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_lurrus_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_e5a_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -1486,6 +1502,7 @@ pub(crate) fn note_attackers_declared(state: &mut GameState) {
 pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_vintage_v1::begin_turn(state, player);
     crate::eternal_lurrus_v1::begin_turn(state, player);
+    crate::eternal_e5a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -1576,6 +1593,9 @@ pub(crate) fn trigger_matches(
         }
         EternalTriggerV1::LurrusV1(condition) => {
             crate::eternal_lurrus_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::E5aV1(condition) => {
+            crate::eternal_e5a_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {

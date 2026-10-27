@@ -21,6 +21,7 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+mod build_eternal_e5a_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -3273,6 +3274,8 @@ enum PermanentFilterRecipe {
     Creature,
     /// A controlled land (Edge of Autumn's "Cycling--Sacrifice a land").
     Land,
+    /// A controlled nonland permanent (Bolas's Citadel).
+    Nonland,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4500,6 +4503,8 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         "Citadel Gate" => vec!["W"],
         "Sea Gate" => vec!["U"],
         "Heap Gate" => vec!["C"],
+        // Planar Nexus and Talon Gates of Madara: Heap Gate's shape.
+        "Planar Nexus" | "Talon Gates of Madara" => vec!["C"],
         // Conduit Pylons' free printed ability is colorless-only; its paid
         // any-color ability is the additional rich definition below, same
         // shape as Heap Gate.
@@ -4608,7 +4613,7 @@ fn additional_mana_abilities_for(name: &str) -> String {
         // (`ManaAbilityCostDef::None`); the per-turn cap reuses Wall of
         // Roots' existing `max_activations_per_turn` enforcement.
         "Barrels of Blasting Jelly" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::None, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) } }]",
-        _ => "&[]",
+        _ => build_eternal_e5a_v1::additional_mana_abilities_for(name).unwrap_or("&[]"),
     }
     .to_string()
 }
@@ -6346,6 +6351,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
         PermanentFilterRecipe::Creature => "PermanentFilter::Creature",
         PermanentFilterRecipe::Land => "PermanentFilter::Land",
+        PermanentFilterRecipe::Nonland => "PermanentFilter::NonlandV1",
     }
 }
 
@@ -6357,6 +6363,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::AnotherArtifact => "another_artifact",
         PermanentFilterRecipe::Creature => "creature",
         PermanentFilterRecipe::Land => "land",
+        PermanentFilterRecipe::Nonland => "nonland",
     }
 }
 
@@ -7142,7 +7149,7 @@ fn optional_additional_cost_for(name: &str) -> &'static str {
         }
         "Troublemaker Ouphe" => "Some(OptionalAdditionalCostDef::Bargain)",
         "Make Disappear" => "Some(OptionalAdditionalCostDef::Casualty(1))",
-        _ => "None",
+        _ => build_eternal_e5a_v1::optional_additional_cost_for(name),
     }
 }
 
@@ -11182,6 +11189,13 @@ fn subtype_variant(t: &str) -> &'static str {
         "Tezzeret" => "Subtype::Tezzeret",
         "Frog" => "Subtype::Frog",
         "Sorcerer" => "Subtype::Sorcerer",
+        "Oko" => "Subtype::Oko",
+        "Ugin" => "Subtype::Ugin",
+        "Cave" => "Subtype::Cave",
+        "Cloud" => "Subtype::Cloud",
+        "Lair" => "Subtype::Lair",
+        "Locus" => "Subtype::Locus",
+        "Planet" => "Subtype::Planet",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

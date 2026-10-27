@@ -248,6 +248,10 @@ pub mod engine;
 mod equipment_damage_source_v4;
 /// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
 pub mod eternal_cards_v1;
+/// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
+/// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
+/// Mystic Forge).
+pub mod eternal_e5a_v1;
 /// Vintage Lurrus card programs and companions of the eternal catalog (wave
 /// E4b).
 pub mod eternal_lurrus_v1;

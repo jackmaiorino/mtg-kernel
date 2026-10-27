@@ -4773,9 +4773,12 @@ fn sba_fixed_point_with_protected_triggers(
         let leaving: Vec<ObjectId> = state
             .objects
             .iter()
-            .filter(|(_, obj)| {
+            .filter(|(id, obj)| {
                 obj.zone != Zone::Battlefield
                     && (token_defs[obj.card_def as usize] || obj.v4.is_token)
+                    // A phased-out token still exists (702.26).
+                    && !(cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_e5a_v1::phasing::phased_out(state, *id))
             })
             .map(|(id, _)| id)
             .collect();

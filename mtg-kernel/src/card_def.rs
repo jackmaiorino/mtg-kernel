@@ -373,6 +373,16 @@ pub enum Subtype {
     /// Frog, Hexing Squelcher).
     Frog,
     Sorcerer,
+    /// Appended for the eternal catalog's wave E5a: planeswalker types (Oko,
+    /// Thief of Crowns; Ugin, Eye of the Storms) and the nonbasic land
+    /// types Planar Nexus has besides those already listed.
+    Oko,
+    Ugin,
+    Cave,
+    Cloud,
+    Lair,
+    Locus,
+    Planet,
 }
 
 impl Subtype {
@@ -1369,6 +1379,9 @@ pub enum PermanentFilter {
     /// (Repurposing Bay's "Sacrifice another artifact"). Appended.
     AnotherArtifact,
     Token,
+    /// A controlled nonland permanent (Bolas's Citadel's "Sacrifice ten
+    /// nonland permanents"). Appended for the eternal catalog.
+    NonlandV1,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -1812,6 +1825,10 @@ pub enum DynamicValueDef {
     DistinctManaValuesAmongControlledNonlandPermanents,
     /// Current life total of the captured evaluating controller.
     ControllerLifeTotal,
+    /// Urza's Workshop: 1, or with metalcraft (three or more artifacts) the
+    /// number of Urza's lands the evaluating controller controls.
+    /// Appended for the eternal catalog.
+    UrzasLandsIfMetalcraftV1,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's

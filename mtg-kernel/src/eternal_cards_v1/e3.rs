@@ -35,6 +35,7 @@ pub(crate) const STREET_WRAITH: &str = "Street Wraith";
 pub(crate) const FLUSTERSTORM: &str = "Flusterstorm";
 pub(crate) const THASSAS_ORACLE: &str = "Thassa's Oracle";
 pub(crate) const BRAIN_FREEZE: &str = "Brain Freeze";
+pub(crate) const TENDRILS_OF_AGONY: &str = "Tendrils of Agony";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -261,6 +262,8 @@ pub enum E3ChoiceKindV1 {
     /// Mad Wizard's Lair: up to one of the `drawn` cards to cast without
     /// paying its mana cost.
     MadWizardV1 { drawn: Vec<EffectObjectBinding> },
+    /// A wave E5a choice (`eternal_e5a_v1::choices`).
+    E5aV1(crate::eternal_e5a_v1::E5aChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -292,13 +295,18 @@ impl E3ChoiceV1 {
                 | E3ChoiceKindV1::ScryV1 { .. }
                 | E3ChoiceKindV1::PunisherV1 { room: 2, .. }
                 | E3ChoiceKindV1::OublietteV1 { stage: 0, .. }
+                | E3ChoiceKindV1::E5aV1(_)
         )
     }
 
     /// Whether the chooser sees library cards it has not looked at before
     /// (a search).
     pub(crate) fn library_search(&self) -> bool {
-        matches!(self.kind, E3ChoiceKindV1::DoomsdayV1)
+        match &self.kind {
+            E3ChoiceKindV1::DoomsdayV1 => true,
+            E3ChoiceKindV1::E5aV1(kind) => kind.library_search(),
+            _ => false,
+        }
     }
 
     pub(crate) fn public_purpose(&self) -> crate::rl::TargetSelectionPurposeV4 {
@@ -311,9 +319,8 @@ impl E3ChoiceV1 {
             | E3ChoiceKindV1::AtraxaV1 { .. }
             | E3ChoiceKindV1::PunisherV1 { room: 2, .. }
             | E3ChoiceKindV1::OublietteV1 { stage: 0, .. }
-            | E3ChoiceKindV1::MadWizardV1 { .. } => {
-                crate::rl::TargetSelectionPurposeV4::CardSelection
-            }
+            | E3ChoiceKindV1::MadWizardV1 { .. }
+            | E3ChoiceKindV1::E5aV1(_) => crate::rl::TargetSelectionPurposeV4::CardSelection,
             E3ChoiceKindV1::AnnihilatorV1
             | E3ChoiceKindV1::PunisherV1 { .. }
             | E3ChoiceKindV1::OublietteV1 { .. }
@@ -392,7 +399,7 @@ impl E3ChoiceV1 {
 }
 
 /// Stages `choice` as the continuation's pending choice.
-fn offer(continuation: &mut EffectContinuation, choice: E3ChoiceV1) {
+pub(crate) fn offer(continuation: &mut EffectContinuation, choice: E3ChoiceV1) {
     continuation.choice = Some(choice.prompt());
 }
 
@@ -551,6 +558,9 @@ pub(crate) fn finish_selection(
                 choice.path.clone(),
                 done,
             )
+        }
+        E3ChoiceKindV1::E5aV1(kind) => {
+            crate::eternal_e5a_v1::choices::finish(state, continuation, choice, kind, bindings)
         }
     }
 }
@@ -828,6 +838,9 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        EternalOpV1::E5aV1(op) => {
+            crate::eternal_e5a_v1::choices::drive(state, continuation, op, path)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -1097,11 +1110,12 @@ pub(crate) fn damage_prevented_by_protection(
     source: ObjectId,
     target: Target,
 ) -> bool {
-    match target {
+    let protected = match target {
         Target::Player(player) => player_protected(state, player),
         Target::Object(object) => protected_from_spell(state, object, source),
         Target::StackItem(_) => false,
-    }
+    };
+    protected || crate::eternal_e5a_v1::statics::damage_prevented(state, source, target)
 }
 
 // ---- Chrome Mox ----------------------------------------------------------------
@@ -1300,6 +1314,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_lurrus_v1::entry_choice_decision(state) {
         return Some(decision);
     }
+    // Serra's Emissary: "As this creature enters, choose a card type."
+    if let Some(decision) = crate::eternal_e5a_v1::statics::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1363,6 +1381,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_lurrus_v1::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_e5a_v1::statics::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;
@@ -1496,7 +1517,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
-        FLUSTERSTORM | BRAIN_FREEZE => &FLUSTERSTORM_TRIGGERS,
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
@@ -1510,7 +1531,9 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     match name {
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
-        | THASSAS_ORACLE | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
+        | TENDRILS_OF_AGONY | THASSAS_ORACLE | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => {
+            Some(TargetSpec::None)
+        }
         _ => None,
     }
 }
@@ -1727,6 +1750,10 @@ pub(crate) fn player_targetable(
         && (controller == player
             || active_veils(state, player).next().is_none()
             || !source_blue_or_black(state, source))
+        // Serra's Emissary: protection from the chosen card type.
+        && !source.is_some_and(|source| {
+            crate::eternal_e5a_v1::statics::player_protected_from(state, player, source)
+        })
 }
 
 /// Whether `object` may be targeted by `controller`'s spell or ability from
@@ -1741,6 +1768,12 @@ pub(crate) fn object_targetable(
     let Some(live) = state.objects.try_get(object) else {
         return true;
     };
+    // Serra's Emissary: creatures with protection from the chosen card type.
+    if source.is_some_and(|source| {
+        crate::eternal_e5a_v1::statics::object_protected_from(state, object, source)
+    }) {
+        return false;
+    }
     if live.controller == controller || live.zone != Zone::Battlefield {
         return true;
     }
@@ -1844,7 +1877,7 @@ pub fn personal_tutor() -> EffectOp {
 
 /// Cards with Storm in this module.
 pub(crate) fn has_storm(name: &str) -> bool {
-    name == FLUSTERSTORM || name == BRAIN_FREEZE
+    name == FLUSTERSTORM || name == BRAIN_FREEZE || name == TENDRILS_OF_AGONY
 }
 
 /// Whether a Storm trigger copies a targeted spell, whose copies may choose
@@ -2030,7 +2063,9 @@ pub(crate) fn delayed_triggers(
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
-        FLUSTERSTORM | BRAIN_FREEZE => matches!(effect, EffectOp::CreateStormCopies { .. }),
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY => {
+            matches!(effect, EffectOp::CreateStormCopies { .. })
+        }
         dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),
         _ => false,
     }

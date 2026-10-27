@@ -877,6 +877,12 @@ pub enum SpellCastRouteV4 {
         holder: PlayerId,
         permission_zone_change_count: u32,
     },
+    /// Casting the top card of its owner's library under Mystic Forge or
+    /// Bolas's Citadel, for the exact library incarnation.
+    LibraryPermissionV1 {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object

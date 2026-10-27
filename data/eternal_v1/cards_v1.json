@@ -4607,6 +4607,917 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/HumanKnightToken.java",
    "is_token": true
+  },
+  {
+   "name": "Beseech the Mirror",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "bargain",
+    "tutor",
+    "cast_without_paying"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BeseechTheMirror.java"
+  },
+  {
+   "name": "Bolas's Citadel",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}{B}",
+   "mana_value": 6,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-blue-tinker",
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "play_from_library_top",
+    "alternative_life_cost",
+    "sacrifice_cost",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BolassCitadel.java"
+  },
+  {
+   "name": "Chalice of the Void",
+   "engine_capability": "full",
+   "mana_cost": "{X}{X}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-raker-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "charge_counters",
+    "counter_spell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ChaliceOfTheVoid.java"
+  },
+  {
+   "name": "Council of Reeds",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Scientist",
+    "Hero"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-paradoxical-outcome",
+    "vintage-blue-tinker"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "legend_rule_exemption",
+    "combat_trigger",
+    "token_copy"
+   ],
+   "java_file": "Scryfall: Council of Reeds"
+  },
+  {
+   "name": "Extrapolate the Impossible",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "wish"
+   ],
+   "java_file": "Scryfall: Extrapolate the Impossible"
+  },
+  {
+   "name": "Flash",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "put_onto_battlefield",
+    "pay_or_sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/Flash.java"
+  },
+  {
+   "name": "Forbidden Orchard",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "tapped_for_mana_trigger",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/ForbiddenOrchard.java"
+  },
+  {
+   "name": "Glaring Fleshraker",
+   "engine_capability": "full",
+   "mana_cost": "{2}{C}",
+   "mana_value": 3,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Eldrazi",
+    "Drone"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-raker-shops",
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cast_trigger",
+    "token_creation",
+    "etb_trigger",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GlaringFleshraker.java"
+  },
+  {
+   "name": "Grim Monolith",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "vintage-raker-shops",
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "doesnt_untap",
+    "untap_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GrimMonolith.java"
+  },
+  {
+   "name": "Inventors' Fair",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "vintage-raker-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "upkeep_trigger",
+    "life_gain",
+    "tutor",
+    "sacrifice_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/InventorsFair.java"
+  },
+  {
+   "name": "Kozilek's Command",
+   "engine_capability": "full",
+   "mana_cost": "{X}{C}{C}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Eldrazi"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "modal",
+    "x_cost",
+    "token_creation",
+    "scry",
+    "exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KozileksCommand.java"
+  },
+  {
+   "name": "Mystic Forge",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-raker-shops",
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "play_from_library_top",
+    "pay_life_cost",
+    "exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MysticForge.java"
+  },
+  {
+   "name": "Oath of Druids",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "upkeep_trigger",
+    "reveal_until",
+    "put_onto_battlefield",
+    "mill"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OathOfDruids.java"
+  },
+  {
+   "name": "Oko, Thief of Crowns",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{U}",
+   "mana_value": 3,
+   "colors": [
+    "G",
+    "U"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Oko"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "token_creation",
+    "lose_abilities",
+    "exchange_control"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OkoThiefOfCrowns.java",
+   "starting_loyalty": 4
+  },
+  {
+   "name": "Planar Nexus",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Cave",
+    "Cloud",
+    "Desert",
+    "Gate",
+    "Lair",
+    "Locus",
+    "Mine",
+    "Planet",
+    "Power-Plant",
+    "Sphere",
+    "Tower",
+    "Town",
+    "Urza's"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C",
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "every_nonbasic_land_type"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PlanarNexus.java"
+  },
+  {
+   "name": "Scrawling Crawler",
+   "engine_capability": "full",
+   "mana_cost": "{3}",
+   "mana_value": 3,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Construct"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-raker-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "upkeep_trigger",
+    "draw",
+    "opponent_draws_trigger",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/ScrawlingCrawler.java"
+  },
+  {
+   "name": "Sensei's Divining Top",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-raker-shops",
+    "vintage-paradoxical-outcome",
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "library_manipulation",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SenseisDiviningTop.java"
+  },
+  {
+   "name": "Serra's Emissary",
+   "engine_capability": "full",
+   "mana_cost": "{4}{W}{W}{W}",
+   "mana_value": 7,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Angel"
+   ],
+   "supertypes": [],
+   "power": 7,
+   "toughness": 7,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "choose_card_type",
+    "protection"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SerrasEmissary.java"
+  },
+  {
+   "name": "Suplex",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-blue-tinker"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "modal",
+    "damage",
+    "exile_if_dies",
+    "exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Suplex.java"
+  },
+  {
+   "name": "Talon Gates of Madara",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Gate"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C",
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "vintage-raker-shops"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_ability",
+    "etb_trigger",
+    "phasing",
+    "activated_from_hand"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TalonGatesOfMadara.java"
+  },
+  {
+   "name": "Tendrils of Agony",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "storm",
+    "life_loss",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TendrilsOfAgony.java"
+  },
+  {
+   "name": "The Endstone",
+   "engine_capability": "full",
+   "mana_cost": "{7}",
+   "mana_value": 7,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-paradoxical-outcome"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cast_trigger",
+    "land_play_trigger",
+    "draw",
+    "end_step_trigger",
+    "set_life"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TheEndstone.java"
+  },
+  {
+   "name": "The Fantasticar",
+   "engine_capability": "full",
+   "mana_cost": "{3}",
+   "mana_value": 3,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Vehicle"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-raker-shops",
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "vehicle",
+    "flying",
+    "cast_trigger",
+    "animate",
+    "token_creation"
+   ],
+   "java_file": "Scryfall: The Fantasticar"
+  },
+  {
+   "name": "Fantasticar Construct Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Construct"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "flying",
+    "haste"
+   ],
+   "java_file": "Scryfall: The Fantasticar",
+   "is_token": true
+  },
+  {
+   "name": "Ugin, Eye of the Storms",
+   "engine_capability": "full",
+   "mana_cost": "{7}",
+   "mana_value": 7,
+   "colors": [],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Ugin"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "cast_trigger",
+    "exile",
+    "tutor",
+    "cast_without_paying"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UginEyeOfTheStorms.java",
+   "starting_loyalty": 7
+  },
+  {
+   "name": "Urza's Workshop",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Urza's"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "metalcraft",
+    "colorless_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UrzasWorkshop.java"
+  },
+  {
+   "name": "Vampiric Tutor",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "tutor",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VampiricTutor.java"
+  },
+  {
+   "name": "Voltaic Key",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "activated_ability",
+    "untap_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VoltaicKey.java"
+  },
+  {
+   "name": "Yawgmoth's Will",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-blue-tinker",
+    "vintage-beseech-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "play_from_graveyard",
+    "replacement_exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/y/YawgmothsWill.java"
   }
  ]
 }

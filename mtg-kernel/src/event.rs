@@ -3111,6 +3111,9 @@ fn commit_with_entry_batch_and_source_color(
         ProposedEvent::ZoneChange(mut z) => {
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
+            // Yawgmoth's Will and Suplex exile instead.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);

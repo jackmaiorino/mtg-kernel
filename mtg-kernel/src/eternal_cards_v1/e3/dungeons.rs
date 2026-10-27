@@ -500,7 +500,7 @@ pub(super) fn resolve_room(
 
 /// "Scry N": the player looks at the top N cards, chooses those to keep on
 /// top in order (first chosen on top), then orders the rest on the bottom.
-fn stage_scry(
+pub(crate) fn stage_scry(
     state: &mut GameState,
     continuation: &mut EffectContinuation,
     player: PlayerId,
@@ -700,9 +700,14 @@ pub(crate) fn resolution_cast_card(
     choice: &E3ChoiceV1,
     selected: &[Target],
 ) -> Option<EffectObjectBinding> {
-    let E3ChoiceKindV1::MadWizardV1 { .. } = choice.kind else {
-        return None;
-    };
+    match &choice.kind {
+        E3ChoiceKindV1::MadWizardV1 { .. } => {}
+        // Beseech the Mirror casts the found card from its owner's hand.
+        E3ChoiceKindV1::E5aV1(kind) => {
+            return crate::eternal_e5a_v1::choices::resolution_cast_card(kind, choice, selected)
+        }
+        _ => return None,
+    }
     selected
         .first()
         .and_then(|&target| choice.binding_for(target))
