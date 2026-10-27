@@ -554,14 +554,31 @@ class ResponsibilityTests(Base):
         self.assertEqual(lease.read(root / "ALERT-pod-not-released.json")["pod_ids"], ["B"])
 
     def test_unhanded_primary_is_deleted_and_verified_before_the_create_fails(self):
-        # finding 3: no durable handoff for the only ID: the creator deletes it and verifies absence
+        # finding 3: no durable handoff for the only ID (record and receipt writes both fail): the
+        # creator deletes it and verifies absence
+        root = self.control(); world = World()
+        original = lease.write
+
+        def write(path, value, **kw):
+            if Path(path).name == "created-pod.json":
+                raise OSError("disk full")
+            return original(path, value, **kw)
+
+        def poster(body):
+            world.pods["A"] = pod("A"); return pod("A")
+        with patch.object(lease, "write", write), self.assertRaisesRegex(RuntimeError, "deleted and verified absent"):
+            self.create_with(root, world, poster, failing_ids=("A",))
+        self.assertNotIn("A", world.pods)
+
+    def test_primary_named_by_a_readable_receipt_is_handed_off_not_deleted(self):
+        # round 8: a durable receipt is a handoff; cleanup reconciles with it and never deletes the Pod
         root = self.control(); world = World()
 
         def poster(body):
             world.pods["A"] = pod("A"); return pod("A")
-        with self.assertRaisesRegex(RuntimeError, "deleted and verified absent"):
-            self.create_with(root, world, poster, failing_ids=("A",))
-        self.assertNotIn("A", world.pods)
+        self.assertEqual(self.create_with(root, world, poster, failing_ids=("A",))["id"], "A")
+        self.assertIn("A", world.pods)
+        self.assertEqual(world.deletes, [])
 
     def test_mixed_validity_census_keeps_each_valid_entry(self):
         # finding 4: a malformed entry never discards valid duplicate B
@@ -708,6 +725,30 @@ class CreateInterruptTests(Base):
                          provider=world.provider, clock=clock, sleep=clock.sleep)
         self.assertIn("A", world.deletes)
         self.assertNotIn("A", world.pods)
+
+
+class StatusInterruptTests(Base):
+    """Round 8 finding 1: an interrupted status never deletes a primary that was already handed off."""
+
+    def test_status_interrupted_during_the_primary_readback_deletes_nothing(self):
+        root = self.control(); world = World([pod("P")])
+        lease.external_guard.remember(root, "P", "receipt", 1000.0)
+        lease.write(root / "lease/created-pod.json", {"id": "P", "name": NAME})
+        prepared = lease.read(root / "lease/lease.json")
+        clock = FakeClock(prepared["deadline_epoch"] - 60)
+
+        def handoff(folder, pod_id, role, epoch):
+            raise KeyboardInterrupt()
+        with patch.object(sys, "argv", ["cloud_lease.py", "status", "--control", str(root)]), \
+                patch.object(lease.external_guard, "api_key", return_value="k"), \
+                patch.object(lease.external_guard, "list_pods", world.list), \
+                patch.object(lease.external_guard, "PodApi", world.provider), \
+                patch.object(lease.external_guard, "handoff_in", side_effect=handoff), \
+                patch.object(lease.time, "time", clock), patch.object(lease.time, "sleep", clock.sleep), \
+                patch("sys.stdout", io.StringIO()), self.assertRaises(KeyboardInterrupt):
+            lease.main()
+        self.assertEqual(world.deletes, [])
+        self.assertIn("P", world.pods)
 
 
 if __name__ == "__main__":

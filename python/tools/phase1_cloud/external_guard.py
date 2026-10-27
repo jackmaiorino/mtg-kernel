@@ -320,13 +320,60 @@ class LeaseClient:
 
     def __enter__(self):
         self._active = True
+        self.load_durable()
         return self
+
+    def receipt_ids(self):
+        """IDs named by this lease's create receipt and ambiguity records, when readable and valid."""
+        found = set()
+        for name, field in (('created-pod.json', 'id'), ('create-ambiguous.json', 'pod_id'),
+                            ('create-pod-failure.json', 'pod_id')):
+            try:
+                value = read(self.folder.parent / name)
+                if isinstance(value, dict) and valid_id(value.get(field)):
+                    found.add(value[field])
+            except Exception:  # noqa: BLE001 - missing or unreadable: names nothing
+                pass
+        return found
+
+    def record_reads_back(self, pod_id):
+        try:
+            value = read(self.folder / (pod_id + '.json'))
+            return isinstance(value, dict) and value.get('id') == pod_id
+        except Exception:  # noqa: BLE001
+            return False
+
+    def load_durable(self):
+        """What is already handed off is never an obligation: known-Pod records that read back and IDs
+        named by readable receipts start resolved."""
+        try:
+            names = [path.name for path in self.folder.iterdir()] if self.folder.exists() else []
+        except Exception:  # noqa: BLE001
+            names = []
+        for name in names:
+            if name.endswith('.json') and not name.endswith('.absent.json'):
+                pod_id = name[:-len('.json')]
+                if valid_id(pod_id) and self.record_reads_back(pod_id):
+                    self.mark_persisted(pod_id)
+        for pod_id in self.receipt_ids():
+            self.mark_durable(pod_id)
+
+    def durable_now(self, pod_id):
+        """Reconciled from disk at the moment of asking: a known-Pod record that reads back, or a
+        readable receipt naming the ID. Destructive cleanup never touches such an ID."""
+        if pod_id in self.durable or self.record_reads_back(pod_id) or pod_id in self.receipt_ids():
+            self.persisted.add(pod_id); self.unpersisted.discard(pod_id)
+            return True
+        return False
+
+    def open_obligations(self):
+        """The unresolved obligations now: registered, not verified absent, not durable on disk."""
+        return sorted(p for p in sorted(self.unpersisted - self.verified_absent) if not self.durable_now(p))
 
     def __exit__(self, exc_type, exc, tb):
         """Runs on every exit, BaseException included (KeyboardInterrupt, SystemExit): release and
         verify every open obligation, or write an ALERT naming every unresolved ID. An exception that
         was already propagating is re-raised unchanged; otherwise a failed resolution raises."""
-        open_ids = sorted(self.unpersisted - self.verified_absent)
         try:
             try:
                 resolve_or_alert(self, self.release_deadline(), self.alert_path, self.sleep)
@@ -334,7 +381,8 @@ class LeaseClient:
                 if exc is None:   # the ALERT record naming the unresolved IDs is already written
                     raise
             except BaseException:
-                self.alert(open_ids, 'interrupted before release completed')
+                # built from the obligations open now, including IDs the cleanup itself discovered
+                self.alert(self.open_obligations(), 'interrupted before release completed')
                 if exc is None:
                     raise
         finally:
@@ -450,7 +498,11 @@ def release_unhanded(client, pod_ids, deadline, sleep=None):
             census_ok = not malformed
         except Exception:  # noqa: BLE001 - never absence
             listed, census_ok = set(), False
-        targets |= client.unpersisted - client.verified_absent
+        # recomputed after this pass's census and reconciled with disk before any DELETE: an ID whose
+        # handoff is durable is the guardian's, never deleted here
+        targets = {p for p in targets | (client.unpersisted - client.verified_absent) if not client.durable_now(p)}
+        if not targets:
+            return []
         state = {}
         for pod_id in sorted(targets):
             try:
@@ -476,18 +528,19 @@ def resolve_or_alert(client, deadline, alert_path, sleep=None, also=()):
     """Every ending path runs this (LeaseClient's exit does): IDs that are neither durable nor verified
     absent are released here (release_unhanded); if any remain, an ALERT record is written and
     RuntimeError('ALERT ...') raised. Returns the IDs this call released."""
-    targets = (set(also) | client.unpersisted) - client.verified_absent
+    targets = {p for p in (set(also) | client.unpersisted) - client.verified_absent if not client.durable_now(p)}
     if not targets:
         return set()
     pending = release_unhanded(client, targets, deadline, sleep)
     if pending:
+        named = sorted(set(pending) | set(client.open_obligations()))
         try:
-            write(alert_path, {'pod_ids': pending, 'reason': 'not handed off and not verified absent',
+            write(alert_path, {'pod_ids': named, 'reason': 'not handed off and not verified absent',
                                'epoch': client.clock()}, replace=True)
         except Exception:  # noqa: BLE001 - the raised error still names them
             pass
-        raise AlertError('ALERT: Pods ' + ','.join(pending) + ' were neither handed off nor verified absent')
-    return targets
+        raise AlertError('ALERT: Pods ' + ','.join(named) + ' were neither handed off nor verified absent')
+    return targets & client.verified_absent
 
 
 def run(root, key, pods=None, provider=None, clock=time.time, sleep=time.sleep,

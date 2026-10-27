@@ -20,6 +20,20 @@ def pod(pid='pod1', **changes):
     return {'id': pid, 'name': NAME, 'costPerHr': 0.96, **changes}
 
 
+def failing_handoff(ids, first=None):
+    """Handoffs of `ids` fail with OSError; with `first`, the first such call raises that instead."""
+    real = eg.handoff_in; fired = []
+
+    def handoff(folder, pod_id, role, epoch):
+        if pod_id in ids:
+            if first is not None and pod_id not in fired:
+                fired.append(pod_id)
+                raise first()
+            raise OSError('read-only store')
+        return real(folder, pod_id, role, epoch)
+    return mock.patch.object(eg, 'handoff_in', side_effect=handoff)
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
@@ -599,8 +613,12 @@ class ReleaseUnhandedTests(unittest.TestCase):
     def run_release(self, world, deadline_after=120, ids=('A',), sleep=None):
         clock = FakeClock(1000.)
         folder = Path(self.temporary.name) / 'known-pods'
-        with no_network(), eg.LeaseClient(folder, NAME, 'k', world.provider, world.list, clock, clock.sleep) as client:
-            pending = eg.release_unhanded(client, list(ids), 1000. + deadline_after, sleep or clock.sleep)
+        pending = None
+        try:
+            with no_network(), failing_handoff(set(ids)),                     eg.LeaseClient(folder, NAME, 'k', world.provider, world.list, clock, clock.sleep) as client:
+                pending = eg.release_unhanded(client, list(ids), 1000. + deadline_after, sleep or clock.sleep)
+        except eg.AlertError:
+            self.assertTrue(pending)            # the exit could not release them either and raised loudly
         return pending, clock
 
     def setUp(self):
@@ -683,7 +701,8 @@ class ReleaseReappearanceTests(unittest.TestCase):
             sleeps[0] += 1; clock.sleep(seconds)
             if clock.t == 1050:                                 # A was confirmed absent; it comes back
                 world.pods['A'] = pod('A'); reappeared.append(len(world.deletes))
-        with no_network(), eg.LeaseClient(self.folder, NAME, 'k', provider, world.list, clock, sleep) as client:
+        with no_network(), failing_handoff({'A', 'B'}), \
+                eg.LeaseClient(self.folder, NAME, 'k', provider, world.list, clock, sleep) as client:
             pending = eg.release_unhanded(client, ['A', 'B'], 1300., sleep)
         self.assertEqual(pending, [])
         self.assertIn('A', world.deletes[reappeared[0]:])          # A was deleted again after reappearing
@@ -697,14 +716,14 @@ class ReleaseReappearanceTests(unittest.TestCase):
         def sleep(seconds):
             clock.sleep(seconds)
             world.pods['A'] = pod('A')                          # A keeps coming back
-        with no_network(), self.client(world, clock) as client:
+        with no_network(), failing_handoff({'A'}), self.client(world, clock) as client:
             pending = eg.release_unhanded(client, ['A'], 1120., sleep)
-        self.assertEqual(pending, ['A'])
+        self.assertEqual(pending, ['A'])   # (the client's exit then releases A once it stops reappearing)
 
     def test_recovery_census_retains_a_new_owned_id(self):
         clock = FakeClock(1000.)
         world = World([pod('A'), pod('B')])
-        with no_network(), self.client(world, clock) as client:
+        with no_network(), failing_handoff({'A'}), self.client(world, clock) as client:
             eg.release_unhanded(client, ['A'], 1300., clock.sleep)
         self.assertEqual(read(self.folder / 'B.json'), {'id': 'B', 'role': 'census',
                                                          'epoch': read(self.folder / 'B.json')['epoch']})
@@ -898,7 +917,8 @@ class InterruptTests(unittest.TestCase):
     def test_interrupt_that_cannot_release_writes_an_alert_naming_every_id(self):
         world = World([pod('B'), pod('C'), pod('D')]); world.delete_failures = -1
         self.first_census_only(world); clock = FakeClock(1000.)
-        with self.assertRaises(KeyboardInterrupt), no_network(), self.interrupting({'B', 'C', 'D'}),                 self.client(world, clock) as client:
+        with self.assertRaises(KeyboardInterrupt), no_network(), \
+                failing_handoff({'B', 'C', 'D'}, first=KeyboardInterrupt), self.client(world, clock) as client:
             client.census()
         self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['B', 'C', 'D'])
 
@@ -918,11 +938,92 @@ class InterruptTests(unittest.TestCase):
         write(self.root / 'worker-started.json', {})
         world = World([pod('pod1'), pod('dup2')]); clock = FakeClock(1100.)
         world.census = lambda current: current if not world.deletes else [p for p in current if p['id'] != 'dup2']
-        with self.assertRaises(KeyboardInterrupt), no_network(), self.interrupting({'dup2'}):
+        with self.assertRaises(KeyboardInterrupt), no_network(), failing_handoff({'dup2'}, first=KeyboardInterrupt):
             eg.run(self.root, 'k', pods=world.list, provider=world.provider, clock=clock, sleep=clock.sleep,
                    once=True)
         self.assertNotIn('dup2', world.pods)
         self.assertIn('pod1', world.pods)
+
+
+class ReconcileTests(unittest.TestCase):
+    """Round 8: cleanup reconciles durable ownership before any DELETE, and an interrupted cleanup's
+    ALERT names the obligations open at the moment it is written."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.folder = self.root / 'lease/known-pods'
+
+    def client(self, world, clock):
+        return eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock, clock.sleep,
+                              self.root / 'ALERT-pod-not-released.json')
+
+    def test_interrupt_after_a_durable_handoff_before_the_obligation_clears_deletes_nothing(self):
+        # finding 1(b): the record is written and reads back, then the interrupt lands
+        world = World([pod('B')]); clock = FakeClock(1000.)
+        real = eg.handoff_in
+
+        def write_then_interrupt(folder, pod_id, role, epoch):
+            real(folder, pod_id, role, epoch)
+            raise KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt), no_network(), \
+                mock.patch.object(eg, 'handoff_in', side_effect=write_then_interrupt), \
+                self.client(world, clock) as client:
+            client.census()
+        self.assertEqual(world.deletes, [])
+        self.assertEqual(read(self.folder / 'B.json')['id'], 'B')
+
+    def test_cleanup_census_that_completes_the_handoff_deletes_nothing(self):
+        # finding 1: the readback is interrupted; the cleanup's own census then hands B off durably
+        world = World([pod('B')]); clock = FakeClock(1000.)
+        real = eg.handoff_in; fired = []
+
+        def interrupt_once(folder, pod_id, role, epoch):
+            if not fired:
+                fired.append(pod_id)
+                raise KeyboardInterrupt()
+            return real(folder, pod_id, role, epoch)
+        with self.assertRaises(KeyboardInterrupt), no_network(), \
+                mock.patch.object(eg, 'handoff_in', side_effect=interrupt_once), \
+                self.client(world, clock) as client:
+            client.census()
+        self.assertEqual(world.deletes, [])
+        self.assertEqual(read(self.folder / 'B.json')['id'], 'B')
+
+    def test_existing_record_is_never_an_obligation(self):
+        # finding 1(a), at the client: a record that reads back is loaded as handed off on entry
+        eg.remember(self.root, 'P', 'receipt', 1000.)
+        world = World([pod('P')]); clock = FakeClock(1000.)
+        with self.assertRaises(KeyboardInterrupt), no_network(), \
+                failing_handoff({'P'}, first=KeyboardInterrupt), self.client(world, clock) as client:
+            client.census()
+        self.assertEqual(world.deletes, [])
+
+    def test_interrupt_during_cleanup_alerts_every_open_obligation(self):
+        # finding 2: A is pending; the cleanup's census discovers B and C; a further interrupt lands
+        # during B's handoff. The ALERT names A, B and C, and the original interrupt propagates.
+        world = World([pod('A'), pod('B'), pod('C')]); clock = FakeClock(1000.)
+        calls = [0]
+
+        def census(current):
+            calls[0] += 1
+            return [p for p in current if p['id'] == 'A'] if calls[0] == 1 else current
+        world.census = census
+        real = eg.handoff_in; fired = []
+
+        def handoff(folder, pod_id, role, epoch):
+            if pod_id in ('A', 'B') and pod_id not in fired:
+                fired.append(pod_id)
+                raise KeyboardInterrupt('first' if pod_id == 'A' else 'second')
+            if pod_id == 'A':
+                raise OSError('read-only store')
+            return real(folder, pod_id, role, epoch)
+        with self.assertRaises(KeyboardInterrupt) as raised, no_network(), \
+                mock.patch.object(eg, 'handoff_in', side_effect=handoff), self.client(world, clock) as client:
+            client.census()
+        self.assertEqual(str(raised.exception), 'first')
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['A', 'B', 'C'])
+        self.assertEqual(world.deletes, [])
 
 
 if __name__ == '__main__':
