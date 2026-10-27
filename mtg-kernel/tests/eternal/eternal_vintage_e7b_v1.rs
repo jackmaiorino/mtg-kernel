@@ -17,7 +17,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E7B_CARDS: [&str; 44] = [
+const E7B_CARDS: [&str; 45] = [
     "Abrupt Decay",
     "Assassin's Trophy",
     "Avatar of Burgeoning Echoes",
@@ -25,6 +25,7 @@ const E7B_CARDS: [&str; 44] = [
     "Bayou",
     "Bazaar of Baghdad",
     "Blazing Rootwalla",
+    "Carnivorous Cultivator",
     "Chain of Vapor",
     "Collector Ouphe",
     "Commandeer",
@@ -451,6 +452,10 @@ fn e7b_cards_are_full_with_their_printed_characteristics() {
     assert_eq!(jace.types, &[CardType::Planeswalker]);
     assert_eq!(jace.starting_loyalty, Some(0));
     assert_eq!(jace.activated_abilities.len(), 2);
+    // Carnivorous Cultivator's prepare spell: a card in no deck.
+    let enroot = def("Enroot");
+    assert!(!enroot.is_token && enroot.capability == CardCapability::Full);
+    assert_eq!(enroot.types, &[CardType::Sorcery]);
 
     for (name, loyalty) in [
         ("Dack Fayden", 3),
@@ -1190,6 +1195,69 @@ fn ragavan_dashes_with_haste_returns_at_end_and_pilfers_on_combat_damage() {
         hand_contains(&state, P0, ragavan),
         "returned at the end step"
     );
+}
+
+#[test]
+fn carnivorous_cultivator_enters_prepared_and_its_enroot_copy_is_cast_from_exile() {
+    let copies = |state: &GameState| {
+        state
+            .exile
+            .iter()
+            .copied()
+            .filter(|&id| name_of(state, id) == "Enroot")
+            .collect::<Vec<_>>()
+    };
+    let mut state = islands();
+    let cultivator = put(&mut state, P0, "Carnivorous Cultivator", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, cultivator, &[]);
+    settled(&mut state);
+    assert!(keyword(&state, cultivator, Keywords::DEATHTOUCH));
+    let enroot = copies(&state);
+    assert_eq!(enroot.len(), 1, "it enters prepared");
+    let enroot = enroot[0];
+    assert!(!castable(&mut state, enroot), "Enroot costs {{G}}");
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    let library = state.players[0].library.len();
+    cast(&mut state, enroot, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            selected_count: 0,
+            ..
+        } => Action::ChooseEffectTarget(legal_targets[0]),
+        other => first_answer(other),
+    });
+    assert_eq!(state.players[0].library.len(), library - 1);
+    let graveyard: Vec<&str> = state.players[0]
+        .graveyard
+        .iter()
+        .map(|&id| name_of(&state, id))
+        .collect();
+    assert_eq!(graveyard, vec!["Island"], "the copy ceased to exist");
+    assert!(copies(&state).is_empty(), "no longer prepared");
+
+    // Combat damage to a player returns a land card from the graveyard.
+    let island = state.players[0].graveyard[0];
+    state.objects.get_mut(cultivator).summoning_sick = false;
+    attack_with(&mut state, vec![cultivator], |_, _| None);
+    assert_eq!(state.players[1].life, 18);
+    assert!(hand_contains(&state, P0, island));
+
+    // A prepared creature that leaves takes its copy with it.
+    let mut state = islands();
+    let cultivator = put(&mut state, P0, "Carnivorous Cultivator", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, cultivator, &[]);
+    settled(&mut state);
+    let enroot = copies(&state)[0];
+    let decay = put(&mut state, P1, "Abrupt Decay", Zone::Hand);
+    opponents_main_phase(&mut state);
+    pool(&mut state, P1, &[ManaColor::B, ManaColor::G], 0);
+    cast(&mut state, decay, &[Target::Object(cultivator)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, cultivator), Zone::Graveyard);
+    assert!(!state.exile.contains(&enroot), "the copy ceases to exist");
 }
 
 // ---- Removal and graveyard hate ---------------------------------------------------

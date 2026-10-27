@@ -120,6 +120,14 @@ pub struct E7bStateV1 {
     /// them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub casters: Vec<(StackItemId, PlayerId)>,
+    /// Prepared creatures, by battlefield incarnation, and the copy of each
+    /// one's prepare spell in exile (Carnivorous Cultivator's Enroot).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prepared: Vec<(ObjectLinkV4, ObjectId)>,
+    /// Copies of prepare spells in exile or on the stack. Each ceases to
+    /// exist once it is anywhere else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prepare_copies: Vec<ObjectId>,
     /// Opening hands whose Serum Powder choice the player declined, cleared
     /// once the mulligans end.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -368,6 +376,7 @@ impl E7bChoiceV1 {
 
 const AVATAR_OF_BURGEONING_ECHOES: &str = "Avatar of Burgeoning Echoes";
 const CARNIVOROUS_CULTIVATOR: &str = "Carnivorous Cultivator";
+const ENROOT: &str = "Enroot";
 const CREEPING_CHILL: &str = "Creeping Chill";
 const DACK_FAYDEN: &str = "Dack Fayden";
 const GOLGARI_GRAVE_TROLL: &str = "Golgari Grave-Troll";
@@ -668,6 +677,17 @@ pub fn mindbreak_trap() -> EffectOp {
 /// owner's library."
 pub fn noxious_revival() -> EffectOp {
     e7b(E7bOpV1::TargetCardToLibraryTopV1)
+}
+
+/// Enroot, Carnivorous Cultivator's prepare spell: "Search your library for
+/// a land card, put it into your graveyard, then shuffle."
+pub fn enroot() -> EffectOp {
+    EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: LibraryCardFilter::AnyLand,
+        max_targets: 1,
+        destination: LibrarySearchDestinationV1::GraveyardV1,
+    }
 }
 
 /// Stonecoil Serpent: "This creature enters with X +1/+1 counters on it."
@@ -2218,8 +2238,8 @@ pub(crate) fn delayed_triggers(
     note_entries(state, events);
     end_step_triggers(state, events);
     graveyard_watch_triggers(state, events);
-    emblem_triggers(state, events);
     prune(state);
+    maintain_prepared(state);
     let Some(eternal) = state.eternal_v1.as_mut() else {
         return Vec::new();
     };
@@ -2267,6 +2287,7 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
         };
         let link = live_link(state, spell);
         let name = definition_name(state, spell);
+        note_prepare_cast(state, spell);
         if !item.is_copy {
             let alternative = item.v4.cast_method == Some(CastMethodV4::Alternative);
             match name {
@@ -2406,9 +2427,21 @@ fn dack_emblem_trigger(state: &mut GameState, player: PlayerId, item: &crate::st
 }
 
 /// Spells that just resolved into permanents: a dashed Ragavan gains haste
-/// and returns at the next end step; a Carnivorous Cultivator's entry is
-/// its own trigger. Also feeds Prized Amalgam.
+/// and returns at the next end step. A Carnivorous Cultivator enters
+/// prepared. Also feeds Prized Amalgam.
 fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
+    for event in events {
+        if let CommittedEvent::CreateToken { object, .. } = *event {
+            if state
+                .objects
+                .try_get(object)
+                .is_some_and(|live| live.zone == Zone::Battlefield)
+                && definition_name(state, object) == Some(CARNIVOROUS_CULTIVATOR)
+            {
+                prepare(state, object);
+            }
+        }
+    }
     for (index, event) in events.iter().enumerate() {
         let CommittedEvent::ZoneChange {
             object,
@@ -2440,10 +2473,130 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
                 }
             }
         }
+        // "Enters prepared" is not a triggered ability.
+        if definition_name(state, object) == Some(CARNIVOROUS_CULTIVATOR) {
+            prepare(state, object);
+        }
         if statics::entry_triggers_suppressed(state, object) {
             continue;
         }
         amalgam_triggers(state, events, index, object, from);
+    }
+}
+
+// ---- Prepared -----------------------------------------------------------------------
+
+/// "This creature enters prepared": as a creature with a prepare spell
+/// becomes prepared, its controller creates a copy of that spell in exile.
+/// It stays there while the creature is on the battlefield and prepared,
+/// and the creature's controller may cast it; as they do, the creature
+/// stops being prepared. A creature can't be prepared twice at once.
+fn prepare(state: &mut GameState, creature: ObjectId) {
+    let link = live_link(state, creature);
+    if read_state(state)
+        .is_some_and(|e7b| e7b.prepared.iter().any(|(prepared, _)| *prepared == link))
+    {
+        return;
+    }
+    let controller = state.objects.get(creature).controller;
+    let card_def = token_id(ENROOT);
+    let copy = state.objects.push(crate::state::GameObject {
+        card_def,
+        name: CARD_DEFS[usize::from(card_def)].object_name.into(),
+        owner: controller,
+        controller,
+        zone: Zone::Exile,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Default::default(),
+        attachments: Vec::new(),
+        v4: crate::state::ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: None,
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    state.exile.push(copy);
+    let e7b = e7b_state(state);
+    e7b.prepared.push((link, copy));
+    e7b.prepare_copies.push(copy);
+    maintain_prepared(state);
+}
+
+/// A cast of a prepare spell's copy: its creature stops being prepared.
+fn note_prepare_cast(state: &mut GameState, spell: ObjectId) {
+    if read_state(state).is_some_and(|e7b| e7b.prepared.iter().any(|(_, copy)| *copy == spell)) {
+        e7b_state(state).prepared.retain(|(_, copy)| *copy != spell);
+    }
+}
+
+/// Keeps each prepare copy's cast permission with its creature's current
+/// controller, and makes copies cease to exist once their creature left or
+/// they left exile and the stack.
+fn maintain_prepared(state: &mut GameState) {
+    let Some(e7b) = read_state(state) else {
+        return;
+    };
+    if e7b.prepare_copies.is_empty() {
+        return;
+    }
+    let prepared = e7b.prepared.clone();
+    for copy in e7b.prepare_copies.clone() {
+        let on_stack = state.stack.iter().any(|item| item.source == copy)
+            || state
+                .engine
+                .pending_cast
+                .as_ref()
+                .is_some_and(|pending| pending.spell == copy);
+        if on_stack {
+            continue;
+        }
+        let in_exile = state.exile.contains(&copy);
+        let holder = prepared
+            .iter()
+            .find(|(_, prepared_copy)| *prepared_copy == copy)
+            .filter(|(creature, _)| in_exile && link_live_in(state, *creature, Zone::Battlefield))
+            .map(|(creature, _)| state.objects.get(creature.object).controller);
+        let generation = state.objects.get(copy).zone_change_count;
+        let permissions = &mut state.engine.exile_play_permissions;
+        match holder {
+            Some(holder) => {
+                let current = permissions
+                    .iter()
+                    .filter(|permission| permission.object == copy)
+                    .count()
+                    == 1
+                    && permissions.iter().any(|permission| {
+                        permission.object == copy
+                            && permission.holder == holder
+                            && permission.zone_change_generation == generation
+                    });
+                if !current {
+                    permissions.retain(|permission| permission.object != copy);
+                    // A permission that never expires is a `LaterTurn`
+                    // grant for a turn that never comes.
+                    permissions.push(crate::engine::PlayPermission {
+                        without_mana_cost: crate::engine::FreeCastV1::default(),
+                        object: copy,
+                        holder,
+                        zone_change_generation: generation,
+                        play_or_cast: crate::engine::PlayOrCast::Cast,
+                        expiry: crate::engine::PlayPermissionExpiry::LaterTurn {
+                            granted_turn: u32::MAX,
+                            granted_active_player: holder,
+                        },
+                    });
+                }
+            }
+            None => {
+                permissions.retain(|permission| permission.object != copy);
+                event::cease_to_exist(state, copy);
+                let e7b = e7b_state(state);
+                e7b.prepared
+                    .retain(|(_, prepared_copy)| *prepared_copy != copy);
+                e7b.prepare_copies.retain(|live| *live != copy);
+            }
+        }
     }
 }
 
@@ -2571,12 +2724,8 @@ fn graveyard_watch_triggers(state: &mut GameState, events: &[CommittedEvent]) {
     }
 }
 
-/// Emblem triggers that read events other than casts: none yet.
-fn emblem_triggers(_state: &mut GameState, _events: &[CommittedEvent]) {}
-
 /// Drops cast records whose spells left the stack, dashed incarnations that
-/// left the battlefield, expired shields and prepared records whose
-/// creature left.
+/// left the battlefield and expired shields.
 fn prune(state: &mut GameState) {
     let Some(e7b) = read_state(state) else {
         return;

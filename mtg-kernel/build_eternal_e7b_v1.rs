@@ -307,6 +307,8 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_vintage_e7b_v1::demonic_consultation",
         ),
+        // Carnivorous Cultivator's prepare spell, cast only as a copy.
+        "Enroot" => spell("TargetSpec::None", "crate::eternal_vintage_e7b_v1::enroot"),
         // Its free cast is `alt_cost_for` below.
         "Mindbreak Trap" => spell(
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::AnyNumberOfSpellsV1)",
@@ -398,6 +400,12 @@ pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
     }
 }
 
+/// A prepare spell (Carnivorous Cultivator's Enroot): a registry card that is
+/// in no deck, since only copies of it are cast.
+pub(super) fn is_prepare_spell(name: &str) -> bool {
+    name == "Enroot"
+}
+
 /// Card-database tokens for the triggered abilities in
 /// `eternal_vintage_e7b_v1::triggers_for`, its hooks and its statics.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
@@ -424,6 +432,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "activated:exile_land_card:add_any_color;activated:exile_instant_sorcery:opponent_loses_2;activated:exile_creature:gain_2"
         }
         "Demonic Consultation" => "spell:name_card:exile_top_6:reveal_until_named:hand:exile_rest",
+        "Enroot" => "spell:search_library_land_card_to_graveyard:shuffle;prepare_spell_copy_only",
         "Golgari Grave-Troll" => {
             "dredge:6;enters_with_counter_per_creature_card_in_graveyard;activated:regenerate"
         }

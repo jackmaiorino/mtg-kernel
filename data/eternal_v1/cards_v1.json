@@ -9958,6 +9958,44 @@
    "java_file": "Mage.Sets/src/mage/cards/b/BlazingRootwalla.java"
   },
   {
+   "name": "Carnivorous Cultivator",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Warlock"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-hogaak-moonshadow",
+    "legacy-selesnya-depths",
+    "legacy-loam-pox",
+    "legacy-bant-control",
+    "vintage-red-prison",
+    "vintage-sultai-psychic-frog",
+    "vintage-fastbond-lands"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "deathtouch",
+    "prepared",
+    "combat_damage_trigger",
+    "return_from_graveyard"
+   ]
+  },
+  {
    "name": "Chain of Vapor",
    "engine_capability": "full",
    "mana_cost": "{U}",
@@ -11253,6 +11291,31 @@
    ],
    "is_token": true,
    "starting_loyalty": 0
+  },
+  {
+   "name": "Enroot",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "prepare_spell",
+    "library_search"
+   ]
   }
  ]
 }

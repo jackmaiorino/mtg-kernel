@@ -168,6 +168,9 @@ pub enum LibrarySearchDestinationV1 {
     LibraryTopAfterShuffle,
     /// Selected order is significant: first enters tapped, others go to hand.
     FirstBattlefieldTappedRestHand,
+    /// Into the owner's graveyard, then shuffle (Enroot). Appended for the
+    /// eternal catalog.
+    GraveyardV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -11852,6 +11855,24 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                                             Zone::Battlefield,
                                         )
                                     }
+                                })
+                                .collect();
+                            event::propose_and_commit_batch(state, events);
+                            state
+                                .commit_library_shuffle(player, shuffle_token)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        LibrarySearchDestinationV1::GraveyardV1 => {
+                            for &binding in &selected {
+                                validate_effect_object_binding(state, binding)?;
+                            }
+                            let events = selected
+                                .iter()
+                                .map(|binding| {
+                                    event::ProposedEvent::zone_change(
+                                        binding.object,
+                                        Zone::Graveyard,
+                                    )
                                 })
                                 .collect();
                             event::propose_and_commit_batch(state, events);

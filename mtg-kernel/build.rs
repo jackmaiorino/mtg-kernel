@@ -2006,7 +2006,7 @@ fn main() {
         if !seen_names.insert(c.name.clone()) {
             panic!("cards_v1.json: duplicate card name {:?}", c.name);
         }
-        if c.decks.is_empty() && !c.is_token {
+        if c.decks.is_empty() && !c.is_token && !build_eternal_e7b_v1::is_prepare_spell(&c.name) {
             panic!("cards_v1.json: card {:?} has empty deck coverage", c.name);
         }
         if c.is_token && c.engine_capability != EngineCapabilityJson::Full {
