@@ -194,6 +194,14 @@ pub enum StandardTargetV1 {
     AnyNumberControlledNonlandNontokenPermanentsV1,
     /// "Up to one target noncreature artifact" (Karn, the Great Creator).
     UpToOneNoncreatureArtifactV1,
+    /// "Target player" then "target artifact" (two of Flame of Anor's modes).
+    PlayerThenArtifactV1,
+    /// "Target player" then "target creature" (two of Flame of Anor's modes).
+    PlayerThenCreatureV1,
+    /// "Target artifact" then "target creature" (two of Flame of Anor's
+    /// modes). Different target words may name one artifact creature
+    /// (115.3).
+    ArtifactThenCreatureV1,
 }
 
 impl StandardTargetV1 {
@@ -206,12 +214,38 @@ impl StandardTargetV1 {
             Self::OneOrTwoAnyTargetsV1 => (2, 1),
             Self::AnyNumberControlledNonlandNontokenPermanentsV1 => (64, 0),
             Self::UpToOneNoncreatureArtifactV1 => (1, 0),
+            Self::PlayerThenArtifactV1
+            | Self::PlayerThenCreatureV1
+            | Self::ArtifactThenCreatureV1 => (2, 2),
             _ => (1, 1),
         }
     }
 }
 
 impl StandardTargetV1 {
+    /// For a filter whose slots take different kinds of targets, the card
+    /// type target slot `slot` takes, or `None` for a player slot.
+    pub(crate) fn slot_kind(self, slot: usize) -> Option<Option<CardType>> {
+        match (self, slot) {
+            (Self::PlayerThenArtifactV1 | Self::PlayerThenCreatureV1, 0) => Some(None),
+            (Self::PlayerThenArtifactV1, 1) | (Self::ArtifactThenCreatureV1, 0) => {
+                Some(Some(CardType::Artifact))
+            }
+            (Self::PlayerThenCreatureV1 | Self::ArtifactThenCreatureV1, 1) => {
+                Some(Some(CardType::Creature))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this filter's slots take different kinds of targets.
+    pub(crate) fn per_slot(self) -> bool {
+        matches!(
+            self,
+            Self::PlayerThenArtifactV1 | Self::PlayerThenCreatureV1 | Self::ArtifactThenCreatureV1
+        )
+    }
+
     fn in_graveyard(self) -> bool {
         matches!(
             self,
@@ -289,6 +323,18 @@ pub(crate) fn legal_targets(
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
+    if target.per_slot() {
+        return match target.slot_kind(prefix.len()) {
+            Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
+            Some(Some(card_type)) => [PlayerId::P0, PlayerId::P1]
+                .iter()
+                .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+                .filter(|&id| crate::engine::object_has_type(state, id, card_type))
+                .map(Target::Object)
+                .collect(),
+            None => Vec::new(),
+        };
+    }
     if matches!(
         target,
         StandardTargetV1::UpToTwoAnyTargets | StandardTargetV1::OneOrTwoAnyTargetsV1
@@ -472,6 +518,12 @@ pub(crate) fn target_matches(
         }
         StandardTargetV1::UpToOneNoncreatureArtifactV1 => {
             has(CardType::Artifact) && !has(CardType::Creature)
+        }
+        // Slot-dependent; `legal_targets` decides by slot.
+        StandardTargetV1::PlayerThenArtifactV1
+        | StandardTargetV1::PlayerThenCreatureV1
+        | StandardTargetV1::ArtifactThenCreatureV1 => {
+            has(CardType::Artifact) || has(CardType::Creature)
         }
     }
 }
@@ -3187,6 +3239,23 @@ const CASE_OF_THE_UNEATEN_FEAST: &str = "Case of the Uneaten Feast";
 /// Whether `holder` may cast `object` from its graveyard incarnation
 /// `zone_change_count` this turn.
 pub(crate) fn graveyard_cast_granted(
+    state: &GameState,
+    object: ObjectId,
+    holder: PlayerId,
+    zone_change_count: u32,
+) -> bool {
+    standard_graveyard_cast_granted(state, object, holder, zone_change_count)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_lurrus_v1::lurrus_permission(
+                state,
+                object,
+                holder,
+                zone_change_count,
+            ))
+}
+
+/// The graveyard cast grants other than Lurrus of the Dream-Den's.
+pub(crate) fn standard_graveyard_cast_granted(
     state: &GameState,
     object: ObjectId,
     holder: PlayerId,

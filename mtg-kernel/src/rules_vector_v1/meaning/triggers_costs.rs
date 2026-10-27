@@ -787,6 +787,13 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             let _ = relation; // Control is checked by this component.
             move_cost(out, ZoneF::Battlefield, ZoneF::Hand, obj, 1);
         }
+        CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
+            // `count` distinct permanents the payer controls matching the
+            // filter move to their owner's hand (and leave combat).
+            let (obj, relation) = reads::permanent_filter_def(filter);
+            let _ = relation; // Control is checked by this component.
+            move_cost(out, ZoneF::Battlefield, ZoneF::Hand, obj, count);
+        }
         CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
             // Taps one other untapped permanent the payer controls with the
             // subtype. Vocabulary gap: `TapOthers` carries no object class.

@@ -55,6 +55,7 @@ impl DeckFileV1 {
     pub fn resolve(&self) -> Result<Vec<u16>, String> {
         CustomDeckV1 {
             cards: self.cards.clone(),
+            companion: None,
         }
         .resolve()
     }

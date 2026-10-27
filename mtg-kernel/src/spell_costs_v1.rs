@@ -174,8 +174,8 @@ impl SelectedSpellManaCostsV1 {
     ) -> Option<SpellComponentChoicesV1> {
         let base = match method {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
-            CastMethodV4::Flashback => Some(definition.flashback.as_ref()?.cost),
-            CastMethodV4::Escape => Some(definition.escape.as_ref()?.cost),
+            CastMethodV4::Flashback => Some(flashback_cost_v1(definition)?),
+            CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
             _ => None,
         };
         let original_groups = base
@@ -481,8 +481,8 @@ pub(super) fn selected_spell_mana_costs_v1(
             }
         }
         CastMethodV4::Alternative => selected.components(definition.alt_cost?.components),
-        CastMethodV4::Flashback => selected.components(definition.flashback.as_ref()?.cost),
-        CastMethodV4::Escape => selected.components(definition.escape.as_ref()?.cost),
+        CastMethodV4::Flashback => selected.components(flashback_cost_v1(definition)?),
+        CastMethodV4::Escape => selected.components(escape_cost_v1(definition)?),
         CastMethodV4::Madness => selected.costs.push(definition.madness_cost?),
         CastMethodV4::Plotted => {
             definition.plot_cost?;
@@ -536,6 +536,28 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.components(additional);
     }
     Some(selected)
+}
+
+/// A definition's flashback cost: printed, or the mana-cost flashback
+/// Snapcaster Mage grants an instant or sorcery card. Whether a card has a
+/// granted flashback is checked where the cast is offered.
+fn flashback_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostComponent]> {
+    definition
+        .flashback
+        .as_ref()
+        .map(|flashback| flashback.cost)
+        .or_else(|| crate::eternal_lurrus_v1::granted_flashback_cost(definition))
+}
+
+/// A definition's escape cost: printed, or the one Underworld Breach grants
+/// a nonland card. Whether a card has a granted escape is checked where the
+/// cast is offered.
+fn escape_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostComponent]> {
+    definition
+        .escape
+        .as_ref()
+        .map(|escape| escape.cost)
+        .or_else(|| crate::eternal_lurrus_v1::granted_escape_cost(definition))
 }
 
 /// The sorted subtype ids a spell of `definition` has, every creature type
@@ -757,6 +779,13 @@ pub(super) fn selected_spell_quote_branch_v1(
                     .map(|binding| binding.object)
                     .collect(),
             )),
+            CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => Some((
+                usize::from(*count),
+                super::return_permanent_cost_candidates(player, state, *filter, &[])
+                    .into_iter()
+                    .map(|binding| binding.object)
+                    .collect(),
+            )),
             CostComponent::ExileCardFromHandWithColorV1(color) => Some((
                 1,
                 super::hand_exile_cost_candidates(player, source, *color, state),
@@ -962,6 +991,33 @@ impl PreparedSpellPaymentV1 {
                     .get(index)
                     .is_some_and(|unit| unit.color != mana::ManaColor::C)
             })
+    }
+
+    /// How many colors of mana this payment spends (converge): the colors
+    /// sources were tapped for and the colored mana taken from the pool.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn colors_spent(&self, state: &GameState, player: PlayerId) -> u8 {
+        let plan = &self.mana.mana;
+        [
+            mana::ManaColor::W,
+            mana::ManaColor::U,
+            mana::ManaColor::B,
+            mana::ManaColor::R,
+            mana::ManaColor::G,
+        ]
+        .into_iter()
+        .filter(|color| {
+            plan.taps.iter().any(|(_, tapped)| tapped == color)
+                || plan.pool_used[color.pool_index()] > 0
+                || plan.restricted_pool_used.iter().any(|&index| {
+                    state.players[player.index()]
+                        .restricted_mana_pool
+                        .0
+                        .get(index)
+                        .is_some_and(|unit| unit.color == *color)
+                })
+        })
+        .count() as u8
     }
 
     fn commit_optional(&self, state: &mut GameState) {

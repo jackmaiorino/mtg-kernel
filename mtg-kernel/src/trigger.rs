@@ -3713,6 +3713,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         | "Lush Portico"
         | "Underground Mortuary"
         | "Undercity Sewers"
+        | "Meticulous Archive"
         | "Hedge Maze"
         | "Thundering Falls" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
@@ -5738,6 +5739,56 @@ fn triggers_from_events(
                     ward_target,
                     targeting_stack_item: *targeting_stack_item,
                     generic,
+                },
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(AbilitySourceContractV4::capture(state, *target)),
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
+        }
+    }
+
+    // Hexing Squelcher: 'Other creatures you control have "Ward--Pay 2
+    // life."' The warded creature's own ability, one trigger per grant.
+    #[cfg(feature = "eternal-fixtures")]
+    for event in events {
+        let CommittedEvent::Targeted {
+            target,
+            target_zone_change_count,
+            targeting_stack_item,
+            targeting_controller,
+        } = event
+        else {
+            continue;
+        };
+        let Some(live) = state.objects.try_get(*target) else {
+            continue;
+        };
+        if live.zone != Zone::Battlefield
+            || live.zone_change_count != *target_zone_change_count
+            || *targeting_controller == live.controller
+        {
+            continue;
+        }
+        let controller = live.controller;
+        for _ in 0..crate::eternal_lurrus_v1::granted_life_wards(state, *target) {
+            let ward_target = crate::state::StackTargetContractV4::capture(
+                state,
+                crate::state::Target::Object(*target),
+            );
+            new_triggers.push(PendingTrigger {
+                controller,
+                source: *target,
+                granted_by: None,
+                effect: EffectOp::CounterUnlessPaysLifeWithChoice {
+                    ward_target,
+                    targeting_stack_item: *targeting_stack_item,
+                    life: 2,
                 },
                 is_madness_offer: false,
                 kicked: false,

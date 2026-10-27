@@ -3455,6 +3455,1158 @@
     "counter_unless_pay"
    ],
    "java_file": "Mage.Sets/src/mage/cards/c/ChancellorOfTheAnnex.java"
+  },
+  {
+   "name": "Lurrus of the Dream-Den",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W/B}{W/B}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Cat",
+    "Nightmare"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-esper-lurrus-control",
+    "vintage-dimir-lurrus-control",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-jeskai-lurrus",
+    "vintage-lurrus-drs",
+    "vintage-sultai-psychic-frog",
+    "vintage-4c-psychic-frog",
+    "vintage-grixis-lurrus-control",
+    "vintage-lurrus-vault-key"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "companion",
+    "lifelink",
+    "cast_from_graveyard",
+    "special_action"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LurrusOfTheDreamDen.java"
+  },
+  {
+   "name": "Demonic Tutor",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-esper-lurrus-control",
+    "vintage-dimir-lurrus-control",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-oath-of-druids",
+    "vintage-blue-tinker",
+    "vintage-beseech-storm",
+    "vintage-lurrus-drs",
+    "vintage-doomsday",
+    "vintage-scam",
+    "vintage-sultai-psychic-frog",
+    "vintage-4c-psychic-frog",
+    "vintage-grixis-lurrus-control",
+    "vintage-underworld-breach",
+    "vintage-oops-all-spells"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "tutor"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DemonicTutor.java"
+  },
+  {
+   "name": "Flow State",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control",
+    "legacy-stiflenought",
+    "legacy-esper-control",
+    "legacy-grixis-control",
+    "legacy-reanimator",
+    "legacy-dimir-control",
+    "legacy-azorius-control",
+    "legacy-high-tide",
+    "legacy-temur-delver",
+    "vintage-esper-lurrus-control",
+    "vintage-dimir-lurrus-control",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-jeskai-lurrus",
+    "vintage-blue-tinker",
+    "vintage-sultai-psychic-frog",
+    "vintage-4c-psychic-frog",
+    "vintage-grixis-lurrus-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "library_look",
+    "graveyard_condition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FlowState.java"
+  },
+  {
+   "name": "Force of Negation",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-tron",
+    "legacy-jeskai-control",
+    "legacy-stiflenought",
+    "legacy-esper-control",
+    "legacy-grixis-control",
+    "legacy-azorius-tempo",
+    "legacy-blue-cloudpost",
+    "legacy-azorius-control",
+    "legacy-bant-control",
+    "vintage-esper-lurrus-control",
+    "vintage-dimir-lurrus-control",
+    "vintage-oath-of-druids",
+    "vintage-dredge",
+    "vintage-counter-vine",
+    "vintage-jeskai-lurrus",
+    "vintage-blue-tinker",
+    "vintage-blue-tempo",
+    "vintage-lurrus-drs",
+    "vintage-doomsday",
+    "vintage-sultai-psychic-frog",
+    "vintage-4c-psychic-frog",
+    "vintage-rug-control",
+    "vintage-grixis-lurrus-control",
+    "vintage-other-shops",
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "counterspell",
+    "alt_cost",
+    "exile_from_hand_cost",
+    "exile_instead"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/ForceOfNegation.java"
+  },
+  {
+   "name": "Gitaxian Probe",
+   "engine_capability": "full",
+   "mana_cost": "{U/P}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-esper-lurrus-control",
+    "vintage-dimir-lurrus-control",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-oath-of-druids",
+    "vintage-counter-vine",
+    "vintage-jeskai-lurrus",
+    "vintage-blue-tinker",
+    "vintage-blue-tempo",
+    "vintage-beseech-storm",
+    "vintage-lurrus-drs",
+    "vintage-doomsday",
+    "vintage-sultai-psychic-frog",
+    "vintage-4c-psychic-frog",
+    "vintage-rug-control",
+    "vintage-grixis-lurrus-control",
+    "vintage-lurrus-vault-key",
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "phyrexian_mana",
+    "look_at_hand",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GitaxianProbe.java"
+  },
+  {
+   "name": "Null Rod",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-esper-lurrus-control",
+    "vintage-blue-tempo",
+    "vintage-stiflenought",
+    "vintage-red-prison",
+    "vintage-4c-psychic-frog",
+    "vintage-eldrazi"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "static_ability",
+    "ability_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NullRod.java"
+  },
+  {
+   "name": "Prismatic Ending",
+   "engine_capability": "full",
+   "mana_cost": "{X}{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-jeskai-control",
+    "legacy-stiflenought",
+    "legacy-azorius-tempo",
+    "legacy-bant-control",
+    "vintage-esper-lurrus-control",
+    "vintage-jeskai-lurrus",
+    "vintage-4c-psychic-frog",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "converge",
+    "x_cost",
+    "exile_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PrismaticEnding.java"
+  },
+  {
+   "name": "Psychic Frog",
+   "engine_capability": "full",
+   "mana_cost": "{U}{B}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Frog"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-esper-lurrus-control",
+    "vintage-dimir-lurrus-control",
+    "vintage-lurrus-drs",
+    "vintage-sultai-psychic-frog",
+    "vintage-4c-psychic-frog"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "combat_damage_trigger",
+    "discard_cost",
+    "graveyard_exile_cost",
+    "flying_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PsychicFrog.java"
+  },
+  {
+   "name": "Swords to Plowshares",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-selesnya-depths",
+    "legacy-jeskai-control",
+    "legacy-stiflenought",
+    "legacy-mardu-energy",
+    "legacy-cephalid-breakfast",
+    "legacy-esper-control",
+    "legacy-azorius-tempo",
+    "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    "legacy-death-and-taxes-60-card",
+    "legacy-azorius-control",
+    "legacy-bant-control",
+    "vintage-esper-lurrus-control",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-jeskai-lurrus",
+    "vintage-4c-psychic-frog",
+    "vintage-abzan-initiative"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "exile_target",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SwordsToPlowshares.java"
+  },
+  {
+   "name": "Treasure Cruise",
+   "engine_capability": "full",
+   "mana_cost": "{7}{U}",
+   "mana_value": 8,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-esper-lurrus-control",
+    "vintage-dimir-lurrus-control",
+    "vintage-blue-tempo",
+    "vintage-lurrus-drs",
+    "vintage-doomsday",
+    "vintage-sultai-psychic-frog",
+    "vintage-4c-psychic-frog"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "delve",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TreasureCruise.java"
+  },
+  {
+   "name": "Tundra",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Plains",
+    "Island"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U"
+   ],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-jeskai-control",
+    "legacy-stiflenought",
+    "legacy-cephalid-breakfast",
+    "legacy-esper-control",
+    "legacy-azorius-tempo",
+    "legacy-azorius-control",
+    "legacy-bant-control",
+    "vintage-esper-lurrus-control",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-paradoxical-outcome",
+    "vintage-jeskai-lurrus",
+    "vintage-4c-psychic-frog",
+    "vintage-lurrus-vault-key"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/Tundra.java"
+  },
+  {
+   "name": "Aether Spellbomb",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sewer-cam-combo",
+    "legacy-affinity-stompy",
+    "vintage-dimir-lurrus-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "bounce",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AetherSpellbomb.java"
+  },
+  {
+   "name": "Dig Through Time",
+   "engine_capability": "full",
+   "mana_cost": "{6}{U}{U}",
+   "mana_value": 8,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dimir-lurrus-control",
+    "vintage-blue-tempo",
+    "vintage-doomsday",
+    "vintage-rug-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "delve",
+    "library_look"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DigThroughTime.java"
+  },
+  {
+   "name": "Dismember",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B/P}{B/P}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-blue-cloudpost",
+    "vintage-dimir-lurrus-control",
+    "vintage-fastbond-lands"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "phyrexian_mana",
+    "pump_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Dismember.java"
+  },
+  {
+   "name": "Gush",
+   "engine_capability": "full",
+   "mana_cost": "{4}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dimir-lurrus-control",
+    "vintage-doomsday"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "alt_cost",
+    "return_land_cost",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Gush.java"
+  },
+  {
+   "name": "Flame of Anor",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{R}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-jeskai-lurrus",
+    "vintage-blue-tinker",
+    "vintage-blue-tempo",
+    "vintage-grixis-lurrus-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "modal",
+    "choose_two_condition",
+    "draw",
+    "destroy_target",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FlameOfAnor.java"
+  },
+  {
+   "name": "Forth Eorlingas!",
+   "engine_capability": "full",
+   "mana_cost": "{X}{R}{W}",
+   "mana_value": 2,
+   "colors": [
+    "R",
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control",
+    "vintage-lurrus-po",
+    "vintage-paradoxical-outcome",
+    "vintage-jeskai-lurrus"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "x_cost",
+    "token_creation",
+    "delayed_trigger",
+    "monarch"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/ForthEorlingas.java"
+  },
+  {
+   "name": "Hexing Squelcher",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Sorcerer"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-boros-energy",
+    "legacy-the-epic-storm",
+    "legacy-red-stompy",
+    "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce",
+    "legacy-goblins",
+    "legacy-the-epic-gamble",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-4c-psychic-frog",
+    "vintage-lurrus-vault-key",
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "cant_be_countered",
+    "ward",
+    "spells_cant_be_countered",
+    "ward_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HexingSquelcher.java"
+  },
+  {
+   "name": "Meticulous Archive",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Plains",
+    "Island"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U"
+   ],
+   "decks": [
+    "legacy-beanstalk-control-non-yorion",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    "legacy-stiflenought",
+    "legacy-cephalid-breakfast",
+    "legacy-esper-control",
+    "legacy-azorius-tempo",
+    "legacy-azorius-control",
+    "legacy-bant-control",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "enters_tapped",
+    "etb_trigger",
+    "surveil"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MeticulousArchive.java"
+  },
+  {
+   "name": "Mox Opal",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "legacy-mystic-forge-combo",
+    "legacy-sewer-cam-combo",
+    "legacy-the-epic-storm",
+    "legacy-painter",
+    "legacy-affinity-stompy",
+    "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce",
+    "legacy-the-epic-gamble",
+    "legacy-8-cast",
+    "vintage-lurrus-po",
+    "vintage-raker-shops",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-paradoxical-outcome"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "metalcraft",
+    "any_color_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoxOpal.java"
+  },
+  {
+   "name": "Portable Hole",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-paradoxical-outcome",
+    "vintage-lurrus-vault-key"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "exile_until_leaves"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PortableHole.java"
+  },
+  {
+   "name": "Snapcaster Mage",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-grixis-control",
+    "legacy-azorius-control",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-jeskai-lurrus",
+    "vintage-grixis-lurrus-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "etb_trigger",
+    "flashback_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SnapcasterMage.java"
+  },
+  {
+   "name": "Soul-Guide Lantern",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-boros-moxite",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-4c-psychic-frog",
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "graveyard_exile",
+    "activated_ability",
+    "sacrifice_cost",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SoulGuideLantern.java"
+  },
+  {
+   "name": "Thundertrap Trainer",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Otter",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-tron",
+    "vintage-lurrus-po",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-paradoxical-outcome",
+    "vintage-jeskai-lurrus",
+    "vintage-blue-tinker",
+    "vintage-blue-tempo",
+    "vintage-grixis-lurrus-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "offspring",
+    "etb_trigger",
+    "library_look"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThundertrapTrainer.java"
+  },
+  {
+   "name": "Brain Freeze",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "storm",
+    "mill"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BrainFreeze.java"
+  },
+  {
+   "name": "Merchant Scroll",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-poison-storm",
+    "legacy-high-tide",
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "tutor"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MerchantScroll.java"
+  },
+  {
+   "name": "Underworld Breach",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "escape_grant",
+    "end_step_trigger",
+    "sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UnderworldBreach.java"
+  },
+  {
+   "name": "Mana Drain",
+   "engine_capability": "full",
+   "mana_cost": "{U}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jeskai-lurrus"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "counterspell",
+    "delayed_trigger",
+    "mana_production"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/ManaDrain.java"
+  },
+  {
+   "name": "Pithing Needle",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-lands",
+    "legacy-mystic-forge-combo",
+    "legacy-sultai-depths",
+    "legacy-blue-cloudpost",
+    "vintage-raker-shops",
+    "vintage-paradoxical-outcome",
+    "vintage-jeskai-lurrus",
+    "vintage-blue-tinker",
+    "vintage-sphere-shops",
+    "vintage-red-prison"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "name_a_card",
+    "ability_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PithingNeedle.java"
+  },
+  {
+   "name": "Thundertrap Trainer Offspring Token",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Otter",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "offspring",
+    "etb_trigger",
+    "library_look"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThundertrapTrainer.java",
+   "is_token": true
+  },
+  {
+   "name": "Human Knight Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Knight"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "trample",
+    "haste"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/HumanKnightToken.java",
+   "is_token": true
   }
  ]
 }

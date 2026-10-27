@@ -1246,11 +1246,13 @@ pub fn stack_target_contract_is_structurally_valid(
                 crate::standard_cards_v1::target_zone_allows(filter, *zone)
             }
             StackTargetContractV4::StackItem { .. } => false,
-            StackTargetContractV4::Player(_) => matches!(
-                filter,
-                crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
-                    | crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1
-            ),
+            StackTargetContractV4::Player(_) => {
+                matches!(
+                    filter,
+                    crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
+                        | crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1
+                ) || filter.slot_kind(target_index) == Some(None)
+            }
         };
         if !matches_kind {
             return false;

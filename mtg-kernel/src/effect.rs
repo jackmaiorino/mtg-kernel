@@ -226,6 +226,9 @@ pub enum LibraryCardFilter {
     /// colored or X symbols and at most one generic. Lands and tokens have
     /// no mana cost and never match. Appended for the eternal catalog.
     ArtifactManaCostZeroOrOneV1,
+    /// A blue instant card (Merchant Scroll). Appended for the eternal
+    /// catalog.
+    BlueInstantV1,
 }
 
 impl LibraryCardFilter {
@@ -1795,6 +1798,9 @@ pub enum LibraryPickFilterV1 {
     CreaturePowerAtMost(i32),
     /// An instant or sorcery card (Augur of Bolas). Appended.
     InstantOrSorcery,
+    /// A noncreature, nonland card (Thundertrap Trainer). Appended for the
+    /// eternal catalog.
+    NoncreatureNonlandV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -15624,6 +15630,7 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Sheltered by Ghosts"
             | "Hardlight Containment"
             | "Banishing Light"
+            | "Portable Hole"
     )
 }
 
@@ -16044,6 +16051,9 @@ fn library_filter_matches(
                 && def.cost.x_count == 0
                 && def.cost.generic <= 1
         }
+        LibraryCardFilter::BlueInstantV1 => {
+            def.has_type(CardType::Instant) && def.colors.contains(&crate::mana::ManaColor::U)
+        }
     })
 }
 
@@ -16091,6 +16101,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 41), u64::from(maximum))
         }
         LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 42),
+        LibraryCardFilter::BlueInstantV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 43),
     }
 }
 
@@ -16325,6 +16336,10 @@ fn library_partition_matching_prefix(
                     LibraryPickFilterV1::InstantOrSorcery => {
                         definition.has_type(CardType::Instant)
                             || definition.has_type(CardType::Sorcery)
+                    }
+                    LibraryPickFilterV1::NoncreatureNonlandV1 => {
+                        !definition.has_type(CardType::Creature)
+                            && !definition.has_type(CardType::Land)
                     }
                 },
             },

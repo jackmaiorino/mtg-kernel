@@ -34,6 +34,7 @@ pub(crate) const CITY_OF_TRAITORS: &str = "City of Traitors";
 pub(crate) const STREET_WRAITH: &str = "Street Wraith";
 pub(crate) const FLUSTERSTORM: &str = "Flusterstorm";
 pub(crate) const THASSAS_ORACLE: &str = "Thassa's Oracle";
+pub(crate) const BRAIN_FREEZE: &str = "Brain Freeze";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1295,6 +1296,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
             option_count,
         });
     }
+    // Pithing Needle: "As this artifact enters, choose a card name."
+    if let Some(decision) = crate::eternal_lurrus_v1::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1357,6 +1362,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         }
         return Ok(());
     }
+    if crate::eternal_lurrus_v1::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;
     let player = state.objects.get(cavern).controller;
     let options = cavern_type_options(state, player);
@@ -1407,6 +1415,7 @@ pub(crate) fn spell_cannot_be_countered(state: &GameState, object: ObjectId) -> 
     };
     e3(state).is_some_and(|e3| e3.uncounterable_spells.contains(&entry))
         || active_veils(state, live.controller).next().is_some()
+        || crate::eternal_lurrus_v1::spell_cannot_be_countered(state, object)
 }
 
 // ---- Triggers and op execution ---------------------------------------------------
@@ -1487,7 +1496,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
-        FLUSTERSTORM => &FLUSTERSTORM_TRIGGERS,
+        FLUSTERSTORM | BRAIN_FREEZE => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
@@ -1500,8 +1509,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
     match name {
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
-        THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | THASSAS_ORACLE | EMRAKUL
-        | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
+        THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
+        | THASSAS_ORACLE | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -1835,7 +1844,7 @@ pub fn personal_tutor() -> EffectOp {
 
 /// Cards with Storm in this module.
 pub(crate) fn has_storm(name: &str) -> bool {
-    name == FLUSTERSTORM
+    name == FLUSTERSTORM || name == BRAIN_FREEZE
 }
 
 /// Whether a Storm trigger copies a targeted spell, whose copies may choose
@@ -2021,7 +2030,7 @@ pub(crate) fn delayed_triggers(
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
-        FLUSTERSTORM => matches!(effect, EffectOp::CreateStormCopies { .. }),
+        FLUSTERSTORM | BRAIN_FREEZE => matches!(effect, EffectOp::CreateStormCopies { .. }),
         dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),
         _ => false,
     }
