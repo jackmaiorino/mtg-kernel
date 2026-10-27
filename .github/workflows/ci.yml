@@ -889,6 +889,15 @@ jobs:
         if: matrix.shard == 0
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .
 
+      # Offline RunPod lease tools: bounded fakes, no provider, network or subprocess call.
+      - name: Lease guard tests
+        if: matrix.shard == 0 && runner.os == 'Linux'
+        run: |
+          uv run --no-sync python -m unittest discover -v -s python/tools/phase1_cloud -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/search_sharing_allocation -p 'test_cloud_lease.py'
+          cd python/tools/tests && PYTHONPATH=.. uv run --no-sync python -m unittest -v \
+            test_nine_deck_cloud_v1.PackageTests.test_tooling_closure_is_complete_from_a_copy
+
       - name: Use the runner's persistent Python environment build
         if: runner.environment == 'self-hosted'
         shell: bash
