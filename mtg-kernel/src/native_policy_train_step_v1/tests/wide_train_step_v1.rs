@@ -3793,7 +3793,10 @@ fn wide_perturbed_state_v1() -> NativePolicyValueTrainStateWideV1 {
 fn wide_gae_updates_are_identical_across_workers() {
     let start = wide_perturbed_state_v1();
     let fixture = ManyFixtureV1::of_v1(start.model_v1());
-    let steps = fixture.substeps_v1(100);
+    // 200 groups, 399 substeps: both parallel paths cap their workers at
+    // substeps / 32 = 12, so 8 workers are effectively used (gae_v1/tests.rs
+    // `exact_parallel_backward_preserves_every_bit`).
+    let steps = fixture.substeps_v1(200);
     let groups = many_groups_v1(&steps);
     let (targets, advantages) = many_targets_v1(groups.len());
     let run = |backward: Option<usize>, forward_workers: usize| {
@@ -3824,7 +3827,7 @@ fn wide_gae_updates_are_identical_across_workers() {
     assert_eq!(reference.3, (1, 1));
     for forward_workers in [2, 4, 8] {
         let actual = run(None, forward_workers);
-        assert_eq!(actual.3, (forward_workers.min(6), forward_workers.min(6)));
+        assert_eq!(actual.3, (forward_workers, forward_workers));
         assert_eq!(actual.0, reference.0, "{forward_workers}");
         assert_eq!(actual.1, reference.1, "{forward_workers}");
         assert_eq!(actual.2, reference.2, "{forward_workers}");
