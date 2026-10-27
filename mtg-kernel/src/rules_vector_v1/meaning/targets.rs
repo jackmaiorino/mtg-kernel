@@ -713,6 +713,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::UpToOneOtherNonlandPermanentV1 => ObjF::NonlandPermanent,
         S::TriggeredAbilityOrColorlessSpellV1 => ObjF::Spell,
         S::CreaturesThenNonlandPermanentsV1 { .. } => ObjF::Permanent,
+        S::TwoControlledArtifactsCreaturesOrLandsV1 => ObjF::Permanent,
     }
 }
 
@@ -726,7 +727,8 @@ pub(super) fn standard_target_origin(
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
         | S::AttackingClericRogueWarriorOrWizardV1
-        | S::AnyNumberControlledNonlandNontokenPermanentsV1 => {
+        | S::AnyNumberControlledNonlandNontokenPermanentsV1
+        | S::TwoControlledArtifactsCreaturesOrLandsV1 => {
             (Some(ZoneF::Battlefield), Some(RelF::You))
         }
         S::OpponentNonlandPermanentManaValueAtMost(_)
@@ -892,6 +894,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.target(TargetAtom::MultipleTargets);
             // The per-mode slot counts have no facet.
             out.atoms.push(Atom::Opaque);
+        }
+        S::TwoControlledArtifactsCreaturesOrLandsV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Land), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
         }
     }
 }

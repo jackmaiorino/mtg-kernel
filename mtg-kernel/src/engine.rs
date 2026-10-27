@@ -7046,6 +7046,9 @@ fn alt_cost_condition_met(
         | card_def::AltCostCondition::ImpendingFromHand { .. }
         | card_def::AltCostCondition::DisguiseFromHand => origin_zone == Zone::Hand,
         card_def::AltCostCondition::NotYourTurnV1 => player != state.active_player,
+        // Which card was foretold is checked at the quote boundary
+        // (`eternal_pauper_e6a_v1::foretell_quote_allowed`).
+        card_def::AltCostCondition::ForetoldV1 => origin_zone == Zone::Exile,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -7158,6 +7161,9 @@ pub(crate) fn permanent_matches_filter(
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_land
         }
         PermanentFilter::AnotherArtifact => object_has_type(state, id, CardType::Artifact),
+        PermanentFilter::BlueV1 => {
+            object_color_mask(state, id) & (1 << ManaColor::U.pool_index()) != 0
+        }
     }
 }
 
@@ -7254,6 +7260,17 @@ fn activation_controlled_cost_candidates(
         .collect()
 }
 
+/// The card type of a craft cost's material: an artifact, or a creature
+/// for Tithing Blade's "Craft with creature".
+fn craft_material_type(state: &GameState, source: ObjectId) -> CardType {
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(card_type) = crate::eternal_pauper_e6a_v1::craft_material_type(state, source) {
+        return card_type;
+    }
+    let _ = (state, source);
+    CardType::Artifact
+}
+
 fn has_craft_material_cost(components: &[CostComponent]) -> bool {
     components
         .iter()
@@ -7270,19 +7287,20 @@ fn craft_material_candidates(
     already_chosen: &[EffectObjectBinding],
 ) -> Vec<EffectObjectBinding> {
     let seat = &state.players[player.index()];
-    let permanents = seat.battlefield.iter().copied().filter(|&id| {
+    let material = craft_material_type(state, source);
+    let permanents = seat.battlefield.iter().copied().filter(move |&id| {
         let object = state.objects.get(id);
         id != source
             && object.zone == Zone::Battlefield
             && object.controller == player
-            && object_has_type(state, id, CardType::Artifact)
+            && object_has_type(state, id, material)
     });
-    let cards = seat.graveyard.iter().copied().filter(|&id| {
+    let cards = seat.graveyard.iter().copied().filter(move |&id| {
         let object = state.objects.get(id);
         id != source
             && object.zone == Zone::Graveyard
             && object.owner == player
-            && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Artifact)
+            && card_def::CARD_DEFS[object.card_def as usize].has_type(material)
     });
     permanents
         .chain(cards)
@@ -7583,7 +7601,8 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         }
         PermanentFilter::ArtifactOrCreature
         | PermanentFilter::Token
-        | PermanentFilter::Creature => CostKind::SacrificePermanents,
+        | PermanentFilter::Creature
+        | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
         PermanentFilter::Land | PermanentFilter::DesertV1 => CostKind::SacrificeLands,
     }
 }
@@ -13203,9 +13222,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
                         CostKind::SacrificeArtifacts
                     }
-                    PermanentFilter::ArtifactOrCreature | PermanentFilter::Token => {
-                        CostKind::SacrificePermanents
-                    }
+                    PermanentFilter::ArtifactOrCreature
+                    | PermanentFilter::Token
+                    | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
                     PermanentFilter::Land | PermanentFilter::DesertV1 => CostKind::SacrificeLands,
                 },
                 remaining,
@@ -17845,6 +17864,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 }
                 state.objects.get_mut(id).summoning_sick = false;
             }
+            // Bender's Waterskin: "Untap this artifact during each other
+            // player's untap step."
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_e6a_v1::untap_during_other_untap_steps(state, p);
             crate::standard_cards_v1::release_untapped_locks(state);
             state.players[0].draws_this_turn = 0;
             state.players[1].draws_this_turn = 0;
@@ -20871,6 +20894,16 @@ pub(crate) fn step_without_linked_aura_v1(
             #[cfg(feature = "eternal-fixtures")]
             if crate::eternal_lurrus_v1::is_companion_source(state, source) {
                 crate::eternal_lurrus_v1::put_companion_into_hand(state, p, source)?;
+                collect_and_queue_triggers(state);
+                state.engine.priority_passes = [false, false];
+                state.priority_player = p;
+                return Ok(());
+            }
+            // 702.143a: foretelling is a special action. It never uses the
+            // stack, and its player keeps priority.
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::eternal_pauper_e6a_v1::is_foretell_action(state, source, index) {
+                crate::eternal_pauper_e6a_v1::foretell(state, p, source)?;
                 collect_and_queue_triggers(state);
                 state.engine.priority_passes = [false, false];
                 state.priority_player = p;
