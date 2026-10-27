@@ -17,6 +17,13 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Write;
 
+use crate::native_policy_train_step_v1::widening_v1::{
+    column_segments_v1, narrow_to_wide_index_v1, segment_width_v1, SegmentV1,
+};
+
+mod screen_fit_v1_tests;
+mod widening_v1_tests;
+
 const VC: f32 = 0.75;
 const LR: f32 = 0.00003;
 /// Frozen before any wide result (design section 5.1): per coordinate,
@@ -628,61 +635,8 @@ fn f64_oracle_reproduces_the_narrow_and_wide_torch_forward_goldens() {
 // never from Rust's gradients.
 // ---------------------------------------------------------------------------
 
-/// One concatenation segment of a layer input.
-#[derive(Clone, Copy)]
-enum SegmentV1 {
-    Fixed(usize),
-    Hidden,
-    Embedding,
-}
-
-/// The input segments of each tensor's columns; biases have none.
-fn column_segments_v1(tensor: usize) -> Vec<SegmentV1> {
-    use SegmentV1::{Embedding, Fixed, Hidden};
-    match tensor {
-        CARD_EMBEDDING => vec![Embedding],
-        OBJECT_FIRST_WEIGHT => vec![Fixed(OBJECT_FEATURE_DIM_V1), Embedding],
-        EDGE_FIRST_WEIGHT => vec![Fixed(EDGE_FEATURE_DIM_V1), Hidden, Hidden],
-        NODE_FIRST_WEIGHT | SCORER_FIRST_WEIGHT => vec![Hidden, Hidden],
-        STATE_FIRST_WEIGHT => std::iter::once(Fixed(STATE_DIM_V1))
-            .chain(std::iter::repeat_n(Hidden, OBJECT_GROUP_COUNT_V1))
-            .collect(),
-        ACTION_REF_FIRST_WEIGHT => vec![Fixed(ACTION_REF_FEATURE_DIM_V1), Hidden],
-        ACTION_FIRST_WEIGHT => vec![Fixed(ACTION_FEATURE_DIM_V1), Hidden],
-        tensor if EXPECTED_PARAMETER_SHAPES[tensor].len() == 2 => vec![Hidden],
-        _ => Vec::new(),
-    }
-}
-
-fn segment_width_v1(segment: SegmentV1, hidden: usize, embedding: usize) -> usize {
-    match segment {
-        SegmentV1::Fixed(width) => width,
-        SegmentV1::Hidden => hidden,
-        SegmentV1::Embedding => embedding,
-    }
-}
-
-/// Narrow-to-wide layout map (design section 5.2, reused by PR 4a's
-/// widening): the wide element a narrow element occupies when net-8 is
-/// embedded in net-8w128 with every new coordinate zero.
-fn narrow_to_wide_index_v1(tensor: usize, index: usize) -> usize {
-    let narrow_shape = EXPECTED_PARAMETER_SHAPES[tensor];
-    let wide_shape = W_EXPECTED_PARAMETER_SHAPES[tensor];
-    if narrow_shape.len() == 1 {
-        return index;
-    }
-    let (row, mut column) = (index / narrow_shape[1], index % narrow_shape[1]);
-    let mut wide_offset = 0;
-    for segment in column_segments_v1(tensor) {
-        let narrow_width = segment_width_v1(segment, HIDDEN_DIM_V1, CARD_EMBEDDING_DIM_V1);
-        if column < narrow_width {
-            return row * wide_shape[1] + wide_offset + column;
-        }
-        column -= narrow_width;
-        wide_offset += segment_width_v1(segment, W_HIDDEN_DIM_V1, W_CARD_EMBEDDING_DIM_V1);
-    }
-    unreachable!("column inside the narrow layout")
-}
+// The narrow-to-wide layout map (design section 5.2) lives in
+// `widening_v1`, which PR 4a's widening shares.
 
 #[test]
 fn narrow_to_wide_layout_map_is_injective_and_shape_consistent() {
