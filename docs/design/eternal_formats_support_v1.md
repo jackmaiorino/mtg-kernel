@@ -74,7 +74,7 @@ reserved.
 | E2 | Legacy Dimir Tempo and Izzet Delver: original duals, surveil lands, fetchlands, Wasteland, Force of Will, Daze, Thoughtseize, Fatal Push, Unholy Heat, Prismari Charm, the Baubles, Brazen Borrower, Dragon's Rage Channeler, Murktide Regent, Moonshadow, Nethergoyf, Orcish Bowmasters, Tamiyo, Bilbo | 27 and a token | Legacy 0% to 19.3% |
 | E3 | Legacy combo decks: Doomsday, Sneak and Show, Aluren, Omni-Tell (Show and Tell, Sneak Attack, Omniscience, Aluren, Doomsday, Thassa's Oracle, Jace, Emrakul, Atraxa, Acererak and the three Forgotten Realms dungeons, Chrome Mox, Lion's Eye Diamond, The One Ring, Cavern of Souls, Misdirection, Flusterstorm, Veil of Summer) | 27 and four tokens | Legacy 19.3% to 33.5% |
 | E4 | Vintage Jewel Shops and Mono-White Initiative: Power Nine (with Mana Crypt, Mana Vault and Sol Ring), Workshop, Academy, Strip Mine, Karakas, Urza's Saga, Time Vault, Tinker, Karn, Tezzeret, Phyrexian Metamorph, Coveted Jewel, Trinisphere, the Initiative creatures, Archon of Emeria, Clarion Conqueror, Chancellor of the Annex, Anointed Peacekeeper, Witch Enchanter; six shared cards come from E3 | 36 | Vintage 0% to 28.4% |
-| E4b | Vintage: Raker Shops, then companions and the Lurrus lists | about 45 | Vintage about 50% |
+| E4b | Vintage Lurrus lists (Esper and Dimir Lurrus Control, Lurrus PO, Lurrus Breach, Jeskai Lurrus, 4c Psychic Frog): companions, Lurrus of the Dream-Den, Demonic Tutor, Mana Drain, Force of Negation, Gush, Dig Through Time, Treasure Cruise, Snapcaster Mage, Underworld Breach, Brain Freeze, Psychic Frog, Hexing Squelcher, Null Rod, Pithing Needle, Mox Opal and the rest of the lists | 29 and two tokens | Vintage 28.4% to 62.3% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -138,6 +138,24 @@ New, each built once in the first wave that needs it:
   Anointed Peacekeeper names any registry card by letter, then name; Chancellor of the
   Annex's opening-hand reveal is offered as the game's first upkeep begins. Companions
   (reveal, pay 3, put into hand) and Lurrus's graveyard casting move to E4b.
+- E4b, built in `src/eternal_lurrus_v1.rs` and `build_eternal_lurrus_v1.rs`: a custom
+  deck may name a companion (`CustomDeckV1::companion`, absent from the wire and every
+  hash when unset), checked against its deck condition at reset and placed face up in
+  exile, where observation v5 shows it; putting it into hand for {3} at sorcery timing is
+  a special action offered as the companion's ability 0. Lurrus's once-per-turn
+  graveyard permission is a `GraveyardPermissionV1` cast route tracked per Lurrus.
+  Snapcaster Mage's flashback and Underworld Breach's escape are granted costs equal to
+  the card's mana cost (plus three graveyard cards for escape); when several graveyard
+  routes apply, one is offered (flashback, then permission, then escape). New cost
+  families: returning N permanents with a filter as an alternative cost (Gush,
+  `CostComponent::ReturnControlledPermanentsToOwnersHandV1`), "not your turn" alternative
+  cost conditions (Force of Negation) and exiling graveyard cards for an activation
+  (Psychic Frog). Converge reads the colors a cast spent (Prismatic Ending); per-slot
+  two-target modes let a Wizard's controller choose two Flame of Anor modes; Mana Drain
+  and Forth Eorlingas! queue delayed triggers from main-phase and combat-damage hooks;
+  Hexing Squelcher grants "Ward--Pay 2 life" and makes its controller's spells
+  uncounterable; Null Rod and Pithing Needle prohibit activations (the Needle names a
+  card visible to its controller); Mox Opal's metalcraft gates its mana ability.
 
 ## Card contract and verification
 
@@ -149,8 +167,8 @@ wave also adds:
 - The newly playable decks to `PLAYABLE` in `tests/eternal/eternal_catalog_v1.rs`, which
   resolves them, preflights them and plays each against the next with a ranked action
   preference and with seeded random actions (so lands, mana rocks and activated abilities
-  run), checking natural terminals and transcript replay. A deck with a companion stays
-  out of `PLAYABLE` until companions are supported and the test exercises the companion.
+  run), checking natural terminals and transcript replay. Decks with a companion play
+  with it, and the games take the companion action.
 - The census output, before and after, in the PR description.
 
 Gameplay support is engineering, not playing-strength evidence. Policy encoders, training
