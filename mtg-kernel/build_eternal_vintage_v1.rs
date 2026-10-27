@@ -297,7 +297,7 @@ pub(super) fn additional_cost_for(name: &str) -> &'static str {
         "Tinker" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Artifact }])"
         }
-        _ => "None",
+        _ => super::build_eternal_e6a_v1::additional_cost_for(name),
     }
 }
 

@@ -1844,6 +1844,13 @@ pub fn apply_replacements(
         if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
             return None;
         }
+        // Moment's Peace, Ethereal Haze and Tangle.
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_pauper_e6a_v1::prevents_damage(state, damage)
+        {
+            return None;
+        }
         if !damage_cannot_be_prevented
             && damage.historical_source.map_or_else(
                 || {

@@ -733,6 +733,17 @@ pub(super) fn selected_spell_quote_branch_v1(
     {
         return None;
     }
+    // Foretell: a foretold card is cast only for its foretell cost.
+    #[cfg(feature = "eternal-fixtures")]
+    if !crate::eternal_pauper_e6a_v1::foretell_quote_allowed(
+        state,
+        definition,
+        source,
+        origin_zone,
+        method,
+    ) {
+        return None;
+    }
     let mut selected = selected_spell_mana_costs_for_source_v1(
         source,
         definition,

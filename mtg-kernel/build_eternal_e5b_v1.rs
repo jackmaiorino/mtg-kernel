@@ -148,14 +148,16 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Eye of Ugin" => &EYE_OF_UGIN,
         "Lazotep Quarry" => &LAZOTEP_QUARRY,
         "Ajani, Nacatl Pariah" => &AJANI,
-        _ => &[],
+        _ => super::build_eternal_e6a_v1::activated_ability_recipes_for(name),
     }
 }
 
 /// Activated abilities printed on one face only: Ajani's loyalty abilities
 /// are its back face's.
-pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
-    (name == "Ajani, Nacatl Pariah").then_some(1)
+pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
+    (name == "Ajani, Nacatl Pariah")
+        .then_some(1)
+        .or_else(|| super::build_eternal_e6a_v1::activated_ability_face_for(name, index))
 }
 
 /// A spell whose program is a runtime function of `eternal_legacy_e5b_v1`.
@@ -194,7 +196,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 3, permanents: 0 })",
             "crate::eternal_legacy_e5b_v1::eldrazi_confluence_0",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e6a_v1::special_for(name),
     })
 }
 
@@ -233,7 +235,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Phelia, Exuberant Shepherd" => &["Keywords::FLASH"],
         "Quantum Riddler" => &["Keywords::FLYING"],
         "Reality Smasher" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
-        _ => &[],
+        _ => super::build_eternal_e6a_v1::keywords_for(name),
     }
 }
 
@@ -257,7 +259,7 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
         // Lazotep Quarry: "{T}, Sacrifice a creature: Add one mana of any
         // color."
         "Lazotep Quarry" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
-        _ => "&[]",
+        _ => super::build_eternal_e6a_v1::additional_mana_abilities_for(name),
     }
 }
 
@@ -268,7 +270,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Quantum Riddler" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 1, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
         "Wastescape Battlemage" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::C), Pip::Colored(ManaColor::U)], generic: 2, x_count: 0 })], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_e6a_v1::alt_cost_for(name),
     }
 }
 
@@ -276,7 +278,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Wastescape Battlemage" => Some("{G}"),
-        _ => None,
+        _ => super::build_eternal_e6a_v1::kicker_cost_for(name),
     }
 }
 
@@ -299,14 +301,14 @@ pub(super) fn escape_for(name: &str) -> String {
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Ajani, Nacatl Pariah" => "Some(TransformFaceDef { name: \"Ajani, Nacatl Avenger\", types: &[CardType::Planeswalker], subtypes: &[Subtype::Ajani], colors: &[ManaColor::R, ManaColor::W], power: None, toughness: None, keywords: Keywords::NONE })",
-        _ => "None",
+        _ => super::build_eternal_e6a_v1::transform_face_for(name),
     }
 }
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Ajani, Nacatl Pariah" => Some("Ajani, Nacatl Avenger"),
-        _ => None,
+        _ => super::build_eternal_e6a_v1::transform_face_name_for(name),
     }
 }
 
@@ -384,6 +386,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Eldrazi Temple" => "mana:tap_add_cc_for_colorless_eldrazi_spells",
         "Lazotep Quarry" => "zombie_copy:4_4_black_zombie",
-        _ => "none",
+        _ => super::build_eternal_e6a_v1::trigger_recipe_for(name),
     }
 }

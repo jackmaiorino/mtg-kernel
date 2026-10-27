@@ -356,9 +356,17 @@ jobs:
       # the two halves of the workspace suite run as parallel jobs.
       - name: Run Rust release tests
         if: startsWith(matrix.group, 'workspace-')
-        run: python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
+        run: |
+          # The hosted Ubuntu runner ran out of memory compiling every
+          # non-library target with full parallelism (shutdown signal, exit
+          # 143, from 2026-10-27), so that half builds two units at a time.
+          if [ "$MATRIX_GROUP" = workspace-targets ] && [ "$MATRIX_OS" = ubuntu-24.04 ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
+          python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
         env:
           MATRIX_GROUP: ${{ matrix.group }}
+          MATRIX_OS: ${{ matrix.os }}
 
       - name: Check opt-in gameplay decision tracing
         if: matrix.group == 'trace'

@@ -1129,11 +1129,12 @@ pub(crate) fn activation_allowed(
     state: &GameState,
     source: ObjectId,
     name: &str,
-    _ability_index: usize,
+    ability_index: usize,
 ) -> bool {
     (name != URZAS_SAGA || saga_level(state, source) >= 2)
         && crate::eternal_lurrus_v1::activation_allowed(state, source)
         && crate::eternal_legacy_e5b_v1::activation_allowed(state, source)
+        && crate::eternal_pauper_e6a_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_e5a_v1::statics::activation_allowed(state, source, name)
 }
 

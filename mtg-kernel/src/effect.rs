@@ -232,6 +232,9 @@ pub enum LibraryCardFilter {
     /// A colorless creature card (Eye of Ugin). Appended for the eternal
     /// catalog.
     ColorlessCreatureV1,
+    /// An instant card or a card with flash (Mystical Teachings). Appended
+    /// for the eternal catalog.
+    InstantOrFlashV1,
 }
 
 impl LibraryCardFilter {
@@ -16076,6 +16079,9 @@ fn library_filter_matches(
         LibraryCardFilter::ColorlessCreatureV1 => {
             def.has_type(CardType::Creature) && def.colors.is_empty()
         }
+        LibraryCardFilter::InstantOrFlashV1 => {
+            def.has_type(CardType::Instant) || def.keywords.has(crate::card_def::Keywords::FLASH)
+        }
     })
 }
 
@@ -16125,6 +16131,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 42),
         LibraryCardFilter::BlueInstantV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 43),
         LibraryCardFilter::ColorlessCreatureV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 44),
+        LibraryCardFilter::InstantOrFlashV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 61),
     }
 }
 

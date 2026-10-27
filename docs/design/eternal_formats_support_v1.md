@@ -76,6 +76,7 @@ reserved.
 | E4 | Vintage Jewel Shops and Mono-White Initiative: Power Nine (with Mana Crypt, Mana Vault and Sol Ring), Workshop, Academy, Strip Mine, Karakas, Urza's Saga, Time Vault, Tinker, Karn, Tezzeret, Phyrexian Metamorph, Coveted Jewel, Trinisphere, the Initiative creatures, Archon of Emeria, Clarion Conqueror, Chancellor of the Annex, Anointed Peacekeeper, Witch Enchanter; six shared cards come from E3 | 36 | Vintage 0% to 28.4% |
 | E4b | Vintage Lurrus lists (Esper and Dimir Lurrus Control, Lurrus PO, Lurrus Breach, Jeskai Lurrus, 4c Psychic Frog): companions, Lurrus of the Dream-Den, Demonic Tutor, Mana Drain, Force of Negation, Gush, Dig Through Time, Treasure Cruise, Snapcaster Mage, Underworld Breach, Brain Freeze, Psychic Frog, Hexing Squelcher, Null Rod, Pithing Needle, Mox Opal and the rest of the lists | 29 and two tokens | Vintage 28.4% to 62.3% |
 | E5b | Legacy Boros Energy, Beanstalk Control, Azorius and Jeskai Tempo, Esper Control, and the Eldrazi and Tron cards outside E5a: Plateau, Savannah, Scrubland, Snow-Covered Plains, Arid Mesa, Windswept Heath, Goblin Bombardment, Up the Beanstalk, Stifle, Consign to Memory, Galvanic Discharge, Wrath of the Skies, Terminus, Leyline Binding, Static Prison, Phelia, Quantum Riddler, Guide of Souls, Ocelot Pride, Ajani, Amped Raptor, Phlage, Sand Scout, Voice of Victory, Lazotep Quarry, Thought-Knot Seer, Reality Smasher, It That Heralds the End, Eldrazi Linebreaker, Wastescape Battlemage, Eldrazi Temple, Eye of Ugin, Abundant Countryside, Petrified Hamlet, Eldrazi Confluence | 35 and six tokens | Legacy 33.5% to 49.4% |
+| E6a | Pauper Tron, Esper, Dimir and 4c Affinity, Esper Ephemerate, Mono-Blue Faeries, Mardu Synthesizer (and Azorius Gates): Abjure, Ancient Den, Archaeomancer, Behold the Multiverse, Bender's Waterskin, Bramble Wurm, Brinebarrow Intruder, Crop Rotation, Cryoshatter, Dispatch, Energy Refractor, Ephemerate, Ethereal Haze, Gearseeker Serpent, Ghostly Flicker, Glacial Floodplain, Grim Bauble, Hard Evidence, Kor Skyfisher, Moment's Peace, Mulldrifter, Mystical Teachings, Omen of the Dead, Prohibit, Prophetic Prism, Razortide Bridge, Remote Isle, Rustvale Bridge, Sewer-veillance Cam, Shattered Landscape, Stream of Thought, Tangle, Tangled Islet, Tithing Blade, Union of the Third Path | 35 and a token | Pauper 53.5% to 69.0% |
 | E5a | Vintage Raker Shops, Oath of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy Mystic Forge, and with E5b's cards Legacy Eldrazi and Tron: Mystic Forge, Bolas's Citadel, Yawgmoth's Will, Chalice of the Void, Sensei's Divining Top, Oath of Druids, Oko, Ugin, Kozilek's Command, Talon Gates of Madara and the rest of the lists | 28 and a token | Vintage 62.3% to 80.0%, Legacy 49.4% to 59.6% (after E5b) |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
@@ -175,6 +176,25 @@ New, each built once in the first wave that needs it:
   (abilities off, taps for colorless), Static Prison's upkeep payment and Ocelot Pride's
   city's blessing are engine hooks. Wastescape Battlemage's {1}{U} kicker is modeled as
   an alternative cost of {2}{C}{U}, so a free cast cannot add only that kicker.
+- E6a, built in `src/eternal_pauper_e6a_v1.rs` and `build_eternal_e6a_v1.rs`: fogs are
+  turn-bound prevention records the damage replacement pass reads (all combat damage, or
+  all damage creatures would deal); Tangle also marks each attacking creature to skip its
+  next untap. Flicker exiles, then returns under the owner (Ephemerate) or the spell's
+  controller (Ghostly Flicker, with a new two-distinct-target shape over artifacts,
+  creatures and lands you control). Rebound marks a resolving spell cast from hand, the
+  spell departure hook exiles it, and its owner's next upkeep queues a trigger that offers
+  E5b's paid resolution cast. Evoke is an alternative cost plus an entry trigger whose
+  condition reads the recorded evoked cast. Foretell is a special action offered as the
+  hand card's ability 0 (as companions are): it pays {2} during its owner's turn, exiles
+  the card face down (only its owner may look) and grants a later-turn exile cast
+  permission; `AltCostCondition::ForetoldV1` and a quote hook make the foretell cost the
+  only way to cast it from exile. Bender's Waterskin untaps in the other player's untap
+  step; Tithing Blade's craft takes a creature as material
+  (`ExileCraftArtifactMaterial` reads the material type per card); Cryoshatter's trigger
+  on its creature becoming tapped or being dealt damage is queued by a hook. Other new
+  shapes: sacrificing a blue permanent (`PermanentFilter::BlueV1`), an instant-or-flash
+  library search (`LibraryCardFilter::InstantOrFlashV1`) and Stream of Thought's choice
+  of up to four graveyard cards to shuffle back (`E3ChoiceKindV1::E6aV1`).
 - E5a, built in `src/eternal_e5a_v1.rs` (with `choices`, `permissions`, `phasing`,
   `statics` and `triggers` submodules) and `build_eternal_e5a_v1.rs`: casting the top
   card of the library is a new cast route (`SpellCastRouteV4::LibraryPermissionV1`,

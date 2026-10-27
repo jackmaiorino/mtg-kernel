@@ -90,6 +90,13 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_legacy_e5b_v1::E5bStateV1::is_empty"
     )]
     pub e5b: crate::eternal_legacy_e5b_v1::E5bStateV1,
+    /// The Pauper Affinity, Tron and Ephemerate lists' state
+    /// (`eternal_pauper_e6a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_pauper_e6a_v1::E6aStateV1::is_empty"
+    )]
+    pub e6a: crate::eternal_pauper_e6a_v1::E6aStateV1,
     /// Wave E5a's state (`eternal_e5a_v1`).
     #[serde(
         default,
@@ -152,6 +159,9 @@ pub enum EternalTriggerV1 {
     /// A condition owned by the Legacy aggro, Eldrazi and control lists'
     /// module.
     E5bV1(crate::eternal_legacy_e5b_v1::E5bTriggerV1),
+    /// A condition owned by the Pauper Affinity, Tron and Ephemerate lists'
+    /// module.
+    E6aV1(crate::eternal_pauper_e6a_v1::E6aTriggerV1),
     /// A condition owned by wave E5a's module.
     E5aV1(crate::eternal_e5a_v1::E5aTriggerV1),
 }
@@ -271,6 +281,9 @@ pub enum EternalOpV1 {
     LurrusV1(crate::eternal_lurrus_v1::LurrusOpV1),
     /// A leaf owned by the Legacy aggro, Eldrazi and control lists' module.
     E5bV1(crate::eternal_legacy_e5b_v1::E5bOpV1),
+    /// A leaf owned by the Pauper Affinity, Tron and Ephemerate lists'
+    /// module.
+    E6aV1(crate::eternal_pauper_e6a_v1::E6aOpV1),
     /// A leaf owned by wave E5a's module.
     E5aV1(crate::eternal_e5a_v1::E5aOpV1),
 }
@@ -290,6 +303,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 | EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 => true,
                 EternalTriggerV1::E5bV1(condition) => {
                     crate::eternal_legacy_e5b_v1::arrival_condition(condition)
+                }
+                EternalTriggerV1::E6aV1(condition) => {
+                    crate::eternal_pauper_e6a_v1::arrival_condition(condition)
                 }
                 _ => false,
             },
@@ -788,6 +804,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::VintageV1(op) => crate::eternal_vintage_v1::execute(op, ctx, state),
         EternalOpV1::LurrusV1(op) => crate::eternal_lurrus_v1::execute(op, ctx, state),
         EternalOpV1::E5bV1(op) => crate::eternal_legacy_e5b_v1::execute(op, ctx, state),
+        EternalOpV1::E6aV1(op) => crate::eternal_pauper_e6a_v1::execute(op, ctx, state),
         EternalOpV1::E5aV1(op) => crate::eternal_e5a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
@@ -1433,6 +1450,9 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_legacy_e5b_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_pauper_e6a_v1::delayed_triggers(
+        state, events,
+    ));
     triggers.extend(crate::eternal_e5a_v1::delayed_triggers(state, events));
     triggers
 }
@@ -1523,6 +1543,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_vintage_v1::begin_turn(state, player);
     crate::eternal_lurrus_v1::begin_turn(state, player);
     crate::eternal_legacy_e5b_v1::begin_turn(state, player);
+    crate::eternal_pauper_e6a_v1::begin_turn(state, player);
     crate::eternal_e5a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
@@ -1625,6 +1646,9 @@ pub(crate) fn trigger_matches(
         EternalTriggerV1::E5bV1(condition) => {
             crate::eternal_legacy_e5b_v1::trigger_matches(condition, events, index, source, state)
         }
+        EternalTriggerV1::E6aV1(condition) => {
+            crate::eternal_pauper_e6a_v1::trigger_matches(condition, events, index, source, state)
+        }
         EternalTriggerV1::E5aV1(condition) => {
             crate::eternal_e5a_v1::trigger_matches(condition, events, index, source, state)
         }
@@ -1719,6 +1743,10 @@ pub(crate) fn exiled_instead_of_graveyard(
     state: &GameState,
     item: &crate::state::StackItem,
 ) -> bool {
+    // Rebound (Ephemerate) exiles a resolving spell cast from hand.
+    if crate::eternal_pauper_e6a_v1::rebounds_on_departure(state, item) {
+        return true;
+    }
     !item.is_copy
         && item
             .v4

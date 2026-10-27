@@ -10723,4 +10723,5 @@ pub(crate) mod tests {
     }
 
     mod reset_start_tests;
+    mod widening_b512_tests;
 }
