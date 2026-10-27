@@ -348,9 +348,56 @@ pub enum Subtype {
     Phoenix,
     /// Appended for the genuine Drake Hatcher dependency; stable ids persist.
     Drake,
-    /// Appended for Curator of Destinies without changing legacy choice lists.
+    /// Appended for the eternal catalog (Utrom Monitor, the Robot token).
+    /// Creature types only in `eternal-fixtures` builds.
+    Utrom,
+    Scientist,
+    Robot,
+    /// Appended for the eternal catalog's Legacy decks (the Orc Army token,
+    /// Nethergoyf, Bilbo, Tamiyo). Tamiyo is a planeswalker type.
+    Army,
+    Lhurgoyf,
+    Halfling,
+    Tamiyo,
+    /// Appended for the eternal catalog's wave-E3 cards (Street Wraith, Raph
+    /// & Mikey, Jace). Jace is a planeswalker type.
+    Wraith,
+    Mutant,
+    Jace,
+    /// Appended for the eternal catalog's Vintage decks (Archon of Emeria,
+    /// and the planeswalker types Karn and Tezzeret).
+    Archon,
+    Karn,
+    Tezzeret,
+    /// Appended for the eternal catalog's Vintage Lurrus decks (Psychic
+    /// Frog, Hexing Squelcher).
+    Frog,
+    Sorcerer,
+    /// Appended for the eternal catalog's Legacy aggro, Eldrazi and control
+    /// lists (Voice of Victory, Quantum Riddler, the Sand Warrior and
+    /// Eldrazi Scion tokens).
+    Bard,
     Sphinx,
-    /// Planeswalker type; appended without changing existing subtype IDs.
+    Sand,
+    Scion,
+    /// Appended for the eternal catalog's Pauper Affinity, Tron and
+    /// Ephemerate lists (Kor Skyfisher, the Crab token, Ethereal Haze's
+    /// Arcane spell type).
+    Crab,
+    Kor,
+    Arcane,
+    /// Appended for the eternal catalog's wave E5a: planeswalker types (Oko,
+    /// Thief of Crowns; Ugin, Eye of the Storms) and the nonbasic land
+    /// types Planar Nexus has besides those already listed.
+    Oko,
+    Ugin,
+    Cave,
+    Cloud,
+    Lair,
+    Locus,
+    Planet,
+    /// Planeswalker type (Vivien Reid), appended after the eternal catalog's
+    /// types; Sphinx (Curator of Destinies) is listed above.
     Vivien,
 }
 
@@ -652,6 +699,40 @@ impl Subtype {
             not(feature = "standard-magezero-fixtures")
         ))]
         Subtype::Phoenix,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Utrom,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Scientist,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Robot,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Army,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Lhurgoyf,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Halfling,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Wraith,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Mutant,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Archon,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Frog,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Sorcerer,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Bard,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Sphinx,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Sand,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Scion,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Crab,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Kor,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -836,8 +917,36 @@ impl Subtype {
             151 => Subtype::Bear,
             152 => Subtype::Phoenix,
             153 => Subtype::Drake,
-            154 => Subtype::Sphinx,
-            155 => Subtype::Vivien,
+            154 => Subtype::Utrom,
+            155 => Subtype::Scientist,
+            156 => Subtype::Robot,
+            157 => Subtype::Army,
+            158 => Subtype::Lhurgoyf,
+            159 => Subtype::Halfling,
+            160 => Subtype::Tamiyo,
+            161 => Subtype::Wraith,
+            162 => Subtype::Mutant,
+            163 => Subtype::Jace,
+            164 => Subtype::Archon,
+            165 => Subtype::Karn,
+            166 => Subtype::Tezzeret,
+            167 => Subtype::Frog,
+            168 => Subtype::Sorcerer,
+            169 => Subtype::Bard,
+            170 => Subtype::Sphinx,
+            171 => Subtype::Sand,
+            172 => Subtype::Scion,
+            173 => Subtype::Crab,
+            174 => Subtype::Kor,
+            175 => Subtype::Arcane,
+            176 => Subtype::Oko,
+            177 => Subtype::Ugin,
+            178 => Subtype::Cave,
+            179 => Subtype::Cloud,
+            180 => Subtype::Lair,
+            181 => Subtype::Locus,
+            182 => Subtype::Planet,
+            183 => Subtype::Vivien,
             _ => return None,
         })
     }
@@ -1003,6 +1112,34 @@ impl Subtype {
             Subtype::Drake => true,
             Subtype::Sphinx => true,
             Subtype::Vivien => false,
+            Subtype::Utrom => true,
+            Subtype::Scientist => true,
+            Subtype::Robot => true,
+            Subtype::Army => true,
+            Subtype::Lhurgoyf => true,
+            Subtype::Halfling => true,
+            Subtype::Wraith => true,
+            Subtype::Mutant => true,
+            Subtype::Archon => true,
+            Subtype::Frog => true,
+            Subtype::Sorcerer => true,
+            Subtype::Bard => true,
+            Subtype::Sand => true,
+            Subtype::Scion => true,
+            Subtype::Crab => true,
+            Subtype::Kor => true,
+            Subtype::Tamiyo => false,
+            Subtype::Jace => false,
+            Subtype::Karn => false,
+            Subtype::Tezzeret => false,
+            Subtype::Arcane => false,
+            Subtype::Oko => false,
+            Subtype::Ugin => false,
+            Subtype::Cave => false,
+            Subtype::Cloud => false,
+            Subtype::Lair => false,
+            Subtype::Locus => false,
+            Subtype::Planet => false,
         }
     }
 
@@ -1061,6 +1198,31 @@ impl Subtype {
                     | Subtype::Wurm
                     | Subtype::Artificer
                     | Subtype::Orc
+            )
+        {
+            return true;
+        }
+        // The eternal catalog's creature types, absent from every other build.
+        if cfg!(feature = "eternal-fixtures")
+            && matches!(
+                self,
+                Subtype::Utrom
+                    | Subtype::Scientist
+                    | Subtype::Robot
+                    | Subtype::Army
+                    | Subtype::Lhurgoyf
+                    | Subtype::Halfling
+                    | Subtype::Wraith
+                    | Subtype::Mutant
+                    | Subtype::Archon
+                    | Subtype::Frog
+                    | Subtype::Sorcerer
+                    | Subtype::Bard
+                    | Subtype::Sphinx
+                    | Subtype::Sand
+                    | Subtype::Scion
+                    | Subtype::Crab
+                    | Subtype::Kor
             )
         {
             return true;
@@ -1422,6 +1584,9 @@ pub enum TargetSpec {
     /// graveyard. The signed bound is captured source power, not a fixed
     /// printed mana value. A negative bound offers no targets.
     AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(i32),
+    /// Exactly one spell with this mana value (Mental Misstep's "target
+    /// spell with mana value 1"). Appended for the eternal catalog.
+    SpellWithManaValueV1(u16),
     /// Exactly one other nonland permanent controlled by the trigger controller.
     AnotherControlledNonlandPermanent,
     /// One creature card in the trigger controller's graveyard whose printed
@@ -1522,6 +1687,7 @@ impl TargetSpec {
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
             TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
             TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => 103,
+            TargetSpec::SpellWithManaValueV1(_) => 140,
             TargetSpec::AnotherControlledNonlandPermanent => 104,
             TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => 105,
         }
@@ -1641,6 +1807,15 @@ pub enum PermanentFilter {
     /// (Repurposing Bay's "Sacrifice another artifact"). Appended.
     AnotherArtifact,
     Token,
+    /// A controlled Desert (Lazotep Quarry's "Sacrifice a Desert").
+    /// Appended for the eternal catalog.
+    DesertV1,
+    /// A controlled blue permanent (Abjure's "sacrifice a blue
+    /// permanent"). Appended for the eternal catalog.
+    BlueV1,
+    /// A controlled nonland permanent (Bolas's Citadel's "Sacrifice ten
+    /// nonland permanents"). Appended for the eternal catalog.
+    NonlandV1,
     /// A controlled permanent with this effective subtype, excluding the cost source.
     AnotherWithSubtype(Subtype),
 }
@@ -1776,6 +1951,27 @@ pub enum CostComponent {
         kind: crate::drake_hatcher_v1::SourceCounterKindV1,
         count: u16,
     },
+    /// "Pay {E}{E}..." (107.14): remove this many energy counters from the
+    /// payer. Appended for the eternal catalog (Inventor's Axe's equip).
+    PayEnergyV1(u8),
+    /// "Exile a blue card from your hand" (Force of Will): one card of this
+    /// color from the payer's hand, other than the spell itself, chosen
+    /// privately through `Decision::ChooseCostTargets`. Appended for the
+    /// eternal catalog.
+    ExileCardFromHandWithColorV1(ManaColor),
+    /// "Exile any number of other cards from your graveyard with N or more
+    /// card types among them" (Nethergoyf's escape). Cards are chosen one
+    /// at a time until the chosen set covers N card types. Appended for the
+    /// eternal catalog.
+    ExileOtherGraveyardCardsWithCardTypesV1(u8),
+    /// "Return two Islands you control to their owner's hand" (Gush):
+    /// `count` distinct controlled permanents matching `filter`, chosen one
+    /// at a time through `Decision::ChooseCostTargets` before any payment
+    /// commits. Appended for the eternal catalog.
+    ReturnControlledPermanentsToOwnersHandV1 {
+        count: u8,
+        filter: PermanentFilterDef,
+    },
 }
 
 impl CostComponent {
@@ -1904,6 +2100,14 @@ pub enum AltCostCondition {
         time_counters: u8,
     },
     DisguiseFromHand,
+    /// "If it's not your turn" (Force of Negation). Appended for the
+    /// eternal catalog.
+    NotYourTurnV1,
+    /// Foretell (702.143): cast from exile on a later turn for its foretell
+    /// cost, only after the card was foretold (Behold the Multiverse). The
+    /// quote hook in `eternal_pauper_e6a_v1` ties it to the foretold card.
+    /// Appended for the eternal catalog.
+    ForetoldV1,
     /// All effective battlefield creatures, under either controller.
     BattlefieldCreatureCountAtLeast(u16),
 }
@@ -2016,6 +2220,14 @@ pub enum ManaAbilityCostDef {
     /// needs at least N life (119.4). Appended; existing discriminants
     /// remain fixed.
     TapSelfPayLife(u8),
+    /// "Discard your hand, Sacrifice this artifact" with "Activate only as
+    /// an instant" (Lion's Eye Diamond): only while its controller holds
+    /// priority with nothing being cast, activated or resolved. Appended for
+    /// the eternal catalog.
+    DiscardHandAndSacrificeSelfV1,
+    /// "{T}, Sacrifice a creature" (Lazotep Quarry): the creature is the
+    /// activation's cost target. Appended for the eternal catalog.
+    TapSelfSacrificeControlledCreatureV1,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -2029,6 +2241,9 @@ pub enum ManaAbilityAmountDef {
     /// One unit of every W/U/B/R/G color among controlled permanents.
     /// The primary action color identifies the ability, not one chosen output.
     EachControlledPermanentColor,
+    /// Exactly these colors at once ("{T}: Add {U}{B}", Dimir Aqueduct).
+    /// The primary action color identifies the ability, not one chosen output.
+    FixedColorsV1(&'static [ManaColor]),
 }
 
 /// A reusable integer derived from current game state. All consumers sample
@@ -2069,6 +2284,10 @@ pub enum DynamicValueDef {
     DistinctManaValuesAmongControlledNonlandPermanents,
     /// Current life total of the captured evaluating controller.
     ControllerLifeTotal,
+    /// Urza's Workshop: 1, or with metalcraft (three or more artifacts) the
+    /// number of Urza's lands the evaluating controller controls.
+    /// Appended for the eternal catalog.
+    UrzasLandsIfMetalcraftV1,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -2152,6 +2371,17 @@ pub enum ManaSpendRestrictionDef {
     LegendarySpell,
     Unrestricted,
     CreatureSpellOrCreatureAbility,
+    /// "Spend this mana only to cast a creature spell of the chosen type"
+    /// (Cavern of Souls): the creature type chosen as the source entered.
+    /// Appended for the eternal catalog.
+    CreatureSpellOfChosenTypeV1,
+    /// "Spend this mana only to cast artifact spells" (Mishra's Workshop).
+    /// Appended for the eternal catalog.
+    ArtifactSpellV1,
+    /// "Spend this mana only to cast colorless Eldrazi spells or activate
+    /// abilities of colorless Eldrazi" (Eldrazi Temple). Appended for the
+    /// eternal catalog.
+    ColorlessEldraziSpellV1,
     /// Spend only on casting a spell with the named subtype, never an activation.
     SpellWithSubtype(Subtype),
     /// None is a definition-owned chosen-type template; floating units
@@ -3360,6 +3590,19 @@ mod tests {
     fn card_db_hash_full_pool_provisional_fdn_is_frozen() {
         const EXPECTED_FDN: u64 = 0x30b0_6c76_c3a3_70a6;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
+    }
+
+    /// The eternal catalog (`kernel_carddb_eternal/v1`): Pauper prefix,
+    /// Standard registry, then `data/eternal_v1/cards_v1.json`. A card wave
+    /// re-pins this value; a Standard append would also move it.
+    #[test]
+    #[cfg(feature = "eternal-fixtures")]
+    fn card_db_hash_eternal_v1_is_frozen() {
+        const EXPECTED_ETERNAL: u64 = 0xba7e_cabc_a244_8b3e;
+        assert_eq!(
+            KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
+            "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
+        );
     }
 
     #[test]

@@ -1,7 +1,8 @@
 """Frozen analysis of the Spy archive distillation screen's raw-policy panels (DESIGN.md sections 6-7).
 
 Input: an index {"panels": [{"checkpoint": ID, "opponent": "T1"|"H", "checkpoint_sha256": SHA,
-"rows": PATH, "labels": PATH}]} with IDs {lineage}-{parent|O|D1U|D2U|D1L|D2L} and the archive
+"rows": PATH, "labels": PATH}]} (another reference list can be passed as ``opponents`` to ``load``,
+``plan``, ``points`` and ``bootstrap``; "pooled" is then the equal mean over that list) with IDs {lineage}-{parent|O|D1U|D2U|D1L|D2L} and the archive
 reset pilot's descriptive endpoints {lineage}-P (its plain-guide reset arm) and {lineage}-S.
 Rows are nine_deck_public_panel_v1 rows (game one score per case); labels are
 ``regret_census_v1 mode=s4a-label-replay`` rows for the Spy-own cases. Both are checked as
@@ -57,7 +58,7 @@ DECKS, REPEATS = pilot.DECKS, pilot.PANEL_REPEATS
 SPY, CAW = pilot.SPY, pilot.CAWGATES
 EIGHT = [d for d in range(DECKS) if d != SPY]
 SEVEN = [d for d in range(DECKS) if d not in (SPY, CAW)]
-OPPONENTS = ("T1", "H")
+OPPONENTS = ("T1", "H")  # the default reference list; "pooled" is the equal mean over the list in use
 ROLES = ("parent", "O", "D1U", "D2U", "D1L", "D2L", "P", "S")
 BOOT_SEED, VALIDATION_SEED, DRAWS = 2026101320, 2026101017, 10_000
 RETENTION, OFFER_FLOOR = 0.02, 0.05
@@ -86,9 +87,20 @@ def checkpoint_ids() -> set:
     return {f"{lineage}-{role}" for lineage in LINEAGES for role in ROLES}
 
 
-def load(index: dict, allowed: set | None = None, namespace: str = pilot.PANEL_NS) -> dict:
+def pooled(values: dict, metric: str, opponents: tuple = OPPONENTS):
+    """The equal mean of ``metric`` over ``opponents``; summed in list order from
+    the first value, so two references give (T1 + H) / 2 exactly."""
+    total = values[opponents[0]][metric]
+    for opp in opponents[1:]:
+        total = total + values[opp][metric]
+    return total / len(opponents)
+
+
+def load(index: dict, allowed: set | None = None, namespace: str = pilot.PANEL_NS,
+         opponents: tuple = OPPONENTS) -> dict:
     """data[(checkpoint, opponent)][(own, other, repeat, seat)] = case record.
     ``namespace`` is the panel's seed namespace (the frozen panel's unless
+    given); ``opponents`` the panel reference names accepted (T1 and H unless
     given)."""
     allowed = checkpoint_ids() if allowed is None else allowed
     data = {}
@@ -96,7 +108,7 @@ def load(index: dict, allowed: set | None = None, namespace: str = pilot.PANEL_N
                       for k in range(REPEATS) for s in (0, 1)}
     for panel in index["panels"]:
         key = (panel["checkpoint"], panel["opponent"])
-        if key in data or key[1] not in OPPONENTS or key[0] not in allowed:
+        if key in data or key[1] not in opponents or key[0] not in allowed:
             raise ValueError(f"duplicate or unknown panel {key}")
         expected_panel = f"{key[0]}-vs-{key[1]}"
         expected_hash = panel.get("checkpoint_sha256")
@@ -224,13 +236,14 @@ def draw_stats(score, spy, score_idx, spy_idx) -> dict:
     return out
 
 
-def plan(data: dict, contrasts) -> list:
-    """(lineage, name, D, control) for every contrast whose four panels exist."""
+def plan(data: dict, contrasts, opponents: tuple = OPPONENTS) -> list:
+    """(lineage, name, D, control) for every contrast whose panels exist against
+    every reference in ``opponents``."""
     return [(lineage, name, d, c) for lineage in LINEAGES for name, d, c in contrasts
-            if all((f"{lineage}-{x}", opp) in data for x in (d, c) for opp in OPPONENTS)]
+            if all((f"{lineage}-{x}", opp) in data for x in (d, c) for opp in opponents)]
 
 
-def points(data: dict, todo: list, metrics) -> dict:
+def points(data: dict, todo: list, metrics, opponents: tuple = OPPONENTS) -> dict:
     out, cache = {}, {}
 
     def s(ck, opp, fill):
@@ -239,17 +252,17 @@ def points(data: dict, todo: list, metrics) -> dict:
         return cache[(ck, opp, fill)]
     for lineage, name, d, c in todo:
         for bound, (fd, fc) in BOUNDS.items():
-            sd = {opp: s(f"{lineage}-{d}", opp, fd) for opp in OPPONENTS}
-            sc = {opp: s(f"{lineage}-{c}", opp, fc) for opp in OPPONENTS}
+            sd = {opp: s(f"{lineage}-{d}", opp, fd) for opp in opponents}
+            sc = {opp: s(f"{lineage}-{c}", opp, fc) for opp in opponents}
             for metric in metrics:
-                for opp in OPPONENTS:
+                for opp in opponents:
                     out[(lineage, name, metric, opp, bound)] = sd[opp][metric] - sc[opp][metric]
                 out[(lineage, name, metric, "pooled", bound)] = (
-                    (sd["T1"][metric] + sd["H"][metric]) / 2 - (sc["T1"][metric] + sc["H"][metric]) / 2)
+                    pooled(sd, metric, opponents) - pooled(sc, metric, opponents))
     return out
 
 
-def bootstrap(data: dict, todo: list, metrics, seed: int = BOOT_SEED) -> dict:
+def bootstrap(data: dict, todo: list, metrics, seed: int = BOOT_SEED, opponents: tuple = OPPONENTS) -> dict:
     """Cluster bootstrap intervals for every (lineage, contrast, metric,
     opponent or pooled, bound): one ``rng.integers`` draw of repeat indices
     per ordered deck pair, shared by every panel."""
@@ -261,7 +274,7 @@ def bootstrap(data: dict, todo: list, metrics, seed: int = BOOT_SEED) -> dict:
         zero = arrays(cases, 0.0)
         filled[key] = {0.0: zero, 1.0: arrays(cases, 1.0) if missing(cases)["count"] else zero}
     keys = [(lineage, name, metric, opp, bound) for lineage, name, _, _ in todo for bound in BOUNDS
-            for metric in metrics for opp in (*OPPONENTS, "pooled")]
+            for metric in metrics for opp in (*opponents, "pooled")]
     values = {key: np.empty(draws) for key in keys}
     for i in range(draws):
         idx = rng.integers(0, REPEATS, size=(DECKS, DECKS, REPEATS))
@@ -276,13 +289,13 @@ def bootstrap(data: dict, todo: list, metrics, seed: int = BOOT_SEED) -> dict:
             return cache[id(arrs)]
         for lineage, name, d, c in todo:
             for bound, (fd, fc) in BOUNDS.items():
-                sd = {opp: stats(f"{lineage}-{d}", opp, fd) for opp in OPPONENTS}
-                sc = {opp: stats(f"{lineage}-{c}", opp, fc) for opp in OPPONENTS}
+                sd = {opp: stats(f"{lineage}-{d}", opp, fd) for opp in opponents}
+                sc = {opp: stats(f"{lineage}-{c}", opp, fc) for opp in opponents}
                 for metric in metrics:
-                    for opp in OPPONENTS:
+                    for opp in opponents:
                         values[(lineage, name, metric, opp, bound)][i] = sd[opp][metric] - sc[opp][metric]
                     values[(lineage, name, metric, "pooled", bound)][i] = (
-                        (sd["T1"][metric] + sd["H"][metric]) / 2 - (sc["T1"][metric] + sc["H"][metric]) / 2)
+                        pooled(sd, metric, opponents) - pooled(sc, metric, opponents))
     out = {}
     for key, v in values.items():
         v = np.sort(v)

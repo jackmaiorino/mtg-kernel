@@ -938,6 +938,12 @@ pub enum SpellCastRouteV4 {
         holder: PlayerId,
         permission_zone_change_count: u32,
     },
+    /// Casting the top card of its owner's library under Mystic Forge or
+    /// Bolas's Citadel, for the exact library incarnation.
+    LibraryPermissionV1 {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
     GreatwurmGraveyardV1 {
         holder: PlayerId,
         graveyard_generation: u32,
@@ -1313,14 +1319,18 @@ pub fn stack_target_contract_is_structurally_valid(
         ..
     } = contract
     {
-        let allowed = matches!(spec, TargetSpec::StackObject)
-            || (matches!(
-                spec,
-                TargetSpec::StackAbility | TargetSpec::UpToOneStackAbility
-            ) && matches!(
-                kind,
-                StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility
-            ));
+        let allowed =
+            matches!(spec, TargetSpec::StackObject)
+                || (matches!(
+                    spec,
+                    TargetSpec::StackAbility | TargetSpec::UpToOneStackAbility
+                ) && matches!(
+                    kind,
+                    StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility
+                ))
+                || (spec == TargetSpec::StandardV1(
+                    crate::standard_cards_v1::StandardTargetV1::TriggeredAbilityOrColorlessSpellV1,
+                ) && kind == StackItemKind::TriggeredAbility);
         return allowed
             && target_index == 0
             && stack_item_id.0 > 0
@@ -1342,14 +1352,17 @@ pub fn stack_target_contract_is_structurally_valid(
         }
         let matches_kind = match &contract {
             StackTargetContractV4::Object { zone, .. } => {
-                *zone == crate::standard_cards_v1::target_zone(filter)
+                crate::standard_cards_v1::target_zone_allows(filter, *zone)
             }
             StackTargetContractV4::StackItem { .. } => false,
-            StackTargetContractV4::Player(_) => matches!(
-                filter,
-                crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
-                    | crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1
-            ),
+            StackTargetContractV4::Player(_) => {
+                matches!(
+                    filter,
+                    crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
+                        | crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1
+                        | crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1
+                ) || filter.slot_kind(target_index) == Some(None)
+            }
         };
         if !matches_kind {
             return false;
@@ -1515,7 +1528,8 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureSpellOnStack
                     | TargetSpec::ArtifactSpellOnStack
                     | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
-                    | TargetSpec::SpellYouDontControl,
+                    | TargetSpec::SpellYouDontControl
+                    | TargetSpec::SpellWithManaValueV1(_),
                 0,
                 StackTargetContractV4::Object {
                     zone: Zone::Stack,
@@ -2331,6 +2345,11 @@ pub struct GameState {
     pub wildwood_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raid_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
+    /// Card state for the eternal catalog's own cards (energy counters).
+    /// Absent until one of them needs it, so every earlier state keeps its
+    /// bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eternal_v1: Option<crate::eternal_cards_v1::EternalStateV1>,
     /// Resolved Nine-Lives death triggers waiting for any future beginning of
     /// an end step. Absent until the first such schedule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2591,6 +2610,10 @@ impl Hash for GameState {
             "raid-entry-waiting/v1".hash(state);
             waiting.hash(state);
         }
+        if let Some(eternal) = &self.eternal_v1 {
+            "eternal-v1".hash(state);
+            eternal.hash(state);
+        }
         if let Some(delayed) = &self.nine_lives_delayed_v1 {
             "nine-lives-delayed/v1".hash(state);
             delayed.hash(state);
@@ -2808,6 +2831,7 @@ impl GameState {
             attack_declaration_turn_v1: None,
             wildwood_waiting_v1: None,
             raid_waiting_v1: None,
+            eternal_v1: None,
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
         };
@@ -3526,6 +3550,48 @@ impl GameState {
         let chosen = projected.players[owner.index()].library.first().copied();
         self.randomness = projected.randomness;
         Ok(chosen)
+    }
+
+    /// Sample one card in `owner`'s hand at random without changing any zone
+    /// order or knowledge (Urza's Bauble). Same checked randomness
+    /// transaction as `random_graveyard_card_v1`.
+    pub(crate) fn random_hand_card_v1(
+        &mut self,
+        owner: PlayerId,
+    ) -> Result<Option<ObjectId>, LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let cards = self.players[owner.index()]
+            .hand
+            .iter()
+            .copied()
+            .filter(|id| {
+                let card = self.objects.get(*id);
+                card.zone == Zone::Hand && card.owner == owner
+            })
+            .collect::<Vec<_>>();
+        if cards.len() < 2 {
+            return Ok(cards.first().copied());
+        }
+        let mut projected = self.clone();
+        projected.players[owner.index()].library = cards;
+        projected.shuffle_library(owner)?;
+        let chosen = projected.players[owner.index()].library.first().copied();
+        self.randomness = projected.randomness;
+        Ok(chosen)
+    }
+
+    /// Flip a coin for `player` (Mana Crypt): true when they win the flip.
+    /// Same checked randomness transaction as `random_hand_card_v1`, over a
+    /// private two-entry projection; no zone or knowledge changes.
+    pub(crate) fn flip_coin_v1(&mut self, player: PlayerId) -> Result<bool, LibraryShuffleError> {
+        let player = library_shuffle_owner(player)?;
+        let heads = ObjectId(0);
+        let mut projected = self.clone();
+        projected.players[player.index()].library = vec![heads, ObjectId(1)];
+        projected.shuffle_library(player)?;
+        let won = projected.players[player.index()].library.first() == Some(&heads);
+        self.randomness = projected.randomness;
+        Ok(won)
     }
 
     pub(crate) fn shuffle_library(&mut self, owner: PlayerId) -> Result<(), LibraryShuffleError> {
@@ -5012,6 +5078,8 @@ mod tests {
             chosen_creature_cost: None,
             convoke_chosen: Vec::new(),
             convoke_finished: false,
+            escape_exile_finished_v1: false,
+            hand_free_cast_v1: None,
             mandatory_additional_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();

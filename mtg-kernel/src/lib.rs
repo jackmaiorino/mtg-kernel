@@ -44,6 +44,108 @@ macro_rules! fast_global_allocator {
     };
 }
 
+/// mimalloc's `mi_option_purge_delay` in the vendored v3 `mimalloc.h`
+/// (libmimalloc-sys 0.1.49, mimalloc 3.3.2), which the bindings do not name.
+const MI_OPTION_PURGE_DELAY_V1: std::ffi::c_int = 15;
+
+unsafe extern "C" {
+    fn mi_option_get(option: std::ffi::c_int) -> std::ffi::c_long;
+    fn mi_option_set(option: std::ffi::c_int, value: std::ffi::c_long);
+}
+
+/// Makes [`FastAllocatorV1`] keep freed memory for reuse instead of returning
+/// it to the system (purge delay -1), unless the environment names a purge
+/// delay (`MIMALLOC_PURGE_DELAY` or its legacy alias `MIMALLOC_RESET_DELAY`,
+/// in any letter case, as mimalloc reads them), in which case mimalloc's own
+/// reading stands. Like the allocator itself it changes cost, not results. A
+/// training process otherwise faults its large per-update buffers back in
+/// from zeroed pages on every reuse; it holds its peak memory instead (about
+/// 140 MB more per process measured for an 18-update ordinary segment; there
+/// is no byte cap).
+///
+/// # Safety
+///
+/// mimalloc's option fields are plain, unsynchronized memory that every
+/// allocating thread reads. Call this first in `main`, before the process
+/// starts any other thread, and never again.
+pub unsafe fn retain_freed_memory_v1() {
+    let named = std::env::vars_os().any(|(name, _)| {
+        name.to_str().is_some_and(|name| {
+            name.eq_ignore_ascii_case("MIMALLOC_PURGE_DELAY")
+                || name.eq_ignore_ascii_case("MIMALLOC_RESET_DELAY")
+        })
+    });
+    if !named {
+        // SAFETY: the caller guarantees no other thread exists yet.
+        unsafe { mi_option_set(MI_OPTION_PURGE_DELAY_V1, -1) };
+    }
+}
+
+/// mimalloc's current purge delay in milliseconds (-1: never purge).
+pub fn purge_delay_ms_v1() -> std::ffi::c_long {
+    // SAFETY: a read of the option; the only writer in this crate,
+    // `retain_freed_memory_v1`, runs before any other thread exists.
+    unsafe { mi_option_get(MI_OPTION_PURGE_DELAY_V1) }
+}
+
+/// Opts this process out of Windows power throttling (EcoQoS): execution
+/// speed controlled and off, so the scheduler may run its threads on any core
+/// its affinity allows. Started through a host reservation, compute processes
+/// are otherwise throttled at normal priority too, and on a hybrid CPU Windows
+/// keeps them on the efficiency cores (measured 2026-10-25 on an i7-13700K:
+/// panel requests 2.4x and 8 training runs 1.6x faster opted out, with every
+/// match hash and per-update state hash identical). A scheduling hint: it
+/// changes no priority or affinity, and a run that does a fixed amount of work
+/// gives the same results. Work bounded by time instead (the census's
+/// CPU-second search profile, the searched-target packet timeout) is
+/// timing-dependent, as it is under host load, so faster cores can fit more
+/// into it; timing fields in receipts differ as they always do. The setting is
+/// not inherited by child processes. Returns whether the system accepted it;
+/// elsewhere than Windows it does nothing.
+pub fn opt_out_of_power_throttling_v1() -> bool {
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct ProcessPowerThrottlingStateV1 {
+            version: u32,
+            control_mask: u32,
+            state_mask: u32,
+        }
+        const PROCESS_POWER_THROTTLING_INFORMATION_CLASS_V1: i32 = 4;
+        const PROCESS_POWER_THROTTLING_CURRENT_VERSION_V1: u32 = 1;
+        const PROCESS_POWER_THROTTLING_EXECUTION_SPEED_V1: u32 = 0x1;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn SetProcessInformation(
+                process: *mut std::ffi::c_void,
+                class: i32,
+                information: *const std::ffi::c_void,
+                size: u32,
+            ) -> i32;
+        }
+        let state = ProcessPowerThrottlingStateV1 {
+            version: PROCESS_POWER_THROTTLING_CURRENT_VERSION_V1,
+            control_mask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED_V1,
+            state_mask: 0,
+        };
+        // SAFETY: the pseudo handle of this process and a correctly sized,
+        // live `PROCESS_POWER_THROTTLING_STATE`; the call keeps no pointer.
+        unsafe {
+            SetProcessInformation(
+                GetCurrentProcess(),
+                PROCESS_POWER_THROTTLING_INFORMATION_CLASS_V1,
+                (&raw const state).cast(),
+                std::mem::size_of::<ProcessPowerThrottlingStateV1>() as u32,
+            ) != 0
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
@@ -158,6 +260,23 @@ pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
 mod equipment_damage_source_v4;
+/// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
+pub mod eternal_cards_v1;
+/// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
+/// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
+/// Mystic Forge).
+pub mod eternal_e5a_v1;
+/// Legacy aggro, Eldrazi and control card programs of the eternal catalog
+/// (wave E5b).
+pub mod eternal_legacy_e5b_v1;
+/// Vintage Lurrus card programs and companions of the eternal catalog (wave
+/// E4b).
+pub mod eternal_lurrus_v1;
+/// Pauper Affinity, Tron and Ephemerate card programs of the eternal
+/// catalog (wave E6a).
+pub mod eternal_pauper_e6a_v1;
+/// Vintage card programs of the eternal catalog (wave E4).
+pub mod eternal_vintage_v1;
 pub mod event;
 pub mod event_history_v1;
 pub mod expanded_deck_training_v1;
@@ -250,6 +369,8 @@ pub mod limited_common_session_v1;
 pub mod limited_common_session_v2;
 pub mod limited_common_session_v3;
 pub mod limited_elenda_session_v4;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub mod limited_match_v1;
 pub mod limited_prepared_session_v5;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;

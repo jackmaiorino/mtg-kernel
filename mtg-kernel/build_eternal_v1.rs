@@ -1,0 +1,643 @@
+//! Card-database recipes for the Pauper, Legacy and Vintage catalog
+//! (`data/eternal_v1/cards_v1.json`). Runtime programs live in
+//! `src/eternal_cards_v1.rs`; this module names them so they are part of the
+//! generated definitions and the eternal catalog identity. Every row is keyed
+//! by a name that occurs only in the eternal registry.
+
+use super::{
+    AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, LibrarySearchFilterRecipe,
+    Special, StackSpellFilter,
+};
+use AbilityCostRecipe::{
+    DiscardSelf, ExileSelf, ManaCost, PayEnergy, PayLife, ReturnControlledUnblockedAttacker,
+    SacrificeSelf, Tap,
+};
+
+/// An activated ability from the battlefield, at instant speed and without
+/// a target.
+const fn instant(
+    cost: &'static [AbilityCostRecipe],
+    effect: AbilityEffectRecipe,
+) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect,
+        activation_zone: "Battlefield",
+        sorcery_speed_only: false,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+/// Melded Moxite: "{3}, Sacrifice this artifact: Create a tapped 2/2
+/// colorless Robot artifact creature token."
+const MELDED_MOXITE: [ActivatedAbilityRecipe; 1] = [instant(
+    &[ManaCost("{3}"), SacrificeSelf],
+    AbilityEffectRecipe::Program {
+        name: "create_tapped_robot_token",
+        effect: "EffectOp::CreateTokensDynamic { token_def: crate::card_def::card_id_by_name(\"Robot Token\").expect(\"Robot Token in CARD_DEFS\"), controller: PlayerRef::Controller, count: DynamicValueDef::Fixed(1), tapped: true }",
+    },
+)];
+
+/// Inventor's Axe: "Equip--Pay {E}{E}" (attach to target creature you
+/// control, as a sorcery).
+const INVENTORS_AXE: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[PayEnergy(2)],
+    effect: AbilityEffectRecipe::AttachSourceToTarget,
+    activation_zone: "Battlefield",
+    sorcery_speed_only: true,
+    target_spec: "ControlledCreature",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+/// Giant's Boulder: "{7}, {T}, Sacrifice this artifact: Destroy target
+/// permanent." Its mana ability is an additional mana ability.
+const GIANTS_BOULDER: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[ManaCost("{7}"), Tap, SacrificeSelf],
+    effect: AbilityEffectRecipe::DestroyTarget,
+    activation_zone: "Battlefield",
+    sorcery_speed_only: false,
+    target_spec: "AnyPermanent",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+/// Mukotai Ambusher: "Ninjutsu {1}{B}".
+const MUKOTAI_AMBUSHER: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[
+        AbilityCostRecipe::Mana {
+            colored: Some("B"),
+            generic: 1,
+        },
+        ReturnControlledUnblockedAttacker,
+    ],
+    effect: AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking,
+    activation_zone: "Hand",
+    sorcery_speed_only: false,
+    target_spec: "None",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+/// Seething Landscape: "{T}, Sacrifice this land: Search your library for a
+/// basic Island, Swamp, or Mountain card, put it onto the battlefield
+/// tapped, then shuffle." and "Cycling {U}{B}{R}". Its `{T}: Add {C}` is the
+/// ordinary mana ability.
+const SEETHING_LANDSCAPE: [ActivatedAbilityRecipe; 2] = [
+    instant(
+        &[Tap, SacrificeSelf],
+        AbilityEffectRecipe::SearchLibraryToBattlefieldTapped {
+            filter: LibrarySearchFilterRecipe::BasicLandWithAnySubtype([
+                "Island", "Swamp", "Mountain",
+            ]),
+        },
+    ),
+    ActivatedAbilityRecipe {
+        cost: &[ManaCost("{U}{B}{R}"), DiscardSelf],
+        effect: AbilityEffectRecipe::DrawCards(1),
+        activation_zone: "Hand",
+        sorcery_speed_only: false,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    },
+];
+
+/// Campfire: "{1}, {T}: You gain 2 life." and "{2}, {T}, Exile Campfire:
+/// Put all commanders you own from the command zone and from your graveyard
+/// into your hand. Then shuffle your graveyard into your library."
+const CAMPFIRE: [ActivatedAbilityRecipe; 2] = [
+    instant(&[ManaCost("{1}"), Tap], AbilityEffectRecipe::GainLife(2)),
+    instant(
+        &[ManaCost("{2}"), Tap, ExileSelf],
+        AbilityEffectRecipe::StandardProgram("crate::eternal_cards_v1::campfire_shuffle_graveyard"),
+    ),
+];
+
+/// A fetchland: "{T}, Pay 1 life, Sacrifice this land: Search your library
+/// for a <first> or <second> card, put it onto the battlefield, then
+/// shuffle." Any card with either land type qualifies (dual lands and
+/// surveil lands included), and it enters untapped unless it says otherwise.
+macro_rules! fetchland {
+    ($name:literal, $first:literal, $second:literal) => {
+        [instant(
+            &[Tap, PayLife(1), SacrificeSelf],
+            AbilityEffectRecipe::Program {
+                name: $name,
+                effect: concat!(
+                    "EffectOp::SearchLibraryCardsToDestination { player: PlayerRef::Controller, filter: crate::effect::LibraryCardFilter::CardWithAnySubtypeV1([Subtype::",
+                    $first,
+                    ", Subtype::",
+                    $second,
+                    "]), max_targets: 1, destination: crate::effect::LibrarySearchDestinationV1::Battlefield { tapped: false } }"
+                ),
+            },
+        )]
+    };
+}
+
+const BLOODSTAINED_MIRE: [ActivatedAbilityRecipe; 1] =
+    fetchland!("fetch_swamp_or_mountain", "Swamp", "Mountain");
+const FLOODED_STRAND: [ActivatedAbilityRecipe; 1] =
+    fetchland!("fetch_plains_or_island", "Plains", "Island");
+const MARSH_FLATS: [ActivatedAbilityRecipe; 1] =
+    fetchland!("fetch_plains_or_swamp", "Plains", "Swamp");
+const MISTY_RAINFOREST: [ActivatedAbilityRecipe; 1] =
+    fetchland!("fetch_forest_or_island", "Forest", "Island");
+const POLLUTED_DELTA: [ActivatedAbilityRecipe; 1] =
+    fetchland!("fetch_island_or_swamp", "Island", "Swamp");
+const SCALDING_TARN: [ActivatedAbilityRecipe; 1] =
+    fetchland!("fetch_island_or_mountain", "Island", "Mountain");
+
+/// Wasteland: "{T}, Sacrifice this land: Destroy target nonbasic land." Its
+/// `{T}: Add {C}` is the ordinary mana ability.
+const WASTELAND: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[Tap, SacrificeSelf],
+    effect: AbilityEffectRecipe::DestroyTarget,
+    activation_zone: "Battlefield",
+    sorcery_speed_only: false,
+    target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::NonbasicLandV1)",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+/// Mishra's Bauble: "{T}, Sacrifice this artifact: Look at the top card of
+/// target player's library. Draw a card at the beginning of the next turn's
+/// upkeep."
+const MISHRAS_BAUBLE: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[Tap, SacrificeSelf],
+    effect: AbilityEffectRecipe::StandardProgram("crate::eternal_cards_v1::mishras_bauble"),
+    activation_zone: "Battlefield",
+    sorcery_speed_only: false,
+    target_spec: "AnyPlayer",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+/// Urza's Bauble: "{T}, Sacrifice this artifact: Look at a card at random
+/// in target player's hand. You draw a card at the beginning of the next
+/// turn's upkeep."
+const URZAS_BAUBLE: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[Tap, SacrificeSelf],
+    effect: AbilityEffectRecipe::StandardProgram("crate::eternal_cards_v1::urzas_bauble"),
+    activation_zone: "Battlefield",
+    sorcery_speed_only: false,
+    target_spec: "AnyPlayer",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+/// A planeswalker loyalty ability: sorcery speed, once per turn through its
+/// loyalty cost.
+const fn loyalty(
+    cost: &'static [AbilityCostRecipe],
+    program: &'static str,
+    target_spec: &'static str,
+) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: AbilityEffectRecipe::StandardProgram(program),
+        activation_zone: "Battlefield",
+        sorcery_speed_only: true,
+        target_spec,
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+/// Tamiyo, Seasoned Scholar (Tamiyo, Inquisitive Student's back face).
+const TAMIYO: [ActivatedAbilityRecipe; 3] = [
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(2)],
+        "crate::eternal_cards_v1::tamiyo_plus_two",
+        "None",
+    ),
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(-3)],
+        "crate::eternal_cards_v1::tamiyo_minus_three",
+        "StandardV1(crate::standard_cards_v1::StandardTargetV1::InstantOrSorceryCardInOwnGraveyard)",
+    ),
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(-7)],
+        "crate::eternal_cards_v1::tamiyo_minus_seven",
+        "None",
+    ),
+];
+
+/// The One Ring: "{T}: Put a burden counter on The One Ring, then draw a
+/// card for each burden counter on The One Ring."
+const THE_ONE_RING: [ActivatedAbilityRecipe; 1] = [instant(
+    &[Tap],
+    AbilityEffectRecipe::StandardProgram("crate::eternal_cards_v1::the_one_ring_draw"),
+)];
+
+/// A cycling ability (702.29): activated from hand, discarding the card as
+/// part of its cost, to draw a card.
+const fn cycling(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: AbilityEffectRecipe::DrawCards(1),
+        activation_zone: "Hand",
+        sorcery_speed_only: false,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+/// Street Wraith: "Cycling--Pay 2 life."
+const STREET_WRAITH: [ActivatedAbilityRecipe; 1] = [cycling(&[PayLife(2), DiscardSelf])];
+
+/// Edge of Autumn: "Cycling--Sacrifice a land."
+const EDGE_OF_AUTUMN: [ActivatedAbilityRecipe; 1] = [cycling(&[
+    AbilityCostRecipe::SacrificeControlled {
+        count: 1,
+        filter: super::PermanentFilterRecipe::Land,
+    },
+    DiscardSelf,
+])];
+
+/// Jace, Wielder of Mysteries: "+1: Target player mills two cards. Draw a
+/// card." and "-8: Draw seven cards. Then if your library has no cards in
+/// it, you win the game."
+const JACE: [ActivatedAbilityRecipe; 2] = [
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(1)],
+        "crate::eternal_cards_v1::jace_plus_one",
+        "AnyPlayer",
+    ),
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(-8)],
+        "crate::eternal_cards_v1::jace_minus_eight",
+        "None",
+    ),
+];
+
+/// Sneak Attack: "{R}: You may put a creature card from your hand onto the
+/// battlefield. That creature gains haste. Sacrifice the creature at the
+/// beginning of the next end step."
+const SNEAK_ATTACK: [ActivatedAbilityRecipe; 1] = [instant(
+    &[AbilityCostRecipe::ManaCost("{R}")],
+    AbilityEffectRecipe::StandardProgram("crate::eternal_cards_v1::sneak_attack"),
+)];
+
+pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
+    match name {
+        "Sneak Attack" => &SNEAK_ATTACK,
+        "Jace, Wielder of Mysteries" => &JACE,
+        "The One Ring" => &THE_ONE_RING,
+        "Street Wraith" => &STREET_WRAITH,
+        "Edge of Autumn" => &EDGE_OF_AUTUMN,
+        "Tamiyo, Inquisitive Student" => &TAMIYO,
+        "Melded Moxite" => &MELDED_MOXITE,
+        "Inventor's Axe" => &INVENTORS_AXE,
+        "Giant's Boulder" => &GIANTS_BOULDER,
+        "Mukotai Ambusher" => &MUKOTAI_AMBUSHER,
+        "Seething Landscape" => &SEETHING_LANDSCAPE,
+        "Campfire" => &CAMPFIRE,
+        "Bloodstained Mire" => &BLOODSTAINED_MIRE,
+        "Flooded Strand" => &FLOODED_STRAND,
+        "Marsh Flats" => &MARSH_FLATS,
+        "Misty Rainforest" => &MISTY_RAINFOREST,
+        "Polluted Delta" => &POLLUTED_DELTA,
+        "Scalding Tarn" => &SCALDING_TARN,
+        "Wasteland" => &WASTELAND,
+        "Mishra's Bauble" => &MISHRAS_BAUBLE,
+        "Urza's Bauble" => &URZAS_BAUBLE,
+        _ => super::build_eternal_vintage_v1::activated_ability_recipes_for(name),
+    }
+}
+
+/// Spell programs.
+pub(super) fn special_for(name: &str) -> Option<Special> {
+    Some(match name {
+        "Agony Warp" => Special::StandardProgram {
+            target_spec:
+                "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::TwoCreaturesV1)",
+            program: "crate::eternal_cards_v1::agony_warp",
+        },
+        "Plunder the Trollshaws" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::plunder_the_trollshaws",
+        },
+        // Replicate is `eternal_cards_v1::replicate_cost`, named in this
+        // card's trigger token below.
+        "Lose Focus" => Special::CounterUnlessPaysGeneric {
+            filter: StackSpellFilter::Any,
+            generic: 2,
+        },
+        "Thoughtseize" => Special::StandardProgram {
+            target_spec: "TargetSpec::AnyPlayer",
+            program: "crate::eternal_cards_v1::thoughtseize",
+        },
+        "Fatal Push" => Special::StandardProgram {
+            target_spec: "TargetSpec::Creature",
+            program: "crate::eternal_cards_v1::fatal_push",
+        },
+        "Unholy Heat" => Special::StandardProgram {
+            target_spec: "TargetSpec::CreatureOrPlaneswalker",
+            program: "crate::eternal_cards_v1::unholy_heat",
+        },
+        // Its alternative cost is `alt_cost_for` below.
+        "Daze" => Special::CounterUnlessPaysGeneric {
+            filter: StackSpellFilter::Any,
+            generic: 1,
+        },
+        "Force of Will" => Special::CounterTarget(StackSpellFilter::Any),
+        // Modes two and three are `mode2_for` and `mode3_for` below.
+        "Prismari Charm" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::prismari_charm_surveil_draw",
+        },
+        // Its alternative cost is `alt_cost_for` below.
+        "Misdirection" => Special::StandardProgram {
+            target_spec:
+                "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::SpellWithSingleTargetV1)",
+            program: "crate::eternal_cards_v1::misdirection",
+        },
+        "Show and Tell" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::show_and_tell",
+        },
+        "Doomsday" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::doomsday",
+        },
+        "Dark Ritual" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::dark_ritual",
+        },
+        "Personal Tutor" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::personal_tutor",
+        },
+        // Its cycling is an activated ability below.
+        "Edge of Autumn" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::edge_of_autumn",
+        },
+        "Veil of Summer" => Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cards_v1::veil_of_summer",
+        },
+        // Storm is its cast trigger (`eternal_cards_v1::e3`).
+        "Flusterstorm" => Special::StandardProgram {
+            target_spec: "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::InstantOrSorcerySpellV1)",
+            program: "crate::eternal_cards_v1::flusterstorm",
+        },
+        // The land face is `transform_face_for` below.
+        "Sink into Stupor" => Special::StandardProgram {
+            target_spec: "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OpponentSpellOrNonlandPermanentV1)",
+            program: "crate::eternal_cards_v1::sink_into_stupor",
+        },
+        _ => return super::build_eternal_vintage_v1::special_for(name),
+    })
+}
+
+/// Printed evergreen keywords, in printed order.
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    match name {
+        "Inventor's Axe" => &["Keywords::FLASH"],
+        "Baleful Strix" => &["Keywords::FLYING", "Keywords::DEATHTOUCH"],
+        "Utrom Monitor" => &["Keywords::FLYING"],
+        "Mukotai Ambusher" => &["Keywords::LIFELINK"],
+        "Thorn of the Black Rose" => &["Keywords::DEATHTOUCH"],
+        "Brazen Borrower" => &["Keywords::FLASH", "Keywords::FLYING"],
+        "Murktide Regent" => &["Keywords::FLYING"],
+        "Moonshadow" => &["Keywords::MENACE"],
+        "Orcish Bowmasters" => &["Keywords::FLASH"],
+        "Tamiyo, Inquisitive Student" => &["Keywords::FLYING"],
+        "Emrakul, the Aeons Torn" => &["Keywords::FLYING"],
+        "Atraxa, Grand Unifier" => &[
+            "Keywords::FLYING",
+            "Keywords::VIGILANCE",
+            "Keywords::DEATHTOUCH",
+            "Keywords::LIFELINK",
+        ],
+        "Raph & Mikey, Troublemakers" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
+        "The Atropal" => &["Keywords::DEATHTOUCH"],
+        _ => super::build_eternal_vintage_v1::keywords_for(name),
+    }
+}
+
+/// Card-database tokens for the triggered abilities in
+/// `eternal_cards_v1::triggers_for` and the replicate table.
+pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
+    match name {
+        "Melded Moxite" => "etb:may_discard_one_then_draw_two",
+        "Inventor's Axe" => {
+            "etb:controller_gets_energy:2;etb:attach_source_to_target_controlled_creature"
+        }
+        "Baleful Strix" => "etb:draw:1",
+        "Giant's Boulder" => "etb:scry_2",
+        "Augur of Bolas" => {
+            "etb:private_look_top3:may_reveal_one_instant_or_sorcery_to_hand:rest_bottom_any_order"
+        }
+        "Thorn of the Black Rose" => "etb:become_monarch",
+        "Dimir Aqueduct" => "etb:return_chosen_controlled_land_to_owners_hand:untargeted",
+        "Lose Focus" => {
+            "replicate:{U}:announced_as_x;cast:copy_once_per_payment:may_choose_new_targets"
+        }
+        "Dragon's Rage Channeler" => "cast_noncreature:surveil:1",
+        "Murktide Regent" => {
+            "enters_with_plus_one_counter_per_instant_or_sorcery_delve_exiled;instant_or_sorcery_card_leaves_controller_graveyard:plus_one_counter_on_source_incarnation"
+        }
+        "Moonshadow" => {
+            "enters_with_minus_one_counters:6;one_or_more_permanent_cards_to_controller_graveyard_per_collection_while_minus_one_counter:remove_minus_one_counter_from_source_incarnation"
+        }
+        "Orcish Bowmasters" => {
+            "etb:any_target_damage_1_then_amass_orcs_1;opponent_draws_except_first_in_their_draw_step:any_target_damage_1_then_amass_orcs_1"
+        }
+        "Mishra's Bauble" | "Urza's Bauble" => {
+            "delayed:next_upkeep_began:activator_draws_1:source_incarnation_contract"
+        }
+        "Bilbo, Thief in the Night" => {
+            "static:controller_spells_cast_from_outside_hand_cost_generic_less:1;attacks:may_cast_one_artifact_instant_or_sorcery_from_own_graveyard_during_resolution_paying_costs:cast_instant_or_sorcery_exiled_instead_of_graveyard"
+        }
+        "Tamiyo, Inquisitive Student" => {
+            "attacks:investigate;draw_nth:3:exile_then_return_transformed_under_owner;face1_plus2:until_controllers_next_turn:each_creature_attacking_controller_gets_minus1_0_eot;face1_minus7:emblem_no_maximum_hand_size"
+        }
+        "The One Ring" => {
+            "etb_if_cast:controller_protection_from_everything_until_controllers_next_turn;controller_upkeep:lose_life_per_burden_counter_lki"
+        }
+        "Chrome Mox" => {
+            "etb:may_exile_nonartifact_nonland_hand_card_linked_imprint;mana:tap_add_one_of_imprinted_card_colors"
+        }
+        "Sink into Stupor" => "land_face_play_from_hand:as_enters_may_pay_3_life_else_tapped",
+        "City of Traitors" => "controller_plays_another_land:sacrifice_source",
+        "Flusterstorm" => "cast:storm:copies_may_choose_new_targets",
+        "Street Wraith" => "static:swampwalk",
+        "Thassa's Oracle" => {
+            "etb:private_look_top_devotion_to_blue:keep_up_to_one_on_top_rest_bottom_random:win_if_devotion_at_least_library"
+        }
+        "Jace, Wielder of Mysteries" => {
+            "static:controller_draw_from_empty_library_wins_instead;minus8:win_if_library_empty_after_draw_seven"
+        }
+        "Lion's Eye Diamond" => "mana:discard_hand_sacrifice_self:instant_timing_only",
+        "Emrakul, the Aeons Torn" => {
+            "cast:controller_extra_turn_after_this_one;static:protection_from_colored_spells;attacks:annihilator:6;put_into_graveyard_from_anywhere:owner_shuffles_graveyard_into_library"
+        }
+        "Atraxa, Grand Unifier" => {
+            "etb:reveal_top10:each_card_type_may_put_one_of_that_type_into_hand:rest_bottom_random"
+        }
+        "Raph & Mikey, Troublemakers" => {
+            "attacks:reveal_until_creature:put_tapped_attacking:rest_bottom_random"
+        }
+        "Acererak the Archlich" => {
+            "etb_if_tomb_of_annihilation_not_completed:return_source_to_hand_then_venture;attacks:each_opponent_sacrifices_creature_or_controller_creates_zombie_2_2;dungeons:lost_mine_of_phandelver,dungeon_of_the_mad_mage,tomb_of_annihilation:rooms_sourced_by_venturing_card:complete_on_entering_bottommost_room"
+        }
+        "Show and Tell" => "spell:each_player_apnap_may_put_artifact_creature_enchantment_or_land_from_hand:no_aura",
+        "Sneak Attack" => "activated_put_creature_from_hand:gains_haste:sacrifice_next_end_step",
+        "Omniscience" => "static:controller_may_cast_hand_spells_without_paying_mana_cost",
+        "Aluren" => "static:any_player_may_cast_mv3_or_less_creatures_free_with_flash",
+        "Cavern of Souls" => {
+            "as_enters:choose_creature_type_of_owned_creature_cards;restricted_mana_spell_cant_be_countered"
+        }
+        _ => super::build_eternal_vintage_v1::trigger_recipe_for(name),
+    }
+}
+
+/// Equipment statics.
+pub(super) fn equipment_for(name: &str) -> &'static str {
+    match name {
+        "Inventor's Axe" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        _ => "None",
+    }
+}
+
+/// Flashback costs.
+pub(super) fn flashback_for(name: &str) -> String {
+    match name {
+        "Plunder the Trollshaws" => {
+            let (pips, generic, x_count) = super::parse_cost("{3}{U}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        _ => "None".to_string(),
+    }
+}
+
+/// Single printed mana abilities that are not "tap: add one".
+pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
+    match name {
+        // "{T}: Add {U}{B}." One activation adds both colors at once.
+        "Dimir Aqueduct" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::B]), controller_damage: 0, max_activations_per_turn: None })",
+        // "{T}: Add {C}{C}. This land deals 2 damage to you."
+        "Ancient Tomb" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 2, max_activations_per_turn: None })",
+        // "Discard your hand, Sacrifice this artifact: Add three mana of
+        // any one color. Activate only as an instant."
+        "Lion's Eye Diamond" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1, amount: ManaAbilityAmountDef::Fixed(3), controller_damage: 0, max_activations_per_turn: None })",
+        // "{T}: Add {C}{C}."
+        "City of Traitors" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
+        _ => super::build_eternal_vintage_v1::mana_ability_def_for(name),
+    }
+}
+
+/// Alternative costs. Daze: "You may return an Island you control to its
+/// owner's hand rather than pay this spell's mana cost." Force of Will: "You
+/// may pay 1 life and exile a blue card from your hand rather than pay this
+/// spell's mana cost."
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    match name {
+        "Daze" => "Some(AltCostDef { components: &[CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandWithSubtype(Subtype::Island))], condition: AltCostCondition::Always })",
+        "Force of Will" => "Some(AltCostDef { components: &[CostComponent::PayLife(1), CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::Always })",
+        // "You may exile a blue card from your hand rather than pay this
+        // spell's mana cost."
+        "Misdirection" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::Always })",
+        _ => super::build_eternal_lurrus_v1::alt_cost_for(name),
+    }
+}
+
+/// Prismari Charm's second mode: "Prismari Charm deals 1 damage to each of
+/// one or two targets."
+pub(super) fn mode2_for(name: &str) -> &'static str {
+    match name {
+        "Prismari Charm" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1), effect: crate::eternal_cards_v1::prismari_charm_damage })",
+        _ => super::build_eternal_lurrus_v1::mode2_for(name),
+    }
+}
+
+/// Prismari Charm's third mode: "Return target nonland permanent to its
+/// owner's hand."
+pub(super) fn mode3_for(name: &str) -> &'static str {
+    match name {
+        "Prismari Charm" => "Some(ModeDef { target_spec: TargetSpec::NonlandPermanent, effect: crate::eternal_cards_v1::return_target_to_owners_hand })",
+        _ => super::build_eternal_lurrus_v1::mode3_for(name),
+    }
+}
+
+/// Brazen Borrower's Petty Theft {1}{U}: "Return target nonland permanent
+/// an opponent controls to its owner's hand."
+pub(super) fn adventure_for(name: &str) -> &'static str {
+    match name {
+        "Brazen Borrower" => "Some(AdventureDef { name: \"Petty Theft\", cost: Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OpponentNonlandPermanent), effect: ability_effect_program_eternal_cards_v1_return_target_to_owners_hand })",
+        _ => "None",
+    }
+}
+
+pub(super) fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
+    match name {
+        "Brazen Borrower" => Some(AbilityEffectRecipe::StandardProgram(
+            "crate::eternal_cards_v1::return_target_to_owners_hand",
+        )),
+        _ => None,
+    }
+}
+
+pub(super) fn adventure_face_name_for(name: &str) -> Option<&'static str> {
+    match name {
+        "Brazen Borrower" => Some("Petty Theft"),
+        _ => None,
+    }
+}
+
+/// Delve (702.66).
+pub(super) fn delve_for(name: &str) -> bool {
+    name == "Murktide Regent" || super::build_eternal_lurrus_v1::delve_for(name)
+}
+
+/// Nethergoyf: "Escape--{2}{B}, Exile any number of other cards from your
+/// graveyard with four or more card types among them."
+pub(super) fn escape_for(name: &str) -> String {
+    match name {
+        "Nethergoyf" => {
+            let (pips, generic, x_count) = super::parse_cost("{2}{B}");
+            format!(
+                "Some(EscapeDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(4)] }})",
+                pips.join(", ")
+            )
+        }
+        _ => super::build_eternal_e5b_v1::escape_for(name),
+    }
+}
+
+/// Tamiyo's back face, a planeswalker with the card's supertypes and a
+/// green-and-blue color indicator.
+pub(super) fn transform_face_for(name: &str) -> &'static str {
+    match name {
+        "Tamiyo, Inquisitive Student" => "Some(TransformFaceDef { name: \"Tamiyo, Seasoned Scholar\", types: &[CardType::Planeswalker], subtypes: &[Subtype::Tamiyo], colors: &[ManaColor::U, ManaColor::G], power: None, toughness: None, keywords: Keywords::NONE })",
+        // A modal double-faced card's land face, played from hand.
+        "Sink into Stupor" => "Some(TransformFaceDef { name: \"Soporific Springs\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
+        _ => super::build_eternal_vintage_v1::transform_face_for(name),
+    }
+}
+
+pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
+    match name {
+        "Tamiyo, Inquisitive Student" => Some("Tamiyo, Seasoned Scholar"),
+        "Sink into Stupor" => Some("Soporific Springs"),
+        _ => super::build_eternal_vintage_v1::transform_face_name_for(name),
+    }
+}
+
+/// Activated abilities printed on one face only.
+pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
+    match name {
+        "Tamiyo, Inquisitive Student" => Some(1),
+        _ => super::build_eternal_e5b_v1::activated_ability_face_for(name, index),
+    }
+}

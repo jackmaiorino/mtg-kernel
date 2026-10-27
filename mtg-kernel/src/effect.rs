@@ -1117,6 +1117,29 @@ pub enum LibraryCardFilter {
     ArtifactWithManaValue(u16),
     LandWithBasicLandType,
     ArtifactCreatureOrEnchantmentManaValueAtMost(u16),
+    /// A card with either effective subtype ("a Swamp or Mountain card", the
+    /// fetchlands). Only lands carry land subtypes, so any match is a land,
+    /// basic or not. Appended for the eternal catalog.
+    CardWithAnySubtypeV1([Subtype; 2]),
+    /// A card with this card type ("a sorcery card", Personal Tutor).
+    /// Appended for the eternal catalog.
+    CardWithTypeV1(CardType),
+    /// An artifact card with mana value at most this (Tezzeret, Cruel
+    /// Captain). Appended for the eternal catalog.
+    ArtifactManaValueAtMostV1(u16),
+    /// An artifact card whose mana cost is {0} or {1} (Urza's Saga): no
+    /// colored or X symbols and at most one generic. Lands and tokens have
+    /// no mana cost and never match. Appended for the eternal catalog.
+    ArtifactManaCostZeroOrOneV1,
+    /// A blue instant card (Merchant Scroll). Appended for the eternal
+    /// catalog.
+    BlueInstantV1,
+    /// A colorless creature card (Eye of Ugin). Appended for the eternal
+    /// catalog.
+    ColorlessCreatureV1,
+    /// An instant card or a card with flash (Mystical Teachings). Appended
+    /// for the eternal catalog.
+    InstantOrFlashV1,
     /// A creature card whose printed mana value does not exceed the bound.
     /// The caller supplies its already chosen X; this filter does not choose
     /// or pay X and grants no permission to activate an ability.
@@ -2826,6 +2849,11 @@ pub enum LibraryPickFilterV1 {
     LegendaryCreature,
     /// Library cards use their front-face power, including accepted CDAs.
     CreaturePowerAtMost(i32),
+    /// An instant or sorcery card (Augur of Bolas). Appended.
+    InstantOrSorcery,
+    /// A noncreature, nonland card (Thundertrap Trainer). Appended for the
+    /// eternal catalog.
+    NoncreatureNonlandV1,
     /// Loot: the physical library owner is the captured resolving controller.
     /// Choices admit no responses, so the effective land scene remains fixed.
     CreatureManaValueAtMostControlledLands,
@@ -3246,6 +3274,11 @@ pub enum EffectFrame {
         choice: discard_payment_v1::DiscardPaymentChoiceV1,
         selected: Vec<EffectObjectBinding>,
     },
+    /// An answered eternal-catalog choice, applied by its module.
+    EternalSelectionV1 {
+        choice: Box<crate::eternal_cards_v1::e3::E3ChoiceV1>,
+        selected: Vec<Target>,
+    },
     NonlandSacrificePaymentV1 {
         choice: nonland_sacrifice_payment_v1::ChoiceV1,
         selected: Vec<EffectObjectBinding>,
@@ -3633,6 +3666,11 @@ pub enum EffectTargetSelectionPurpose {
     },
     DiscardPaymentV1 {
         choice: discard_payment_v1::DiscardPaymentChoiceV1,
+    },
+    /// A resolution choice of the eternal catalog's wave-E3 cards. Appended
+    /// so existing purpose discriminants remain fixed.
+    EternalV1 {
+        choice: Box<crate::eternal_cards_v1::e3::E3ChoiceV1>,
     },
     AttachCopiedAuraV1 {
         choice: nonland_copy_v1::CopyChoiceV1,
@@ -4275,6 +4313,11 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
     }
     if crate::high_society_hunter_custody_v45::binding(op).is_some() {
         return true;
+    }
+    // Storm copies of a targeted spell may choose new targets (Flusterstorm).
+    if let EffectOp::CreateStormCopies { binding } = op {
+        return cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::e3::targeted_storm(binding);
     }
     if matches!(op, EffectOp::ExileTopChooseOneUntilNextTurn { .. }) {
         return true;
@@ -5987,6 +6030,20 @@ fn complete_resumable_target_selection(
         });
         return Ok(());
     }
+    if let EffectTargetSelectionPurpose::EternalV1 { choice } = purpose {
+        let frame = EffectFrame::EternalSelectionV1 {
+            choice,
+            selected: selected
+                .into_iter()
+                .map(|candidate| candidate.target)
+                .collect(),
+        };
+        continuation.answered_choice_guard = Some(EffectAnsweredChoiceGuard::StandardSelection {
+            frame: Box::new(frame.clone()),
+        });
+        continuation.frames.push(frame);
+        return Ok(());
+    }
     if let EffectTargetSelectionPurpose::CopyTarget { choice } = purpose {
         if selected.len() > 1 {
             return Err("too many replacement targets".into());
@@ -6029,7 +6086,8 @@ fn complete_resumable_target_selection(
             }
             exile_top_choose_v1::stage_answer(continuation, binding, objects[0])?;
         }
-        EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. } => {
+        EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. }
+        | EffectTargetSelectionPurpose::EternalV1 { .. } => {
             unreachable!("answered above without object bindings")
         }
         EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
@@ -7685,6 +7743,9 @@ fn validate_counter_target_unless_pays_program(
             | crate::card_def::TargetSpec::NoncreatureSpellOnStack
             | crate::card_def::TargetSpec::CreatureSpellOnStack
             | crate::card_def::TargetSpec::ArtifactSpellOnStack
+            | crate::card_def::TargetSpec::StandardV1(
+                crate::standard_cards_v1::StandardTargetV1::InstantOrSorcerySpellV1
+            )
     ) {
         return Err("counter-unless-pay resolving spell has a nonspell target filter".to_string());
     }
@@ -7868,7 +7929,7 @@ fn validated_definition_owned_root_effect(
     } else {
         return Err("answered effect frame lost its definition-owned root program".to_string());
     };
-    if let EffectOp::CopySpellSnapshot { spell } = &*root {
+    if let Some((spell, _)) = crate::engine::own_spell_copy_snapshot(&root) {
         crate::engine::validate_copy_snapshot(state, spell)?;
         return Ok(root);
     }
@@ -8746,7 +8807,7 @@ pub(crate) fn validate_initiative_trigger_binding(
     if binding.source.controller != binding.player
         || binding.source.zone != Zone::Battlefield
         || binding.source.attached_to.is_some()
-        || definition.name != "Avenging Hunter"
+        || !crate::eternal_vintage_v1::initiative_granter(definition.name)
         || !definition.is_executable()
         || source.card_def != binding.source.card_def
         || source.owner != binding.source.owner
@@ -8781,8 +8842,16 @@ pub(crate) fn validate_monarch_trigger_binding(
         .objects
         .try_get(binding.source.source)
         .ok_or("Monarch trigger source object is missing")?;
+    let card_def_matches = source.card_def == binding.source.card_def
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::standard_cards_v1::had_card_def(
+                state,
+                binding.source.source,
+                binding.source.zone_change_count,
+                binding.source.card_def,
+            ));
     if binding.source.controller != binding.player
-        || source.card_def != binding.source.card_def
+        || !card_def_matches
         || source.owner != binding.source.owner
         || source.zone_change_count < binding.source.zone_change_count
         || (source.zone_change_count == binding.source.zone_change_count
@@ -9115,7 +9184,9 @@ fn take_initiative(
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
         || crate::card_def::CARD_DEFS
             .get(source.card_def as usize)
-            .is_none_or(|definition| definition.name != "Avenging Hunter")
+            .is_none_or(|definition| {
+                !crate::eternal_vintage_v1::initiative_granter(definition.name)
+            })
     {
         return Err("Initiative source contract is malformed".to_string());
     }
@@ -9387,6 +9458,7 @@ fn validate_answered_choice_guard(
                             ordered: Some(_),
                             ..
                         }
+                        | EffectFrame::EternalSelectionV1 { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterUnlessPaysLife { .. }
@@ -9441,6 +9513,7 @@ fn validate_answered_choice_guard(
                             ordered: Some(_),
                             ..
                         }
+                        | EffectFrame::EternalSelectionV1 { .. }
                 ) || (aberration_continuation_v1(pending)
                     && matches!(
                         **frame,
@@ -10586,6 +10659,20 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::EternalV1 { choice } => {
+                    crate::eternal_cards_v1::e3::validate_selection(
+                        state,
+                        pending,
+                        choice,
+                        *chooser,
+                        path,
+                        selected,
+                        legal,
+                        *min_targets,
+                        *max_targets,
+                        *ordered,
+                    )?;
+                }
                 EffectTargetSelectionPurpose::ChandraExileV74 { .. } => {
                     chandra_flameshaper_v1::validate_pending(state)?;
                 }
@@ -11434,12 +11521,17 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     eligible,
                     canonical_path,
                 } => {
+                    // Thoughtseize's "target player" may name its own caster;
+                    // Duress and Pilfer target an opponent.
+                    let any_player = pending.resolving_item.v4.target_spec
+                        == Some(crate::card_def::TargetSpec::AnyPlayer);
                     if *chooser != pending.ctx.controller
                         || path != canonical_path
-                        || *hand_player == pending.ctx.controller
+                        || (*hand_player == pending.ctx.controller && !any_player)
                         || pending.ctx.targets.as_slice() != [Target::Player(*hand_player)]
-                        || pending.resolving_item.v4.target_spec
-                            != Some(crate::card_def::TargetSpec::TargetOpponent)
+                        || !(any_player
+                            || pending.resolving_item.v4.target_spec
+                                == Some(crate::card_def::TargetSpec::TargetOpponent))
                         || *min_targets != 1
                         || *max_targets != 1
                         || *ordered
@@ -12660,6 +12752,28 @@ pub(crate) fn validate_resolution_play_authorization(
     answer: &EffectFrame,
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
+    if let EffectFrame::EternalSelectionV1 { choice, selected } = answer {
+        return crate::eternal_cards_v1::e3::dungeons::validate_resolution_cast(
+            suspended, choice, selected, permission,
+        );
+    }
+    if let EffectFrame::ApplySelectedObjectsV1 {
+        rule,
+        original_candidates,
+        selected,
+        path,
+    } = answer
+    {
+        return standard_selection_v1::validate_graveyard_cast_authorization(
+            state,
+            suspended,
+            *rule,
+            original_candidates,
+            selected,
+            path,
+            permission,
+        );
+    }
     let mut expected = suspended.clone();
     match answer {
         EffectFrame::ExilePlay { choice, play: true } => {
@@ -12788,6 +12902,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     ordered: Some(_),
                     ..
                 }
+                | EffectFrame::EternalSelectionV1 { .. }
         ) || (aberration_continuation_v1(&continuation)
             && matches!(
                 frame,
@@ -12805,6 +12920,33 @@ fn drive_resumable_inner_with_native_row_v1(
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::EternalSelectionV1 { choice, selected } => {
+                    // Mad Wizard's Lair: a chosen card is cast during this
+                    // resolution (608.2g).
+                    if let Some(card) = crate::eternal_cards_v1::e3::dungeons::resolution_cast_card(
+                        &choice, &selected,
+                    ) {
+                        let answer = EffectFrame::EternalSelectionV1 { choice, selected };
+                        crate::engine::resolution_cast_v1::stage(
+                            state,
+                            continuation,
+                            card,
+                            None,
+                            false,
+                            answer,
+                        )?;
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                    if crate::eternal_cards_v1::e3::finish_selection(
+                        state,
+                        &mut continuation,
+                        &choice,
+                        &selected,
+                    )? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
                 EffectFrame::ChandraExileGrantV74 { capture, chosen } => {
                     chandra_flameshaper_v1::apply_grant(state, &continuation, capture, chosen)?;
                 }
@@ -14186,6 +14328,39 @@ fn drive_resumable_inner_with_native_row_v1(
                         &path,
                         &expected_remaining_frames,
                     )?;
+                }
+                EffectFrame::ApplySelectedObjectsV1 {
+                    rule,
+                    original_candidates,
+                    selected,
+                    path,
+                } if rule.action == ObjectSelectionActionV1::CastFromGraveyardV1 => {
+                    standard_selection_v1::validate_answer(
+                        state,
+                        &continuation,
+                        rule,
+                        &original_candidates,
+                        &selected,
+                        &path,
+                    )?;
+                    if let [card] = selected.as_slice() {
+                        let card = *card;
+                        let answer = EffectFrame::ApplySelectedObjectsV1 {
+                            rule,
+                            original_candidates,
+                            selected,
+                            path,
+                        };
+                        crate::engine::resolution_cast_v1::stage(
+                            state,
+                            continuation,
+                            card,
+                            None,
+                            false,
+                            answer,
+                        )?;
+                        return Ok(ResumableProgress::Suspended);
+                    }
                 }
                 EffectFrame::ApplySelectedObjectsV1 {
                     rule,
@@ -16305,7 +16480,10 @@ fn drive_resumable_inner_with_native_row_v1(
                     EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
                 );
                 let player = continuation.ctx.resolve_player(player, state);
-                if player == continuation.ctx.controller {
+                if player == continuation.ctx.controller
+                    && continuation.resolving_item.v4.target_spec
+                        != Some(crate::card_def::TargetSpec::AnyPlayer)
+                {
                     return Err("Duress must target an opponent".to_string());
                 }
                 let original_hand = bind_hand(state, player);
@@ -16595,6 +16773,28 @@ fn drive_resumable_inner_with_native_row_v1(
                 });
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::CreateStormCopies { binding }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cards_v1::e3::targeted_storm(&binding) =>
+            {
+                if crate::eternal_cards_v1::e3::storm_copies(
+                    state,
+                    &mut continuation,
+                    binding,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(op))
+                if op.contains_player_choice() =>
+            {
+                if crate::eternal_cards_v1::e3::drive(state, &mut continuation, &op, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             leaf => {
                 if let EffectOp::DiscardCards { player, count } = &leaf {
@@ -17955,6 +18155,10 @@ fn stage_creature_sacrifice_choice(
 pub(crate) enum LinkedHandExileKind {
     ReturnTrigger,
     UntilSourceLeaves,
+    /// The card stays exiled (Thought-Knot Seer). Appended for the eternal
+    /// catalog.
+    #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+    ExiledV1,
 }
 
 impl LinkedHandExileKind {
@@ -17972,6 +18176,8 @@ pub(crate) fn linked_hand_exile_kind(card_def: u16) -> Option<LinkedHandExileKin
         "Mesmeric Fiend" => Some(LinkedHandExileKind::ReturnTrigger),
         #[cfg(feature = "standard-magezero-fixtures")]
         "Deep-Cavern Bat" => Some(LinkedHandExileKind::UntilSourceLeaves),
+        #[cfg(feature = "eternal-fixtures")]
+        "Thought-Knot Seer" => Some(LinkedHandExileKind::ExiledV1),
         _ => None,
     }
 }
@@ -17986,6 +18192,9 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Sheltered by Ghosts"
             | "Hardlight Containment"
             | "Banishing Light"
+            | "Portable Hole"
+            | "Leyline Binding"
+            | "Static Prison"
     )
 }
 
@@ -18394,6 +18603,30 @@ fn library_filter_matches(
             (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
                 && def.mana_value == value
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
+            .iter()
+            .any(|subtype| subtype.is_in_subtype_ids(subtype_ids)),
+        LibraryCardFilter::CardWithTypeV1(card_type) => def.has_type(card_type),
+        LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
+            def.has_type(CardType::Artifact) && def.mana_value <= maximum
+        }
+        LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => {
+            def.has_type(CardType::Artifact)
+                && !def.is_land
+                && !def.is_token
+                && def.cost.pips.is_empty()
+                && def.cost.x_count == 0
+                && def.cost.generic <= 1
+        }
+        LibraryCardFilter::BlueInstantV1 => {
+            def.has_type(CardType::Instant) && def.colors.contains(&crate::mana::ManaColor::U)
+        }
+        LibraryCardFilter::ColorlessCreatureV1 => {
+            def.has_type(CardType::Creature) && def.colors.is_empty()
+        }
+        LibraryCardFilter::InstantOrFlashV1 => {
+            def.has_type(CardType::Instant) || def.keywords.has(crate::card_def::Keywords::FLASH)
+        }
     })
 }
 
@@ -18429,8 +18662,23 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(value))
         }
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
+            .iter()
+            .fold(fnv1a_u64(0xcbf2_9ce4_8422_2325, 11), |hash, subtype| {
+                fnv1a_u64(hash, u64::from(subtype.stable_id()))
+            }),
+        LibraryCardFilter::CardWithTypeV1(card_type) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 12), card_type as u64)
+        }
+        LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 41), u64::from(maximum))
+        }
+        LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 42),
+        LibraryCardFilter::BlueInstantV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 43),
+        LibraryCardFilter::ColorlessCreatureV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 44),
+        LibraryCardFilter::InstantOrFlashV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 61),
         LibraryCardFilter::CreatureManaValueAtMost(maximum) => {
-            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 11), u64::from(maximum))
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 62), u64::from(maximum))
         }
     }
 }
@@ -18672,6 +18920,14 @@ fn library_partition_matching_prefix(
                     LibraryPickFilterV1::AnySubtype(subtypes) => subtypes
                         .iter()
                         .any(|subtype| subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)),
+                    LibraryPickFilterV1::InstantOrSorcery => {
+                        definition.has_type(CardType::Instant)
+                            || definition.has_type(CardType::Sorcery)
+                    }
+                    LibraryPickFilterV1::NoncreatureNonlandV1 => {
+                        !definition.has_type(CardType::Creature)
+                            && !definition.has_type(CardType::Land)
+                    }
                 },
             },
         };
@@ -24001,8 +24257,12 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             eval_cond(&EffectCond::TargetInZone(*index, Zone::Stack), ctx, state)
                 && match ctx.targets.get(usize::from(*index)) {
                     Some(Target::Object(object)) => {
-                        !crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
+                        !(crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
                             .spell_cannot_be_countered
+                            || (cfg!(feature = "eternal-fixtures")
+                                && crate::eternal_cards_v1::e3::spell_cannot_be_countered(
+                                    state, *object,
+                                )))
                     }
                     _ => false,
                 }

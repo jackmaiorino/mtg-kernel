@@ -2602,6 +2602,8 @@ fn initialize_entry_counters(
     crate::fdn_raid_v1::apply_entry_counters(state, object, counter_input);
     #[cfg(feature = "standard-magezero-fixtures")]
     crate::standard_statics_v1::apply_conditional_entry_counters(state, object, counter_input);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::apply_entry_counters(state, object, counter_input);
 }
 
 pub(crate) fn log_plus_one_counters_added(
@@ -2833,6 +2835,13 @@ pub fn apply_replacements(
             return None;
         }
         if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
+            return None;
+        }
+        // Moment's Peace, Ethereal Haze and Tangle.
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_pauper_e6a_v1::prevents_damage(state, damage)
+        {
             return None;
         }
         if !damage_cannot_be_prevented
@@ -3805,11 +3814,27 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
         }
         return;
     }
+    // Quantum Riddler: "if you would draw one or more cards, you draw that
+    // many cards plus one instead", read before the draw.
+    #[cfg(feature = "eternal-fixtures")]
+    let extra_draws = match &event {
+        ProposedEvent::Draw(draw) => Some((
+            draw.player,
+            crate::eternal_legacy_e5b_v1::riddler_extra_draws(state, draw.player),
+        )),
+        _ => None,
+    };
     if let Some(final_event) = apply_replacements(state, event) {
         let lifelink_gain = lifelink_gain_for(state, &final_event);
         commit(state, final_event);
         if let Some((player, amount)) = lifelink_gain {
             commit(state, ProposedEvent::life_gain(player, amount));
+        }
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some((player, extra)) = extra_draws {
+        for _ in 0..extra {
+            commit(state, ProposedEvent::draw(player));
         }
     }
 }
@@ -5212,6 +5237,9 @@ fn materialize_event_v1(
         ProposedEvent::ZoneChange(mut z) => {
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
+            // Yawgmoth's Will and Suplex exile instead.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;
@@ -5233,7 +5261,8 @@ fn materialize_event_v1(
                 }
                 crate::standard_cards_v1::before_departure(state, z.object);
                 if from == Zone::Battlefield
-                    && crate::standard_cards_v1::active_aegis_copy(state, z.object)
+                    && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
+                        || crate::eternal_vintage_v1::active_copy(state, z.object))
                 {
                     let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                         source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -5321,6 +5350,10 @@ fn materialize_event_v1(
                 if from == Zone::Battlefield {
                     crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
                 }
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                }
                 if from == Zone::Battlefield
                     && z.to_zone != Zone::Battlefield
                     && crate::card_def::CARD_DEFS
@@ -5353,6 +5386,10 @@ fn materialize_event_v1(
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
                     crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+                }
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                 }
             }
             materialize_zone_change_v1(
@@ -5449,6 +5486,19 @@ fn materialize_event_v1(
             CommittedEvent::LifeGain {
                 player: g.player,
                 amount: g.amount,
+            }
+        }
+        ProposedEvent::Draw(d)
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::wins_instead_of_drawing_from_empty_library(
+                    state, d.player,
+                ) =>
+        {
+            // Jace, Wielder of Mysteries replaces this draw with a win.
+            crate::eternal_cards_v1::e3::replace_empty_library_draw(state, d.player);
+            CommittedEvent::Draw {
+                player: d.player,
+                object: None,
             }
         }
         ProposedEvent::Draw(d) => {
@@ -6801,7 +6851,9 @@ pub fn log_initiative_trigger(
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
         || crate::card_def::CARD_DEFS
             .get(source.card_def as usize)
-            .is_none_or(|definition| definition.name != "Avenging Hunter")
+            .is_none_or(|definition| {
+                !crate::eternal_vintage_v1::initiative_granter(definition.name)
+            })
     {
         return Err("Initiative designation source contract is malformed".to_string());
     }
@@ -6835,7 +6887,18 @@ pub fn log_monarch_trigger(
         .objects
         .try_get(source.source)
         .ok_or("Monarch designation source no longer exists")?;
-    if live.card_def != source.card_def
+    // A copy (Phyrexian Metamorph as Thorn of the Black Rose) that later
+    // left the battlefield is its own card again; the copied definition it
+    // had stays recorded for that incarnation.
+    let card_def_matches = live.card_def == source.card_def
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::standard_cards_v1::had_card_def(
+                state,
+                source.source,
+                source.zone_change_count,
+                source.card_def,
+            ));
+    if !card_def_matches
         || live.owner != source.owner
         || live.zone_change_count < source.zone_change_count
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
@@ -6863,6 +6926,12 @@ fn permanent_enters_battlefield_tapped(
 ) -> bool {
     let def = &crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
     if def.enters_battlefield_tapped {
+        return true;
+    }
+    // Archon of Emeria: "Nonbasic lands your opponents control enter
+    // tapped."
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_v1::enters_tapped(state, object, controller) {
         return true;
     }
     if let Some(rule) = def.enters_tapped_unless_controller {

@@ -1211,6 +1211,7 @@ fn flat_cost_kind_v1(kind: CostKind) -> u8 {
         CostKind::PutCounters => 11,
         CostKind::ChooseCreatureOrRevealCreature => 12,
         CostKind::ExileCraftMaterial => 13,
+        CostKind::ExileFromHandV1 => 14,
     }
 }
 
@@ -2622,18 +2623,16 @@ fn flat_validate_origin_decision_common_scoped_v42(
                 if choices.is_empty() {
                     return Err(invalid());
                 }
-                let cost_target_count =
-                    crate::engine::mana_ability_cost_targets(*player, *object, state)
-                        .len()
-                        .max(1);
-                mana_action_count = mana_action_count
-                    .checked_add(
-                        choices
-                            .len()
-                            .checked_mul(cost_target_count)
-                            .ok_or_else(invalid)?,
+                for &choice in choices.as_slice() {
+                    let cost_target_count = crate::engine::mana_ability_cost_targets_for_choice(
+                        *player, *object, choice, state,
                     )
-                    .ok_or_else(invalid)?;
+                    .len()
+                    .max(1);
+                    mana_action_count = mana_action_count
+                        .checked_add(cost_target_count)
+                        .ok_or_else(invalid)?;
+                }
             }
             let expected_count = castable_spells
                 .len()
@@ -2673,8 +2672,9 @@ fn flat_validate_origin_decision_common_scoped_v42(
                     return Err(invalid());
                 }
                 for &choice in choices.as_slice() {
-                    let cost_targets =
-                        crate::engine::mana_ability_cost_targets(*player, *object, state);
+                    let cost_targets = crate::engine::mana_ability_cost_targets_for_choice(
+                        *player, *object, choice, state,
+                    );
                     if cost_targets.is_empty() {
                         let candidate = &candidates[cursor];
                         let valid = match (&candidate.semantic, &candidate.policy_action) {
@@ -5614,6 +5614,35 @@ impl RlEpisodeSessionV1 {
         foundations_combat: bool,
         london_mulligans: bool,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_custom_decks_companions_and_london_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            card_ids,
+            [None, None],
+            priority_mode,
+            foundations_combat,
+            london_mulligans,
+        )
+    }
+
+    /// `reset_with_custom_decks_and_london_v1` with each seat's companion,
+    /// put face up in exile before the game begins.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_with_custom_decks_companions_and_london_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        card_ids: [&[u16]; 2],
+        companions: [Option<u16>; 2],
+        priority_mode: crate::surface_v2::PriorityModeV1,
+        foundations_combat: bool,
+        london_mulligans: bool,
+    ) -> Result<Self, RlSessionError> {
         for cards in card_ids {
             crate::card_def::preflight_fully_supported_deck(cards).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
@@ -5637,6 +5666,11 @@ impl RlEpisodeSessionV1 {
         if london_mulligans {
             crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
                 .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        }
+        // Companions join exile after the opening deal is bound, which
+        // requires an empty exile.
+        if companions.iter().any(Option::is_some) {
+            crate::eternal_lurrus_v1::add_companions(&mut state, companions);
         }
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));
@@ -8001,6 +8035,62 @@ impl FastActorSessionV1 {
         Ok(sampled)
     }
 
+    /// Limited match search (issue #110 milestone 6): the census world with a
+    /// caller rewrite of the actor's unknown slots. Unlike the census clone,
+    /// every unknown slot of both owners counts as changed, whether or not its
+    /// identity moved, so a rejection depends only on public structure and
+    /// never on which hidden card sat in a slot.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_belief_clone_v1(
+        &self,
+        seed: u64,
+        rewrite: impl FnOnce(&mut crate::state::GameState, PlayerId, &[ObjectId]) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        use crate::kernel_native_search_opponent_v1::{
+            pending_selection_hidden_objects_v1, redeterminize_hidden_zones_pinned_v1,
+        };
+        let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
+        let slots: Vec<_> = [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .flat_map(|owner| {
+                crate::limited_match_v1::unknown_slots_v1(&self.state, actor, owner, &pinned)
+            })
+            .collect();
+        if flat_action_v4::census_hidden_source_conflicts_v1(&self.state, &slots) {
+            return Err("hidden-source provenance conflict".to_string());
+        }
+        let mut sampled = self.clone();
+        redeterminize_hidden_zones_pinned_v1(&mut sampled.state, actor, seed, &pinned)
+            .map_err(|error| error.to_string())?;
+        rewrite(&mut sampled.state, actor, &pinned)?;
+        Ok(sampled)
+    }
+
+    /// Limited self-play and search rollouts (issue #364): a Prepared V57 step
+    /// without the pre-step contract re-check. The advance that built the
+    /// current decision already validated this state and menu, and only
+    /// `step`/`restore` change them, so the re-check repeats that work. Callers
+    /// must not use it on a session whose state was edited after its last
+    /// advance (a redeterminized world): those take the full `step`.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_trusted_step_v1(
+        &mut self,
+        episode_id: u64,
+        expected_step: u64,
+        selected_index: u32,
+    ) -> Result<FastActorResponseV1, RlSessionError> {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::PreparedV57 {
+            return self.step(episode_id, expected_step, selected_index);
+        }
+        self.apply_prechecked_step_v1(
+            episode_id,
+            expected_step,
+            selected_index,
+            FastActorApplyPathV1::InPlace,
+        )
+    }
+
     /// Diagnostic only: a clone whose game state is edited by `edit`. The
     /// current decision's cached candidates are kept, so edits must not
     /// change the legal action set.
@@ -8539,6 +8629,19 @@ impl FastActorSessionV1 {
                 "extra turns require V23 owning transport",
             ));
         }
+        self.apply_prechecked_step_v1(episode_id, expected_step, selected_index, apply_path)
+    }
+
+    /// The binding checks, apply and advance of a step whose contract checks
+    /// above already passed (or, for the trusted Limited step, whose state is
+    /// unchanged since the advance that validated it).
+    fn apply_prechecked_step_v1(
+        &mut self,
+        episode_id: u64,
+        expected_step: u64,
+        selected_index: u32,
+        apply_path: FastActorApplyPathV1,
+    ) -> Result<FastActorResponseV1, RlSessionError> {
         if episode_id != self.episode_id {
             return Err(session_error(
                 RlSessionErrorCode::EpisodeIdMismatch,

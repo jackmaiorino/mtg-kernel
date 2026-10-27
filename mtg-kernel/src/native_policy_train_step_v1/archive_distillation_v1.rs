@@ -240,6 +240,7 @@ impl NativePolicyValueTrainStateV1 {
         NativePolicyTrainErrorV1,
     > {
         self.require_platform_math_v1("archive distillation")?;
+        self.require_no_input_contract_v1("archive distillation")?;
         if pathway.is_some() && update_scope != ArchiveDistillationUpdateScopeV1::FullNetwork {
             return Err(invalid("rules-pathway-scope"));
         }

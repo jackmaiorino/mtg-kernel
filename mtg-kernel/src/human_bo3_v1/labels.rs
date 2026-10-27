@@ -1723,10 +1723,21 @@ fn label_common(
                         ManaAbilityCostDef::TapSelfPayLife(life) => {
                             format!("Tap {source_name} and pay {life} life")
                         }
+                        ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
+                            format!("Discard your hand and sacrifice {source_name}")
+                        }
+                        ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1 => {
+                            format!(
+                                "Tap {source_name} and sacrifice {}",
+                                handles
+                                    .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
+                            )
+                        }
                     };
                     if !matches!(
                         ability.cost,
                         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
+                            | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
                     ) && cost_target.is_some()
                     {
                         return Err(Error::UnsupportedPrompt);
@@ -1775,6 +1786,7 @@ fn label_common(
                 CostKind::DiscardCards => "Discard",
                 CostKind::ExileFromGraveyard => "Exile from your graveyard",
                 CostKind::ExileCraftMaterial => "Exile as craft material",
+                CostKind::ExileFromHandV1 => "Exile from your hand",
                 CostKind::TapPermanents => "Tap",
                 CostKind::ReturnPermanentsToHand => "Return to its owner's hand",
                 CostKind::ChooseCreatureOrRevealCreature => {

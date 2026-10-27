@@ -119,6 +119,26 @@ impl SamplerStats {
     }
 }
 
+/// Consecutive world-sampling rejections in one search: the current run
+/// (the `MAX_CONSECUTIVE_REJECTIONS` stop reads it) and the longest run seen.
+/// Recording only (mtg-kernel#380).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RejectionRun {
+    pub(crate) current: u64,
+    pub(crate) longest: u64,
+}
+
+impl RejectionRun {
+    pub(crate) fn reject(&mut self) {
+        self.current += 1;
+        self.longest = self.longest.max(self.current);
+    }
+
+    pub(crate) fn accept(&mut self) {
+        self.current = 0;
+    }
+}
+
 fn sample_world(
     ctx: &RootCtx,
     s: &FastActorSessionV1,
@@ -313,6 +333,8 @@ pub(crate) struct Selection {
     pub(crate) incomplete: bool,
     pub(crate) faults: Vec<String>,
     pub(crate) sampler: SamplerStats,
+    /// E selection only; not in `json()`, so existing rows keep their bytes.
+    pub(crate) rejection_run: RejectionRun,
     pub(crate) discovery: Discovery,
     pub(crate) d: DStats,
     /// A/D: root candidate edges (canonical bytes) and the chosen one.
@@ -1161,8 +1183,18 @@ impl Roles {
             diag.path_log = super::pathlog::dir().map(super::pathlog::PathLog::new);
         }
         let retain = retain.max(1);
-        // Exact and per search: this context's keys only.
-        let mut memo = key_memo_enabled().then(KeyMemo::new);
+        // Exact and per search: this context's keys only. A search that
+        // stops on CPU time keeps both default memos off (cheaper steps
+        // would fit more simulations); only an explicit request turns them on.
+        let cpu_limited = options.cpu_seconds.is_some();
+        let memo_use = key_memo_for_search(key_memo_use(), cpu_limited);
+        let _digest_memo_default =
+            cpu_limited.then(crate::native_flat_tensorizer_v2::suppress_default_digest_memo_v1);
+        let mut memo = match memo_use {
+            KeyMemoUse::Off => None,
+            KeyMemoUse::Quiet => Some(KeyMemo::quiet()),
+            KeyMemoUse::Reported => Some(KeyMemo::new()),
+        };
         let inference_cache = match self.search_inference_cache() {
             Ok(cache) => cache,
             Err(e) => {
@@ -1182,7 +1214,6 @@ impl Roles {
         let mut tree = Tree::default();
         let mut meter = Meter::new(ctx.limits.select_cap);
         let mut c = Counters::default();
-        let mut consecutive = 0u64;
         let mut i = 0u64;
         loop {
             if options.work_limit.is_some_and(|limit| i >= limit) {
@@ -1203,7 +1234,7 @@ impl Roles {
                     _ => {}
                 }
             }
-            if consecutive >= MAX_CONSECUTIVE_REJECTIONS {
+            if sel.rejection_run.current >= MAX_CONSECUTIVE_REJECTIONS {
                 sel.incomplete = true;
                 break;
             }
@@ -1217,7 +1248,7 @@ impl Roles {
             let world = match world {
                 Ok(w) => w,
                 Err(_) => {
-                    consecutive += 1;
+                    sel.rejection_run.reject();
                     if let Some(t) = trace.as_deref_mut() {
                         t.sim_rejected(index);
                     }
@@ -1230,7 +1261,7 @@ impl Roles {
                     continue;
                 }
             };
-            consecutive = 0;
+            sel.rejection_run.accept();
             let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Reseed);
             self.reset_main(ctx, "E", index, "select");
             drop(span);
@@ -1333,7 +1364,7 @@ impl Roles {
         if let Some(t) = trace {
             t.finish_tree(&tree);
         }
-        if let Some(m) = &memo {
+        if let (Some(m), KeyMemoUse::Reported) = (&memo, memo_use) {
             diag.key_memo = m.json();
         }
         if let Some(cache) = &inference_cache {
@@ -1723,15 +1754,63 @@ pub(crate) struct EdgeWin {
     pub(crate) wins_after: u64,
 }
 
-/// Whether E searches memoize key steps (`S4A_KEY_MEMO=1`; default off).
-/// Exact: selection, trees and key statistics are unchanged; only time is.
-pub(crate) fn key_memo_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| match std::env::var("S4A_KEY_MEMO").as_deref() {
-        Ok("1") => true,
-        Ok("0") | Err(_) => false,
-        Ok(v) => panic!("S4A_KEY_MEMO must be 0 or 1, got {v:?}"),
+/// How E searches use the exact key-step memo (`S4A_KEY_MEMO`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeyMemoUse {
+    /// `S4A_KEY_MEMO=0`, or unset in a mode without the default.
+    Off,
+    /// Unset in the fixed-work play modes (`stage4a::exact_cost_defaults_v1`):
+    /// on, without counters in search records, so a record is the same as
+    /// with the memo off; limit `S4A_KEY_MEMO_MIB` or `QUIET_KEY_MEMO_BYTES`.
+    Quiet,
+    /// `S4A_KEY_MEMO=1`: on, with counters; limit `S4A_KEY_MEMO_MIB` or
+    /// `KEY_MEMO_BYTES`.
+    Reported,
+}
+
+/// Whether this process uses the quiet key memo when `S4A_KEY_MEMO` is unset
+/// (set before any search by `stage4a::exact_cost_defaults_v1`).
+static KEY_MEMO_DEFAULT_ON: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn set_key_memo_default_on() {
+    KEY_MEMO_DEFAULT_ON.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn key_memo_default_on() -> bool {
+    KEY_MEMO_DEFAULT_ON.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Exact for every transition- or work-limited search: selection, trees and
+/// key statistics are unchanged; only time is. Read once per process.
+pub(crate) fn key_memo_use() -> KeyMemoUse {
+    static USE: std::sync::OnceLock<KeyMemoUse> = std::sync::OnceLock::new();
+    *USE.get_or_init(|| {
+        key_memo_use_from(
+            std::env::var("S4A_KEY_MEMO").ok().as_deref(),
+            KEY_MEMO_DEFAULT_ON.load(std::sync::atomic::Ordering::Relaxed),
+        )
     })
+}
+
+fn key_memo_use_from(value: Option<&str>, default_on: bool) -> KeyMemoUse {
+    match value {
+        None if default_on => KeyMemoUse::Quiet,
+        None => KeyMemoUse::Off,
+        Some("1") => KeyMemoUse::Reported,
+        Some("0") => KeyMemoUse::Off,
+        Some(v) => panic!("S4A_KEY_MEMO must be 0 or 1, got {v:?}"),
+    }
+}
+
+/// One search's key memo: the default (quiet) memo stays off when the search
+/// stops on CPU time, whose simulation count a cheaper step would change.
+fn key_memo_for_search(memo_use: KeyMemoUse, cpu_limited: bool) -> KeyMemoUse {
+    match memo_use {
+        KeyMemoUse::Quiet if cpu_limited => KeyMemoUse::Off,
+        other => other,
+    }
 }
 
 /// Search diagnostics (never read by selection, backup or execution).
@@ -1974,4 +2053,49 @@ pub(crate) fn tree_stats(tree: &Tree) -> Value {
     }
     json!({"nodes":tree.nodes.len(),"hash":tree.hash(),"root":root,
         "by_depth":by_depth.iter().map(|(d,(n,v))| json!({"depth":d,"nodes":n,"visits":v})).collect::<Vec<_>>()})
+}
+
+#[cfg(test)]
+mod key_memo_use_tests {
+    use super::{key_memo_for_search, key_memo_use_from, KeyMemoUse};
+
+    #[test]
+    fn key_memo_default_is_quiet_only_where_set_and_reports_only_when_asked() {
+        assert_eq!(key_memo_use_from(None, true), KeyMemoUse::Quiet);
+        assert_eq!(key_memo_use_from(None, false), KeyMemoUse::Off);
+        for default_on in [false, true] {
+            assert_eq!(
+                key_memo_use_from(Some("1"), default_on),
+                KeyMemoUse::Reported
+            );
+            assert_eq!(key_memo_use_from(Some("0"), default_on), KeyMemoUse::Off);
+            assert!(
+                std::panic::catch_unwind(|| key_memo_use_from(Some("yes"), default_on)).is_err()
+            );
+        }
+    }
+
+    /// A CPU-limited search never takes the default memo; an explicit
+    /// `S4A_KEY_MEMO=1` still applies.
+    #[test]
+    fn cpu_limited_searches_keep_the_default_key_memo_off() {
+        assert_eq!(
+            key_memo_for_search(KeyMemoUse::Quiet, true),
+            KeyMemoUse::Off
+        );
+        assert_eq!(
+            key_memo_for_search(KeyMemoUse::Quiet, false),
+            KeyMemoUse::Quiet
+        );
+        for cpu_limited in [false, true] {
+            assert_eq!(
+                key_memo_for_search(KeyMemoUse::Reported, cpu_limited),
+                KeyMemoUse::Reported
+            );
+            assert_eq!(
+                key_memo_for_search(KeyMemoUse::Off, cpu_limited),
+                KeyMemoUse::Off
+            );
+        }
+    }
 }

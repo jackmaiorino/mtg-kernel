@@ -47,6 +47,12 @@ pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64
         .into_iter()
         .chain(land_override_timestamp(state, host))
         .chain(crate::standard_creatures_v1::removal_timestamp(state, host))
+        .chain(if cfg!(feature = "eternal-fixtures") {
+            // Oko, Thief of Crowns's Elks.
+            crate::eternal_e5a_v1::statics::removal_timestamp(state, host)
+        } else {
+            None
+        })
         .max()
 }
 
@@ -284,6 +290,12 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
     // its artifact host a creature in layer 4.
     if let Some((animation, timestamp)) = animation(state, id) {
         settings.push((animation.power, animation.toughness, timestamp));
+    }
+    if cfg!(feature = "eternal-fixtures") {
+        // Oko, Thief of Crowns's Elks are 3/3.
+        settings.extend(crate::eternal_e5a_v1::statics::base_power_toughness(
+            state, id,
+        ));
     }
     if object.zone == Zone::Battlefield {
         settings.extend(object.v4.temporary_base_pt_v1);

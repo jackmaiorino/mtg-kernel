@@ -826,6 +826,7 @@ mod tests {
                     refresh::BudgetExtras {
                         per_decision: Some((8_000, 4_000)),
                         node_stats: true,
+                        rollout: None,
                     },
                 )
                 .unwrap();

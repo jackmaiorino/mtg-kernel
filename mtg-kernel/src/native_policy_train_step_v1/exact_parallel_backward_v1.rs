@@ -105,7 +105,11 @@ impl<'t> ReverseGradientSinkV1<'t> for RecordTermsV1<'_, 't> {
         Ok(())
     }
 
-    fn card_embedding_v1(&mut self, object_card_ids: &'t [usize], d_object_input: &[f32]) {
+    fn card_embedding_dims_v1<D: NetDimsV1>(
+        &mut self,
+        object_card_ids: &'t [usize],
+        d_object_input: &[f32],
+    ) {
         let terms = &mut *self.terms;
         for (object, token) in object_card_ids.iter().copied().enumerate() {
             if token == 0 {
@@ -113,14 +117,14 @@ impl<'t> ReverseGradientSinkV1<'t> for RecordTermsV1<'_, 't> {
             }
             // The sequential sink panics here, indexing past the embedding.
             assert!(
-                token * CARD_EMBEDDING_DIM_V1 + CARD_EMBEDDING_DIM_V1 <= self.card_embedding_len,
+                token * D::CARD_EMBEDDING + D::CARD_EMBEDDING <= self.card_embedding_len,
                 "card token {token} is outside the card embedding"
             );
-            let source = object * OBJECT_ENCODER_INPUT + OBJECT_FEATURE_DIM_V1;
+            let source = object * D::OBJECT_ENCODER_INPUT + OBJECT_FEATURE_DIM_V1;
             terms.card_tokens.push(token);
             terms
                 .d_card_embeddings
-                .extend_from_slice(&d_object_input[source..source + CARD_EMBEDDING_DIM_V1]);
+                .extend_from_slice(&d_object_input[source..source + D::CARD_EMBEDDING]);
         }
     }
 }
@@ -162,21 +166,46 @@ pub(super) fn exact_parallel_backward_v1(
     value_coefficient: f32,
     workers: usize,
     math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
 ) -> Option<BackwardResultV1> {
-    let substeps = groups.iter().map(|group| group.tapes.len()).sum::<usize>();
-    let workers = workers.min(substeps / EXACT_BACKWARD_MIN_SUBSTEPS_PER_WORKER_V1);
-    if workers < 2 {
-        return None;
-    }
-    #[cfg(test)]
-    EXACT_BACKWARD_RUNS_FOR_TEST_V1.with(|runs| runs.set(runs.get() + 1));
-    Some(backward_v1(
+    exact_parallel_backward_dims_v1::<Net8DimsV1>(
         parameters,
         groups,
         group_count,
         value_coefficient,
         workers,
         math,
+        mxcsr,
+    )
+}
+
+/// [`exact_parallel_backward_v1`] at the dims `D`.
+pub(super) fn exact_parallel_backward_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    groups: &[GroupTapeV1<'_>],
+    group_count: f32,
+    value_coefficient: f32,
+    workers: usize,
+    math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
+) -> Option<BackwardResultV1> {
+    let substeps = groups.iter().map(|group| group.tapes.len()).sum::<usize>();
+    let workers = workers.min(substeps / EXACT_BACKWARD_MIN_SUBSTEPS_PER_WORKER_V1);
+    #[cfg(test)]
+    record_effective_backward_workers_for_test_v1(workers.max(1));
+    if workers < 2 {
+        return None;
+    }
+    #[cfg(test)]
+    EXACT_BACKWARD_RUNS_FOR_TEST_V1.with(|runs| runs.set(runs.get() + 1));
+    Some(backward_dims_v1::<D>(
+        parameters,
+        groups,
+        group_count,
+        value_coefficient,
+        workers,
+        math,
+        mxcsr,
     ))
 }
 
@@ -187,6 +216,27 @@ fn backward_v1(
     value_coefficient: f32,
     workers: usize,
     math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
+) -> BackwardResultV1 {
+    backward_dims_v1::<Net8DimsV1>(
+        parameters,
+        groups,
+        group_count,
+        value_coefficient,
+        workers,
+        math,
+        mxcsr,
+    )
+}
+
+fn backward_dims_v1<D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    groups: &[GroupTapeV1<'_>],
+    group_count: f32,
+    value_coefficient: f32,
+    workers: usize,
+    math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
 ) -> BackwardResultV1 {
     let controls = ControlsV1::current_v1();
     // The sequential arm's coefficients and visiting order.
@@ -231,22 +281,25 @@ fn backward_v1(
     let mut terms = Vec::new();
     for block in visits[..backward_end].chunks(controls.block_substeps_v1()) {
         terms.resize_with(block.len(), SubstepTermsV1::default);
-        let outcomes = record_block_v1(parameters, block, &mut terms, workers, controls, math);
+        let outcomes = record_block_dims_v1::<D>(
+            parameters, block, &mut terms, workers, controls, math, mxcsr,
+        )?;
         for outcome in outcomes {
             match outcome {
                 PhaseAOutcomeV1::Completed(result) => result?,
                 PhaseAOutcomeV1::Panicked(payload) => resume_unwind(payload),
             }
         }
-        let blocks = gradient_blocks_v1(parameters, &mut gradients, &terms, workers);
+        let blocks = gradient_blocks_dims_v1::<D>(parameters, &mut gradients, &terms, workers);
         drain_in_parallel_v1(
             blocks,
             workers,
+            mxcsr,
             || (),
             |_, block| {
-                replay_block_v1(block, &terms);
+                replay_block_dims_v1::<D>(block, &terms);
             },
-        );
+        )?;
     }
     if let Some((_, error)) = gauge_failure {
         return Err(error);
@@ -263,7 +316,20 @@ fn record_block_v1<'g>(
     workers: usize,
     controls: ControlsV1,
     math: TrainingMathV1,
-) -> Vec<PhaseAOutcomeV1> {
+    mxcsr: ThreadMxcsrCheckV1,
+) -> Result<Vec<PhaseAOutcomeV1>, NativePolicyTrainErrorV1> {
+    record_block_dims_v1::<Net8DimsV1>(parameters, visits, terms, workers, controls, math, mxcsr)
+}
+
+fn record_block_dims_v1<'g, D: NetDimsV1>(
+    parameters: &[NativeNamedParameterV1],
+    visits: &[VisitV1<'g, '_>],
+    terms: &mut [SubstepTermsV1<'g>],
+    workers: usize,
+    controls: ControlsV1,
+    math: TrainingMathV1,
+    mxcsr: ThreadMxcsrCheckV1,
+) -> Result<Vec<PhaseAOutcomeV1>, NativePolicyTrainErrorV1> {
     let mut outcomes = Vec::with_capacity(visits.len());
     outcomes.resize_with(visits.len(), || PhaseAOutcomeV1::Completed(Ok(())));
     let chunk = visits
@@ -278,23 +344,34 @@ fn record_block_v1<'g>(
     drain_in_parallel_v1(
         items,
         workers,
+        mxcsr,
         ReverseWorkspaceV1::default,
         |workspace, ((visits, terms), outcomes)| {
             for ((visit, terms), outcome) in visits.iter().zip(terms).zip(outcomes) {
                 *outcome = match catch_unwind(AssertUnwindSafe(|| {
                     controls.backward_v1(visit.index)?;
-                    record_substep_v1(parameters, visit, terms, workspace, math)
+                    record_substep_dims_v1::<D>(parameters, visit, terms, workspace, math)
                 })) {
                     Ok(result) => PhaseAOutcomeV1::Completed(result),
                     Err(payload) => PhaseAOutcomeV1::Panicked(payload),
                 };
             }
         },
-    );
-    outcomes
+    )?;
+    Ok(outcomes)
 }
 
 fn record_substep_v1<'g>(
+    parameters: &[NativeNamedParameterV1],
+    visit: &VisitV1<'g, '_>,
+    terms: &mut SubstepTermsV1<'g>,
+    workspace: &mut ReverseWorkspaceV1,
+    math: TrainingMathV1,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    record_substep_dims_v1::<Net8DimsV1>(parameters, visit, terms, workspace, math)
+}
+
+fn record_substep_dims_v1<'g, D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     visit: &VisitV1<'g, '_>,
     terms: &mut SubstepTermsV1<'g>,
@@ -312,7 +389,7 @@ fn record_substep_v1<'g>(
         math,
     );
     let tape: &'g DecisionTapeV1 = &visit.selected.tape;
-    reverse_decision_into_v1(
+    reverse_decision_into_dims_v1::<D>(
         parameters,
         &mut RecordTermsV1 {
             terms,
@@ -328,6 +405,15 @@ fn record_substep_v1<'g>(
 /// Splits every gradient tensor this block touches into row blocks of about
 /// equal work (one multiply-add per element and layer row), largest first.
 fn gradient_blocks_v1<'v>(
+    parameters: &[NativeNamedParameterV1],
+    gradients: &'v mut [Vec<f32>],
+    terms: &[SubstepTermsV1<'_>],
+    workers: usize,
+) -> Vec<GradientBlockV1<'v>> {
+    gradient_blocks_dims_v1::<Net8DimsV1>(parameters, gradients, terms, workers)
+}
+
+fn gradient_blocks_dims_v1<'v, D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     gradients: &'v mut [Vec<f32>],
     terms: &[SubstepTermsV1<'_>],
@@ -352,7 +438,7 @@ fn gradient_blocks_v1<'v>(
             costs[linear.bias_index] += outputs;
         }
         assert!(
-            substep.card_tokens.is_empty() || widths[CARD_EMBEDDING] == CARD_EMBEDDING_DIM_V1,
+            substep.card_tokens.is_empty() || widths[CARD_EMBEDDING] == D::CARD_EMBEDDING,
             "the exact parallel backward needs validated parameter shapes"
         );
         costs[CARD_EMBEDDING] += substep.d_card_embeddings.len() as u64;
@@ -445,23 +531,43 @@ fn input_gradient_rows_body_v1(
 /// scorer bias's reverse rows. Elements are independent, so the vector width
 /// changes no bit (AVX2 does not enable FMA).
 fn replay_block_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
+    replay_block_dims_v1::<Net8DimsV1>(block, terms);
+}
+
+fn replay_block_dims_v1<D: NetDimsV1>(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
     #[cfg(target_arch = "x86_64")]
     if std::arch::is_x86_feature_detected!("avx2") {
         // SAFETY: AVX2 support was detected at run time just above.
-        unsafe { replay_block_avx2_v1(block, terms) };
+        unsafe { replay_block_avx2_dims_v1::<D>(block, terms) };
         return;
     }
-    replay_block_body_v1(block, terms);
+    replay_block_body_dims_v1::<D>(block, terms);
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn replay_block_avx2_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
-    replay_block_body_v1(block, terms);
+    replay_block_body_dims_v1::<Net8DimsV1>(block, terms);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn replay_block_avx2_dims_v1<D: NetDimsV1>(
+    block: GradientBlockV1<'_>,
+    terms: &[SubstepTermsV1<'_>],
+) {
+    replay_block_body_dims_v1::<D>(block, terms);
+}
+
+fn replay_block_body_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
+    replay_block_body_dims_v1::<Net8DimsV1>(block, terms);
 }
 
 #[inline(always)]
-fn replay_block_body_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
+fn replay_block_body_dims_v1<D: NetDimsV1>(
+    block: GradientBlockV1<'_>,
+    terms: &[SubstepTermsV1<'_>],
+) {
     let GradientBlockV1 {
         tensor,
         rows: block_rows,
@@ -472,11 +578,11 @@ fn replay_block_body_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]
     let first = block_rows.start;
     for substep in terms {
         if tensor == CARD_EMBEDDING {
-            for (token, d_embedding) in substep.card_tokens.iter().zip(
-                substep
-                    .d_card_embeddings
-                    .chunks_exact(CARD_EMBEDDING_DIM_V1),
-            ) {
+            for (token, d_embedding) in substep
+                .card_tokens
+                .iter()
+                .zip(substep.d_card_embeddings.chunks_exact(D::CARD_EMBEDDING))
+            {
                 if block_rows.contains(token) {
                     let offset = (token - first) * width;
                     for (gradient, d_value) in
@@ -532,14 +638,19 @@ fn replay_block_body_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]
 /// scoped helpers, each thread with its own `state`. Items are independent,
 /// so which thread runs one changes no result. If a helper cannot be spawned
 /// the remaining threads take its share; a helper's panic resumes on the
-/// calling thread once every thread has stopped.
+/// calling thread once every thread has stopped. A helper outside the pinned
+/// MXCSR state (`mxcsr`) takes no item and its error is returned once every
+/// thread has stopped; the calling thread verifies before its own share.
 fn drain_in_parallel_v1<T: Send, S>(
     items: Vec<T>,
     workers: usize,
+    mxcsr: ThreadMxcsrCheckV1,
     state: impl Fn() -> S + Sync,
     work: impl Fn(&mut S, T) + Sync,
-) {
+) -> Result<(), NativePolicyTrainErrorV1> {
+    mxcsr.verify_v1()?;
     let queue = Mutex::new(items.into_iter());
+    let refused = Mutex::new(None);
     let next = || queue.lock().unwrap_or_else(PoisonError::into_inner).next();
     let drain = || {
         let mut state = state();
@@ -547,12 +658,21 @@ fn drain_in_parallel_v1<T: Send, S>(
             work(&mut state, item);
         }
     };
+    let helper = || match mxcsr.verify_worker_v1() {
+        Ok(()) => drain(),
+        Err(error) => {
+            refused
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get_or_insert(error);
+        }
+    };
     thread::scope(|scope| {
         let helpers = (1..workers)
             .filter_map(|index| {
                 thread::Builder::new()
                     .name(format!("native-gae-backward-{index}"))
-                    .spawn_scoped(scope, drain)
+                    .spawn_scoped(scope, helper)
                     .ok()
             })
             .collect::<Vec<_>>();
@@ -563,6 +683,10 @@ fn drain_in_parallel_v1<T: Send, S>(
             }
         }
     });
+    match refused.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// Test-only failure injection and block size, read on the calling thread;

@@ -36,7 +36,10 @@ fn fixtures() -> Vec<(String, CustomDeckV1)> {
                 .collect();
             (
                 path.file_stem().unwrap().to_string_lossy().into_owned(),
-                CustomDeckV1 { cards },
+                CustomDeckV1 {
+                    cards,
+                    companion: None,
+                },
             )
         })
         .collect()

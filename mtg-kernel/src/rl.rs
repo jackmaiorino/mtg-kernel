@@ -6913,7 +6913,9 @@ fn core_surface_action_candidates_fake_scoped_v50(
                 for &id in mana_abilities {
                     let choices = engine::available_mana_ability_choices(*player, id, state);
                     for &choice in &choices {
-                        let cost_targets = engine::mana_ability_cost_targets(*player, id, state);
+                        let cost_targets = engine::mana_ability_cost_targets_for_choice(
+                            *player, id, choice, state,
+                        );
                         if cost_targets.is_empty() {
                             push_action(
                                 &mut out,
@@ -12039,7 +12041,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     if matches!(purpose, crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. }) {
                         return Err(RlContractError("nonland sacrifice payment requires its distinct consumer".into()));
                     }
-                    let chooser_private = matches!(
+                    let chooser_private = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
                             | crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
@@ -12081,13 +12083,21 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                                 ..
                             }
-                    ) && acting_player != *player;
-                    let search_for_chooser = matches!(
+                    ) || matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
+                            if choice.chooser_private()
+                    )) && acting_player != *player;
+                    let search_for_chooser = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
-                    ) && acting_player == *player;
+                    ) || matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
+                            if choice.library_search()
+                    )) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
@@ -12282,6 +12292,9 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             crate::effect::EffectTargetSelectionPurpose::StandardCopyTargetV1 {
                                 ..
                             } => TargetSelectionPurposeV4::EffectTargets,
+                            crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice } => {
+                                choice.public_purpose()
+                            }
                         },
                     })
                 }
@@ -12376,12 +12389,27 @@ fn pending_cast_semantic_v2(
                 )
             })
         });
-    let sacrifice_chosen =
-        if p.source_contract.cast_method == CastMethodV4::Escape || object_cost_is_tap {
-            Vec::new()
-        } else {
-            visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
-        };
+    // An alternative cost's returned permanent or exiled hand card (Daze,
+    // Force of Will) is not a sacrifice either.
+    let object_cost_is_alternative = p.cast_mode == Some(engine::CastMode::Alternative)
+        && source_def.alt_cost.is_some_and(|alt| {
+            alt.components.iter().any(|component| {
+                matches!(
+                    component,
+                    crate::card_def::CostComponent::ReturnControlledPermanentToOwnersHand(_)
+                        | crate::card_def::CostComponent::ExileCardFromHandWithColorV1(_)
+                        | crate::card_def::CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
+                )
+            })
+        });
+    let sacrifice_chosen = if p.source_contract.cast_method == CastMethodV4::Escape
+        || object_cost_is_tap
+        || object_cost_is_alternative
+    {
+        Vec::new()
+    } else {
+        visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
+    };
     Ok(PendingCastSemanticV2 {
         source: visible_card_ref(state, p.spell, acting_player)?,
         controller: p.controller.into(),
@@ -13499,7 +13527,17 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
     let historical = state.objects.try_get(item.source).ok_or_else(|| {
         RlContractError("ability stack source references an unknown arena object".to_string())
     })?;
-    if historical.card_def != card_def || historical.owner != owner {
+    // A copy that left the battlefield (Phyrexian Metamorph) is its own
+    // card again; its copied definition stays recorded for the incarnation.
+    let same_card = historical.card_def == card_def
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::standard_cards_v1::had_card_def(
+                state,
+                item.source,
+                zone_change_count,
+                card_def,
+            ));
+    if !same_card || historical.owner != owner {
         return Err(RlContractError(
             "ability stack source changed stable arena identity".to_string(),
         ));
@@ -13559,7 +13597,15 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
                             "stack target contract references an unknown arena object".to_string(),
                         )
                     })?;
-                    if historical.card_def != card_def || historical.owner != owner {
+                    let same_card = historical.card_def == card_def
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::standard_cards_v1::had_card_def(
+                                state,
+                                object,
+                                zone_change_count,
+                                card_def,
+                            ));
+                    if !same_card || historical.owner != owner {
                         return Err(RlContractError(
                             "stack target contract changed stable arena identity".to_string(),
                         ));

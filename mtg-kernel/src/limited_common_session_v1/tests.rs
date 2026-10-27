@@ -55,6 +55,7 @@ fn deck(name: &str, count: u32) -> CustomDeckV1 {
             name: name.into(),
             count,
         }],
+        companion: None,
     }
 }
 fn reset(actor: PlayerSeatV1, id: &str) -> LimitedCommonRequestV1 {

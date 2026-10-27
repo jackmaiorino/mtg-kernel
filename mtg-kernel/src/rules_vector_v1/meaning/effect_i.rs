@@ -156,6 +156,16 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     // Frozen vocabulary does not express this cost-bound consequence.
                     out.atoms.push(Atom::Opaque);
                 }
+                crate::effect::ObjectSelectionActionV1::CastFromGraveyardV1 => {
+                    // Casting the chosen card during resolution, paying its
+                    // costs, has no facet in the frozen vocabulary.
+                    out.atoms.push(Atom::Opaque);
+                }
+                crate::effect::ObjectSelectionActionV1::EnterAsCopyV1 => {
+                    // Entering as a copy of the chosen permanent has no facet
+                    // in the frozen vocabulary.
+                    out.atoms.push(Atom::Opaque);
+                }
                 crate::effect::ObjectSelectionActionV1::TapFiveThenTransformSource => {
                     out.control(ControlF::Conditional);
                     out.effect(

@@ -7,6 +7,9 @@
 //!   Spy-focal games, the earliest cast-Spy and Spy-self-target-available
 //!   decisions before any Spy self-target, with replay keys. Rows carry no
 //!   outcome. `tools/stage4a/freeze_roots.py` freezes the roots.
+//! - `s4a-wm-dump`: the same plain games, one row per game with the exact
+//!   game facts at every decision and the outcome (`stage4a/wm_dump.rs`;
+//!   collab LANES/world-model-probe-20261020).
 //! - `s4a-run`: for each frozen root in `ROOTS`, selection by E, A and D
 //!   under the transition ceiling, then 16 paired evaluation worlds per arm.
 //!   One row per root; a root already present in `out` is skipped (resume).
@@ -76,6 +79,7 @@ mod seeds;
 mod sharing;
 mod tree;
 mod utility_root;
+mod wm_dump;
 #[cfg(feature = "gameplay-decision-trace-v1")]
 pub(crate) use utility_root::{authenticated_roots_v1, validate_searched_game_v1, SearchedRootV1};
 #[cfg(feature = "viewer-recording-v1")]
@@ -105,6 +109,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
         "s4a-corpus"
+            | "s4a-wm-dump"
             | "s4a-run"
             | "s4a-diag"
             | "s4a-bank"
@@ -125,6 +130,35 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-reused-action"
             | "s4a-policy-ensemble"
     )
+}
+
+/// Per-thread digest memo budget (MiB) that the fixed-work play modes use
+/// when `MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB` is unset.
+const DIGEST_MEMO_DEFAULT_MIB: usize = 64;
+
+/// The fixed-work play modes that get the exact cost defaults: the searched
+/// budget player (the seat-clock games) and the two paths that check its
+/// records. Their searches stop on transitions, never on CPU time. Every
+/// other mode, the profile modes included, runs exactly as before.
+const EXACT_COST_DEFAULT_MODES: [&str; 3] = ["s4a-budget", "s4a-budget-replay", "s4a-root-rebuild"];
+
+/// Whether `mode` gets the exact cost defaults.
+pub(super) fn exact_cost_defaults_apply_v1(mode: &str) -> bool {
+    EXACT_COST_DEFAULT_MODES.contains(&mode)
+}
+
+/// Exact cost defaults for the fixed-work play modes, set before the policy
+/// loads: the tensorizer's whole-message digest memo and the quiet key memo
+/// are on unless their variables say otherwise, and the vector tanh proof
+/// is settled now (its record read, or the proof run), so it never lands
+/// inside a timed search. None changes a result bit or a record field.
+pub(super) fn exact_cost_defaults_v1(mode: &str) {
+    if !exact_cost_defaults_apply_v1(mode) {
+        return;
+    }
+    crate::native_flat_tensorizer_v2::set_default_digest_memo_mib_v1(DIGEST_MEMO_DEFAULT_MIB);
+    arms::set_key_memo_default_on();
+    crate::vector_tanh_v1::prepare_v1();
 }
 
 const SPY_DECK: &str = "Spy";
@@ -243,7 +277,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         }
         Err(_) => Limits::FORMAL,
     };
-    let roots = if cfg.mode != "s4a-corpus" {
+    let roots = if !plain_games(&cfg.mode) {
         let path = std::env::var("ROOTS").map_err(|_| "ROOTS names no roots file")?;
         std::fs::read_to_string(&path)
             .map_err(|e| format!("{path}: {e}"))?
@@ -461,6 +495,12 @@ fn set_replay_forward(roles: &mut Roles, fast_forward: bool) {
     for opponent in &mut roles.opps {
         opponent.set_fast_search_forward_v1(fast_forward);
     }
+}
+
+/// Modes that play numbered plain games (`first_game`, `games`) instead of
+/// frozen roots.
+fn plain_games(mode: &str) -> bool {
+    mode == "s4a-corpus" || mode == "s4a-wm-dump"
 }
 
 fn write_line(sink: &Mutex<std::fs::File>, row: &Value) -> Result<(), String> {
@@ -1046,6 +1086,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
     if cfg.mode == policy_ensemble::MODE {
         return policy_ensemble::run(cfg, policy, &sh, &spec_bytes);
     }
+    validate_rollout_mode(&cfg.mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
+    let rollout = refresh::parse_rollout_opponent(std::env::var(ROLLOUT_OPPONENT), &sh.labels)?;
+    let rollout_label = rollout.map(|r| sh.labels[r].clone());
     if cfg.mode == "s4a-utility-root" {
         return utility_root::run(cfg, policy, &sh, &spec_bytes);
     }
@@ -1245,16 +1288,23 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             };
             let actions: Vec<u32> = serde_json::from_value(row["game"]["actions"].clone())
                 .map_err(|e| e.to_string())?;
-            let rep = std::thread::scope(|scope| {
-                std::thread::Builder::new()
-                    .stack_size(256 << 20)
-                    .spawn_scoped(scope, || refresh::budget_replay(&sh, &src, &actions))
-                    .map_err(|e| e.to_string())?
-                    .join()
-                    .map_err(|_| "replay worker panicked".to_owned())?
-            })
-            .unwrap_or_else(|e| json!({"error":e}));
-            let ok = rep["end"] == row["game"]["end"] && rep["sequence"] == row["game"]["sequence"];
+            // A record of another rollout model is refused, not replayed.
+            let rep = refresh::check_rollout(&row, rollout_label.as_deref())
+                .and_then(|()| {
+                    std::thread::scope(|scope| {
+                        std::thread::Builder::new()
+                            .stack_size(256 << 20)
+                            .spawn_scoped(scope, || refresh::budget_replay(&sh, &src, &actions))
+                            .map_err(|e| e.to_string())?
+                            .join()
+                            .map_err(|_| "replay worker panicked".to_owned())?
+                    })
+                })
+                .unwrap_or_else(|e| json!({"error":e}));
+            // An error (a refused record, a failed replay) never matches.
+            let ok = rep.get("error").is_none()
+                && rep["end"] == row["game"]["end"]
+                && rep["sequence"] == row["game"]["sequence"];
             out.push_str(&format!(
                 "{}
 ",
@@ -1287,7 +1337,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             Err(_) => None,
         };
         let list = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
-        let out = root_rebuild::rows(&sh.spec, &list, schedule.as_ref());
+        let out = root_rebuild::rows(&sh.spec, &list, schedule.as_ref(), rollout_label.as_deref());
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
     if cfg.mode == "s4a-budget" {
@@ -1340,6 +1390,10 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         if plain && extras != refresh::BudgetExtras::default() {
             return Err("S4A_ALLOCATION and S4A_NODE_STATS require BUDGET_ARM=search-v1".into());
         }
+        if plain && rollout.is_some() {
+            return Err(format!("{ROLLOUT_OPPONENT} requires BUDGET_ARM=search-v1"));
+        }
+        let extras = refresh::BudgetExtras { rollout, ..extras };
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1571,7 +1625,26 @@ pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
     if mode != policy_ensemble::MODE && std::env::var_os("POLICY_ENSEMBLE_MEMBERS").is_some() {
         return Err("POLICY_ENSEMBLE_MEMBERS is supported only for s4a-policy-ensemble".into());
     }
+    validate_rollout_mode(mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
     refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
+}
+
+/// Opt-in rollout opponent (`refresh::BudgetExtras::rollout`): the label of
+/// the OPPONENTS policy that plays the opponent inside searches, while the
+/// live opponent stays the case's scheduled one.
+const ROLLOUT_OPPONENT: &str = "S4A_ROLLOUT_OPPONENT";
+/// Modes that honour `S4A_ROLLOUT_OPPONENT`: the searched budget player and
+/// the two paths that check its records.
+const ROLLOUT_MODES: [&str; 3] = ["s4a-budget", "s4a-budget-replay", "s4a-root-rebuild"];
+
+fn validate_rollout_mode(mode: &str, set: bool) -> Result<(), String> {
+    if set && !ROLLOUT_MODES.contains(&mode) {
+        return Err(format!(
+            "{ROLLOUT_OPPONENT} is supported only for {}",
+            ROLLOUT_MODES.join(", ")
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
@@ -1614,7 +1687,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     } else {
         "s4a_root"
     };
-    let done: HashSet<String> = if cfg.mode != "s4a-corpus" {
+    let done: HashSet<String> = if !plain_games(&cfg.mode) {
         let bytes = match std::fs::read(&cfg.out) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -1650,7 +1723,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
             .open(&cfg.out)
             .map_err(|e| e.to_string())?,
     );
-    let (first, end) = if cfg.mode != "s4a-corpus" {
+    let (first, end) = if !plain_games(&cfg.mode) {
         (0, shared.roots.len() as u64)
     } else {
         (cfg.first_game, cfg.first_game + cfg.games)
@@ -1679,6 +1752,15 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
                     }
                     let result = if cfg.mode == "s4a-corpus" {
                         corpus_game(cfg, shared, &mut roles.focal, &mut roles.opps, item, sink)
+                    } else if cfg.mode == "s4a-wm-dump" {
+                        wm_dump::wm_dump_game(
+                            cfg,
+                            shared,
+                            &mut roles.focal,
+                            &mut roles.opps,
+                            item,
+                            sink,
+                        )
                     } else {
                         let root = &shared.roots[item as usize];
                         let id = root["root_id"].as_str().unwrap_or("").to_owned();
