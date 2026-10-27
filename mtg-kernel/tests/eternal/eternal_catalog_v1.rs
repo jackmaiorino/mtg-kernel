@@ -5,7 +5,8 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, CARD_DEFS, KERNEL_CARDDB_HASH,
+    card_id_by_name, preflight_fully_supported_deck, CardCapability, TargetSpec, CARD_DEFS,
+    KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
 use serde_json::{json, Value};
@@ -14,9 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Snapshot archetypes the eternal build plays, by format. A wave that
-/// completes a deck adds it here; a regression removes one and fails.
-/// Companion decks stay out until the engine supports companions.
-const PLAYABLE: [(&str, &str); 20] = [
+/// completes a deck adds it here; a regression removes one and fails. A
+/// deck's companion is part of the deck the session plays.
+const PLAYABLE: [(&str, &str); 27] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -47,8 +48,18 @@ const PLAYABLE: [(&str, &str); 20] = [
     ("legacy", "legacy-sneak-and-show"),
     ("legacy", "legacy-aluren"),
     ("legacy", "legacy-omni-tell"),
+    ("legacy", "legacy-temur-delver"),
     ("vintage", "vintage-jewel-shops"),
     ("vintage", "vintage-mono-white-initiative"),
+    ("vintage", "vintage-esper-lurrus-control"),
+    ("vintage", "vintage-dimir-lurrus-control"),
+    ("vintage", "vintage-lurrus-po"),
+    (
+        "vintage",
+        "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    ),
+    ("vintage", "vintage-jeskai-lurrus"),
+    ("vintage", "vintage-4c-psychic-frog"),
 ];
 
 fn read_json(relative: &str) -> Value {
@@ -80,8 +91,8 @@ const STANDARD_DEFINITIONS: usize = 254;
 struct SnapshotDeck {
     format: String,
     archetype: String,
-    mainboard: CustomDeckV1,
-    companion: Option<String>,
+    /// The mainboard and the companion, as the session takes them.
+    deck: CustomDeckV1,
 }
 
 /// Every snapshot deck, in snapshot order.
@@ -102,8 +113,10 @@ fn snapshot_decks() -> Vec<SnapshotDeck> {
             decks.push(SnapshotDeck {
                 format: format.clone(),
                 archetype: archetype["archetype"].as_str().unwrap().to_owned(),
-                mainboard: CustomDeckV1 { cards },
-                companion: archetype["companion"].as_str().map(str::to_owned),
+                deck: CustomDeckV1 {
+                    cards,
+                    companion: archetype["companion"].as_str().map(str::to_owned),
+                },
             });
         }
     }
@@ -133,11 +146,11 @@ fn playable_snapshot_decks_match_the_tracked_list() {
     let playable: BTreeSet<(String, String)> = decks
         .iter()
         .filter(|deck| {
-            deck.mainboard
+            deck.deck
                 .cards
                 .iter()
                 .map(|card| card.name.as_str())
-                .chain(deck.companion.as_deref())
+                .chain(deck.deck.companion.as_deref())
                 .all(fully_supported)
         })
         .map(|deck| (deck.format.clone(), deck.archetype.clone()))
@@ -147,10 +160,6 @@ fn playable_snapshot_decks_match_the_tracked_list() {
         .map(|(format, archetype)| (format.to_string(), archetype.to_string()))
         .collect();
     assert_eq!(playable, expected);
-    assert!(decks
-        .iter()
-        .filter(|deck| PLAYABLE.contains(&(deck.format.as_str(), deck.archetype.as_str())))
-        .all(|deck| deck.companion.is_none()));
 }
 
 fn rank(action: &Value) -> u8 {
@@ -166,13 +175,78 @@ fn rank(action: &Value) -> u8 {
     }
 }
 
+/// Whether `seat` controls a battlefield permanent named `name` in the
+/// decision's public projection.
+fn controls_named(decision: &Value, seat: &Value, name: &str) -> bool {
+    decision["observation"]["projection"]["battlefield"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|cards| cards.as_array().into_iter().flatten())
+        .any(|card| {
+            &card["stable"]["controller"] == seat
+                && card["stable"]["card_db_id"]
+                    .as_u64()
+                    .is_some_and(|id| CARD_DEFS[id as usize].name == name)
+        })
+}
+
+/// Whether the opponent of `seat` controls a Hexing Squelcher, whose own
+/// "Ward--Pay 2 life" and the one it grants their other creatures policy
+/// observation v5 does not represent.
+fn opponent_has_life_ward(decision: &Value, seat: &Value) -> bool {
+    decision["observation"]["projection"]["battlefield"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|cards| cards.as_array().into_iter().flatten())
+        .any(|card| {
+            &card["stable"]["controller"] != seat
+                && card["stable"]["card_db_id"]
+                    .as_u64()
+                    .is_some_and(|id| CARD_DEFS[id as usize].name == "Hexing Squelcher")
+        })
+}
+
+/// Whether starting this spell or ability may target a permanent: its card
+/// or ability has a target, or its entry trigger targets one.
+fn may_target(action: &Value) -> bool {
+    let s = &action["semantic"];
+    let Some(id) = s["source"]["card_db_id"].as_u64() else {
+        return false;
+    };
+    let def = &CARD_DEFS[id as usize];
+    match s["action_kind"].as_str() {
+        Some("cast_spell") => {
+            def.target_spec != TargetSpec::None
+                || def.mode2.is_some()
+                || matches!(def.name, "Portable Hole" | "Witch Enchanter")
+        }
+        Some("activate_ability") => s["ability_index"]
+            .as_u64()
+            .and_then(|index| def.activated_abilities.get(index as usize))
+            .is_some_and(|ability| ability.target_spec != TargetSpec::None),
+        _ => false,
+    }
+}
+
+/// Whether this action puts a companion into its owner's hand.
+fn is_companion_action(action: &Value) -> bool {
+    let s = &action["semantic"];
+    s["action_kind"] == "activate_ability"
+        && s["source"]["zone"] == serde_json::to_value(mtg_kernel::state::Zone::Exile).unwrap()
+        && s["source"]["card_db_id"]
+            .as_u64()
+            .is_some_and(|id| CARD_DEFS[id as usize].name == "Lurrus of the Dream-Den")
+}
+
 /// Whether the public session can follow this action. Policy observation v5
 /// fails closed while an Escape cast stages its graveyard exile (Sleep of the
-/// Dead) and once an extra turn is scheduled (Emrakul, the Aeons Torn's cast
-/// trigger, Time Walk, Time Vault's ability), so these games never begin
-/// either; the engine paths are covered by the rules tests. Every other
-/// action is admitted.
-fn session_can_follow(action: &Value) -> bool {
+/// Dead, and every nonland card under Underworld Breach) and once an extra
+/// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
+/// Time Vault's ability), so these games never begin either; the engine
+/// paths are covered by the rules tests. Every other action is admitted.
+fn session_can_follow(action: &Value, decision: &Value) -> bool {
     let s = &action["semantic"];
     if !matches!(
         s["action_kind"].as_str(),
@@ -192,7 +266,8 @@ fn session_can_follow(action: &Value) -> bool {
     }
     s["action_kind"] != "cast_spell"
         || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
-        || CARD_DEFS[id].escape.is_none()
+        || (CARD_DEFS[id].escape.is_none()
+            && !controls_named(decision, &s["actor"], "Underworld Breach"))
 }
 
 /// Whether this action chooses a Ward permanent as a target.
@@ -260,6 +335,7 @@ struct Game {
     transcript_sha256: String,
     action_counts: BTreeMap<String, usize>,
     casts_by_seat: [usize; 2],
+    companion_actions: usize,
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -274,6 +350,7 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
     let mut transcript = Sha256::new();
     let mut action_counts = BTreeMap::new();
     let mut casts_by_seat = [0; 2];
+    let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
     let mut random_state = match policy {
@@ -316,6 +393,7 @@ last actions:
                 transcript_sha256: format!("{:x}", transcript.finalize()),
                 action_counts,
                 casts_by_seat,
+                companion_actions,
             };
         }
         let decision = &reply["decision"];
@@ -323,12 +401,15 @@ last actions:
             .as_array()
             .unwrap()
             .iter()
-            .filter(|action| session_can_follow(action))
+            .filter(|action| session_can_follow(action, decision))
             .collect();
         // Policy observation v5 fails closed while two stack items target
         // one Ward permanent, so these games avoid targeting a Ward
         // permanent whenever another action is available, and start no new
-        // spell or ability while something on the stack targets one.
+        // spell or ability while something on the stack targets one. It
+        // does not represent "Ward--Pay N life" at all, so while a seat's
+        // opponent controls a Hexing Squelcher that seat starts no spell or
+        // ability that may target a permanent.
         let ward_targeted = public_targets_ward_permanent(decision);
         let unwarded: Vec<&Value> = actions
             .iter()
@@ -341,6 +422,12 @@ last actions:
                     action["semantic"]["action_kind"].as_str(),
                     Some("cast_spell" | "activate_ability")
                 );
+                if starts_new
+                    && may_target(action)
+                    && opponent_has_life_ward(decision, &action["semantic"]["actor"])
+                {
+                    return false;
+                }
                 !ward_targeted || !starts_new
             })
             .collect();
@@ -364,6 +451,9 @@ last actions:
                 actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }
         };
+        if is_companion_action(action) {
+            companion_actions += 1;
+        }
         recent.push(action["semantic"].to_string());
         if recent.len() > 8 {
             recent.remove(0);
@@ -398,22 +488,24 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
         .collect();
     assert_eq!(decks.len(), PLAYABLE.len());
     for deck in &decks {
-        let ids = deck
-            .mainboard
-            .resolve()
+        let (ids, companion) = deck
+            .deck
+            .resolve_with_companion()
             .unwrap_or_else(|error| panic!("{}: {error}", deck.archetype));
         preflight_fully_supported_deck(&ids)
             .unwrap_or_else(|error| panic!("{}: {error:?}", deck.archetype));
+        assert_eq!(companion.is_some(), deck.deck.companion.is_some());
     }
     // Each deck plays the next one, so every deck takes both seats, once
     // with ranked actions and once with seeded random actions.
     let mut random_activations = 0;
+    let mut companion_actions = 0;
     // Every deck casts a spell in its two ranked games (one per seat); a
     // single shuffle can leave one seat without a castable spell.
     let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
     for index in 0..decks.len() {
         let (first, second) = (&decks[index], &decks[(index + 1) % decks.len()]);
-        let pair = [first.mainboard.clone(), second.mainboard.clone()];
+        let pair = [first.deck.clone(), second.deck.clone()];
         let seed = 0x4554_4552_0000 + index as u64;
         for policy in [Policy::Ranked, Policy::Random(seed)] {
             let game = play(pair.clone(), seed, policy);
@@ -423,6 +515,7 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
                 "{} / {}",
                 first.archetype, second.archetype
             );
+            companion_actions += game.companion_actions;
             if let Policy::Ranked = policy {
                 *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
                 *ranked_casts.entry(second.archetype.as_str()).or_default() +=
@@ -447,5 +540,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     assert!(
         random_activations > 0,
         "random games activated no abilities"
+    );
+    assert!(
+        companion_actions > 0,
+        "no game put a companion into its owner's hand"
     );
 }

@@ -453,7 +453,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         TEZZERET => &TEZZERET_TRIGGERS,
         CHANCELLOR => &CHANCELLOR_TRIGGERS,
         WITCH_ENCHANTER => &WITCH_ENCHANTER_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_lurrus_v1::triggers_for(name),
     }
 }
 
@@ -468,6 +468,10 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to E4b's cards, so they answer first.
+    if let Some(spec) = crate::eternal_lurrus_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }
@@ -558,7 +562,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         MANA_VAULT => *effect == mana_vault_draw_step(),
         TEZZERET => *effect == tezzeret_emblem_counters(),
         CHANCELLOR => *effect == chancellor_reveal_choice() || is_counter_unless_pays_one(effect),
-        _ => false,
+        _ => crate::eternal_lurrus_v1::delayed_effect_matches(name, effect),
     }
 }
 
@@ -1109,7 +1113,7 @@ pub(crate) fn mana_abilities_active(
     match name {
         URZAS_SAGA => Some(saga_level(state, object) >= 1),
         WITCH_ENCHANTER => Some(state.objects.get(object).v4.face_index == 1),
-        _ => None,
+        _ => crate::eternal_lurrus_v1::mana_abilities_active(state, object, name),
     }
 }
 
@@ -1121,7 +1125,8 @@ pub(crate) fn activation_allowed(
     name: &str,
     _ability_index: usize,
 ) -> bool {
-    name != URZAS_SAGA || saga_level(state, source) >= 2
+    (name != URZAS_SAGA || saga_level(state, source) >= 2)
+        && crate::eternal_lurrus_v1::activation_allowed(state, source)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
@@ -1713,10 +1718,11 @@ pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> boo
     {
         return true;
     }
-    artifact
+    (artifact
         && active_permanents(state, KARN, Some(live.controller.opponent()))
             .next()
-            .is_some()
+            .is_some())
+        || crate::eternal_lurrus_v1::activations_prohibited(state, object)
 }
 
 /// Whether `target` has protection from creatures (Seasoned Dungeoneer).

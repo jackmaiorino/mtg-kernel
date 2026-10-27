@@ -369,6 +369,10 @@ pub enum Subtype {
     Archon,
     Karn,
     Tezzeret,
+    /// Appended for the eternal catalog's Vintage Lurrus decks (Psychic
+    /// Frog, Hexing Squelcher).
+    Frog,
+    Sorcerer,
 }
 
 impl Subtype {
@@ -687,6 +691,10 @@ impl Subtype {
         Subtype::Mutant,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Archon,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Frog,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Sorcerer,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -785,6 +793,8 @@ impl Subtype {
                     | Subtype::Wraith
                     | Subtype::Mutant
                     | Subtype::Archon
+                    | Subtype::Frog
+                    | Subtype::Sorcerer
             )
         {
             return true;
@@ -1505,6 +1515,14 @@ pub enum CostComponent {
     /// at a time until the chosen set covers N card types. Appended for the
     /// eternal catalog.
     ExileOtherGraveyardCardsWithCardTypesV1(u8),
+    /// "Return two Islands you control to their owner's hand" (Gush):
+    /// `count` distinct controlled permanents matching `filter`, chosen one
+    /// at a time through `Decision::ChooseCostTargets` before any payment
+    /// commits. Appended for the eternal catalog.
+    ReturnControlledPermanentsToOwnersHandV1 {
+        count: u8,
+        filter: PermanentFilterDef,
+    },
 }
 
 impl CostComponent {
@@ -1620,6 +1638,9 @@ pub enum AltCostCondition {
         time_counters: u8,
     },
     DisguiseFromHand,
+    /// "If it's not your turn" (Force of Negation). Appended for the
+    /// eternal catalog.
+    NotYourTurnV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -3071,7 +3092,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x3abe_dc8b_a56b_87d3;
+        const EXPECTED_ETERNAL: u64 = 0xac2a_c313_e3e3_a6b5;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

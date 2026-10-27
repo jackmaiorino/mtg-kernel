@@ -5197,6 +5197,35 @@ impl RlEpisodeSessionV1 {
         foundations_combat: bool,
         london_mulligans: bool,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_custom_decks_companions_and_london_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            card_ids,
+            [None, None],
+            priority_mode,
+            foundations_combat,
+            london_mulligans,
+        )
+    }
+
+    /// `reset_with_custom_decks_and_london_v1` with each seat's companion,
+    /// put face up in exile before the game begins.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_with_custom_decks_companions_and_london_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        card_ids: [&[u16]; 2],
+        companions: [Option<u16>; 2],
+        priority_mode: crate::surface_v2::PriorityModeV1,
+        foundations_combat: bool,
+        london_mulligans: bool,
+    ) -> Result<Self, RlSessionError> {
         let mut state =
             build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
@@ -5208,6 +5237,11 @@ impl RlEpisodeSessionV1 {
         if london_mulligans {
             crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
                 .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        }
+        // Companions join exile after the opening deal is bound, which
+        // requires an empty exile.
+        if companions.iter().any(Option::is_some) {
+            crate::eternal_lurrus_v1::add_companions(&mut state, companions);
         }
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));

@@ -548,7 +548,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         // "You may exile a blue card from your hand rather than pay this
         // spell's mana cost."
         "Misdirection" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::U)], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_lurrus_v1::alt_cost_for(name),
     }
 }
 
@@ -557,7 +557,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Prismari Charm" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1), effect: crate::eternal_cards_v1::prismari_charm_damage })",
-        _ => "None",
+        _ => super::build_eternal_lurrus_v1::mode2_for(name),
     }
 }
 
@@ -566,7 +566,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Prismari Charm" => "Some(ModeDef { target_spec: TargetSpec::NonlandPermanent, effect: crate::eternal_cards_v1::return_target_to_owners_hand })",
-        _ => "None",
+        _ => super::build_eternal_lurrus_v1::mode3_for(name),
     }
 }
 
@@ -597,7 +597,7 @@ pub(super) fn adventure_face_name_for(name: &str) -> Option<&'static str> {
 
 /// Delve (702.66).
 pub(super) fn delve_for(name: &str) -> bool {
-    name == "Murktide Regent"
+    name == "Murktide Regent" || super::build_eternal_lurrus_v1::delve_for(name)
 }
 
 /// Nethergoyf: "Escape--{2}{B}, Exile any number of other cards from your

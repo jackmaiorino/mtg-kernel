@@ -248,6 +248,9 @@ pub mod engine;
 mod equipment_damage_source_v4;
 /// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
 pub mod eternal_cards_v1;
+/// Vintage Lurrus card programs and companions of the eternal catalog (wave
+/// E4b).
+pub mod eternal_lurrus_v1;
 /// Vintage card programs of the eternal catalog (wave E4).
 pub mod eternal_vintage_v1;
 pub mod event;

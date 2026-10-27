@@ -1739,7 +1739,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::RemoveSourceCountersV1 { .. }
             | card_def::CostComponent::PayEnergyV1(_)
             | card_def::CostComponent::ExileCardFromHandWithColorV1(_)
-            | card_def::CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)) => {
+            | card_def::CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
+            | card_def::CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }

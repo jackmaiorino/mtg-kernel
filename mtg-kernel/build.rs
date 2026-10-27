@@ -21,6 +21,7 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -3133,6 +3134,9 @@ enum AbilityCostRecipe {
     RemoveSourceIncubationCounters(u16),
     /// "Pay {E}..." (`CostComponent::PayEnergyV1`).
     PayEnergy(u8),
+    /// "Exile N cards from your graveyard"
+    /// (`CostComponent::ExileOtherCardsFromOwnGraveyard`).
+    ExileGraveyardCards(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4623,7 +4627,9 @@ fn object_name_for(name: &str) -> &str {
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
         "Knight Vigilance Token" => "Knight Token",
-        _ => build_standard_v1::object_name_for(name).unwrap_or(name),
+        _ => build_standard_v1::object_name_for(name)
+            .or_else(|| build_eternal_lurrus_v1::object_name_for(name))
+            .unwrap_or(name),
     }
 }
 
@@ -4749,7 +4755,8 @@ fn kicker_cost_for(name: &str) -> String {
         "Tear Asunder" => cost_src("{1}{B}"),
         "Grow from the Ashes" => cost_src("{2}"),
         "Gatekeeper of Malakir" => cost_src("{B}"),
-        _ => "None".to_string(),
+        _ => build_eternal_lurrus_v1::kicker_cost_for(name)
+            .map_or_else(|| "None".to_string(), cost_src),
     }
 }
 
@@ -6270,6 +6277,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
             "CostComponent::RemoveNetCounterFromSelf".to_string()
         }
         AbilityCostRecipe::PayEnergy(amount) => format!("CostComponent::PayEnergyV1({amount})"),
+        AbilityCostRecipe::ExileGraveyardCards(count) => {
+            format!("CostComponent::ExileOtherCardsFromOwnGraveyard({count})")
+        }
     }
 }
 
@@ -6324,6 +6334,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::RemoveNetCounterFromSelf => "remove_net_counter_from_self".to_string(),
         AbilityCostRecipe::PayEnergy(amount) => format!("pay_energy:{amount}"),
+        AbilityCostRecipe::ExileGraveyardCards(count) => format!("exile_graveyard_cards:{count}"),
     }
 }
 
@@ -7070,7 +7081,10 @@ fn ward_cost_for(name: &str) -> &'static str {
         "Sire of Seven Deaths" => "Some(WardCostDef::PayLife(7))",
         "Zul Ashur, Lich Lord" => "Some(WardCostDef::PayLife(2))",
         "Graveyard Trespasser" => "Some(WardCostDef::DiscardCard)",
-        _ => build_standard_v1::ward_cost_for(name),
+        _ => match build_standard_v1::ward_cost_for(name) {
+            "None" => build_eternal_lurrus_v1::ward_cost_for(name),
+            ward => ward,
+        },
     }
 }
 
@@ -7312,6 +7326,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         | "Lush Portico"
         | "Underground Mortuary"
         | "Undercity Sewers"
+        | "Meticulous Archive"
         | "Hedge Maze"
         | "Thundering Falls" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
@@ -10277,7 +10292,7 @@ fn codegen(cards: &[CardJson]) -> String {
         let extra_modes = if c.name == "Gix's Command" {
             "&[ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_3 }, ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_4 }, ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_5 }]"
         } else {
-            "&[]"
+            build_eternal_lurrus_v1::additional_modes_for(&c.name)
         };
         writeln!(out, "        additional_modes: {extra_modes},").unwrap();
         let kicked_target = if c.name == "Tear Asunder" {
@@ -11165,6 +11180,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Archon" => "Subtype::Archon",
         "Karn" => "Subtype::Karn",
         "Tezzeret" => "Subtype::Tezzeret",
+        "Frog" => "Subtype::Frog",
+        "Sorcerer" => "Subtype::Sorcerer",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

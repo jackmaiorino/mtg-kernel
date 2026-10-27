@@ -158,7 +158,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Manifold Key" => &MANIFOLD_KEY,
         "Vexing Bauble" => &VEXING_BAUBLE,
         "Time Vault" => &TIME_VAULT,
-        _ => &[],
+        _ => super::build_eternal_lurrus_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -191,7 +191,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::extra_turn_v1::recipe",
         },
-        _ => return None,
+        _ => return super::build_eternal_lurrus_v1::special_for(name),
     })
 }
 
@@ -202,7 +202,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
             &["Keywords::FLYING"]
         }
         "Anointed Peacekeeper" => &["Keywords::VIGILANCE"],
-        _ => &[],
+        _ => super::build_eternal_lurrus_v1::keywords_for(name),
     }
 }
 
@@ -245,7 +245,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Urza's Saga" => {
             "saga:i:gains_tap_add_c;ii:gains_construct_ability;iii:search_artifact_mana_cost_0_or_1_to_battlefield"
         }
-        _ => "none",
+        _ => super::build_eternal_lurrus_v1::trigger_recipe_for(name),
     }
 }
 

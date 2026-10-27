@@ -708,6 +708,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::AnotherArtifactV1 | S::UpToOneNoncreatureArtifactV1 => typed(CardType::Artifact),
         S::AttackingClericRogueWarriorOrWizardV1 => creature(),
         S::AnyNumberControlledNonlandNontokenPermanentsV1 => ObjF::NonlandPermanent,
+        S::PlayerThenArtifactV1 | S::PlayerThenCreatureV1 => ObjF::PlayerOrPermanent,
+        S::ArtifactThenCreatureV1 => ObjF::Permanent,
     }
 }
 
@@ -738,6 +740,9 @@ pub(super) fn standard_target_origin(
         | S::NonbasicLandV1
         | S::AnotherArtifactV1
         | S::UpToOneNoncreatureArtifactV1
+        | S::PlayerThenArtifactV1
+        | S::PlayerThenCreatureV1
+        | S::ArtifactThenCreatureV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -840,6 +845,26 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Artifact), relation, zone);
             out.target(TargetAtom::UpTo);
             // The noncreature refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::PlayerThenArtifactV1 | S::PlayerThenCreatureV1 => {
+            out.target(TargetAtom::PlayerYou);
+            out.target(TargetAtom::PlayerOpponent);
+            let second = if filter == S::PlayerThenArtifactV1 {
+                typed(CardType::Artifact)
+            } else {
+                creature()
+            };
+            object(out, second, relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            // Which slot takes which kind has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::ArtifactThenCreatureV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            // Both target words may name one artifact creature.
             out.atoms.push(Atom::Opaque);
         }
     }

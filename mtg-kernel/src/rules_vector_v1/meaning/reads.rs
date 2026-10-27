@@ -589,6 +589,11 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             out.atoms.push(Atom::Opaque);
             ObjF::Typed(CardTypeF::Artifact)
         }
+        LibraryCardFilter::BlueInstantV1 => {
+            // The color refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Instant)
+        }
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(_) => ObjF::Permanent,
         LibraryCardFilter::ArtifactWithManaValue(_) => {
             // The frozen vocabulary lacks an exact mana-value read predicate.

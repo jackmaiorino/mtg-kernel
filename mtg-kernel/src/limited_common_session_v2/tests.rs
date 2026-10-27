@@ -64,6 +64,7 @@ fn deck(name: &str, count: u32) -> CustomDeckV1 {
             name: name.into(),
             count,
         }],
+        companion: None,
     }
 }
 fn reset(actor: PlayerSeatV1, id: &str) -> LimitedCommonRequestV2 {
@@ -942,6 +943,7 @@ fn public_v2_full_fake_reference_reset_owned_restore_and_continued_gameplay_both
         if let LimitedCommonRequestV2::Reset { decks, .. } = &mut input {
             *decks = std::array::from_fn(|_| CustomDeckV1 {
                 cards: crate::fake_full_engine_admission_v1_tests::reference_rows(),
+                companion: None,
             });
         }
         let opening = server.handle_request(input);
