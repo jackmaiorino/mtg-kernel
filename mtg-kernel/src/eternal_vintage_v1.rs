@@ -468,8 +468,12 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to E4b's cards, so they answer first.
+    if let Some(spec) = crate::eternal_lurrus_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
-        return crate::eternal_lurrus_v1::trigger_target_spec(name, effect);
+        return None;
     }
     Some(
         if name == SEASONED_DUNGEONEER && *effect == dungeoneer_attack() {

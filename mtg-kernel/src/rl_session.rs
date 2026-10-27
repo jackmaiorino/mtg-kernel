@@ -5230,9 +5230,6 @@ impl RlEpisodeSessionV1 {
             build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
             })?;
-        if companions.iter().any(Option::is_some) {
-            crate::eternal_lurrus_v1::add_companions(&mut state, companions);
-        }
         if foundations_combat {
             crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
                 .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
@@ -5240,6 +5237,11 @@ impl RlEpisodeSessionV1 {
         if london_mulligans {
             crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
                 .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        }
+        // Companions join exile after the opening deal is bound, which
+        // requires an empty exile.
+        if companions.iter().any(Option::is_some) {
+            crate::eternal_lurrus_v1::add_companions(&mut state, companions);
         }
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));

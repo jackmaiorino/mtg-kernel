@@ -1004,6 +1004,28 @@ pub(crate) fn trigger_matches(
     }
 }
 
+/// The source contract of a delayed trigger created by a resolving spell
+/// (Mana Drain, Forth Eorlingas!). An ability's source contract can't name
+/// the stack, so the trigger is bound to the card's current incarnation
+/// when it triggers, after the spell has left the stack.
+fn spell_delayed_source(
+    state: &GameState,
+    recorded: AbilitySourceContractV4,
+    controller: PlayerId,
+) -> Option<AbilitySourceContractV4> {
+    let live = state.objects.try_get(recorded.source)?;
+    if live.zone == Zone::Stack
+        || live.card_def != recorded.card_def
+        || live.owner != recorded.owner
+        || live.zone_change_count < recorded.zone_change_count
+    {
+        return None;
+    }
+    let mut contract = AbilitySourceContractV4::capture(state, recorded.source);
+    contract.controller = controller;
+    Some(contract)
+}
+
 fn queue_trigger(
     state: &mut GameState,
     source: AbilitySourceContractV4,
@@ -1107,12 +1129,9 @@ pub(crate) fn note_combat_damage(state: &mut GameState, events: &[CommittedEvent
         })
         .unwrap_or_default();
     for watch in watches {
-        queue_trigger(
-            state,
-            watch.source,
-            watch.controller,
-            LurrusOpV1::BecomeMonarchV1,
-        );
+        if let Some(source) = spell_delayed_source(state, watch.source, watch.controller) {
+            queue_trigger(state, source, watch.controller, LurrusOpV1::BecomeMonarchV1);
+        }
     }
 }
 
@@ -1130,16 +1149,19 @@ pub(crate) fn begin_main_phase(state: &mut GameState) -> bool {
         .into_iter()
         .partition(|drain| drain.controller == player);
     eternal.lurrus.mana_drains = rest;
-    let queued = !due.is_empty();
+    let mut queued = false;
     for drain in due {
-        queue_trigger(
-            state,
-            drain.source,
-            drain.controller,
-            LurrusOpV1::AddColorlessV1 {
-                amount: drain.amount,
-            },
-        );
+        if let Some(source) = spell_delayed_source(state, drain.source, drain.controller) {
+            queued = true;
+            queue_trigger(
+                state,
+                source,
+                drain.controller,
+                LurrusOpV1::AddColorlessV1 {
+                    amount: drain.amount,
+                },
+            );
+        }
     }
     queued
 }

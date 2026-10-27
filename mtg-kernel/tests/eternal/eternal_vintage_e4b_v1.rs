@@ -683,11 +683,10 @@ fn dig_through_time_delves_and_takes_two_of_seven() {
     cast(&mut state, dig, &[]);
     settle_first(&mut state);
     assert_eq!(
-        state.players[0].graveyard.len(),
-        2,
-        "delve exiled five of six, then Dig Through Time"
+        state.players[0].graveyard,
+        vec![dig],
+        "{{6}}{{U}}{{U}}: delve exiled all six"
     );
-    assert!(state.players[0].graveyard.contains(&dig));
     assert_eq!(state.players[0].hand.len(), 2);
     assert!(state.players[0].hand.iter().all(|card| top.contains(card)));
 }
