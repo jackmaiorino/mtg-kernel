@@ -806,6 +806,8 @@ enum ObjectiveV1 {
 struct FdReportV1 {
     witnesses: usize,
     max_ratio: f64,
+    /// The witness with the largest error ratio, for the receipt.
+    max_witness: String,
     counted_new: BTreeMap<String, usize>,
     outside: Vec<String>,
 }
@@ -880,6 +882,7 @@ where
     let mut report = FdReportV1 {
         witnesses: 0,
         max_ratio: 0.0,
+        max_witness: String::new(),
         counted_new: BTreeMap::new(),
         outside: Vec::new(),
     };
@@ -908,7 +911,13 @@ where
             let allowance = FD_ABSOLUTE_V1 + FD_RELATIVE_V1 * numerical.abs();
             let ratio = (analytic - numerical).abs() / allowance;
             report.witnesses += 1;
-            report.max_ratio = report.max_ratio.max(ratio);
+            if ratio > report.max_ratio {
+                report.max_ratio = ratio;
+                report.max_witness = format!(
+                    "{} [{index}] rust {analytic:e} oracle {numerical:e}",
+                    block.name
+                );
+            }
             if ratio > 1.0 {
                 report.outside.push(format!(
                     "{} [{index}]: rust {analytic:e} oracle {numerical:e}",
@@ -932,7 +941,6 @@ where
 fn wide_gradients_match_f64_central_differences_with_detection_power() {
     let narrow = perturbed_dims_v1::<Net8DimsV1>(narrow_model_v1(), 0xA11C_E5ED);
     let wide = perturbed_dims_v1::<Net8W128DimsV1>(wide_model_v1(), 0xA11C_E5ED);
-    let mut receipt = Vec::new();
     for objective in [ObjectiveV1::Gae, ObjectiveV1::Terminal] {
         let narrow_report = fd_check_dims_v1::<Net8DimsV1>(&narrow, objective);
         assert!(
@@ -942,15 +950,22 @@ fn wide_gradients_match_f64_central_differences_with_detection_power() {
         );
         let r_n = narrow_report.max_ratio;
         let wide_report = fd_check_dims_v1::<Net8W128DimsV1>(&wide, objective);
-        receipt.push(format!(
-            "{objective:?}: r_n={r_n:.6e} narrow_witnesses={} wide_max_ratio={:.6e} \
-             wide_witnesses={} wide_over_r_n={:.4} min_counted_new={}",
+        // Written past the test harness's capture, before the gate, so CI
+        // logs carry the receipt on every target.
+        writeln!(
+            std::io::stderr().lock(),
+            "WIDE_FD_RECEIPT_V1 {objective:?}: r_n={r_n:.6e} narrow_witnesses={} \
+             wide_max_ratio={:.6e} wide_witnesses={} wide_over_r_n={:.4} \
+             min_counted_new={} narrow_max=({}) wide_max=({})",
             narrow_report.witnesses,
             wide_report.max_ratio,
             wide_report.witnesses,
             wide_report.max_ratio / r_n,
             wide_report.counted_new.values().min().copied().unwrap_or(0),
-        ));
+            narrow_report.max_witness,
+            wide_report.max_witness,
+        )
+        .unwrap();
         assert!(
             wide_report.outside.is_empty(),
             "wide {objective:?} outside tolerance: {:?}",
@@ -971,11 +986,6 @@ fn wide_gradients_match_f64_central_differences_with_detection_power() {
             wide_report.max_ratio,
             FD_NARROW_RATIO_FACTOR_V1 * r_n
         );
-    }
-    // Written past the test harness's capture so CI logs carry the receipt.
-    let mut stderr = std::io::stderr().lock();
-    for line in receipt {
-        writeln!(stderr, "WIDE_FD_RECEIPT_V1 {line}").unwrap();
     }
 }
 
