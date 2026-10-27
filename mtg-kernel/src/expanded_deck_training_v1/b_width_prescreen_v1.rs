@@ -1252,9 +1252,7 @@ fn set_aside_torn_attempt_v1(games: &Path, index: usize) -> Result<bool, String>
         return Ok(false);
     }
     let target = (0..)
-        .map(|n| {
-            games.join(format!("{}{n}", torn_attempt_prefix_v1(index)))
-        })
+        .map(|n| games.join(format!("{}{n}", torn_attempt_prefix_v1(index))))
         .find(|candidate| !candidate.exists())
         .expect("an unused name");
     fs::rename(&path, &target).map_err(err)?;
