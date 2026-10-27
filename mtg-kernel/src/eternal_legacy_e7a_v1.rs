@@ -724,7 +724,7 @@ pub fn goblin_welder() -> EffectOp {
 
 /// Emry, Lurker of the Loch: "Choose target artifact card in your
 /// graveyard. You may cast that card this turn."
-pub fn emry_permission() -> EffectOp {
+pub fn emry_choose_artifact() -> EffectOp {
     e7a(E7aOpV1::EmryPermissionV1)
 }
 

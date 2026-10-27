@@ -203,7 +203,7 @@ const GOBLIN_WELDER: [ActivatedAbilityRecipe; 1] = [instant(
 /// graveyard. You may cast that card this turn."
 const EMRY: [ActivatedAbilityRecipe; 1] = [instant(
     &[Tap],
-    program("crate::eternal_legacy_e7a_v1::emry_permission"),
+    program("crate::eternal_legacy_e7a_v1::emry_choose_artifact"),
     "StandardV1(crate::standard_cards_v1::StandardTargetV1::ArtifactCardInOwnGraveyardV1)",
 )];
 

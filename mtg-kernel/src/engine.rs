@@ -7895,7 +7895,7 @@ fn spell_cost_generic_modifiers_v1(
         (u32::from(increase), u32::from(reduction))
     };
     #[cfg(not(feature = "standard-magezero-fixtures"))]
-    let (increase, reduction) = (0, 0);
+    let (increase, reduction): (u32, u32) = (0, 0);
     // Sphere of Resistance: "Spells cost {1} more to cast."
     let increase = if cfg!(feature = "eternal-fixtures") {
         increase.saturating_add(crate::eternal_legacy_e7a_v1::spell_tax(state))
