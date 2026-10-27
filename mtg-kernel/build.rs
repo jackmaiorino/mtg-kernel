@@ -25,6 +25,7 @@ mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;
 mod build_eternal_e6b_v1;
+mod build_eternal_e7b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -3141,6 +3142,9 @@ enum AbilityCostRecipe {
     /// "Exile N cards from your graveyard"
     /// (`CostComponent::ExileOtherCardsFromOwnGraveyard`).
     ExileGraveyardCards(u8),
+    /// "Remove a +1/+1 counter from this creature"
+    /// (`CostComponent::RemovePlusOneCounterFromSelfV1`).
+    RemovePlusOneCounterFromSelf,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6296,6 +6300,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ExileGraveyardCards(count) => {
             format!("CostComponent::ExileOtherCardsFromOwnGraveyard({count})")
         }
+        AbilityCostRecipe::RemovePlusOneCounterFromSelf => {
+            "CostComponent::RemovePlusOneCounterFromSelfV1".to_string()
+        }
     }
 }
 
@@ -6351,6 +6358,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::RemoveNetCounterFromSelf => "remove_net_counter_from_self".to_string(),
         AbilityCostRecipe::PayEnergy(amount) => format!("pay_energy:{amount}"),
         AbilityCostRecipe::ExileGraveyardCards(count) => format!("exile_graveyard_cards:{count}"),
+        AbilityCostRecipe::RemovePlusOneCounterFromSelf => {
+            "remove_plus_one_from_self:1".to_string()
+        }
     }
 }
 
@@ -11225,6 +11235,13 @@ fn subtype_variant(t: &str) -> &'static str {
         "Planet" => "Subtype::Planet",
         "Imp" => "Subtype::Imp",
         "Cartouche" => "Subtype::Cartouche",
+        "Dack" => "Subtype::Dack",
+        "Incarnation" => "Subtype::Incarnation",
+        "Trap" => "Subtype::Trap",
+        "Minsc" => "Subtype::Minsc",
+        "Snake" => "Subtype::Snake",
+        "Wrenn" => "Subtype::Wrenn",
+        "Hamster" => "Subtype::Hamster",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

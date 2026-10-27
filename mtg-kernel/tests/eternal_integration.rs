@@ -20,3 +20,5 @@ mod eternal_vintage_e4_v1;
 mod eternal_vintage_e4b_v1;
 #[path = "eternal/eternal_vintage_e5a_v1.rs"]
 mod eternal_vintage_e5a_v1;
+#[path = "eternal/eternal_vintage_e7b_v1.rs"]
+mod eternal_vintage_e7b_v1;

@@ -4603,6 +4603,19 @@ fn sba_fixed_point_with_protected_triggers(
                 dying.push(id);
             }
         }
+        // Regeneration (eternal wave E7b): a creature destroyed by lethal
+        // damage regenerates instead when it has a shield.
+        #[cfg(feature = "eternal-fixtures")]
+        if !dying.is_empty() {
+            let mut regenerated = false;
+            dying.retain(|&id| {
+                let shielded =
+                    crate::eternal_vintage_e7b_v1::statics::regenerate_from_damage(state, id);
+                regenerated |= shielded;
+                !shielded
+            });
+            changed |= regenerated;
+        }
         if !dying.is_empty() {
             crate::equipment_damage_source_v4::before_protected_departures(
                 state,
@@ -5405,6 +5418,12 @@ fn triggers_from_events(
                     continue;
                 }
                 for (i, ev) in events.iter().enumerate() {
+                    // Torpor Orb and Karn, Argent Defender (eternal wave
+                    // E7b): these permanents entering cause no triggers.
+                    #[cfg(feature = "eternal-fixtures")]
+                    if crate::eternal_vintage_e7b_v1::statics::entry_event_suppressed(state, ev) {
+                        continue;
+                    }
                     let copied_departure =
                         crate::standard_cards_v1::copied_departure_at(events, i, id);
                     let event_definition = if matches!(ev,CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. } if *object == id)

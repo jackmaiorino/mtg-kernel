@@ -114,7 +114,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Sheltering Landscape" => &SHELTERING_LANDSCAPE,
         "Greatsword of Tyr" => &GREATSWORD_OF_TYR,
         "Ragged Short Spear" => &RAGGED_SHORT_SPEAR,
-        _ => &[],
+        _ => super::build_eternal_e7b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -193,7 +193,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::ForestV1)",
             "crate::eternal_pauper_e6b_v1::utopia_sprawl",
         ),
-        _ => return None,
+        _ => return super::build_eternal_e7b_v1::special_for(name),
     })
 }
 
@@ -206,7 +206,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Kitchen Imp" => &["Keywords::FLYING", "Keywords::HASTE"],
         "Bird Token" => &["Keywords::FLYING"],
         "White Warrior Token" => &["Keywords::VIGILANCE"],
-        _ => &[],
+        _ => super::build_eternal_e7b_v1::keywords_for(name),
     }
 }
 
@@ -223,7 +223,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Martyr's Soul" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 2, x_count: 0 })], condition: AltCostCondition::Always })",
         "Ramosian Rally" => "Some(AltCostDef { components: &[CostComponent::TapUntappedControlledPermanent(PermanentFilterDef::CreatureV1)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Plains) })",
         "Demand Answers" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }), CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Artifact }], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_e7b_v1::alt_cost_for(name),
     }
 }
 
@@ -256,7 +256,7 @@ pub(super) fn flashback_for(name: &str) -> String {
 pub(super) fn madness_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Kitchen Imp" | "Alms of the Vein" => Some("{B}"),
-        _ => None,
+        _ => super::build_eternal_e7b_v1::madness_cost_for(name),
     }
 }
 
@@ -267,7 +267,7 @@ pub(super) fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
         "Salt Road Packbeast" => "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Creature]) })",
         "Search Party Captain" => "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::CreaturesAttackedThisTurn })",
-        _ => "None",
+        _ => super::build_eternal_e7b_v1::generic_cost_reduction_for(name),
     }
 }
 
@@ -409,6 +409,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "sneak:declare_blockers_step:enters_tapped_and_attacking;static:plus_1_plus_0_per_other_controlled_creature"
         }
         "Spider-Man, Web-Slinger" => "web_slinging:return_tapped_controlled_creature",
-        _ => "none",
+        _ => super::build_eternal_e7b_v1::trigger_recipe_for(name),
     }
 }

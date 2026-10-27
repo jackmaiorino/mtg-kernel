@@ -10792,6 +10792,7 @@ fn pending_cast_semantic_v2(
                     component,
                     crate::card_def::CostComponent::ReturnControlledPermanentToOwnersHand(_)
                         | crate::card_def::CostComponent::ExileCardFromHandWithColorV1(_)
+                        | crate::card_def::CostComponent::ExileCardsFromHandWithColorV1 { .. }
                         | crate::card_def::CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
                 )
             })

@@ -10505,6 +10505,24 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether `op` may run in the resumable interpreter (the dredge of wave
+/// E7b moves a synchronous program there while a dredge choice exists).
+pub(crate) fn resumable_program_supported(op: &EffectOp) -> bool {
+    validate_resumable_program(op).is_ok()
+}
+
+/// Regeneration (wave E7b): the objects of a destroy that regenerate
+/// instead are left out of it.
+fn without_regenerated_v1(state: &mut GameState, objects: Vec<ObjectId>) -> Vec<ObjectId> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return objects;
+    }
+    objects
+        .into_iter()
+        .filter(|&id| !crate::eternal_vintage_e7b_v1::statics::regenerate_instead(state, id))
+        .collect()
+}
+
 fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
     match op {
         EffectOp::Sequence(ops) => {
@@ -14266,6 +14284,50 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 if op.contains_player_choice() =>
             {
                 if crate::eternal_cards_v1::e3::drive(state, &mut continuation, &op, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            // Dredge (wave E7b): each card drawn may be dredged instead.
+            EffectOp::DrawCards { player, count }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                        state,
+                        &continuation,
+                        player,
+                    ) =>
+            {
+                if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+                    state,
+                    &mut continuation,
+                    player,
+                    count,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::DrawCardsDynamic { player, count }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                        state,
+                        &continuation,
+                        player,
+                    ) =>
+            {
+                let count = crate::engine::evaluate_dynamic_value(
+                    state,
+                    count,
+                    continuation.ctx.controller,
+                );
+                if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+                    state,
+                    &mut continuation,
+                    player,
+                    u32::try_from(count.max(0)).unwrap_or(0),
+                    path,
+                )? {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
@@ -18780,6 +18842,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     object,
                     crate::card_def::Keywords::INDESTRUCTIBLE,
                 )
+                && !without_regenerated_v1(state, vec![object]).is_empty()
             {
                 event::propose_and_commit(
                     state,
@@ -19531,11 +19594,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                         && crate::engine::effective_power(state, id) <= *power
                 })
                 .collect::<Vec<_>>();
-            let events = objects
+            let destroyed = objects
                 .into_iter()
                 .filter(|&id| {
                     !crate::engine::has_effective_keyword(state, id, Keywords::INDESTRUCTIBLE)
                 })
+                .collect::<Vec<_>>();
+            let events = without_regenerated_v1(state, destroyed)
+                .into_iter()
                 .map(|id| event::ProposedEvent::zone_change(id, Zone::Graveyard))
                 .collect();
             event::propose_and_commit_batch(state, events);
@@ -19554,11 +19620,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     id == *target || crate::engine::objects_share_name(state, id, *target)
                 })
                 .collect::<Vec<_>>();
-            let events = objects
+            let destroyed = objects
                 .into_iter()
                 .filter(|&id| {
                     !crate::engine::has_effective_keyword(state, id, Keywords::INDESTRUCTIBLE)
                 })
+                .collect::<Vec<_>>();
+            let events = without_regenerated_v1(state, destroyed)
+                .into_iter()
                 .map(|id| event::ProposedEvent::zone_change(id, Zone::Graveyard))
                 .collect();
             event::propose_and_commit_batch(state, events);
@@ -19598,7 +19667,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
         }
         EffectOp::DestroyAllCreatures => {
-            let events = [PlayerId::P0, PlayerId::P1]
+            let destroyed = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
                 .filter(|&object| {
@@ -19609,6 +19678,9 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                             crate::card_def::Keywords::INDESTRUCTIBLE,
                         )
                 })
+                .collect::<Vec<_>>();
+            let events = without_regenerated_v1(state, destroyed)
+                .into_iter()
                 .map(|object| event::ProposedEvent::zone_change(object, Zone::Graveyard))
                 .collect();
             event::propose_and_commit_batch(state, events);

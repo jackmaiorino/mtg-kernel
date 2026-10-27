@@ -238,6 +238,30 @@ pub enum StandardTargetV1 {
     /// "Up to one target creature defending player controls" (Greatsword
     /// of Tyr): a creature the opponent controls.
     UpToOneOpponentCreatureV1,
+    /// "Target nonland permanent with mana value N or less", any
+    /// controller (Abrupt Decay). Wave E7b's filters follow
+    /// (`eternal_vintage_e7b_v1::targets`).
+    NonlandPermanentManaValueAtMostV1(u8),
+    /// "Target permanent an opponent controls" (Assassin's Trophy).
+    OpponentPermanentV1,
+    /// "Any number of target spells" (Mindbreak Trap): distinct spells,
+    /// none required.
+    AnyNumberOfSpellsV1,
+    /// "Up to one target creature spell or planeswalker spell" (Subtlety).
+    UpToOneCreatureOrPlaneswalkerSpellV1,
+    /// "Target land card from a graveyard" (Deathrite Shaman).
+    LandCardInAGraveyardV1,
+    /// "Target instant or sorcery card from a graveyard" (Deathrite
+    /// Shaman).
+    InstantOrSorceryCardInAGraveyardV1,
+    /// "Target creature card from a graveyard" (Deathrite Shaman).
+    CreatureCardInAnyGraveyardV1,
+    /// "Up to one target land card from your graveyard" (Wrenn and Six).
+    UpToOneLandCardInOwnGraveyardV1,
+    /// "Target land card from your graveyard" (Carnivorous Cultivator).
+    LandCardInOwnGraveyardV1,
+    /// "Up to one target creature with trample or haste" (Minsc & Boo).
+    UpToOneCreatureWithTrampleOrHasteV1,
 }
 
 impl StandardTargetV1 {
@@ -260,6 +284,10 @@ impl StandardTargetV1 {
             Self::UpToOneOtherNonlandPermanentV1 => (1, 0),
             Self::TwoControlledArtifactsCreaturesOrLandsV1 => (2, 2),
             Self::UpToOneOpponentCreatureV1 => (1, 0),
+            Self::AnyNumberOfSpellsV1 => (64, 0),
+            Self::UpToOneCreatureOrPlaneswalkerSpellV1
+            | Self::UpToOneLandCardInOwnGraveyardV1
+            | Self::UpToOneCreatureWithTrampleOrHasteV1 => (1, 0),
             Self::CreaturesThenNonlandPermanentsV1 {
                 creatures,
                 permanents,
@@ -302,7 +330,7 @@ impl StandardTargetV1 {
         matches!(
             self,
             Self::InstantOrSorceryCardInOwnGraveyard | Self::CardInAGraveyard
-        )
+        ) || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
     }
 
     /// Filters whose targets are spells on the stack.
@@ -312,7 +340,7 @@ impl StandardTargetV1 {
             Self::InstantOrSorcerySpellV1
                 | Self::SpellWithSingleTargetV1
                 | Self::TriggeredAbilityOrColorlessSpellV1
-        )
+        ) || crate::eternal_vintage_e7b_v1::targets::on_stack(self)
     }
 }
 
@@ -452,6 +480,11 @@ pub(crate) fn legal_targets(
     state: &GameState,
 ) -> Vec<Target> {
     if let Some(targets) = eternal_e5a_legal_targets(target, controller, prefix, state) {
+        return targets;
+    }
+    if let Some(targets) = crate::eternal_vintage_e7b_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
         return targets;
     }
     if target.per_slot() {
@@ -629,6 +662,11 @@ pub(crate) fn target_matches(
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };
+    if let Some(matches) =
+        crate::eternal_vintage_e7b_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -741,6 +779,17 @@ pub(crate) fn target_matches(
         StandardTargetV1::UpToOneOpponentCreatureV1 => {
             live.controller != controller && has(CardType::Creature)
         }
+        // Answered by `eternal_vintage_e7b_v1::targets` above.
+        StandardTargetV1::NonlandPermanentManaValueAtMostV1(_)
+        | StandardTargetV1::OpponentPermanentV1
+        | StandardTargetV1::AnyNumberOfSpellsV1
+        | StandardTargetV1::UpToOneCreatureOrPlaneswalkerSpellV1
+        | StandardTargetV1::LandCardInAGraveyardV1
+        | StandardTargetV1::InstantOrSorceryCardInAGraveyardV1
+        | StandardTargetV1::CreatureCardInAnyGraveyardV1
+        | StandardTargetV1::UpToOneLandCardInOwnGraveyardV1
+        | StandardTargetV1::LandCardInOwnGraveyardV1
+        | StandardTargetV1::UpToOneCreatureWithTrampleOrHasteV1 => false,
     }
 }
 

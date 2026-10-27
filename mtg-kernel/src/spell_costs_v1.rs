@@ -843,6 +843,10 @@ pub(super) fn selected_spell_quote_branch_v1(
                 1,
                 super::hand_exile_cost_candidates(player, source, *color, state),
             )),
+            CostComponent::ExileCardsFromHandWithColorV1 { count, color } => Some((
+                usize::from(*count),
+                super::hand_exile_cost_candidates(player, source, *color, state),
+            )),
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
                 graveyard_types_needed = Some(*minimum);
                 Some((

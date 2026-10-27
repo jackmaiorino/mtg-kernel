@@ -365,6 +365,6 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> Option<&'static str> 
 pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Fantasticar Construct Token" => Some("Construct Token"),
-        _ => None,
+        _ => super::build_eternal_e7b_v1::object_name_for(name),
     }
 }

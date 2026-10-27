@@ -2098,6 +2098,13 @@ fn validate_physical_spell_cast_origin(
     contract: StackSourceContractV4,
     cast_method: CastMethodV4,
 ) -> Result<(), String> {
+    // Commandeer (eternal wave E7b) changes a spell's controller; its cast
+    // route still belongs to the player who cast it.
+    let caster = if cfg!(feature = "eternal-fixtures") {
+        crate::eternal_vintage_e7b_v1::spell_caster(state, item).unwrap_or(item.controller)
+    } else {
+        item.controller
+    };
     let source = state.objects.get(item.source);
     let origin = source
         .v4
@@ -2188,12 +2195,12 @@ fn validate_physical_spell_cast_origin(
             // Lair) from the caster's hand for free.
             let from_graveyard = cfg!(feature = "eternal-fixtures")
                 && origin.origin_zone == Zone::Graveyard
-                && source.owner == item.controller;
+                && source.owner == caster;
             let from_hand = cfg!(feature = "eternal-fixtures")
                 && origin.origin_zone == Zone::Hand
-                && source.owner == item.controller;
+                && source.owner == caster;
             (origin.origin_zone == Zone::Exile || from_graveyard || from_hand)
-                && holder == item.controller
+                && holder == caster
                 && (from_graveyard || item.v4.x_value == 0)
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
                     || (is_pending_placeholder
@@ -2205,14 +2212,14 @@ fn validate_physical_spell_cast_origin(
                 && (!is_pending_placeholder
                     || resolution_cast_v1::permit(state, item.source).is_some_and(|p| {
                         !p.land
-                            && p.controller == item.controller
+                            && p.controller == caster
                             && p.card.expected_zone == origin.origin_zone
                             && p.card.expected_zone_change_count == origin.origin_zone_change_count
                     }))
         }
         SpellCastRouteV4::Hand => {
             origin.origin_zone == Zone::Hand
-                && source.owner == item.controller
+                && source.owner == caster
                 && matches!(
                     cast_method,
                     CastMethodV4::Normal
@@ -2223,7 +2230,7 @@ fn validate_physical_spell_cast_origin(
         }
         SpellCastRouteV4::AdventureExile => {
             origin.origin_zone == Zone::Exile
-                && source.owner == item.controller
+                && source.owner == caster
                 && cast_method == CastMethodV4::Normal
                 && def.adventure.is_some()
         }
@@ -2232,7 +2239,7 @@ fn validate_physical_spell_cast_origin(
             permission_zone_change_count,
         } => {
             origin.origin_zone == Zone::Graveyard
-                && holder == item.controller
+                && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && def.name == "Mosswood Dreadknight"
                 && crate::standard_creatures_v1::graveyard_permission(state, item.source)
@@ -2245,7 +2252,7 @@ fn validate_physical_spell_cast_origin(
         }
         SpellCastRouteV4::GraveyardFlashback => {
             origin.origin_zone == Zone::Graveyard
-                && source.owner == item.controller
+                && source.owner == caster
                 && cast_method == CastMethodV4::Flashback
                 && has_flashback_v1(
                     state,
@@ -2260,8 +2267,8 @@ fn validate_physical_spell_cast_origin(
             permission_zone_change_count,
         } => {
             origin.origin_zone == Zone::Library
-                && source.owner == item.controller
-                && holder == item.controller
+                && source.owner == caster
+                && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && cast_method == CastMethodV4::Normal
                 && crate::eternal_e5a_v1::permissions::library_permission(
@@ -2276,8 +2283,8 @@ fn validate_physical_spell_cast_origin(
             permission_zone_change_count,
         } => {
             origin.origin_zone == Zone::Graveyard
-                && source.owner == item.controller
-                && holder == item.controller
+                && source.owner == caster
+                && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && matches!(
                     cast_method,
@@ -2299,7 +2306,7 @@ fn validate_physical_spell_cast_origin(
             permission_zone_change_count,
         } => {
             origin.origin_zone == Zone::Exile
-                && holder == item.controller
+                && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (!matches!(origin.route, SpellCastRouteV4::ExileFreePermission { .. })
                     || (item.v4.x_value == 0
@@ -2331,7 +2338,7 @@ fn validate_physical_spell_cast_origin(
         }
         SpellCastRouteV4::Plotted { plotted_turn } => {
             origin.origin_zone == Zone::Exile
-                && source.owner == item.controller
+                && source.owner == caster
                 && cast_method == CastMethodV4::Plotted
                 && def.plot_cost.is_some()
                 && source.plotted_turn == Some(plotted_turn)
@@ -2339,13 +2346,13 @@ fn validate_physical_spell_cast_origin(
         }
         SpellCastRouteV4::Madness => {
             origin.origin_zone == Zone::Exile
-                && source.owner == item.controller
+                && source.owner == caster
                 && cast_method == CastMethodV4::Madness
                 && def.madness_cost.is_some()
         }
         SpellCastRouteV4::GraveyardEscape => {
             origin.origin_zone == Zone::Graveyard
-                && source.owner == item.controller
+                && source.owner == caster
                 && cast_method == CastMethodV4::Escape
                 && has_escape_v1(
                     state,
@@ -5653,6 +5660,13 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 hand_exile_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::ExileCardsFromHandWithColorV1 { count, .. } => {
+                if *count == 0 {
+                    return false;
+                }
+                hand_exile_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
                 if *minimum == 0 {
                     return false;
@@ -5774,7 +5788,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 net_counter_count += 1;
             }
             CostComponent::RemoveNetCounterFromSelf
-            | CostComponent::RemoveChargeCounterFromSelf => {
+            | CostComponent::RemoveChargeCounterFromSelf
+            | CostComponent::RemovePlusOneCounterFromSelfV1 => {
                 net_counter_count += 1;
             }
             CostComponent::Crew(_) => {
@@ -5834,6 +5849,7 @@ fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
                         | CostComponent::TapUntappedControlledPermanent(_)
                         | CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand
                         | CostComponent::ExileCardFromHandWithColorV1(_)
+                        | CostComponent::ExileCardsFromHandWithColorV1 { .. }
                         | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
                         | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
                         | CostComponent::TapUntappedControlledPermanentsV1 { .. }
@@ -6156,6 +6172,10 @@ fn can_pay_components(
             CostComponent::RemoveChargeCounterFromSelf => {
                 state.objects.get(source).counters.charge > 0
             }
+            CostComponent::RemovePlusOneCounterFromSelfV1 => {
+                state.objects.get(source).zone == Zone::Battlefield
+                    && state.objects.get(source).counters.plus1_plus1 > 0
+            }
             CostComponent::RemoveSourceCountersV1 { kind, count } => {
                 crate::drake_hatcher_v1::can_pay(state, source, *kind, *count)
             }
@@ -6164,6 +6184,10 @@ fn can_pay_components(
             }
             CostComponent::ExileCardFromHandWithColorV1(color) => {
                 !hand_exile_cost_candidates(player, source, *color, state).is_empty()
+            }
+            CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
+                hand_exile_cost_candidates(player, source, *color, state).len()
+                    >= usize::from(*count)
             }
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
                 checked_graveyard_exile_candidates(player, source, state, &[]).is_some_and(
@@ -6320,6 +6344,11 @@ fn validate_cost_component_choices_v1(
     if components.iter().any(|c| matches!(c, CostComponent::RemoveSourceCountersV1 { kind, count } if !crate::drake_hatcher_v1::can_pay(state, source, *kind, *count))) { return None; }
     if components.contains(&CostComponent::RemoveChargeCounterFromSelf)
         && state.objects.get(source).counters.charge <= 0
+    {
+        return None;
+    }
+    if components.contains(&CostComponent::RemovePlusOneCounterFromSelfV1)
+        && state.objects.get(source).counters.plus1_plus1 <= 0
     {
         return None;
     }
@@ -6481,6 +6510,25 @@ fn validate_cost_component_choices_v1(
         if object_cost_chosen.len() != 1
             || !hand_exile_cost_candidates(player, source, color, state)
                 .contains(&object_cost_chosen[0])
+        {
+            return None;
+        }
+    }
+    let hand_exiles = components.iter().find_map(|component| match component {
+        CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
+            Some((usize::from(*count), *color))
+        }
+        _ => None,
+    });
+    if let Some((needed, color)) = hand_exiles {
+        let candidates = hand_exile_cost_candidates(player, source, color, state);
+        let duplicate = object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        if object_cost_chosen.len() != needed
+            || duplicate
+            || object_cost_chosen.iter().any(|id| !candidates.contains(id))
         {
             return None;
         }
@@ -6662,10 +6710,15 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::ExileSelf => {
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
             }
-            CostComponent::DiscardSelf => event::propose_and_commit(
-                state,
-                ProposedEvent::zone_change(source, Zone::Graveyard),
-            ),
+            CostComponent::DiscardSelf => {
+                // Cycling discards its card (Hollow One counts it).
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_vintage_e7b_v1::statics::note_discard(state, source);
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(source, Zone::Graveyard),
+                )
+            }
             CostComponent::SacrificeLands(n) => {
                 debug_assert_eq!(
                     object_cost_chosen.len(),
@@ -6823,6 +6876,9 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::RemoveChargeCounterFromSelf => {
                 state.objects.get_mut(source).counters.charge -= 1;
             }
+            CostComponent::RemovePlusOneCounterFromSelfV1 => {
+                state.objects.get_mut(source).counters.plus1_plus1 -= 1;
+            }
             CostComponent::RemoveSourceCountersV1 { kind, count } => {
                 crate::drake_hatcher_v1::pay(state, source, *kind, *count)?;
             }
@@ -6833,6 +6889,15 @@ fn commit_cost_components_from_plan_v1(
                 state,
                 ProposedEvent::zone_change(object_cost_chosen[0], Zone::Exile),
             ),
+            CostComponent::ExileCardsFromHandWithColorV1 { .. } => {
+                event::propose_and_commit_batch(
+                    state,
+                    object_cost_chosen
+                        .iter()
+                        .map(|&card| ProposedEvent::zone_change(card, Zone::Exile))
+                        .collect(),
+                );
+            }
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_) => {
                 commit_graveyard_exile(state, object_cost_chosen);
             }
@@ -7178,6 +7243,12 @@ fn alt_cost_condition_met(
                 && player == state.active_player
         }
         card_def::AltCostCondition::DisturbV1 => origin_zone == Zone::Graveyard,
+        // Mindbreak Trap: "If an opponent cast three or more spells this
+        // turn".
+        card_def::AltCostCondition::OpponentCastThreeSpellsThisTurnV1 => {
+            state.players[player.opponent().index()].spells_cast_this_turn >= 3
+        }
+        card_def::AltCostCondition::DashV1 => origin_zone == Zone::Hand,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -7614,6 +7685,8 @@ pub(crate) fn hand_exile_cost_candidates(
 enum CastSingleObjectCostV1 {
     ReturnPermanent(PermanentFilterDef),
     ExileHandCard(mana::ManaColor),
+    /// Commandeer's two blue cards.
+    ExileHandCards(mana::ManaColor, u8),
     ReturnPermanents(PermanentFilterDef, u8),
     /// A flashback cost that taps `count` matching permanents (Battle
     /// Screech).
@@ -7625,7 +7698,8 @@ impl CastSingleObjectCostV1 {
     fn count(self) -> u8 {
         match self {
             CastSingleObjectCostV1::ReturnPermanents(_, count)
-            | CastSingleObjectCostV1::TapPermanents(_, count) => count,
+            | CastSingleObjectCostV1::TapPermanents(_, count)
+            | CastSingleObjectCostV1::ExileHandCards(_, count) => count,
             CastSingleObjectCostV1::ReturnPermanent(_)
             | CastSingleObjectCostV1::ExileHandCard(_) => 1,
         }
@@ -7662,6 +7736,9 @@ fn cast_single_object_cost_needed(
             CostComponent::ExileCardFromHandWithColorV1(color) => {
                 Some(CastSingleObjectCostV1::ExileHandCard(*color))
             }
+            CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
+                Some(CastSingleObjectCostV1::ExileHandCards(*color, *count))
+            }
             CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
                 Some(CastSingleObjectCostV1::ReturnPermanents(*filter, *count))
             }
@@ -7683,6 +7760,12 @@ fn cast_single_object_cost_candidates(
         }
         CastSingleObjectCostV1::ExileHandCard(color) => {
             hand_exile_cost_candidates(pending.controller, pending.spell, color, state)
+        }
+        CastSingleObjectCostV1::ExileHandCards(color, _) => {
+            hand_exile_cost_candidates(pending.controller, pending.spell, color, state)
+                .into_iter()
+                .filter(|object| !pending.sacrifice_chosen.contains(object))
+                .collect()
         }
         CastSingleObjectCostV1::ReturnPermanents(filter, _) => {
             return_permanent_cost_candidates(pending.controller, state, filter, &[])
@@ -7987,7 +8070,15 @@ fn spell_cost_generic_modifiers_v1(
         (u32::from(increase), u32::from(reduction))
     };
     #[cfg(not(feature = "standard-magezero-fixtures"))]
-    let (increase, reduction) = (0, 0);
+    let (increase, reduction): (u32, u32) = (0, 0);
+    // Thorn of Amethyst and Lodestone Golem (eternal wave E7b).
+    let increase = if cfg!(feature = "eternal-fixtures") {
+        increase.saturating_add(crate::eternal_vintage_e7b_v1::statics::spell_tax(
+            state, types,
+        ))
+    } else {
+        increase
+    };
     if !(types.contains(&CardType::Instant) || types.contains(&CardType::Sorcery)) {
         return (increase, reduction);
     }
@@ -8069,6 +8160,12 @@ fn normal_cast_reduction_count(
         .count() as u32,
         card_def::DynamicCountDef::CreaturesAttackedThisTurn => {
             state.creatures_attacked_this_turn_v1()
+        }
+        // Hollow One. Without an eternal state this is zero.
+        card_def::DynamicCountDef::CardsCycledOrDiscardedThisTurnV1 => {
+            crate::eternal_vintage_e7b_v1::statics::cards_cycled_or_discarded_this_turn(
+                state, player,
+            )
         }
         card_def::DynamicCountDef::ControllerDrawsThisTurn => {
             state.players[player.index()].draws_this_turn
@@ -10339,6 +10436,24 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         }
                     }
                 }
+                // Avatar of Burgeoning Echoes (eternal wave E7b): its
+                // controller's planeswalkers have a loyalty ability, one
+                // index past their printed abilities.
+                #[cfg(feature = "eternal-fixtures")]
+                if let Some(granted) =
+                    crate::eternal_vintage_e7b_v1::statics::granted_avatar_ability(state, id)
+                {
+                    if let Ok(index) = u8::try_from(def.activated_abilities.len()) {
+                        if !crate::standard_cards_v1::activations_locked(state, id)
+                            && sorcery_speed_timing_ok(player, state)
+                            && !loyalty_ability_activated_this_turn(state, id)
+                            && can_pay_activation_components(granted.cost, player, id, state)
+                            && activation_target_prefix_can_complete(id, &granted, &[], state)
+                        {
+                            out.push((id, index));
+                        }
+                    }
+                }
                 // Agatha's Soul Cauldron's granted abilities follow
                 // (`standard_cards_v1::cauldron_granted_abilities`).
                 for (index, donor, local, granted) in
@@ -10402,6 +10517,13 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     out.extend(crate::eternal_e5a_v1::permissions::extra_land_candidates(
         state, player,
     ));
+    // Crucible of Worlds (wave E7b).
+    #[cfg(feature = "eternal-fixtures")]
+    for id in crate::eternal_vintage_e7b_v1::statics::extra_land_candidates(state, player) {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
     out
 }
 
@@ -11521,6 +11643,8 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
 /// replacement and ordinary owner-controlled trigger queue. Choice-bearing
 /// discard callers retain their own authentication and completion stages.
 pub(crate) fn commit_discarded_card(state: &mut GameState, id: ObjectId) {
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::statics::note_discard(state, id);
     let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
     if def.is_castable() && def.madness_cost.is_some() {
         // 702.83b: a discarded Madness card is exiled instead of
@@ -16271,8 +16395,16 @@ pub(crate) fn stack_targets_still_legal(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SpellDeparture {
-    Move { source: ObjectId, to_zone: Zone },
-    Cease { source: ObjectId },
+    Move {
+        source: ObjectId,
+        to_zone: Zone,
+        /// Where a library move places the card. Every departure but
+        /// Subtlety's (eternal wave E7b) goes on top.
+        placement: event::LibraryPlacement,
+    },
+    Cease {
+        source: ObjectId,
+    },
 }
 
 /// Purely derives how a spell source leaves the stack. Flashback replaces
@@ -16298,6 +16430,7 @@ fn plan_spell_departure(
     } else {
         SpellDeparture::Move {
             source: item.source,
+            placement: event::LibraryPlacement::Top,
             to_zone: if item.is_flashback
                 || (cfg!(feature = "eternal-fixtures")
                     && requested_zone == Zone::Graveyard
@@ -16321,8 +16454,18 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
     let faebloom_start = state.engine.event_history.len();
     let mut faebloom_ceased = false;
     match departure {
-        SpellDeparture::Move { source, to_zone } => {
-            event::propose_and_commit(state, ProposedEvent::zone_change(source, to_zone));
+        SpellDeparture::Move {
+            source,
+            to_zone,
+            placement,
+        } => {
+            let proposed = if to_zone == Zone::Library && placement != event::LibraryPlacement::Top
+            {
+                ProposedEvent::public_library_insert(source, placement)
+            } else {
+                ProposedEvent::zone_change(source, to_zone)
+            };
+            event::propose_and_commit(state, proposed);
         }
         SpellDeparture::Cease { source } => {
             // Resolution pops its item before applying the final
@@ -16645,6 +16788,30 @@ pub(crate) fn apply_live_stack_spell_departure(
     object: ObjectId,
     requested_zone: Zone,
 ) -> Result<bool, String> {
+    apply_live_stack_spell_departure_placed(
+        state,
+        object,
+        requested_zone,
+        event::LibraryPlacement::Top,
+    )
+}
+
+/// Subtlety (eternal wave E7b): a live spell goes to its owner's library at
+/// `placement`.
+pub(crate) fn apply_live_stack_spell_departure_to_library_v1(
+    state: &mut GameState,
+    object: ObjectId,
+    placement: event::LibraryPlacement,
+) -> Result<bool, String> {
+    apply_live_stack_spell_departure_placed(state, object, Zone::Library, placement)
+}
+
+fn apply_live_stack_spell_departure_placed(
+    state: &mut GameState,
+    object: ObjectId,
+    requested_zone: Zone,
+    placement: event::LibraryPlacement,
+) -> Result<bool, String> {
     let Some(live_source) = state.objects.try_get(object) else {
         return Ok(false);
     };
@@ -16665,7 +16832,16 @@ pub(crate) fn apply_live_stack_spell_departure(
         return Ok(false);
     };
     validate_spell_stack_source(state, &item)?;
-    let departure = plan_spell_departure(state, &item, requested_zone)?;
+    let departure = match plan_spell_departure(state, &item, requested_zone)? {
+        SpellDeparture::Move {
+            source, to_zone, ..
+        } => SpellDeparture::Move {
+            source,
+            to_zone,
+            placement,
+        },
+        cease => cease,
+    };
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     let fake_owner = crate::fake_your_own_death_v50::spell_custody::acquire(state, &item)?;
     if let Some(owner) = crate::faebloom_trick_v43::acquire(state, &item)? {
@@ -16712,7 +16888,16 @@ fn execute_resolving_program(
     ),
 ) -> ResolutionProgress {
     let (gourmand_owner, crystal_owner, inspiration_owner, hunter_owner) = extra_owners;
-    if crystal_owner.is_none() && !effect::contains_player_choice(program) {
+    // Dredge (eternal wave E7b): a draw may be replaced by a choice, so a
+    // drawing program runs in the resumable interpreter while one exists.
+    let dredge = cfg!(feature = "eternal-fixtures")
+        && squad_owner.is_none()
+        && frenzied_owner.is_none()
+        && gourmand_owner.is_none()
+        && inspiration_owner.is_none()
+        && hunter_owner.is_none()
+        && crate::eternal_vintage_e7b_v1::dredge::forces_resumable(state, program);
+    if crystal_owner.is_none() && !effect::contains_player_choice(program) && !dredge {
         effect::execute(program, ctx, state);
         return if state.engine.halted.is_some() {
             #[cfg(test)]
@@ -18211,9 +18396,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             #[cfg(feature = "eternal-fixtures")]
             let vintage_draw_step = crate::eternal_vintage_v1::begin_draw_step(state, p);
             if !is_first_turn_of_the_game {
-                event::propose_and_commit(state, ProposedEvent::draw(p));
-                #[cfg(feature = "eternal-fixtures")]
-                crate::eternal_cards_v1::note_draw_step_draw(state, p);
+                // Dredge (wave E7b): the draw waits for its player's choice
+                // to dredge instead.
+                let dredge = cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::defer_draw_step_draw(state, p);
+                if !dredge {
+                    event::propose_and_commit(state, ProposedEvent::draw(p));
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cards_v1::note_draw_step_draw(state, p);
+                }
                 collect_and_queue_triggers(state);
             }
             #[cfg(feature = "eternal-fixtures")]
@@ -19999,6 +20190,14 @@ pub(crate) fn resolved_activated_ability(
     if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
         return Some(*ability);
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if usize::from(ability_index) == def.activated_abilities.len() {
+        if let Some(granted) =
+            crate::eternal_vintage_e7b_v1::statics::granted_avatar_ability(state, source)
+        {
+            return Some(granted);
+        }
+    }
     let pole_index = def.activated_abilities.len()
         + usize::from(equipped_granted_activated_ability(state, source).is_some());
     if usize::from(ability_index) == pole_index {
@@ -20069,6 +20268,19 @@ fn resolved_stack_activated_ability(
             );
         }
         return Ok(*ability);
+    }
+    // Avatar of Burgeoning Echoes' granted loyalty ability (eternal wave
+    // E7b), one index past a planeswalker's printed abilities.
+    #[cfg(feature = "eternal-fixtures")]
+    if granted_by.is_none() {
+        if let Some(granted) =
+            crate::eternal_vintage_e7b_v1::statics::granted_avatar_ability_on_stack(
+                host_contract,
+                ability_index,
+            )
+        {
+            return Ok(granted);
+        }
     }
     let fishing_grant = granted_by
         .is_some_and(|grant| crate::fishing_pole_v39::selected_definition(grant.card_def));
@@ -20454,6 +20666,7 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
     {
         let events = state.engine.event_log[event_start..].to_vec();
         crate::eternal_lurrus_v1::note_combat_damage(state, &events);
+        crate::eternal_vintage_e7b_v1::note_combat_damage(state, &events);
     }
     collect_and_queue_triggers(state);
 }
@@ -22528,6 +22741,201 @@ pub(crate) fn spell_retarget_candidates_v1(
     .into_iter()
     .filter(|target| target != current && *target != Target::Object(item.source))
     .collect()
+}
+
+// ---- Eternal wave E7b: control, targets and copies of spells ---------------------------
+
+/// Commandeer: "Gain control of target noncreature spell." The spell's
+/// stack item, now controlled by `player`.
+pub(crate) fn gain_control_of_spell_v1(
+    state: &mut GameState,
+    spell: ObjectId,
+    player: PlayerId,
+) -> Option<StackItemId> {
+    let position = state
+        .stack
+        .iter()
+        .position(|item| item.kind == StackItemKind::Spell && item.source == spell)?;
+    let id = state.stack[position].v4.stack_item_id;
+    let previous = state.stack[position].controller;
+    if previous != player {
+        crate::eternal_vintage_e7b_v1::note_spell_caster(state, id, previous);
+        let item = &mut state.stack[position];
+        item.controller = player;
+        if let Some(contract) = item.v4.source_contract.as_mut() {
+            contract.controller = player;
+        }
+        state.objects.get_mut(spell).controller = player;
+    }
+    Some(id)
+}
+
+/// Commandeer's "You may choose new targets for it": the choices for target
+/// `chosen.len()` of the spell `stack_item` after the new targets `chosen`
+/// of its earlier slots, for its current controller. A target that is still
+/// legal may be kept; with no legal target the current one stays (115.7).
+/// `None` when the spell left the stack or has no such target.
+pub(crate) fn spell_slot_retarget_candidates_v1(
+    state: &GameState,
+    stack_item: StackItemId,
+    chosen: &[Target],
+) -> Option<Vec<Target>> {
+    let item = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == stack_item && item.kind == StackItemKind::Spell)?;
+    let spec = item.v4.target_spec?;
+    let current = *item.targets.get(chosen.len())?;
+    let legal = legal_targets_for_controller_from_source(
+        spec,
+        chosen,
+        item.controller,
+        targeting_source_for_object(state, item.source),
+        state,
+    )
+    .into_iter()
+    .filter(|target| *target != Target::Object(item.source))
+    .collect::<Vec<_>>();
+    Some(if legal.is_empty() {
+        vec![current]
+    } else {
+        legal
+    })
+}
+
+/// Gives the spell `stack_item` the targets `targets` (one per slot),
+/// capturing their incarnations and logging the targeting when they
+/// changed.
+pub(crate) fn retarget_spell_targets_v1(
+    state: &mut GameState,
+    stack_item: StackItemId,
+    targets: &[Target],
+) -> Result<(), String> {
+    let contracts = targets
+        .iter()
+        .map(|&target| StackTargetContractV4::capture(state, target))
+        .collect::<Vec<_>>();
+    let item = state
+        .stack
+        .iter_mut()
+        .find(|item| item.v4.stack_item_id == stack_item)
+        .ok_or("the retargeted spell left the stack")?;
+    if item.targets.as_slice() == targets {
+        return Ok(());
+    }
+    if item.targets.len() != targets.len() {
+        return Err("a retargeted spell keeps its number of targets".to_string());
+    }
+    item.targets = targets.to_vec();
+    item.v4.target_contracts = contracts;
+    log_final_targeting_events(state, stack_item)
+}
+
+/// The legal targets `player` could choose for `spec`, with `source` as the
+/// targeting spell.
+pub(crate) fn legal_spell_targets_for_v1(
+    state: &GameState,
+    spec: TargetSpec,
+    player: PlayerId,
+    source: ObjectId,
+) -> Vec<Target> {
+    legal_targets_for_controller_from_source(
+        spec,
+        &[],
+        player,
+        targeting_source_for_object(state, source),
+        state,
+    )
+}
+
+/// Chain of Vapor: "they may copy this spell and may choose a new target
+/// for that copy." Puts a copy of the resolving spell `source` on the stack
+/// under `controller` with `target`. Every copy names the physical card at
+/// the root of the chain as its parent.
+pub(crate) fn copy_resolving_spell_for_v1(
+    state: &mut GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    target: Target,
+    spec: TargetSpec,
+) -> Result<(), String> {
+    let live = state
+        .objects
+        .try_get(source)
+        .ok_or("the copied spell no longer exists")?;
+    let card_def = live.card_def;
+    let name = live.name.clone();
+    let origin = match live.spell_copy_origin {
+        Some(origin) => SpellCopyOriginV4 {
+            parent_was_copy: false,
+            ..origin
+        },
+        None => {
+            if live.zone != Zone::Stack {
+                return Err("the copied spell is no longer on the stack".to_string());
+            }
+            SpellCopyOriginV4 {
+                parent: source,
+                parent_card_def: card_def,
+                parent_owner: live.owner,
+                parent_controller: live.controller,
+                parent_stack_zone_change_count: live.zone_change_count,
+                parent_was_copy: false,
+                source_types_v1: crate::source_type_hexproof_v1::copy_projection(
+                    card_def,
+                    CastMethodV4::Normal,
+                ),
+            }
+        }
+    };
+    let owner = origin.parent_owner;
+    let mut staged = state.clone();
+    let copy_source = staged.objects.push(crate::state::GameObject {
+        card_def,
+        name,
+        owner,
+        controller,
+        zone: Zone::Stack,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Default::default(),
+        attachments: Vec::new(),
+        v4: ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: Some(origin),
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    let stack_item_id = next_stack_item_id(&mut staged);
+    let source_contract =
+        StackSourceContractV4::capture(&staged, copy_source, CastMethodV4::Normal);
+    let contract = StackTargetContractV4::capture(&staged, target);
+    let copy = StackItem {
+        kind: StackItemKind::Spell,
+        source: copy_source,
+        controller,
+        targets: vec![target],
+        is_copy: true,
+        inline_effect: None,
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: false,
+        v4: StackStateV4 {
+            stack_item_id,
+            cast_method: Some(CastMethodV4::Normal),
+            source_contract: Some(source_contract),
+            target_spec: Some(spec),
+            target_contracts: vec![contract],
+            ..StackStateV4::default()
+        },
+    };
+    staged.stack.push(copy.clone());
+    validate_spell_stack_source(&staged, &copy)?;
+    validated_stack_item_target_spec(&copy, &staged)?;
+    *state = staged;
+    log_final_targeting_events(state, stack_item_id)
 }
 
 /// Changes the one target of a spell on the stack to `target`, capturing

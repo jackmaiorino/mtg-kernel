@@ -273,6 +273,9 @@ pub enum E3ChoiceKindV1 {
     /// A choice owned by the Pauper Bogles, white aggro and Rakdos Madness
     /// lists' module (`eternal_pauper_e6b_v1`).
     E6bV1(crate::eternal_pauper_e6b_v1::E6bChoiceV1),
+    /// A choice owned by the Vintage graveyard and tempo lists' module
+    /// (`eternal_vintage_e7b_v1`).
+    E7bV1(crate::eternal_vintage_e7b_v1::E7bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -301,6 +304,9 @@ impl E3ChoiceV1 {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::E6bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::E7bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
         matches!(
@@ -332,6 +338,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E5bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E6aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E6bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::E7bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
             | E3ChoiceKindV1::OracleV1 { .. }
@@ -377,6 +384,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E5bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E6aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E6bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::E7bV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -589,6 +597,14 @@ pub(crate) fn finish_selection(
             choice,
             kind,
             bindings,
+        ),
+        E3ChoiceKindV1::E7bV1(kind) => crate::eternal_vintage_e7b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+            selected,
         ),
         E3ChoiceKindV1::AtraxaV1 { revealed, picked } => {
             let mut picked = picked.clone();
@@ -895,6 +911,9 @@ pub(crate) fn drive(
         EternalOpV1::E6bV1(op) => {
             crate::eternal_pauper_e6b_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::E7bV1(op) => {
+            crate::eternal_vintage_e7b_v1::drive(state, continuation, op, path)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -921,6 +940,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
     ) || matches!(op, EternalOpV1::E5bV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::E6aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::E6bV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::E7bV1(op) if op.contains_player_choice())
 }
 
 /// The cards (not tokens or copies) in `player`'s graveyard, in order.
@@ -1171,6 +1191,9 @@ pub(crate) fn damage_prevented_by_protection(
         Target::Object(object) => {
             protected_from_spell(state, object, source)
                 || crate::eternal_pauper_e6b_v1::protected_from_source(state, object, source)
+                || crate::eternal_vintage_e7b_v1::statics::protected_from_source(
+                    state, object, source,
+                )
         }
         Target::StackItem(_) => false,
     };
@@ -1381,6 +1404,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_e5a_v1::statics::entry_choice_decision(state) {
         return Some(decision);
     }
+    // The draw step's dredge choice; Phyrexian Revoker's name.
+    if let Some(decision) = crate::eternal_vintage_e7b_v1::statics::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1451,6 +1478,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_e5a_v1::statics::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_vintage_e7b_v1::statics::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;
@@ -1841,10 +1871,14 @@ pub(crate) fn object_targetable(
     }) {
         return false;
     }
-    // Benevolent Blessing's protection from a color.
+    // Benevolent Blessing's protection from a color, Stonecoil Serpent's
+    // protection from multicolored.
     if live.zone == Zone::Battlefield
         && source.is_some_and(|source| {
             crate::eternal_pauper_e6b_v1::protected_from_source(state, object, source)
+                || crate::eternal_vintage_e7b_v1::statics::protected_from_source(
+                    state, object, source,
+                )
         })
     {
         return false;
