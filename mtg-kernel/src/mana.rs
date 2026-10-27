@@ -583,6 +583,12 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
 /// Planning does not tap creatures or produce mana. The returned tap lists
 /// distinguish Convoke payment from mana-ability activation.
 /// The existing Alternative-cast interface requires at least one convoker.
+/// The cast path calls `plan_spell_mana_total_with_tappers_v1` directly.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_spell_mana_total_with_convoke_v1(
     pips: &[Pip],
