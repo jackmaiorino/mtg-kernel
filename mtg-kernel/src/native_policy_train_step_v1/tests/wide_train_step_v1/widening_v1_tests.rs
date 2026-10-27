@@ -671,7 +671,46 @@ fn constant_gradient_multiplier_v1(k: u64, bias_age: Option<u64>) -> f64 {
     }
 }
 
-/// Widens the trained parent with the b512 Adam step and runs 300 real GAE
+/// The train snapshot inside an RT1 checkpoint's JSON (`parameters`,
+/// `first_moments`, `second_moments` as named bit vectors, `adam_step`,
+/// `scorer_bias_anchor_bits`), in the frozen net-8 order.
+fn checkpoint_snapshot_v1(bytes: &[u8]) -> NativePolicyValueTrainSnapshotV1 {
+    let json: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    let tensors = |key: &str| -> Vec<NativeNamedParameterV1> {
+        json[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(
+                EXPECTED_PARAMETER_NAMES
+                    .iter()
+                    .zip(EXPECTED_PARAMETER_SHAPES),
+            )
+            .map(|(tensor, (name, shape))| {
+                assert_eq!(tensor["name"], *name);
+                NativeNamedParameterV1 {
+                    name,
+                    shape: shape.to_vec(),
+                    values: tensor["values"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|bits| f32::from_bits(bits.as_u64().unwrap() as u32))
+                        .collect(),
+                }
+            })
+            .collect()
+    };
+    NativePolicyValueTrainSnapshotV1 {
+        adam_step: json["adam_step"].as_u64().unwrap(),
+        scorer_bias_anchor_bits: json["scorer_bias_anchor_bits"].as_u64().unwrap() as u32,
+        parameters: tensors("parameters"),
+        first_moments: tensors("first_moments"),
+        second_moments: tensors("second_moments"),
+    }
+}
+
+/// Widens a parent with a large inherited Adam step and runs 300 real GAE
 /// updates (exact parallel backward, 4 workers, 100 groups of real Map V3
 /// decisions) on one fixed batch. For each update it records, per
 /// coordinate class, the effective step `|delta parameter| / lr` over the
@@ -679,12 +718,31 @@ fn constant_gradient_multiplier_v1(k: u64, bias_age: Option<u64>) -> f64 {
 /// beside the constant-gradient reference of design section 7.6 (3.16 at
 /// k = 1, peak 6.57 at k = 12) and its about 7.27 bound. Measurement only:
 /// the optimizer is the unchanged train step. Writes JSON to
-/// `MTG_KERNEL_PR4A_STEP_AGE_OUT` when set, else prints it.
+/// `MTG_KERNEL_PR4A_STEP_AGE_OUT` when set, else prints it. The parent is
+/// the b512 checkpoint at `MTG_KERNEL_PR4A_B512_CHECKPOINT` when set (mature
+/// old moments), else the synthetic trained parent with the b512 Adam step.
 #[test]
 #[ignore = "measurement probe (design section 7.6): run explicitly; writes the step-age JSON"]
 fn adam_step_age_trajectory_probe_v1() {
-    let (_, mut parent) = trained_parent_v1();
-    parent.adam_step = B512_ADAM_STEP_V1;
+    let (parent, parent_description) = match std::env::var_os("MTG_KERNEL_PR4A_B512_CHECKPOINT") {
+        Some(path) => (
+            checkpoint_snapshot_v1(&std::fs::read(&path).unwrap()),
+            format!(
+                "b512 checkpoint {} (its own parameters, moments and adam_step)",
+                path.to_string_lossy()
+            ),
+        ),
+        None => {
+            let (_, mut parent) = trained_parent_v1();
+            parent.adam_step = B512_ADAM_STEP_V1;
+            (
+                parent,
+                "perturbed runner-fixed net-8 after two GAE updates on the gradient fixture, then                  adam_step set to the b512 dose checkpoint's 118584 (OH2 r2-s1 doses/b512.json);                  its old moments are only two updates old"
+                    .to_owned(),
+            )
+        }
+    };
+    let inherited_adam_step = parent.adam_step;
     let widened = widen_net8_snapshot_v1(
         &parent,
         W_MODEL_ARCHITECTURE_VERSION_V1,
@@ -750,7 +808,7 @@ fn adam_step_age_trajectory_probe_v1() {
             "reference_constant_gradient_k_equals_update_minus_1":
                 if k > 1 { Some(constant_gradient_multiplier_v1(k - 1, None)) } else { None },
             "reference_with_global_bias_correction":
-                constant_gradient_multiplier_v1(k, Some(B512_ADAM_STEP_V1 + k)),
+                constant_gradient_multiplier_v1(k, Some(inherited_adam_step + k)),
         }));
     }
     let peak = (1..=STEP_AGE_UPDATES_V1 as u64)
@@ -763,8 +821,9 @@ fn adam_step_age_trajectory_probe_v1() {
         "schema": "mtg-kernel-pr4a-adam-step-age-trajectory-v1",
         "design": "WIDE-BACKWARD-DESIGN.md v2.1 section 7.6 (measurement only, optimizer unchanged)",
         "definition": "per update and coordinate class: |parameter after - parameter before| / learning_rate over active coordinates (first moment nonzero after the update); moved counts every coordinate whose parameter changed",
-        "parent": "perturbed runner-fixed net-8 after two GAE updates on the gradient fixture, then adam_step set to the b512 dose checkpoint's 118584 (OH2 r2-s1 doses/b512.json)",
-        "inherited_adam_step": B512_ADAM_STEP_V1,
+        "parent": parent_description,
+        "parent_state_sha256": widened.provenance.parent_state_sha256,
+        "inherited_adam_step": inherited_adam_step,
         "widening": widened.provenance,
         "route": "generic CPU GAE train step, exact parallel backward, 4 forward workers, 100 groups (199 substeps) of the real Map V3 decisions, one fixed batch every update (wide_train_step_v1 GaeExactParallel)",
         "learning_rate": LR,
