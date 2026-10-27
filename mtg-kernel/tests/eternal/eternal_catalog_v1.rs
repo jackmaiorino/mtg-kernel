@@ -509,18 +509,33 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // Every deck casts a spell in its two ranked games (one per seat); a
     // single shuffle can leave one seat without a castable spell.
     let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut failures: Vec<String> = Vec::new();
     for index in 0..decks.len() {
         let (first, second) = (&decks[index], &decks[(index + 1) % decks.len()]);
         let pair = [first.deck.clone(), second.deck.clone()];
         let seed = 0x4554_4552_0000 + index as u64;
         for policy in [Policy::Ranked, Policy::Random(seed)] {
-            let game = play(pair.clone(), seed, policy);
-            let replay = play(pair.clone(), seed, policy);
-            assert_eq!(
-                game.transcript_sha256, replay.transcript_sha256,
-                "{} / {}",
-                first.archetype, second.archetype
-            );
+            // Every pairing runs even after one fails, so a single run
+            // reports all failing games (each panic message is printed).
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let game = play(pair.clone(), seed, policy);
+                let replay = play(pair.clone(), seed, policy);
+                assert_eq!(
+                    game.transcript_sha256, replay.transcript_sha256,
+                    "{} / {}",
+                    first.archetype, second.archetype
+                );
+                game
+            }));
+            let Ok(game) = outcome else {
+                failures.push(format!(
+                    "{} / {} seed={seed} random={}",
+                    first.archetype,
+                    second.archetype,
+                    matches!(policy, Policy::Random(_))
+                ));
+                continue;
+            };
             companion_actions += game.companion_actions;
             if let Policy::Ranked = policy {
                 *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
@@ -539,6 +554,15 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
             );
         }
     }
+    assert!(
+        failures.is_empty(),
+        "failing games:
+{}",
+        failures.join(
+            "
+"
+        )
+    );
     assert!(
         ranked_casts.values().all(|casts| *casts > 0),
         "{ranked_casts:?}"
