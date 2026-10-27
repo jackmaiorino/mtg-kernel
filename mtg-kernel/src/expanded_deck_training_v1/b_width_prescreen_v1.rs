@@ -11,8 +11,8 @@
 //! - `qualify-collect`, `qualify-fit`: the throughput check
 //!   (COMPUTE-POLICY.md). Each times the real workload at every candidate
 //!   worker count and records the fastest; `collect`, `preserve` and `fit`
-//!   refuse to start without a matching record for this host, binary and
-//!   config.
+//!   refuse to start without a matching record for this host, binary, config
+//!   and worker counts (concurrent jobs, and forward workers for `fit`).
 //! - `collect`: each scheduled game of a chain is played exactly once (no
 //!   retry, no replacement) by the parent against itself through the RT1
 //!   collector's own episode path: [`collect_episode`] with the current-self
@@ -20,7 +20,12 @@
 //!   as `collect_parallel_v1` serves an RT1 `current` opponent. Natural games
 //!   are stored in a compact binary store; a non-natural game keeps its
 //!   terminal in the collection record and has no stored decisions. No JSON
-//!   trajectory is written.
+//!   trajectory is written. The first collection writes `LAUNCH.json` (the
+//!   48-hour cap's start). Each game's attempt record is durable before the
+//!   game is dispatched and its result as soon as it ends, so a resumed
+//!   collection never plays an attempted game again: an attempt without a
+//!   published result, or a game that hit a collection error, is recorded as
+//!   an excluded game.
 //! - `convert`: the store becomes `ScreenGameRecordV1`s, non-natural games
 //!   are filtered out, and the chain's data record (section 7's per-chain
 //!   items) is written. Once every chain has one, `SECTION7.json` is too.
@@ -31,7 +36,10 @@
 //! - `fit`: the per-chain fits of every (seed, arm), run concurrently from one
 //!   shared read-only record set, each from fresh Adam, each writing one
 //!   report. A chain's step-0 held-out reports of w64 and w128 must then be
-//!   bit-identical.
+//!   bit-identical. A fit-entry refusal is recorded durably
+//!   (`fits/k<k>-s<s>-<arm>.refused.json`), which makes the screen VOID; it is
+//!   never rerun. Only publication (I/O) is retried, and a resumed fit stage
+//!   removes earlier processes' interrupted publications.
 //!
 //! The single read is the separate pinned analyzer
 //! (`python/tools/b_width_prescreen_read_v1.py`), whose hash the config pins.
@@ -75,6 +83,10 @@ const DATA_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-data/v1";
 const SECTION7_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-section7/v1";
 const PRESERVATION_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-preservation/v1";
 const FIT_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-fit/v1";
+const REFUSAL_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-fit-refusal/v1";
+const LAUNCH_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-launch/v1";
+const ATTEMPT_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-game-attempt/v1";
+const RESULT_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-game-result/v1";
 pub(crate) const STORE_MAGIC_V1: &[u8] = b"mtg-kernel-b-width-prescreen-store/v1\n";
 /// The one accepted bootstrap draw order (note section 5): per chain
 /// occurrence, its seed draws, then its per-pair game draws.
@@ -211,6 +223,8 @@ pub(crate) struct PrescreenAnalysisV1 {
     pub(crate) fund_lower_bound_above: f64,
     pub(crate) fund_min_point_r: f64,
     pub(crate) t_critical_df7: f64,
+    /// Note section 6: wall time from the collection launch to the read.
+    pub(crate) wall_cap_hours: f64,
     pub(crate) max_pooled_nonnatural_holdout_fraction: f64,
     pub(crate) max_chain_nonnatural_holdout: u32,
     pub(crate) max_chain_nonnatural_fit: u32,
@@ -387,6 +401,8 @@ impl PrescreenConfigV1 {
                 && n.fund_min_point_r.is_finite()
                 && n.t_critical_df7.is_finite()
                 && n.t_critical_df7 > 0.0
+                && n.wall_cap_hours.is_finite()
+                && n.wall_cap_hours > 0.0
                 && (0.0..=1.0).contains(&n.max_pooled_nonnatural_holdout_fraction),
             "invalid analysis constants",
         )?;
@@ -901,9 +917,11 @@ fn screen_groups_from_trajectory_v1(
 }
 
 /// One played game: its terminal, and for a natural game its store bytes.
+/// `failure` is a collection error of a game that has no terminal.
 pub(crate) struct CollectedGameV1 {
-    pub(crate) terminal: RlSessionTerminalV1,
+    pub(crate) terminal: Option<RlSessionTerminalV1>,
     pub(crate) stored: Option<StoredGameV1>,
+    pub(crate) failure: Option<String>,
 }
 
 pub(crate) struct StoredGameV1 {
@@ -917,6 +935,9 @@ struct ScreenCollectorV1 {
     opponents: OpponentCacheV1,
 }
 
+/// A per-game hook of [`collect_games_hooked_v1`].
+type GameHookV1<'a> = &'a (dyn Fn(usize, Option<&CollectedGameV1>) -> Result<(), String> + Sync);
+
 /// Plays every plan once with `workers` collectors: no retry, no
 /// replacement. A non-natural game returns its terminal; any other
 /// collection error is fatal.
@@ -925,6 +946,21 @@ pub(crate) fn collect_games_v1(
     parent: &ParentV1,
     plans: &[GamePlanV1],
     workers: usize,
+) -> Result<Vec<CollectedGameV1>, String> {
+    collect_games_hooked_v1(config, parent, plans, workers, &|_, _| Ok(()), false)
+}
+
+/// [`collect_games_v1`] with `hook(index, None)` called before a game is
+/// dispatched and `hook(index, Some(game))` after it ends. With
+/// `record_failures`, a collection error becomes the game's `failure`
+/// instead of ending the whole collection.
+fn collect_games_hooked_v1(
+    config: &PrescreenConfigV1,
+    parent: &ParentV1,
+    plans: &[GamePlanV1],
+    workers: usize,
+    hook: GameHookV1<'_>,
+    record_failures: bool,
 ) -> Result<Vec<CollectedGameV1>, String> {
     ensure(!plans.is_empty(), "no games to collect")?;
     let episodes: Vec<ExpandedEpisodeV1> = plans
@@ -953,6 +989,7 @@ pub(crate) fn collect_games_v1(
         contexts,
         episodes.len(),
         |collector, index| {
+            hook(index, None)?;
             // The current-self opponent: a private fork of the learner under
             // the legacy sampler, as `collect_parallel_v1` serves RT1's
             // `current` assignment.
@@ -966,7 +1003,7 @@ pub(crate) fn collect_games_v1(
                 });
             }
             let opponent = collector.opponents.load(source)?;
-            match collect_episode(
+            let collected = match collect_episode(
                 &mut collector.policy,
                 learner,
                 Some(opponent),
@@ -974,40 +1011,56 @@ pub(crate) fn collect_games_v1(
             ) {
                 Ok(trajectory) => {
                     let groups = screen_groups_from_trajectory_v1(config, &trajectory)?;
-                    Ok(CollectedGameV1 {
+                    CollectedGameV1 {
                         stored: Some(StoredGameV1 {
                             bytes: encode_game_v1(&groups)?,
                             groups: groups.len(),
                             substeps: groups.iter().map(|g| g.substeps.len()).sum(),
                         }),
-                        terminal: trajectory.terminal,
-                    })
+                        terminal: Some(trajectory.terminal),
+                        failure: None,
+                    }
                 }
-                Err(CollectEpisodeErrorV1::NonNatural(terminal)) => Ok(CollectedGameV1 {
-                    terminal: *terminal,
+                Err(CollectEpisodeErrorV1::NonNatural(terminal)) => CollectedGameV1 {
+                    terminal: Some(*terminal),
                     stored: None,
-                }),
-                Err(CollectEpisodeErrorV1::Other(error)) => Err(error),
-            }
+                    failure: None,
+                },
+                Err(CollectEpisodeErrorV1::Other(error)) if record_failures => CollectedGameV1 {
+                    terminal: None,
+                    stored: None,
+                    failure: Some(error),
+                },
+                Err(CollectEpisodeErrorV1::Other(error)) => return Err(error),
+            };
+            hook(index, Some(&collected))?;
+            Ok(collected)
         },
         || (),
     )?;
     Ok(games)
 }
 
-/// One attempted game in the collection record.
+/// One attempted game in the collection record. A game with no terminal is
+/// either a collection error (`failure`) or an attempt whose result was never
+/// published (interrupted); neither is ever played again.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CollectedGameEntryV1 {
     pub(crate) plan: GamePlanV1,
     pub(crate) natural: bool,
-    pub(crate) terminal: RlSessionTerminalV1,
+    pub(crate) terminal: Option<RlSessionTerminalV1>,
+    pub(crate) failure: Option<String>,
     pub(crate) groups: usize,
     pub(crate) substeps: usize,
     pub(crate) offset: u64,
     pub(crate) length: u64,
     pub(crate) sha256: Option<String>,
 }
+
+/// The `failure` of an attempted game whose result was never published.
+pub(crate) const UNPUBLISHED_ATTEMPT_V1: &str =
+    "attempted before an interruption; its result was never published, so it is not played again";
 
 /// A chain's collection record (`collect/k<k>/collection.json`). It holds no
 /// timing, so a rerun from the same inputs reproduces its bytes.
@@ -1032,7 +1085,80 @@ pub(crate) struct CollectionRecordV1 {
     pub(crate) games: Vec<CollectedGameEntryV1>,
 }
 
-/// `collect`: one chain's games, played once each, into its store and
+/// The collection launch record (`LAUNCH.json`): written once, before the
+/// first game of the run root, and never replaced. The analyzer measures the
+/// note's 48-hour cap from it.
+pub(crate) fn ensure_launch_v1(loaded: &LoadedConfigV1, root: &Path) -> Result<Value, String> {
+    let path = root.join("LAUNCH.json");
+    if !path.exists() {
+        let launched = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(err)?
+            .as_secs();
+        let record = json!({"schema": LAUNCH_SCHEMA_V1, "config_sha256": loaded.sha256,
+            "launched_at_unix": launched, "host": host_name_v1(),
+            "binary_sha256": binary_sha256_v1()?, "engine_commit": engine_commit_v1()});
+        write_file_v1(&path, &json_bytes_v1(&record)?, false)?;
+    }
+    let record: Value = serde_json::from_slice(&read_v1(&path)?).map_err(err)?;
+    ensure(
+        record["schema"] == json!(LAUNCH_SCHEMA_V1)
+            && record["config_sha256"] == json!(loaded.sha256)
+            && record["launched_at_unix"].is_u64(),
+        "LAUNCH.json belongs to another config",
+    )?;
+    Ok(record)
+}
+
+/// A game's durable attempt record, written before it is dispatched.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GameAttemptV1 {
+    schema: String,
+    config_sha256: String,
+    plan: GamePlanV1,
+    host: String,
+    pid: u32,
+}
+
+/// A game's durable result, published after its store bytes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GameResultV1 {
+    schema: String,
+    config_sha256: String,
+    plan: GamePlanV1,
+    terminal: Option<RlSessionTerminalV1>,
+    failure: Option<String>,
+    groups: usize,
+    substeps: usize,
+    sha256: Option<String>,
+}
+
+fn games_dir_v1(root: &Path, chain: u32) -> PathBuf {
+    root.join("collect").join(format!(".k{chain}-games"))
+}
+
+fn attempt_path_v1(directory: &Path, index: usize) -> PathBuf {
+    directory.join(format!("attempt-{index:04}.json"))
+}
+
+fn result_path_v1(directory: &Path, index: usize, extension: &str) -> PathBuf {
+    directory.join(format!("result-{index:04}.{extension}"))
+}
+
+/// Writes `bytes` to a new file, failing if it exists, and syncs it.
+fn create_new_v1(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    file.write_all(bytes).map_err(err)?;
+    file.sync_all().map_err(err)
+}
+
+/// `collect`: one chain's games, each played at most once, into its store and
 /// collection record. A chain whose record exists is verified and skipped.
 pub(crate) fn collect_chain_stage_v1(
     loaded: &LoadedConfigV1,
@@ -1040,43 +1166,139 @@ pub(crate) fn collect_chain_stage_v1(
     chain: &PrescreenChainV1,
     workers: usize,
 ) -> Result<Value, String> {
+    collect_chain_limited_v1(loaded, root, chain, workers, None)
+}
+
+/// [`collect_chain_stage_v1`], dispatching at most `max_new_games` new games
+/// (the interruption test's hook; None in production).
+///
+/// Each game's attempt record is written durably before the game is
+/// dispatched, and its result (store bytes, then the result record) as soon
+/// as it ends. A resumed collection reuses published results and never plays
+/// an attempted game again: an attempt without a published result is
+/// recorded as an excluded game with [`UNPUBLISHED_ATTEMPT_V1`].
+pub(crate) fn collect_chain_limited_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+    chain: &PrescreenChainV1,
+    workers: usize,
+    max_new_games: Option<usize>,
+) -> Result<Value, String> {
+    ensure_launch_v1(loaded, root)?;
     let directory = collection_dir_v1(root, chain.index);
+    let games = games_dir_v1(root, chain.index);
     if directory.exists() {
         read_collection_v1(loaded, root, chain)?;
+        if games.exists() {
+            fs::remove_dir_all(&games).map_err(err)?;
+        }
         return Ok(json!({"chain": chain.index, "collect": "verified-existing"}));
     }
     let config = &loaded.config;
     let started = Instant::now();
     let parent = load_parent_v1(config, &chain.source)?;
     let plans = chain_schedule_v1(config, chain.index);
-    let games = collect_games_v1(config, &parent, &plans, workers)?;
-    let mut store = STORE_MAGIC_V1.to_vec();
-    let mut entries = Vec::with_capacity(games.len());
-    for (plan, game) in plans.into_iter().zip(games) {
-        let offset = store.len() as u64;
-        let (natural, groups, substeps, length, digest) = match &game.stored {
-            Some(stored) => {
-                store.extend_from_slice(&stored.bytes);
-                (
-                    true,
-                    stored.groups,
-                    stored.substeps,
-                    stored.bytes.len() as u64,
-                    Some(sha(&stored.bytes)),
-                )
+    fs::create_dir_all(&games).map_err(err)?;
+    let unattempted: Vec<usize> = (0..plans.len())
+        .filter(|&index| !attempt_path_v1(&games, index).exists())
+        .collect();
+    let pending: Vec<usize> = unattempted
+        .iter()
+        .copied()
+        .take(max_new_games.unwrap_or(usize::MAX))
+        .collect();
+    let complete = pending.len() == unattempted.len();
+    if !pending.is_empty() {
+        let pending_plans: Vec<GamePlanV1> =
+            pending.iter().map(|&index| plans[index].clone()).collect();
+        let hook = |job: usize, game: Option<&CollectedGameV1>| -> Result<(), String> {
+            let index = pending[job];
+            let plan = plans[index].clone();
+            let Some(game) = game else {
+                let attempt = GameAttemptV1 {
+                    schema: ATTEMPT_SCHEMA_V1.into(),
+                    config_sha256: loaded.sha256.clone(),
+                    plan,
+                    host: host_name_v1(),
+                    pid: std::process::id(),
+                };
+                return create_new_v1(&attempt_path_v1(&games, index), &json_bytes_v1(&attempt)?);
+            };
+            if let Some(stored) = &game.stored {
+                write_file_v1(&result_path_v1(&games, index, "bin"), &stored.bytes, true)?;
             }
-            None => (false, 0, 0, 0, None),
+            let result = GameResultV1 {
+                schema: RESULT_SCHEMA_V1.into(),
+                config_sha256: loaded.sha256.clone(),
+                plan,
+                terminal: game.terminal.clone(),
+                failure: game.failure.clone(),
+                groups: game.stored.as_ref().map_or(0, |stored| stored.groups),
+                substeps: game.stored.as_ref().map_or(0, |stored| stored.substeps),
+                sha256: game.stored.as_ref().map(|stored| sha(&stored.bytes)),
+            };
+            write_file_v1(
+                &result_path_v1(&games, index, "json"),
+                &json_bytes_v1(&result)?,
+                false,
+            )
         };
-        entries.push(CollectedGameEntryV1 {
-            plan,
-            natural,
-            terminal: game.terminal,
-            groups,
-            substeps,
-            offset,
-            length,
-            sha256: digest,
-        });
+        collect_games_hooked_v1(config, &parent, &pending_plans, workers, &hook, true)?;
+    }
+    if !complete {
+        return Ok(json!({"chain": chain.index, "collect": "partial",
+            "dispatched": pending.len()}));
+    }
+    let mut store = STORE_MAGIC_V1.to_vec();
+    let mut entries = Vec::with_capacity(plans.len());
+    for (index, plan) in plans.into_iter().enumerate() {
+        let offset = store.len() as u64;
+        let result_path = result_path_v1(&games, index, "json");
+        let entry = if result_path.exists() {
+            let result: GameResultV1 =
+                serde_json::from_slice(&read_v1(&result_path)?).map_err(err)?;
+            ensure(
+                result.schema == RESULT_SCHEMA_V1
+                    && result.config_sha256 == loaded.sha256
+                    && result.plan == plan,
+                "a published game result is not this config's game",
+            )?;
+            let mut length = 0;
+            if let Some(digest) = &result.sha256 {
+                let bytes = read_v1(&result_path_v1(&games, index, "bin"))?;
+                ensure(sha(&bytes) == *digest, "a published game's bytes differ")?;
+                length = bytes.len() as u64;
+                store.extend_from_slice(&bytes);
+            }
+            CollectedGameEntryV1 {
+                natural: result.sha256.is_some(),
+                plan,
+                terminal: result.terminal,
+                failure: result.failure,
+                groups: result.groups,
+                substeps: result.substeps,
+                offset,
+                length,
+                sha256: result.sha256,
+            }
+        } else {
+            ensure(
+                attempt_path_v1(&games, index).exists(),
+                "a scheduled game was never attempted",
+            )?;
+            CollectedGameEntryV1 {
+                plan,
+                natural: false,
+                terminal: None,
+                failure: Some(UNPUBLISHED_ATTEMPT_V1.into()),
+                groups: 0,
+                substeps: 0,
+                offset,
+                length: 0,
+                sha256: None,
+            }
+        };
+        entries.push(entry);
     }
     let record = CollectionRecordV1 {
         schema: COLLECTION_SCHEMA_V1.into(),
@@ -1110,11 +1332,12 @@ pub(crate) fn collect_chain_stage_v1(
         false,
     )?;
     fs::rename(&partial, &directory).map_err(err)?;
+    fs::remove_dir_all(&games).map_err(err)?;
     let natural = record.games.iter().filter(|game| game.natural).count();
     let summary = json!({"chain": chain.index, "collect": "written", "games": record.games.len(),
         "natural": natural, "store_bytes": record.store_bytes,
-        "elapsed_seconds": started.elapsed().as_secs_f64(), "workers": workers,
-        "host": host_name_v1()});
+        "dispatched": pending.len(), "elapsed_seconds": started.elapsed().as_secs_f64(),
+        "workers": workers, "host": host_name_v1()});
     write_file_v1(
         &root
             .join("collect")
@@ -1167,9 +1390,13 @@ pub(crate) fn read_collection_v1(
         "the collection record differs from the config's schedule",
     )?;
     for entry in &record.games {
-        let natural = entry.terminal.terminal_classification == TerminalClassificationV1::Natural;
+        let natural = entry.terminal.as_ref().is_some_and(|terminal| {
+            terminal.terminal_classification == TerminalClassificationV1::Natural
+        });
         ensure(
-            entry.natural == natural && entry.natural == entry.sha256.is_some(),
+            entry.natural == natural
+                && entry.natural == entry.sha256.is_some()
+                && entry.terminal.is_some() != entry.failure.is_some(),
             "a collection entry's natural flag differs from its terminal",
         )?;
         if let Some(digest) = &entry.sha256 {
@@ -1209,7 +1436,9 @@ pub(crate) struct ExcludedGameV1 {
     pub(crate) split: SplitV1,
     pub(crate) focal: u32,
     pub(crate) opposing: u32,
-    pub(crate) terminal_classification: TerminalClassificationV1,
+    /// The terminal's classification, or `collection-error` or
+    /// `unpublished-attempt` for a game without a terminal.
+    pub(crate) terminal_classification: String,
     pub(crate) terminal_reason: String,
 }
 
@@ -1287,17 +1516,34 @@ pub(crate) fn build_chain_data_v1(
             SplitV1::Holdout => (&mut attempted.holdout, &mut natural.holdout),
         };
         ids.push(plan.id.clone());
-        if !entry.natural {
+        let Some(terminal) = entry.terminal.as_ref().filter(|_| entry.natural) else {
+            let (classification, reason) = match (&entry.terminal, &entry.failure) {
+                (Some(terminal), _) => (
+                    serde_json::to_value(terminal.terminal_classification)
+                        .map_err(err)?
+                        .as_str()
+                        .unwrap_or("unknown")
+                        .to_owned(),
+                    terminal.terminal_reason.clone(),
+                ),
+                (None, Some(failure)) if failure == UNPUBLISHED_ATTEMPT_V1 => {
+                    ("unpublished-attempt".to_owned(), failure.clone())
+                }
+                (None, failure) => (
+                    "collection-error".to_owned(),
+                    failure.clone().unwrap_or_default(),
+                ),
+            };
             excluded.push(ExcludedGameV1 {
                 id: plan.id.clone(),
                 split: plan.split,
                 focal: plan.focal,
                 opposing: plan.opposing,
-                terminal_classification: entry.terminal.terminal_classification,
-                terminal_reason: entry.terminal.terminal_reason.clone(),
+                terminal_classification: classification,
+                terminal_reason: reason,
             });
             continue;
-        }
+        };
         retained.push(plan.id.clone());
         let start = entry.offset as usize;
         let groups = decode_game_v1(&collection.store[start..start + entry.length as usize])?;
@@ -1307,7 +1553,7 @@ pub(crate) fn build_chain_data_v1(
         )?;
         let game = ScreenGameRecordV1 {
             game_id: plan.id.clone(),
-            outcome: ScreenGameOutcomeV1::from(&entry.terminal),
+            outcome: ScreenGameOutcomeV1::from(terminal),
             groups,
         };
         match plan.split {
@@ -1420,15 +1666,19 @@ pub(crate) fn section7_stage_v1(
         chains.push(json!({"chain": record.chain, "chain_id": record.chain_id,
             "parent_checkpoint_sha256": record.parent_checkpoint_sha256,
             "collection_record_sha256": record.collection_record_sha256,
+            "store_sha256": record.store_sha256,
             "data_record_sha256": sha(&bytes),
             "attempted": record.attempted, "natural": record.natural, "excluded": record.excluded,
             "outcome_source_sha256": record.outcome_source_sha256,
             "decision_source_sha256": record.decision_source_sha256,
             "fit_groups": record.fit_groups, "steps": record.steps}));
     }
+    let launch_bytes = read_v1(&root.join("LAUNCH.json"))?;
+    let launch: Value = serde_json::from_slice(&launch_bytes).map_err(err)?;
     let document = json!({"schema": SECTION7_SCHEMA_V1, "note": loaded.config.note,
         "config_sha256": loaded.sha256, "analyzer": loaded.config.analyzer,
         "engine_commit": engine_commit_v1(), "binary_sha256": binary_sha256_v1()?,
+        "launch": {"sha256": sha(&launch_bytes), "launched_at_unix": launch["launched_at_unix"]},
         "chains": chains});
     let bytes = json_bytes_v1(&document)?;
     let path = section7_path_v1(root);
@@ -1917,9 +2167,18 @@ pub(crate) fn fit_chain_stage_v1(
         "the chain needs a passed preservation record before fitting",
     )?;
     let seeds = &loaded.config.fitting.fitting_seeds;
+    let removed = remove_stale_temporaries_v1(&root.join("fits"))?;
     let mut jobs = Vec::new();
     for &seed in seeds {
         for arm in ARM_NAMES_V1 {
+            let refusal = refusal_path_v1(root, chain.index, seed, arm);
+            ensure(
+                !refusal.exists(),
+                &format!(
+                    "{} records a fit-entry refusal: the screen is VOID and the fit is not rerun",
+                    refusal.display()
+                ),
+            )?;
             let path = fit_path_v1(root, chain.index, seed, arm);
             if path.exists() {
                 existing_fit_matches_v1(&path, loaded, &data_sha256)?;
@@ -1952,8 +2211,33 @@ pub(crate) fn fit_chain_stage_v1(
             jobs.len(),
             |_, index| {
                 let (seed, arm) = jobs[index];
-                let bytes = fit_record_bytes_v1(&inputs, seed, arm)?;
-                write_file_v1(&fit_path_v1(root, chain.index, seed, arm), &bytes, false)
+                // Everything up to the report's bytes is deterministic: an
+                // error or panic there is an entry refusal, recorded durably
+                // and never retried. Only publication (I/O) may be retried.
+                let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    fit_record_bytes_v1(&inputs, seed, arm)
+                }))
+                .unwrap_or_else(|_| Err("the fit panicked".into()));
+                match computed {
+                    Ok(bytes) => {
+                        write_file_v1(&fit_path_v1(root, chain.index, seed, arm), &bytes, false)
+                    }
+                    Err(error) => {
+                        let refusal = json!({"schema": REFUSAL_SCHEMA_V1,
+                            "config_sha256": loaded.sha256, "data_record_sha256": data_sha256,
+                            "engine_commit": engine_commit_v1(), "chain": chain.index,
+                            "seed": seed, "arm": arm, "error": error});
+                        write_file_v1(
+                            &refusal_path_v1(root, chain.index, seed, arm),
+                            &json_bytes_v1(&refusal)?,
+                            false,
+                        )?;
+                        Err(format!(
+                            "chain {} seed {seed} {arm}: fit-entry refusal recorded: {error}",
+                            chain.index
+                        ))
+                    }
+                }
             },
             || (),
         )?;
@@ -1961,7 +2245,42 @@ pub(crate) fn fit_chain_stage_v1(
     step0_reports_identical_v1(root, chain.index, seeds)?;
     Ok(json!({"chain": chain.index, "fits_written": jobs.len(),
         "fits_present": seeds.len() * ARM_NAMES_V1.len(),
+        "stale_temporaries_removed": removed,
         "elapsed_seconds": started.elapsed().as_secs_f64()}))
+}
+
+/// A fit-entry refusal record (`fits/k<k>-s<s>-<arm>.refused.json`).
+pub(crate) fn refusal_path_v1(root: &Path, chain: u32, seed: u32, arm: &str) -> PathBuf {
+    root.join("fits")
+        .join(format!("k{chain}-s{seed}-{arm}.refused.json"))
+}
+
+/// Whether `name` is an interrupted publication of [`write_file_v1`]:
+/// `.<name>.tmp-<pid>`.
+pub(crate) fn is_temporary_name_v1(name: &str) -> bool {
+    name.strip_prefix('.')
+        .and_then(|rest| rest.rsplit_once(".tmp-"))
+        .is_some_and(|(stem, pid)| {
+            !stem.is_empty() && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())
+        })
+}
+
+/// Removes interrupted publications ([`is_temporary_name_v1`]) left in
+/// `directory` by an earlier process; returns their names.
+fn remove_stale_temporaries_v1(directory: &Path) -> Result<Vec<String>, String> {
+    let mut removed = Vec::new();
+    if !directory.is_dir() {
+        return Ok(removed);
+    }
+    let own = format!(".tmp-{}", std::process::id());
+    for entry in fs::read_dir(directory).map_err(err)? {
+        let name = entry.map_err(err)?.file_name().to_string_lossy().into_owned();
+        if is_temporary_name_v1(&name) && !name.ends_with(&own) {
+            fs::remove_file(directory.join(&name)).map_err(err)?;
+            removed.push(name);
+        }
+    }
+    Ok(removed)
 }
 
 // ---------------------------------------------------------------------------
@@ -2114,6 +2433,7 @@ pub(crate) fn require_qualification_v1(
     path: &Path,
     stage: QualifiedStageV1,
     workers: usize,
+    forward_workers: Option<usize>,
 ) -> Result<Value, String> {
     let record: Value = serde_json::from_slice(&read_v1(path)?).map_err(err)?;
     ensure(
@@ -2128,6 +2448,12 @@ pub(crate) fn require_qualification_v1(
         record["selected_workers"] == json!(workers),
         "the requested worker count is not the qualified fastest",
     )?;
+    if let Some(forward_workers) = forward_workers {
+        ensure(
+            record["forward_workers"] == json!(forward_workers),
+            "the requested forward workers are not the qualified ones",
+        )?;
+    }
     Ok(json!({"path": path, "sha256": sha(&read_v1(path)?)}))
 }
 
@@ -2285,14 +2611,16 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
             .collect::<Result<_, _>>()?,
         None => loaded.config.chains.iter().collect(),
     };
-    let guard = |stage: QualifiedStageV1| -> Result<(usize, Value), String> {
+    let guard = |stage: QualifiedStageV1,
+                 forward: Option<usize>|
+     -> Result<(usize, Value), String> {
         let workers = workers.ok_or("--workers is required")?;
         let path = qualification
             .as_ref()
             .ok_or("--qualification is required (COMPUTE-POLICY.md)")?;
         Ok((
             workers,
-            require_qualification_v1(&loaded, path, stage, workers)?,
+            require_qualification_v1(&loaded, path, stage, workers, forward)?,
         ))
     };
     let mut results = Vec::new();
@@ -2318,7 +2646,7 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
             Value::Null
         }
         "collect" => {
-            let (workers, record) = guard(QualifiedStageV1::Collect)?;
+            let (workers, record) = guard(QualifiedStageV1::Collect, None)?;
             for chain in &selected {
                 results.push(collect_chain_stage_v1(&loaded, &root, chain, workers)?);
             }
@@ -2334,14 +2662,14 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
             Value::Null
         }
         "preserve" => {
-            let (workers, record) = guard(QualifiedStageV1::Fit)?;
+            let (workers, record) = guard(QualifiedStageV1::Fit, None)?;
             for chain in &selected {
                 results.push(preserve_chain_stage_v1(&loaded, &root, chain, workers)?);
             }
             record
         }
         "fit" => {
-            let (workers, record) = guard(QualifiedStageV1::Fit)?;
+            let (workers, record) = guard(QualifiedStageV1::Fit, Some(forward_workers))?;
             for chain in &selected {
                 results.push(fit_chain_stage_v1(
                     &loaded,

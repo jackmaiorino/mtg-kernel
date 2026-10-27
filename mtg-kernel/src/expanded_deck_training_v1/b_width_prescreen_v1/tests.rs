@@ -108,6 +108,7 @@ fn shipped_config_is_the_frozen_note() {
     );
     assert_eq!(a.bootstrap_seed_domain, "b-width-prescreen-bootstrap-v1");
     assert_eq!((a.fund_lower_bound_above, a.fund_min_point_r), (0.0, 0.02));
+    assert_eq!(a.wall_cap_hours, 48.0);
     assert_eq!(
         (
             a.max_chain_nonnatural_holdout,
@@ -485,10 +486,17 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
     assert_eq!(collected["collect"], json!("written"));
     assert_eq!(collected["games"], json!(8));
     let collection_bytes = read_v1(&root.join("collect/k1/collection.json")).unwrap();
+    let launch = read_v1(&root.join("LAUNCH.json")).unwrap();
+    assert!(!games_dir_v1(root, 1).exists());
     assert_eq!(
         collect_chain_stage_v1(loaded, root, &chain, 2).unwrap()["collect"],
         json!("verified-existing")
     );
+    // The launch record is written once and never replaced.
+    assert_eq!(read_v1(&root.join("LAUNCH.json")).unwrap(), launch);
+    let mut other = loaded.clone();
+    other.sha256 = "0".repeat(64);
+    assert!(ensure_launch_v1(&other, root).is_err());
 
     // Data, then section 7 once every chain has data.
     assert!(load_chain_data_v1(loaded, root, &chain).is_err());
@@ -514,6 +522,13 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
         step_rule_v1(&loaded.config.fitting, data.record.fit_groups)
     );
     assert!(section7_stage_v1(loaded, root).unwrap().is_some());
+    let section7: Value =
+        serde_json::from_slice(&read_v1(&root.join("data/SECTION7.json")).unwrap()).unwrap();
+    assert_eq!(section7["launch"]["sha256"], json!(sha(&launch)));
+    assert_eq!(
+        section7["chains"][0]["store_sha256"],
+        json!(data.record.store_sha256)
+    );
 
     // The fit stage refuses before preservation has passed.
     assert!(fit_chain_stage_v1(loaded, root, &chain, 3, 1).is_err());
@@ -556,13 +571,19 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
     assert_eq!(w64["report"]["config"]["steps"], json!(data.record.steps));
 
     // Resume: a lost report is rerun from the same inputs (at another fit
-    // concurrency) to the same bytes, and present reports are kept.
+    // concurrency) to the same bytes, and present reports are kept. An
+    // interrupted publication's temporary file is removed.
     let w128_bytes = read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap();
     fs::remove_file(fit_path_v1(root, 1, 1, "w128")).unwrap();
+    let stale = root.join("fits/.k1-s1-w128.json.tmp-4294967295");
+    fs::write(&stale, b"{").unwrap();
+    let resumed = fit_chain_stage_v1(loaded, root, &chain, 2, 1).unwrap();
+    assert_eq!(resumed["fits_written"], json!(1));
     assert_eq!(
-        fit_chain_stage_v1(loaded, root, &chain, 2, 1).unwrap()["fits_written"],
-        json!(1)
+        resumed["stale_temporaries_removed"],
+        json!([".k1-s1-w128.json.tmp-4294967295"])
     );
+    assert!(!stale.exists());
     assert_eq!(
         read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap(),
         w128_bytes
@@ -604,7 +625,126 @@ fn a_seed_at_or_above_two_to_the_63_plays() {
     assert!(plan.seed >= 1u64 << 63);
     let games = collect_games_v1(config, &parent, &[plan], 1).unwrap();
     assert_eq!(games.len(), 1);
-    assert!(games[0].terminal.policy_step_count > 0);
+    assert!(games[0].terminal.as_ref().unwrap().policy_step_count > 0);
+}
+
+#[test]
+fn temporary_names_are_only_interrupted_publications() {
+    assert!(is_temporary_name_v1(".k1-s1-w64.json.tmp-123"));
+    assert!(is_temporary_name_v1(".games.bin.tmp-9"));
+    for name in [
+        "k1-s1-w64.json",
+        "k1-s1-w64.refused.json",
+        ".k1-s1-w64.json.tmp-",
+        ".k1-s1-w64.json.tmp-12a",
+        "k1-s1-w64.json.tmp-12",
+        "..tmp-1",
+    ] {
+        assert!(!is_temporary_name_v1(name), "{name}");
+    }
+}
+
+/// An interrupted collection resumes without playing any attempted game
+/// again: published results are reused, an attempt whose result was never
+/// published becomes an excluded game, and every other entry equals an
+/// uninterrupted collection's.
+#[test]
+fn an_interrupted_collection_never_replays_an_attempted_game() {
+    let fixture = fixture_v1("interrupted");
+    let (loaded, root) = (&fixture.loaded, fixture.root.as_path());
+    let chain = loaded.config.chains[0].clone();
+    let first = collect_chain_limited_v1(loaded, root, &chain, 2, Some(3)).unwrap();
+    assert_eq!(first["collect"], json!("partial"));
+    assert_eq!(first["dispatched"], json!(3));
+    let games = games_dir_v1(root, 1);
+    let published: Vec<Vec<u8>> = (0..3)
+        .map(|index| read_v1(&result_path_v1(&games, index, "json")).unwrap())
+        .collect();
+    // The process died after dispatching game 5 and before its result.
+    let plan = chain_schedule_v1(&loaded.config, 1)[5].clone();
+    let attempt = GameAttemptV1 {
+        schema: ATTEMPT_SCHEMA_V1.into(),
+        config_sha256: loaded.sha256.clone(),
+        plan: plan.clone(),
+        host: "interrupted".into(),
+        pid: 1,
+    };
+    create_new_v1(
+        &attempt_path_v1(&games, 5),
+        &json_bytes_v1(&attempt).unwrap(),
+    )
+    .unwrap();
+    assert!(create_new_v1(&attempt_path_v1(&games, 5), b"{}").is_err());
+    fs::write(games.join(".result-0006.json.tmp-1"), b"{").unwrap();
+
+    let resumed = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap();
+    assert_eq!(resumed["collect"], json!("written"));
+    assert_eq!(resumed["dispatched"], json!(4));
+    assert!(!games.exists());
+    let record = read_collection_v1(loaded, root, &chain).unwrap().record;
+    let lost = &record.games[5];
+    assert_eq!(lost.plan, plan);
+    assert!(!lost.natural && lost.terminal.is_none() && lost.sha256.is_none());
+    assert_eq!(lost.failure.as_deref(), Some(UNPUBLISHED_ATTEMPT_V1));
+    for (index, bytes) in published.iter().enumerate() {
+        let result: GameResultV1 = serde_json::from_slice(bytes).unwrap();
+        assert_eq!(record.games[index].terminal, result.terminal);
+    }
+
+    let reference = fixture_v1("interrupted-reference");
+    collect_chain_stage_v1(loaded, &reference.root, &chain, 1).unwrap();
+    let full = read_collection_v1(loaded, &reference.root, &chain)
+        .unwrap()
+        .record;
+    for index in (0..8).filter(|&index| index != 5) {
+        let (a, b) = (&record.games[index], &full.games[index]);
+        assert_eq!(
+            (&a.plan, &a.terminal, &a.sha256, a.groups),
+            (&b.plan, &b.terminal, &b.sha256, b.groups),
+            "game {index}"
+        );
+    }
+    convert_chain_stage_v1(loaded, root, &chain).unwrap();
+    let data = load_chain_data_v1(loaded, root, &chain).unwrap();
+    let excluded: Vec<_> = data
+        .record
+        .excluded
+        .iter()
+        .filter(|game| game.id == plan.id)
+        .collect();
+    assert_eq!(excluded.len(), 1);
+    assert_eq!(excluded[0].terminal_classification, "unpublished-attempt");
+    assert!(!data.record.natural.fit.contains(&plan.id));
+    assert!(!data.record.natural.holdout.contains(&plan.id));
+}
+
+/// A fit-entry refusal is recorded durably, fails the stage and is never
+/// requeued as a missing fit.
+#[test]
+fn an_entry_refusal_is_recorded_and_never_rerun() {
+    let mut fixture = fixture_v1("refusal");
+    // A minibatch larger than any fit set: the entry refuses every fit.
+    fixture.loaded.config.fitting.batch_groups = 1_000_000;
+    fixture.loaded.config.fitting.heldout_curve_points = 1;
+    fixture.loaded.sha256 = sha(&serde_json::to_vec(&fixture.loaded.config).unwrap());
+    let (loaded, root) = (&fixture.loaded, fixture.root.as_path());
+    let chain = loaded.config.chains[0].clone();
+    collect_chain_stage_v1(loaded, root, &chain, 2).unwrap();
+    convert_chain_stage_v1(loaded, root, &chain).unwrap();
+    section7_stage_v1(loaded, root).unwrap().unwrap();
+    preserve_chain_stage_v1(loaded, root, &chain, 2).unwrap();
+    let error = fit_chain_stage_v1(loaded, root, &chain, 1, 1).unwrap_err();
+    assert!(error.contains("fit-entry refusal recorded"), "{error}");
+    let refusal = refusal_path_v1(root, 1, 1, "w64");
+    let record: Value = serde_json::from_slice(&read_v1(&refusal).unwrap()).unwrap();
+    assert_eq!(record["schema"], json!(REFUSAL_SCHEMA_V1));
+    assert!(record["error"]
+        .as_str()
+        .unwrap()
+        .contains("BatchLargerThanFitSet"));
+    let again = fit_chain_stage_v1(loaded, root, &chain, 1, 1).unwrap_err();
+    assert!(again.contains("records a fit-entry refusal"), "{again}");
+    assert!(!fit_path_v1(root, 1, 1, "w64").exists());
 }
 
 #[test]
@@ -614,11 +754,16 @@ fn the_throughput_guard_refuses_other_hosts_binaries_and_counts() {
     let path = fixture.root.join("qualification.json");
     let good = json!({"schema": QUALIFICATION_SCHEMA_V1, "stage": "fit", "host": host_name_v1(),
         "config_sha256": loaded.sha256, "binary_sha256": binary_sha256_v1().unwrap(),
-        "selected_workers": 4});
+        "selected_workers": 4, "forward_workers": 1});
     fs::write(&path, serde_json::to_vec(&good).unwrap()).unwrap();
-    require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4).unwrap();
-    assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 8).is_err());
-    assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Collect, 4).is_err());
+    require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(1)).unwrap();
+    require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, None).unwrap();
+    // Qualified with one forward worker per fit is not qualified with 64.
+    assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(64)).is_err());
+    assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 8, Some(1)).is_err());
+    assert!(
+        require_qualification_v1(loaded, &path, QualifiedStageV1::Collect, 4, None).is_err()
+    );
     for (field, value) in [
         ("host", json!("another-host")),
         ("binary_sha256", json!("0".repeat(64))),
@@ -627,7 +772,9 @@ fn the_throughput_guard_refuses_other_hosts_binaries_and_counts() {
         let mut changed = good.clone();
         changed[field] = value;
         fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
-        assert!(require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4).is_err());
+        assert!(
+            require_qualification_v1(loaded, &path, QualifiedStageV1::Fit, 4, Some(1)).is_err()
+        );
     }
 }
 

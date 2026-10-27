@@ -962,10 +962,11 @@
   "max_pooled_nonnatural_holdout_fraction": 0.05,
   "max_chain_nonnatural_holdout": 16,
   "max_chain_nonnatural_fit": 24,
-  "min_holdout_games_per_pair": 1
+  "min_holdout_games_per_pair": 1,
+  "wall_cap_hours": 48
  },
  "analyzer": {
   "path": "python/tools/b_width_prescreen_read_v1.py",
-  "sha256": "a1f729dea290742cdb47f82c432ebcc9332e77ead030fb5fdd9b4415a707850d"
+  "sha256": "833bcdbc9891638c7bcc64e08d1cb183f3d3201969a148b6572e27ac7a749dea"
  }
 }
