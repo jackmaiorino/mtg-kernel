@@ -10779,6 +10779,7 @@ fn pending_cast_semantic_v2(
                 matches!(
                     component,
                     crate::card_def::CostComponent::TapUntappedControlledPermanent(_)
+                        | crate::card_def::CostComponent::TapUntappedControlledPermanentsV1 { .. }
                 )
             })
         });

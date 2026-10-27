@@ -97,6 +97,13 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_pauper_e6a_v1::E6aStateV1::is_empty"
     )]
     pub e6a: crate::eternal_pauper_e6a_v1::E6aStateV1,
+    /// The Pauper Bogles, white aggro and Rakdos Madness lists' state
+    /// (`eternal_pauper_e6b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_pauper_e6b_v1::E6bStateV1::is_empty"
+    )]
+    pub e6b: crate::eternal_pauper_e6b_v1::E6bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -156,6 +163,9 @@ pub enum EternalTriggerV1 {
     /// A condition owned by the Pauper Affinity, Tron and Ephemerate lists'
     /// module.
     E6aV1(crate::eternal_pauper_e6a_v1::E6aTriggerV1),
+    /// A condition owned by the Pauper Bogles, white aggro and Rakdos
+    /// Madness lists' module.
+    E6bV1(crate::eternal_pauper_e6b_v1::E6bTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -276,6 +286,9 @@ pub enum EternalOpV1 {
     /// A leaf owned by the Pauper Affinity, Tron and Ephemerate lists'
     /// module.
     E6aV1(crate::eternal_pauper_e6a_v1::E6aOpV1),
+    /// A leaf owned by the Pauper Bogles, white aggro and Rakdos Madness
+    /// lists' module.
+    E6bV1(crate::eternal_pauper_e6b_v1::E6bOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -296,6 +309,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 }
                 EternalTriggerV1::E6aV1(condition) => {
                     crate::eternal_pauper_e6a_v1::arrival_condition(condition)
+                }
+                EternalTriggerV1::E6bV1(condition) => {
+                    crate::eternal_pauper_e6b_v1::arrival_condition(condition)
                 }
                 _ => false,
             },
@@ -792,6 +808,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::LurrusV1(op) => crate::eternal_lurrus_v1::execute(op, ctx, state),
         EternalOpV1::E5bV1(op) => crate::eternal_legacy_e5b_v1::execute(op, ctx, state),
         EternalOpV1::E6aV1(op) => crate::eternal_pauper_e6a_v1::execute(op, ctx, state),
+        EternalOpV1::E6bV1(op) => crate::eternal_pauper_e6b_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1257,6 +1274,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING))
         && e3::blocker_allowed(state, attacker, blocker)
         && crate::eternal_vintage_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_pauper_e6b_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1438,6 +1456,9 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_pauper_e6a_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_pauper_e6b_v1::delayed_triggers(
+        state, events,
+    ));
     triggers
 }
 
@@ -1605,6 +1626,12 @@ pub(crate) fn trigger_matches(
     if condition == EternalTriggerV1::PutIntoGraveyardFromAnywhereV1 {
         return e3::trigger_matches(condition, events, index, source, state);
     }
+    // These conditions check their own source, which may show a back face.
+    if let EternalTriggerV1::E6bV1(condition) = condition {
+        return crate::eternal_pauper_e6b_v1::trigger_matches(
+            condition, events, index, source, state,
+        );
+    }
     if let EternalTriggerV1::E5bV1(condition) = condition {
         if crate::eternal_legacy_e5b_v1::functions_on_stack(condition) {
             return crate::eternal_legacy_e5b_v1::trigger_matches(
@@ -1632,6 +1659,7 @@ pub(crate) fn trigger_matches(
         EternalTriggerV1::E6aV1(condition) => {
             crate::eternal_pauper_e6a_v1::trigger_matches(condition, events, index, source, state)
         }
+        EternalTriggerV1::E6bV1(_) => false,
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {
                 object,

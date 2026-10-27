@@ -3134,6 +3134,8 @@ fn commit_with_entry_batch_and_source_color(
         ProposedEvent::ZoneChange(mut z) => {
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);

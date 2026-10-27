@@ -77,6 +77,7 @@ reserved.
 | E4b | Vintage Lurrus lists (Esper and Dimir Lurrus Control, Lurrus PO, Lurrus Breach, Jeskai Lurrus, 4c Psychic Frog): companions, Lurrus of the Dream-Den, Demonic Tutor, Mana Drain, Force of Negation, Gush, Dig Through Time, Treasure Cruise, Snapcaster Mage, Underworld Breach, Brain Freeze, Psychic Frog, Hexing Squelcher, Null Rod, Pithing Needle, Mox Opal and the rest of the lists | 29 and two tokens | Vintage 28.4% to 62.3% |
 | E5b | Legacy Boros Energy, Beanstalk Control, Azorius and Jeskai Tempo, Esper Control, and the Eldrazi and Tron cards outside E5a: Plateau, Savannah, Scrubland, Snow-Covered Plains, Arid Mesa, Windswept Heath, Goblin Bombardment, Up the Beanstalk, Stifle, Consign to Memory, Galvanic Discharge, Wrath of the Skies, Terminus, Leyline Binding, Static Prison, Phelia, Quantum Riddler, Guide of Souls, Ocelot Pride, Ajani, Amped Raptor, Phlage, Sand Scout, Voice of Victory, Lazotep Quarry, Thought-Knot Seer, Reality Smasher, It That Heralds the End, Eldrazi Linebreaker, Wastescape Battlemage, Eldrazi Temple, Eye of Ugin, Abundant Countryside, Petrified Hamlet, Eldrazi Confluence | 35 and six tokens | Legacy 33.5% to 49.4% |
 | E6a | Pauper Tron, Esper, Dimir and 4c Affinity, Esper Ephemerate, Mono-Blue Faeries, Mardu Synthesizer (and Azorius Gates): Abjure, Ancient Den, Archaeomancer, Behold the Multiverse, Bender's Waterskin, Bramble Wurm, Brinebarrow Intruder, Crop Rotation, Cryoshatter, Dispatch, Energy Refractor, Ephemerate, Ethereal Haze, Gearseeker Serpent, Ghostly Flicker, Glacial Floodplain, Grim Bauble, Hard Evidence, Kor Skyfisher, Moment's Peace, Mulldrifter, Mystical Teachings, Omen of the Dead, Prohibit, Prophetic Prism, Razortide Bridge, Remote Isle, Rustvale Bridge, Sewer-veillance Cam, Shattered Landscape, Stream of Thought, Tangle, Tangled Islet, Tithing Blade, Union of the Third Path | 35 and a token | Pauper 53.5% to 69.0% |
+| E6b | Pauper Bogles, White Aggro, Rakdos Madness, Boros Moxite, Mono-White Aggro, Snacker Gates and Boros Synthesizer (and Azorius Faeries): Abundant Growth, Alms of the Vein, Ancestral Mask, Angelic Gift, Armadillo Cloak, Asgardian Citadel, Ash Barrens, Battle Screech, Benevolent Blessing, Boros Garrison, Bushwhack, Cartouche of Solidarity, Cliffgate, Dawnbringer Cleric, Demand Answers, Eagles of the North, Ethereal Armor, Fortress Kin-Guard, Gladecover Scout, Greatsword of Tyr, Guardians' Pledge, Heliod's Pilgrim, Idyllic Grange, Jagged Barrens, Kitchen Imp, Leonardo, Lunarch Veteran, Malevolent Rumble, Mana Tithe, Manor Gate, Martyr's Soul, Pursue the Past, Raffine's Informant, Ragged Short Spear, Rakdos Carnarium, Ramosian Rally, Rancor, Salt Road Packbeast, Search Party Captain, Sheltering Landscape, Silhana Ledgewalker, Slippery Bogle, Spider-Man, Spirit Link, Thraben Inspector, Utopia Sprawl, Vampire's Kiss, Wind-Scarred Crag | 48 and three tokens | Pauper 69.0% to 80.5% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -194,6 +195,29 @@ New, each built once in the first wave that needs it:
   shapes: sacrificing a blue permanent (`PermanentFilter::BlueV1`), an instant-or-flash
   library search (`LibraryCardFilter::InstantOrFlashV1`) and Stream of Thought's choice
   of up to four graveyard cards to shuffle back (`E3ChoiceKindV1::E6aV1`).
+- E6b, built in `src/eternal_pauper_e6b_v1.rs` and `build_eternal_e6b_v1.rs`: creature
+  Auras reuse `AuraCreatureStatic`, and an engine hook multiplies Ancestral Mask's and
+  Ethereal Armor's bonus by their enchantment counts. Auras that enchant a land or a
+  creature you control (Abundant Growth, Utopia Sprawl, Cartouche of Solidarity) use the
+  Standard Aura entry with an enchant-rule hook; Abundant Growth grants its land an
+  any-color mana ability through the granted-mana hook, and Utopia Sprawl adds its chosen
+  color whenever its Forest is tapped for mana (a triggered mana ability, resolved at
+  once). "As this Aura enters, choose a color" is an option list before the Aura enters.
+  Benevolent Blessing's protection from a color is checked for targeting, blocking and
+  damage, and its 704.5m check keeps the Blessing controller's own Auras and Equipment.
+  Spirit Link's and Armadillo Cloak's damage triggers and Rancor's return are queued or
+  ordinary triggers. New alternative-cost conditions: web-slinging (return a tapped
+  creature), sneak (castable during the declare blockers step by returning an unblocked
+  attacker; the spell enters tapped and attacking) and disturb (a graveyard permission
+  whose only cost is the disturb cost; the spell enters transformed, and Luminous Phantom
+  is exiled instead of going to a graveyard). `CostComponent::TapUntappedControlledPermanentsV1`
+  pays Battle Screech's flashback; Demand Answers' "sacrifice an artifact or discard a
+  card" is its discard additional cost, or an alternative cost of the same mana plus the
+  sacrifice that skips the discard. Connive and Malevolent Rumble's reveal use
+  `E3ChoiceKindV1::E6bV1`; endure is an option list; Dawnbringer Cleric is a modal entry
+  trigger; Greatsword of Tyr's attack trigger, Idyllic Grange's "enters untapped" and
+  Martyr's Soul's "no tapped lands" are E6b trigger conditions. New target shapes: a
+  Forest, and up to one creature the defending player controls.
 
 ## Card contract and verification
 
