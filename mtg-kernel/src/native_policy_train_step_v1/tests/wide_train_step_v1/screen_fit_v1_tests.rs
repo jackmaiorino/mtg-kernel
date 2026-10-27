@@ -253,12 +253,15 @@ fn screen_fit_refuses_non_terminal_targets_and_other_target_sources() {
     );
 }
 
+/// One config edit and the refusal it must produce.
+type ConfigEditV1 = (fn(&mut ScreenFitConfigV1), ScreenFitErrorV1);
+
 #[test]
 fn screen_fit_validates_every_caller_parameter_and_the_split() {
     let mut state = narrow_state_v1();
     let (fit, heldout) = (fit_games_v1(), heldout_games_v1());
     let invalid = |field: &'static str| ScreenFitErrorV1::InvalidConfig { field };
-    let cases: [(fn(&mut ScreenFitConfigV1), ScreenFitErrorV1); 9] = [
+    let cases: [ConfigEditV1; 9] = [
         (|c| c.steps = 0, invalid("steps")),
         (|c| c.batch_groups = 0, invalid("batch_groups")),
         (|c| c.learning_rate = 0.0, invalid("learning_rate")),

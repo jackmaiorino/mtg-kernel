@@ -705,8 +705,8 @@ fn adam_step_age_trajectory_probe_v1() {
         let after = state.snapshot_v1().unwrap();
         let mut per_class = BTreeMap::<WideCoordinateClassV1, Vec<f64>>::new();
         let mut moved = BTreeMap::<WideCoordinateClassV1, u64>::new();
-        for tensor in 0..PARAMETER_TENSOR_COUNT {
-            for (index, &class) in classes[tensor].iter().enumerate() {
+        for (tensor, tensor_classes) in classes.iter().enumerate() {
+            for (index, &class) in tensor_classes.iter().enumerate() {
                 let delta = f64::from(after.parameters[tensor].values[index])
                     - f64::from(before.parameters[tensor].values[index]);
                 if delta != 0.0 {
