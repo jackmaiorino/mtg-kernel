@@ -840,7 +840,9 @@ fn real_b512_step0_preflight() {
             game.stored.as_ref().map(|stored| ScreenGameRecordV1 {
                 game_id: plan.id.clone(),
                 outcome: ScreenGameOutcomeV1::from(
-                    game.terminal.as_ref().expect("a natural game has a terminal"),
+                    game.terminal
+                        .as_ref()
+                        .expect("a natural game has a terminal"),
                 ),
                 groups: decode_game_v1(&stored.bytes).unwrap(),
             })
