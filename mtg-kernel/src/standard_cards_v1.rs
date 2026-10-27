@@ -217,6 +217,21 @@ pub enum StandardTargetV1 {
     /// "Two target artifacts, creatures, and/or lands you control" (Ghostly
     /// Flicker): exactly two distinct targets.
     TwoControlledArtifactsCreaturesOrLandsV1,
+    /// "Target player" twice (Kozilek's Command's first two modes); the two
+    /// target words may name one player (115.3).
+    PlayerThenPlayerV1,
+    /// "Target player" then "up to X target cards from graveyards"
+    /// (Kozilek's Command): a player, then any number of distinct cards.
+    PlayerThenGraveyardCardsV1,
+    /// "Target creature" then "up to X target cards from graveyards"
+    /// (Kozilek's Command).
+    CreatureThenGraveyardCardsV1,
+    /// "Up to one target permanent that's one or more colors" (Ugin, Eye of
+    /// the Storms).
+    UpToOneColoredPermanentV1,
+    /// "Target artifact or creature you control and target creature an
+    /// opponent controls with power 3 or less" (Oko, Thief of Crowns).
+    ControlledArtifactOrCreatureThenOpponentSmallCreatureV1,
     /// "Enchant Forest" (Utopia Sprawl): a land with the Forest subtype,
     /// any controller.
     ForestV1,
@@ -237,7 +252,11 @@ impl StandardTargetV1 {
             Self::UpToOneNoncreatureArtifactV1 => (1, 0),
             Self::PlayerThenArtifactV1
             | Self::PlayerThenCreatureV1
-            | Self::ArtifactThenCreatureV1 => (2, 2),
+            | Self::ArtifactThenCreatureV1
+            | Self::PlayerThenPlayerV1
+            | Self::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => (2, 2),
+            Self::PlayerThenGraveyardCardsV1 | Self::CreatureThenGraveyardCardsV1 => (64, 1),
+            Self::UpToOneColoredPermanentV1 => (1, 0),
             Self::UpToOneOtherNonlandPermanentV1 => (1, 0),
             Self::TwoControlledArtifactsCreaturesOrLandsV1 => (2, 2),
             Self::UpToOneOpponentCreatureV1 => (1, 0),
@@ -258,7 +277,9 @@ impl StandardTargetV1 {
     /// type target slot `slot` takes, or `None` for a player slot.
     pub(crate) fn slot_kind(self, slot: usize) -> Option<Option<CardType>> {
         match (self, slot) {
-            (Self::PlayerThenArtifactV1 | Self::PlayerThenCreatureV1, 0) => Some(None),
+            (Self::PlayerThenArtifactV1 | Self::PlayerThenCreatureV1, 0)
+            | (Self::PlayerThenPlayerV1, 0 | 1)
+            | (Self::PlayerThenGraveyardCardsV1, 0) => Some(None),
             (Self::PlayerThenArtifactV1, 1) | (Self::ArtifactThenCreatureV1, 0) => {
                 Some(Some(CardType::Artifact))
             }
@@ -311,6 +332,77 @@ pub(crate) fn target_zone(target: StandardTargetV1) -> Zone {
 pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
     zone == target_zone(target)
         || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
+        || (matches!(
+            target,
+            StandardTargetV1::PlayerThenGraveyardCardsV1
+                | StandardTargetV1::CreatureThenGraveyardCardsV1
+        ) && zone == Zone::Graveyard)
+}
+
+/// The legal choices of wave E5a's slot-dependent filters after the
+/// already chosen `prefix`, or `None` for every other filter.
+fn eternal_e5a_legal_targets(
+    target: StandardTargetV1,
+    controller: PlayerId,
+    prefix: &[Target],
+    state: &GameState,
+) -> Option<Vec<Target>> {
+    use StandardTargetV1 as S;
+    let battlefield = || {
+        [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+            .filter(|&id| state.objects.get(id).zone == Zone::Battlefield)
+    };
+    let has = |id, card_type| crate::engine::object_has_type(state, id, card_type);
+    let players = || [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec();
+    let graveyard_cards = || {
+        [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
+            .filter(|&id| !state.objects.get(id).v4.is_token)
+            .map(Target::Object)
+            .filter(|candidate| !prefix.contains(candidate))
+            .collect::<Vec<_>>()
+    };
+    Some(match (target, prefix.len()) {
+        (S::PlayerThenPlayerV1, 0 | 1) | (S::PlayerThenGraveyardCardsV1, 0) => players(),
+        (S::CreatureThenGraveyardCardsV1, 0) => battlefield()
+            .filter(|&id| has(id, CardType::Creature))
+            .map(Target::Object)
+            .collect(),
+        (S::PlayerThenGraveyardCardsV1 | S::CreatureThenGraveyardCardsV1, slot) if slot < 64 => {
+            graveyard_cards()
+        }
+        (S::UpToOneColoredPermanentV1, 0) => battlefield()
+            .filter(|&id| crate::engine::object_color_mask(state, id) & 0b1_1111 != 0)
+            .map(Target::Object)
+            .collect(),
+        (S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1, 0) => battlefield()
+            .filter(|&id| {
+                state.objects.get(id).controller == controller
+                    && (has(id, CardType::Artifact) || has(id, CardType::Creature))
+            })
+            .map(Target::Object)
+            .collect(),
+        (S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1, 1) => battlefield()
+            .filter(|&id| {
+                state.objects.get(id).controller != controller
+                    && has(id, CardType::Creature)
+                    && crate::engine::effective_power(state, id) <= 3
+            })
+            .map(Target::Object)
+            .collect(),
+        (
+            S::PlayerThenPlayerV1
+            | S::PlayerThenGraveyardCardsV1
+            | S::CreatureThenGraveyardCardsV1
+            | S::UpToOneColoredPermanentV1
+            | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1,
+            _,
+        ) => Vec::new(),
+        _ => return None,
+    })
 }
 
 /// Whether the stack spell `source` (not the one being announced) matches
@@ -359,6 +451,9 @@ pub(crate) fn legal_targets(
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
+    if let Some(targets) = eternal_e5a_legal_targets(target, controller, prefix, state) {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -619,7 +714,8 @@ pub(crate) fn target_matches(
         // Slot-dependent; `legal_targets` decides by slot.
         StandardTargetV1::PlayerThenArtifactV1
         | StandardTargetV1::PlayerThenCreatureV1
-        | StandardTargetV1::ArtifactThenCreatureV1 => {
+        | StandardTargetV1::ArtifactThenCreatureV1
+        | StandardTargetV1::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => {
             has(CardType::Artifact) || has(CardType::Creature)
         }
         StandardTargetV1::UpToOneOtherNonlandPermanentV1 => !has(CardType::Land),
@@ -630,6 +726,13 @@ pub(crate) fn target_matches(
         StandardTargetV1::TwoControlledArtifactsCreaturesOrLandsV1 => {
             live.controller == controller
                 && (has(CardType::Artifact) || has(CardType::Creature) || has(CardType::Land))
+        }
+        StandardTargetV1::PlayerThenPlayerV1 | StandardTargetV1::PlayerThenGraveyardCardsV1 => {
+            false
+        }
+        StandardTargetV1::CreatureThenGraveyardCardsV1 => has(CardType::Creature),
+        StandardTargetV1::UpToOneColoredPermanentV1 => {
+            crate::engine::object_color_mask(state, object) & 0b1_1111 != 0
         }
         StandardTargetV1::ForestV1 => {
             has(CardType::Land)
@@ -2446,6 +2549,11 @@ pub(crate) fn cast_target_allowed(
 
 /// The least X this spell may announce with these targets.
 pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) -> u8 {
+    if cfg!(feature = "eternal-fixtures") {
+        if let Some(minimum) = crate::eternal_e5a_v1::choices::minimum_x(def.name, targets, state) {
+            return minimum;
+        }
+    }
     match (def.name, targets.first()) {
         (BLUE_SUNS_TWILIGHT, Some(Target::Object(object))) if def.cost.x_count != 0 => {
             u8::try_from(mana_value(state, *object)).unwrap_or(u8::MAX)
@@ -3374,17 +3482,19 @@ pub(crate) fn graveyard_cast_granted(
 ) -> bool {
     standard_graveyard_cast_granted(state, object, holder, zone_change_count)
         || (cfg!(feature = "eternal-fixtures")
-            && (crate::eternal_lurrus_v1::lurrus_permission(
-                state,
-                object,
-                holder,
-                zone_change_count,
-            ) || crate::eternal_pauper_e6b_v1::disturb_permission(
-                state,
-                object,
-                holder,
-                zone_change_count,
-            )))
+            && (crate::eternal_e5a_v1::permissions::will_permission(state, object, holder)
+                || crate::eternal_lurrus_v1::lurrus_permission(
+                    state,
+                    object,
+                    holder,
+                    zone_change_count,
+                )
+                || crate::eternal_pauper_e6b_v1::disturb_permission(
+                    state,
+                    object,
+                    holder,
+                    zone_change_count,
+                )))
 }
 
 /// The graveyard cast grants other than Lurrus of the Dream-Den's.

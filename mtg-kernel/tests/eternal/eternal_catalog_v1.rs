@@ -17,7 +17,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 49] = [
+const PLAYABLE: [(&str, &str); 57] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -83,6 +83,9 @@ const PLAYABLE: [(&str, &str); 49] = [
     ),
     ("legacy", "legacy-esper-control"),
     ("legacy", "legacy-azorius-tempo"),
+    ("legacy", "legacy-mystic-forge-combo"),
+    ("legacy", "legacy-eldrazi"),
+    ("legacy", "legacy-tron"),
     ("vintage", "vintage-jewel-shops"),
     ("vintage", "vintage-mono-white-initiative"),
     ("vintage", "vintage-esper-lurrus-control"),
@@ -94,6 +97,11 @@ const PLAYABLE: [(&str, &str); 49] = [
     ),
     ("vintage", "vintage-jeskai-lurrus"),
     ("vintage", "vintage-4c-psychic-frog"),
+    ("vintage", "vintage-raker-shops"),
+    ("vintage", "vintage-oath-of-druids"),
+    ("vintage", "vintage-paradoxical-outcome"),
+    ("vintage", "vintage-blue-tinker"),
+    ("vintage", "vintage-beseech-storm"),
 ];
 
 fn read_json(relative: &str) -> Value {
@@ -279,22 +287,9 @@ fn is_companion_action(action: &Value) -> bool {
 /// Dead, and every nonland card under Underworld Breach) and once an extra
 /// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
 /// Time Vault's ability), so these games never begin either; the engine
-/// paths are covered by the rules tests. A resolution cast of an X spell from
-/// the graveyard (Bilbo, Thief in the Night choosing Prismatic Ending) halts
-/// the engine, so Bilbo's choice skips X spells. Every other action is
-/// admitted.
+/// paths are covered by the rules tests. Every other action is admitted.
 fn session_can_follow(action: &Value, decision: &Value) -> bool {
     let s = &action["semantic"];
-    if s["action_kind"] == "choose_effect_target"
-        && s["source"]["card_db_id"]
-            .as_u64()
-            .is_some_and(|id| CARD_DEFS[id as usize].name == "Bilbo, Thief in the Night")
-        && s["target"]["object"]["card_db_id"]
-            .as_u64()
-            .is_some_and(|id| CARD_DEFS[id as usize].cost.x_count > 0)
-    {
-        return false;
-    }
     if !matches!(
         s["action_kind"].as_str(),
         Some("cast_spell" | "activate_ability")
@@ -550,18 +545,33 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // Every deck casts a spell in its two ranked games (one per seat); a
     // single shuffle can leave one seat without a castable spell.
     let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut failures: Vec<String> = Vec::new();
     for index in 0..decks.len() {
         let (first, second) = (&decks[index], &decks[(index + 1) % decks.len()]);
         let pair = [first.deck.clone(), second.deck.clone()];
         let seed = 0x4554_4552_0000 + index as u64;
         for policy in [Policy::Ranked, Policy::Random(seed)] {
-            let game = play(pair.clone(), seed, policy);
-            let replay = play(pair.clone(), seed, policy);
-            assert_eq!(
-                game.transcript_sha256, replay.transcript_sha256,
-                "{} / {}",
-                first.archetype, second.archetype
-            );
+            // Every pairing runs even after one fails, so a single run
+            // reports all failing games (each panic message is printed).
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let game = play(pair.clone(), seed, policy);
+                let replay = play(pair.clone(), seed, policy);
+                assert_eq!(
+                    game.transcript_sha256, replay.transcript_sha256,
+                    "{} / {}",
+                    first.archetype, second.archetype
+                );
+                game
+            }));
+            let Ok(game) = outcome else {
+                failures.push(format!(
+                    "{} / {} seed={seed} random={}",
+                    first.archetype,
+                    second.archetype,
+                    matches!(policy, Policy::Random(_))
+                ));
+                continue;
+            };
             companion_actions += game.companion_actions;
             if let Policy::Ranked = policy {
                 *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
@@ -580,6 +590,15 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
             );
         }
     }
+    assert!(
+        failures.is_empty(),
+        "failing games:
+{}",
+        failures.join(
+            "
+"
+        )
+    );
     assert!(
         ranked_casts.values().all(|casts| *casts > 0),
         "{ranked_casts:?}"

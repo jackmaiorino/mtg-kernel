@@ -97,6 +97,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_pauper_e6a_v1::E6aStateV1::is_empty"
     )]
     pub e6a: crate::eternal_pauper_e6a_v1::E6aStateV1,
+    /// Wave E5a's state (`eternal_e5a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_e5a_v1::E5aStateV1::is_empty"
+    )]
+    pub e5a: crate::eternal_e5a_v1::E5aStateV1,
     /// The Pauper Bogles, white aggro and Rakdos Madness lists' state
     /// (`eternal_pauper_e6b_v1`).
     #[serde(
@@ -163,6 +169,8 @@ pub enum EternalTriggerV1 {
     /// A condition owned by the Pauper Affinity, Tron and Ephemerate lists'
     /// module.
     E6aV1(crate::eternal_pauper_e6a_v1::E6aTriggerV1),
+    /// A condition owned by wave E5a's module.
+    E5aV1(crate::eternal_e5a_v1::E5aTriggerV1),
     /// A condition owned by the Pauper Bogles, white aggro and Rakdos
     /// Madness lists' module.
     E6bV1(crate::eternal_pauper_e6b_v1::E6bTriggerV1),
@@ -286,6 +294,8 @@ pub enum EternalOpV1 {
     /// A leaf owned by the Pauper Affinity, Tron and Ephemerate lists'
     /// module.
     E6aV1(crate::eternal_pauper_e6a_v1::E6aOpV1),
+    /// A leaf owned by wave E5a's module.
+    E5aV1(crate::eternal_e5a_v1::E5aOpV1),
     /// A leaf owned by the Pauper Bogles, white aggro and Rakdos Madness
     /// lists' module.
     E6bV1(crate::eternal_pauper_e6b_v1::E6bOpV1),
@@ -323,7 +333,10 @@ impl EternalOpV1 {
     /// Whether this leaf can yield a player decision, so its program must use
     /// the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
-        e3::contains_player_choice(self)
+        match self {
+            EternalOpV1::E5aV1(op) => op.contains_player_choice(),
+            _ => e3::contains_player_choice(self),
+        }
     }
 }
 
@@ -808,6 +821,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::LurrusV1(op) => crate::eternal_lurrus_v1::execute(op, ctx, state),
         EternalOpV1::E5bV1(op) => crate::eternal_legacy_e5b_v1::execute(op, ctx, state),
         EternalOpV1::E6aV1(op) => crate::eternal_pauper_e6a_v1::execute(op, ctx, state),
+        EternalOpV1::E5aV1(op) => crate::eternal_e5a_v1::execute(op, ctx, state),
         EternalOpV1::E6bV1(op) => crate::eternal_pauper_e6b_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
@@ -1274,6 +1288,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING))
         && e3::blocker_allowed(state, attacker, blocker)
         && crate::eternal_vintage_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_e5a_v1::statics::blocker_allowed(state, attacker, blocker)
         && crate::eternal_pauper_e6b_v1::blocker_allowed(state, attacker, blocker)
 }
 
@@ -1456,6 +1471,7 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_pauper_e6a_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_e5a_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_pauper_e6b_v1::delayed_triggers(
         state, events,
     ));
@@ -1549,6 +1565,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_lurrus_v1::begin_turn(state, player);
     crate::eternal_legacy_e5b_v1::begin_turn(state, player);
     crate::eternal_pauper_e6a_v1::begin_turn(state, player);
+    crate::eternal_e5a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -1658,6 +1675,9 @@ pub(crate) fn trigger_matches(
         }
         EternalTriggerV1::E6aV1(condition) => {
             crate::eternal_pauper_e6a_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::E5aV1(condition) => {
+            crate::eternal_e5a_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::E6bV1(_) => false,
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
