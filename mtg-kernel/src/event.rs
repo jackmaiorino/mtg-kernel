@@ -4412,7 +4412,17 @@ pub fn log_monarch_trigger(
         .objects
         .try_get(source.source)
         .ok_or("Monarch designation source no longer exists")?;
-    if live.card_def != source.card_def
+    // A copy (Phyrexian Metamorph as Thorn of the Black Rose) that later
+    // left the battlefield is its own card again; the copied definition it
+    // had stays recorded for that incarnation.
+    let card_def_matches = live.card_def == source.card_def
+        || crate::standard_cards_v1::had_card_def(
+            state,
+            source.source,
+            source.zone_change_count,
+            source.card_def,
+        );
+    if !card_def_matches
         || live.owner != source.owner
         || live.zone_change_count < source.zone_change_count
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)

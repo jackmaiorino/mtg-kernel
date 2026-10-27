@@ -7121,8 +7121,15 @@ pub(crate) fn validate_monarch_trigger_binding(
         .objects
         .try_get(binding.source.source)
         .ok_or("Monarch trigger source object is missing")?;
+    let card_def_matches = source.card_def == binding.source.card_def
+        || crate::standard_cards_v1::had_card_def(
+            state,
+            binding.source.source,
+            binding.source.zone_change_count,
+            binding.source.card_def,
+        );
     if binding.source.controller != binding.player
-        || source.card_def != binding.source.card_def
+        || !card_def_matches
         || source.owner != binding.source.owner
         || source.zone_change_count < binding.source.zone_change_count
         || (source.zone_change_count == binding.source.zone_change_count
