@@ -24289,6 +24289,11 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
             object.v4.on_adventure = true;
         }
     }
+    // A foretold card stays foretold across an aborted cast.
+    #[cfg(feature = "eternal-fixtures")]
+    if to_zone == Zone::Exile {
+        crate::eternal_pauper_e6a_v1::restore_aborted_foretell(state, pending.spell);
+    }
     match resolution_cast_v1::finish_child(state) {
         Ok(true) => return,
         Ok(false) => {}

@@ -1259,11 +1259,27 @@ fn prune(state: &mut GameState) {
     };
     let evoked = keep_stack(&e6a.evoked_casts);
     let rebounding = keep_stack(&e6a.rebounding_spells);
+    // A foretold card being cast keeps its record until it leaves the stack.
     let foretold = e6a
         .foretold
         .iter()
         .copied()
-        .filter(|&link| link_live_in(state, link, Zone::Exile))
+        .filter(|&link| {
+            link_live_in(state, link, Zone::Exile)
+                || link
+                    .zone_change_count
+                    .checked_add(1)
+                    .is_some_and(|zone_change_count| {
+                        link_live_in(
+                            state,
+                            ObjectLinkV4 {
+                                object: link.object,
+                                zone_change_count,
+                            },
+                            Zone::Stack,
+                        )
+                    })
+        })
         .collect::<Vec<_>>();
     let changed = evoked.len() != e6a.evoked_casts.len()
         || rebounding.len() != e6a.rebounding_spells.len()
@@ -1408,6 +1424,41 @@ pub(crate) fn foretell(
     state.engine.exile_play_permissions.push(permission);
     e6a_state(state).foretold.push(link);
     Ok(())
+}
+
+/// An aborted cast of a foretold card returns it to exile as a new object:
+/// it stays foretold, face down, with its cast permission.
+pub(crate) fn restore_aborted_foretell(state: &mut GameState, card: ObjectId) {
+    let live_count = state.objects.get(card).zone_change_count;
+    let Some(exile_count) = live_count.checked_sub(2) else {
+        return;
+    };
+    let old = ObjectLinkV4 {
+        object: card,
+        zone_change_count: exile_count,
+    };
+    let Some(e6a) = state.eternal_v1.as_mut().map(|eternal| &mut eternal.e6a) else {
+        return;
+    };
+    let Some(position) = e6a.foretold.iter().position(|link| *link == old) else {
+        return;
+    };
+    e6a.foretold[position] = ObjectLinkV4 {
+        object: card,
+        zone_change_count: live_count,
+    };
+    let owner = state.objects.get(card).owner;
+    state.objects.get_mut(card).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+        disguised: false,
+        lookers: 1 << owner.index(),
+        hidden_by: None,
+        hidden_by_source: None,
+    });
+    for permission in &mut state.engine.exile_play_permissions {
+        if permission.object == card && permission.zone_change_generation == exile_count {
+            permission.zone_change_generation = live_count;
+        }
+    }
 }
 
 /// Whether `object` is a foretold card, in exile or as the spell cast from
