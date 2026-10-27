@@ -229,11 +229,12 @@ pub(crate) fn wide_coordinate_classes_v1(tensor: usize) -> Vec<WideCoordinateCla
         .flat_map(|segment| {
             let narrow_width = segment_width_v1(segment, HIDDEN_DIM_V1, CARD_EMBEDDING_DIM_V1);
             let wide_width = segment_width_v1(segment, W_HIDDEN_DIM_V1, W_CARD_EMBEDDING_DIM_V1);
+            // A fixed segment keeps its width, so its columns are all old.
             let new = match (tensor, segment) {
                 (CARD_EMBEDDING, _) => NewEmbeddingColumn,
                 (_, SegmentV1::Embedding) => NewEmbeddingFanOut,
                 (_, SegmentV1::Hidden) => NewFanOut,
-                (_, SegmentV1::Fixed(_)) => unreachable!("fixed segments do not widen"),
+                (_, SegmentV1::Fixed(_)) => Old,
             };
             (0..wide_width).map(move |offset| if offset < narrow_width { Old } else { new })
         })
