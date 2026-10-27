@@ -406,7 +406,7 @@ class ReviewR1CreateTests(Base):
             return pod("A")
         self.assertEqual(self.create(root, world, poster)["id"], "A")
         self.assertEqual(world.deletes, ["B"])
-        self.assertEqual(lease.external_guard.known_pods(root)["B"], "duplicate")
+        self.assertEqual(lease.external_guard.known_pods(root)["B"], "census")   # retained by the census, not a create result
         self.assertEqual(lease.external_guard.known_pods(root)["A"], "receipt")
 
     def test_post_creation_diagnostics_never_gate_the_delete(self):
@@ -567,7 +567,7 @@ class ResponsibilityTests(Base):
         root = self.control(); world = World()
         world.census = lambda current: current + ([{"name": NAME, "id": None}] if current else [])
         self.assertEqual(self.create_with(root, world, self.two(world))["id"], "A")
-        self.assertEqual(lease.external_guard.known_pods(root)["B"], "duplicate")
+        self.assertEqual(lease.external_guard.known_pods(root)["B"], "census")   # retained by the census, not a create result
         self.assertNotIn("B", world.pods)
 
     def test_post_id_is_retained_whatever_the_name(self):
