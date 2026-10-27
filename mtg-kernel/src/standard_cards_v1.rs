@@ -214,6 +214,9 @@ pub enum StandardTargetV1 {
         creatures: u8,
         permanents: u8,
     },
+    /// "Two target artifacts, creatures, and/or lands you control" (Ghostly
+    /// Flicker): exactly two distinct targets.
+    TwoControlledArtifactsCreaturesOrLandsV1,
 }
 
 impl StandardTargetV1 {
@@ -230,6 +233,7 @@ impl StandardTargetV1 {
             | Self::PlayerThenCreatureV1
             | Self::ArtifactThenCreatureV1 => (2, 2),
             Self::UpToOneOtherNonlandPermanentV1 => (1, 0),
+            Self::TwoControlledArtifactsCreaturesOrLandsV1 => (2, 2),
             Self::CreaturesThenNonlandPermanentsV1 {
                 creatures,
                 permanents,
@@ -500,10 +504,14 @@ pub(crate) fn legal_targets(
                     | StandardTargetV1::UpToOneOtherNonlandPermanentV1
             ) || Some(id) != source.map(|(id, _)| id)
         })
-        // "Any number of target" permanents are distinct (115.3).
+        // "Any number of target" permanents are distinct (115.3), as are
+        // Ghostly Flicker's two targets.
         .filter(|&id| {
-            target != StandardTargetV1::AnyNumberControlledNonlandNontokenPermanentsV1
-                || !prefix.contains(&Target::Object(id))
+            !matches!(
+                target,
+                StandardTargetV1::AnyNumberControlledNonlandNontokenPermanentsV1
+                    | StandardTargetV1::TwoControlledArtifactsCreaturesOrLandsV1
+            ) || !prefix.contains(&Target::Object(id))
         })
         .map(Target::Object)
         .collect()
@@ -611,6 +619,10 @@ pub(crate) fn target_matches(
         StandardTargetV1::TriggeredAbilityOrColorlessSpellV1 => false,
         StandardTargetV1::CreaturesThenNonlandPermanentsV1 { .. } => {
             has(CardType::Creature) || !has(CardType::Land)
+        }
+        StandardTargetV1::TwoControlledArtifactsCreaturesOrLandsV1 => {
+            live.controller == controller
+                && (has(CardType::Artifact) || has(CardType::Creature) || has(CardType::Land))
         }
     }
 }

@@ -264,6 +264,9 @@ pub enum E3ChoiceKindV1 {
     /// A choice owned by the Legacy aggro, Eldrazi and control lists'
     /// module (`eternal_legacy_e5b_v1`).
     E5bV1(crate::eternal_legacy_e5b_v1::E5bChoiceV1),
+    /// A choice owned by the Pauper Affinity, Tron and Ephemerate lists'
+    /// module (`eternal_pauper_e6a_v1`).
+    E6aV1(crate::eternal_pauper_e6a_v1::E6aChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -288,6 +291,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::E5bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::E6aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -310,6 +316,7 @@ impl E3ChoiceV1 {
     pub(crate) fn public_purpose(&self) -> crate::rl::TargetSelectionPurposeV4 {
         match &self.kind {
             E3ChoiceKindV1::E5bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::E6aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
             | E3ChoiceKindV1::OracleV1 { .. }
@@ -354,6 +361,7 @@ impl E3ChoiceV1 {
             }
             E3ChoiceKindV1::MadWizardV1 { drawn } => out.extend(drawn.iter().copied()),
             E3ChoiceKindV1::E5bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::E6aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -547,6 +555,13 @@ pub(crate) fn finish_selection(
             dungeons::finish(state, continuation, choice, bindings)
         }
         E3ChoiceKindV1::E5bV1(kind) => crate::eternal_legacy_e5b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::E6aV1(kind) => crate::eternal_pauper_e6a_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -846,6 +861,9 @@ pub(crate) fn drive(
         EternalOpV1::E5bV1(op) => {
             crate::eternal_legacy_e5b_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::E6aV1(op) => {
+            crate::eternal_pauper_e6a_v1::drive(state, continuation, op, path)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -870,6 +888,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::AcererakEntersV1
             | EternalOpV1::AcererakAttacksV1
     ) || matches!(op, EternalOpV1::E5bV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::E6aV1(op) if op.contains_player_choice())
 }
 
 /// The cards (not tokens or copies) in `player`'s graveyard, in order.

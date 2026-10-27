@@ -22,6 +22,7 @@
 //! compilation.
 
 mod build_eternal_e5b_v1;
+mod build_eternal_e6a_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -4515,8 +4516,9 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         // always available.
         "Barrels of Blasting Jelly" => vec![],
         // Giant's Boulder's only mana ability is its paid any-color one
-        // below, never an automatic payment source.
-        "Giant's Boulder" => vec![],
+        // below, never an automatic payment source. The same holds for
+        // Prophetic Prism and Energy Refractor.
+        "Giant's Boulder" | "Prophetic Prism" | "Energy Refractor" => vec![],
         // Dimir Aqueduct's one action identifies the whole {U}{B} bundle.
         "Dimir Aqueduct" => vec!["U"],
         _ if standard_lands::overrides_primary_mana(&card.name) => {
@@ -4957,7 +4959,7 @@ fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => build_eternal_e6a_v1::flashback_for(name),
     }
 }
 
@@ -7048,7 +7050,11 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         "Luminous Rebuke" => {
             "Some(GenericCostReductionDef { generic_per_count: 3, count: DynamicCountDef::SpellTargetsTappedCreature })"
         }
-        "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" | "Utrom Monitor" => {
+        "Myr Enforcer"
+        | "Thoughtcast"
+        | "Refurbished Familiar"
+        | "Utrom Monitor"
+        | "Gearseeker Serpent" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
         "Cryptic Serpent" | "Tolarian Terror" => {
@@ -7136,7 +7142,7 @@ fn attachment_for(name: &str) -> &'static str {
         "Monster Role Token" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::TRAMPLE, per_controlled_subtype: None }))",
         "Zoetic Glyph" => "Some(AttachmentDef::AuraArtifactAnimation(AnimationDef { power:5, toughness:4, artifact:false, colors:&[], subtypes:&[Subtype::Golem], keywords:Keywords::NONE, until_end_of_turn:false }))",
         "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
-        _ => "None",
+        _ => build_eternal_e6a_v1::attachment_for(name),
     }
 }
 
@@ -11193,6 +11199,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Sphinx" => "Subtype::Sphinx",
         "Sand" => "Subtype::Sand",
         "Scion" => "Subtype::Scion",
+        "Crab" => "Subtype::Crab",
+        "Kor" => "Subtype::Kor",
+        "Arcane" => "Subtype::Arcane",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

@@ -380,6 +380,12 @@ pub enum Subtype {
     Sphinx,
     Sand,
     Scion,
+    /// Appended for the eternal catalog's Pauper Affinity, Tron and
+    /// Ephemerate lists (Kor Skyfisher, the Crab token, Ethereal Haze's
+    /// Arcane spell type).
+    Crab,
+    Kor,
+    Arcane,
 }
 
 impl Subtype {
@@ -710,6 +716,10 @@ impl Subtype {
         Subtype::Sand,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Scion,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Crab,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Kor,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -814,6 +824,8 @@ impl Subtype {
                     | Subtype::Sphinx
                     | Subtype::Sand
                     | Subtype::Scion
+                    | Subtype::Crab
+                    | Subtype::Kor
             )
         {
             return true;
@@ -1391,6 +1403,9 @@ pub enum PermanentFilter {
     /// A controlled Desert (Lazotep Quarry's "Sacrifice a Desert").
     /// Appended for the eternal catalog.
     DesertV1,
+    /// A controlled blue permanent (Abjure's "sacrifice a blue
+    /// permanent"). Appended for the eternal catalog.
+    BlueV1,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -1663,6 +1678,11 @@ pub enum AltCostCondition {
     /// "If it's not your turn" (Force of Negation). Appended for the
     /// eternal catalog.
     NotYourTurnV1,
+    /// Foretell (702.143): cast from exile on a later turn for its foretell
+    /// cost, only after the card was foretold (Behold the Multiverse). The
+    /// quote hook in `eternal_pauper_e6a_v1` ties it to the foretold card.
+    /// Appended for the eternal catalog.
+    ForetoldV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -3121,7 +3141,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xd570_6b3e_6788_d50b;
+        const EXPECTED_ETERNAL: u64 = 0x3747_06e8_9d77_08b0;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
