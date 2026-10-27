@@ -1414,7 +1414,8 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureSpellOnStack
                     | TargetSpec::ArtifactSpellOnStack
                     | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
-                    | TargetSpec::SpellYouDontControl,
+                    | TargetSpec::SpellYouDontControl
+                    | TargetSpec::SpellWithManaValueV1(_),
                 0,
                 StackTargetContractV4::Object {
                     zone: Zone::Stack,
@@ -3406,6 +3407,20 @@ impl GameState {
         let chosen = projected.players[owner.index()].library.first().copied();
         self.randomness = projected.randomness;
         Ok(chosen)
+    }
+
+    /// Flip a coin for `player` (Mana Crypt): true when they win the flip.
+    /// Same checked randomness transaction as `random_hand_card_v1`, over a
+    /// private two-entry projection; no zone or knowledge changes.
+    pub(crate) fn flip_coin_v1(&mut self, player: PlayerId) -> Result<bool, LibraryShuffleError> {
+        let player = library_shuffle_owner(player)?;
+        let heads = ObjectId(0);
+        let mut projected = self.clone();
+        projected.players[player.index()].library = vec![heads, ObjectId(1)];
+        projected.shuffle_library(player)?;
+        let won = projected.players[player.index()].library.first() == Some(&heads);
+        self.randomness = projected.randomness;
+        Ok(won)
     }
 
     pub(crate) fn shuffle_library(&mut self, owner: PlayerId) -> Result<(), LibraryShuffleError> {

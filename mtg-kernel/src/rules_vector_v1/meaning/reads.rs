@@ -578,6 +578,17 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
         }
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
         LibraryCardFilter::CardWithTypeV1(card_type) => ObjF::Typed(card_type.into()),
+        LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
+            // The frozen vocabulary has no library mana-value bound.
+            let _ = maximum;
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Artifact)
+        }
+        LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => {
+            // A mana-cost shape, not a mana value: opaque to the vocabulary.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Artifact)
+        }
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(_) => ObjF::Permanent,
         LibraryCardFilter::ArtifactWithManaValue(_) => {
             // The frozen vocabulary lacks an exact mana-value read predicate.

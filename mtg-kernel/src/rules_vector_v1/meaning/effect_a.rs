@@ -60,7 +60,8 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::SorcerySpellOnStack
         | TargetSpec::NoncreatureSpellOnStack
         | TargetSpec::ArtifactSpellOnStack
-        | TargetSpec::CreatureSpellOnStack => (STACK, None),
+        | TargetSpec::CreatureSpellOnStack
+        | TargetSpec::SpellWithManaValueV1(_) => (STACK, None),
         TargetSpec::SpellYouDontControl => (STACK, Some(RelF::Opponent)),
         TargetSpec::SpellManaValueAtMostControlledSubtypes { first, second } => {
             // The subtypes bound the legal mana value; that is a target

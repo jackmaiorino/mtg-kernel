@@ -62,10 +62,19 @@ pub(crate) fn record_trigger_publication(state: &mut GameState, item: &StackItem
 pub(crate) fn selected_definition(id: u16) -> bool {
     card_def::CARD_DEFS
         .get(usize::from(id))
-        .is_some_and(|definition| definition.name == "Temporal Manipulation")
+        .is_some_and(|definition| selected_name(definition.name))
+}
+
+/// The printed spells whose whole program is "Take an extra turn after this
+/// one": Temporal Manipulation, and Time Walk in the eternal catalog.
+fn selected_name(name: &str) -> bool {
+    name == "Temporal Manipulation" || (cfg!(feature = "eternal-fixtures") && name == "Time Walk")
 }
 
 fn selected(item: &StackItem, state: &GameState) -> bool {
+    if time_vault_ability(item) {
+        return true;
+    }
     if item.kind == StackItemKind::TriggeredAbility {
         return cast_trigger(item);
     }
@@ -81,7 +90,35 @@ fn selected(item: &StackItem, state: &GameState) -> bool {
     .any(selected_definition)
 }
 
+/// Time Vault: "{T}: Take an extra turn after this one." Its activated
+/// ability is scheduled like Temporal Manipulation's spell.
+fn time_vault_ability(item: &StackItem) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && item.kind == StackItemKind::ActivatedAbility
+        && item.v4.ability_source_contract.is_some_and(|source| {
+            source.source == item.source
+                && card_def::CARD_DEFS
+                    .get(usize::from(source.card_def))
+                    .is_some_and(|definition| definition.name == "Time Vault")
+        })
+}
+
+fn exact_ability_recipe(item: &StackItem) -> bool {
+    time_vault_ability(item)
+        && !item.is_copy
+        && item.inline_effect.as_ref() == Some(&recipe())
+        && item.targets.is_empty()
+        && item.v4.target_contracts.is_empty()
+        && item
+            .v4
+            .ability_source_contract
+            .is_some_and(|source| source.controller == item.controller)
+}
+
 fn exact_recipe(item: &StackItem) -> bool {
+    if exact_ability_recipe(item) {
+        return true;
+    }
     if item
         .v4
         .source_contract
@@ -99,7 +136,7 @@ fn exact_recipe(item: &StackItem) -> bool {
         .source_contract
         .and_then(|source| card_def::CARD_DEFS.get(usize::from(source.card_def)))
         .is_some_and(|definition| {
-            definition.name == "Temporal Manipulation"
+            selected_name(definition.name)
                 && definition.target_spec == TargetSpec::None
                 && (definition.spell_effect)() == Some(recipe())
         })
@@ -560,8 +597,11 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                                     if *object==item.source && *controller_before==item.controller)
                             }
                         }).count();
-                        // An ability has no physical stack departure.
-                        if item.kind != StackItemKind::TriggeredAbility && departures != 1 {
+                        // An activated ability (Time Vault) leaves no card
+                        // behind; a cast trigger's source (Emrakul) departs the
+                        // stack on its own, so only spells are counted.
+                        let expected = usize::from(item.kind != StackItemKind::ActivatedAbility);
+                        if item.kind != StackItemKind::TriggeredAbility && departures != expected {
                             return Err("removed Temporal spell lacks its unique independent actual Stack departure".into());
                         }
                     }

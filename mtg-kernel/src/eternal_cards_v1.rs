@@ -71,6 +71,12 @@ pub struct EternalStateV1 {
     /// State of the wave-E3 cards (`e3::E3StateV1`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub e3: Option<Box<e3::E3StateV1>>,
+    /// The Vintage cards' state (`eternal_vintage_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_vintage_v1::VintageStateV1::is_empty"
+    )]
+    pub vintage: crate::eternal_vintage_v1::VintageStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -120,6 +126,8 @@ pub enum EternalTriggerV1 {
     /// "When this enters, if you haven't completed Tomb of Annihilation"
     /// (Acererak the Archlich).
     EntersIfTombNotCompletedV1,
+    /// A condition owned by the Vintage cards' module.
+    VintageV1(crate::eternal_vintage_v1::VintageTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -231,6 +239,8 @@ pub enum EternalOpV1 {
     AcererakEntersV1,
     /// Acererak the Archlich's attack trigger. A choice.
     AcererakAttacksV1,
+    /// A leaf owned by the Vintage cards' module.
+    VintageV1(crate::eternal_vintage_v1::VintageOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -544,7 +554,10 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         ORCISH_BOWMASTERS => &ORCISH_BOWMASTERS_TRIGGERS,
         TAMIYO => &TAMIYO_TRIGGERS,
         BILBO => &BILBO_TRIGGERS,
-        _ => e3::triggers_for(name),
+        _ => match e3::triggers_for(name) {
+            [] => crate::eternal_vintage_v1::triggers_for(name),
+            triggers => triggers,
+        },
     }
 }
 
@@ -568,7 +581,8 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         | URZAS_BAUBLE
         | TAMIYO
         | BILBO => Some(TargetSpec::None),
-        _ => e3::trigger_target_spec(name, effect),
+        _ => e3::trigger_target_spec(name, effect)
+            .or_else(|| crate::eternal_vintage_v1::trigger_target_spec(name, effect)),
     }
 }
 
@@ -732,6 +746,7 @@ pub fn campfire_shuffle_graveyard() -> EffectOp {
 
 pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        EternalOpV1::VintageV1(op) => crate::eternal_vintage_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1196,6 +1211,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
     (!printed_battlefield_source(state, blocker, BRAZEN_BORROWER)
         || crate::engine::has_effective_keyword(state, attacker, Keywords::FLYING))
         && e3::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_vintage_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1203,13 +1219,17 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 /// plus 1." A characteristic-defining ability works in every zone.
 pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> Option<i32> {
     if definition_name(state, id)? != NETHERGOYF {
-        return None;
+        return crate::eternal_vintage_v1::characteristic_defining_power(state, id);
     }
     let controller = state.objects.get(id).controller;
     i32::try_from(card_type_count(state, &graveyard_cards(state, controller))).ok()
 }
 
 pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    if definition_name(state, id)? != NETHERGOYF {
+        // Karn's and the Tezzeret emblem's animations set both stats.
+        return crate::eternal_vintage_v1::characteristic_defining_power(state, id);
+    }
     characteristic_defining_power(state, id).map(|power| power + 1)
 }
 
@@ -1336,7 +1356,7 @@ pub(crate) fn note_draw_step_draw(state: &mut GameState, player: PlayerId) {
         .draw_step_draw = Some(marker);
 }
 
-fn delayed_trigger(
+pub(crate) fn delayed_trigger(
     source: AbilitySourceContractV4,
     controller: PlayerId,
     effect: EffectOp,
@@ -1361,6 +1381,15 @@ fn delayed_trigger(
 /// The delayed triggers this collection sets off (603.7): the Baubles'
 /// draws at the beginning of an upkeep and Tamiyo's attack shrinks.
 pub(crate) fn delayed_triggers(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Vec<PendingTrigger> {
+    let mut triggers = legacy_delayed_triggers(state, events);
+    triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
+    triggers
+}
+
+fn legacy_delayed_triggers(
     state: &mut GameState,
     events: &[CommittedEvent],
 ) -> Vec<PendingTrigger> {
@@ -1409,7 +1438,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
                 EternalOpV1::ShrinkAttackerV1 { .. }
             ))
         ),
-        _ => false,
+        _ => crate::eternal_vintage_v1::delayed_effect_matches(name, effect),
     }
 }
 
@@ -1443,6 +1472,7 @@ pub(crate) fn note_attackers_declared(state: &mut GameState) {
 /// The beginning of `player`'s turn ends their "until your next turn"
 /// effects.
 pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
+    crate::eternal_vintage_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -1528,6 +1558,9 @@ pub(crate) fn trigger_matches(
     }
     let controller = state.objects.get(source).controller;
     match condition {
+        EternalTriggerV1::VintageV1(condition) => {
+            crate::eternal_vintage_v1::trigger_matches(condition, events, index, source, state)
+        }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {
                 object,

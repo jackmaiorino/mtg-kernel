@@ -53,8 +53,8 @@ pub struct E3StateV1 {
     /// The creature type chosen as each Cavern of Souls incarnation entered.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cavern_types: Vec<(ObjectLinkV4, Subtype)>,
-    /// Soporific Springs incarnations still choosing whether to pay 3 life
-    /// or be tapped.
+    /// Land-face incarnations (Soporific Springs, Witch-Blessed Meadow)
+    /// still choosing whether to pay 3 life or be tapped.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub springs_entering: Vec<ObjectLinkV4>,
     /// Spell incarnations that can't be countered (Cavern of Souls).
@@ -1179,9 +1179,11 @@ pub fn sink_into_stupor() -> EffectOp {
     }
 }
 
-/// Modal double-faced cards whose back face is a land played from hand.
+/// Modal double-faced cards whose back face is a land played from hand:
+/// Sink into Stupor // Soporific Springs and wave E4's Witch Enchanter //
+/// Witch-Blessed Meadow.
 pub(crate) fn has_land_back_face(name: &str) -> bool {
-    name == SINK_INTO_STUPOR
+    name == SINK_INTO_STUPOR || name == "Witch Enchanter"
 }
 
 /// Whether `card` is a modal double-faced card in its owner's hand whose
@@ -1330,10 +1332,10 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
     if let Some(entering) = live_springs_entry(state) {
         let player = state.objects.get(entering.object).controller;
         if option == 1 && state.players[player.index()].life < 3 {
-            return Err("Soporific Springs needs 3 life to pay".to_string());
+            return Err("the land face needs 3 life to pay".to_string());
         }
         if option > 1 {
-            return Err("Soporific Springs has two options".to_string());
+            return Err("the land face's life payment has two options".to_string());
         }
         let still_entering = e3(state)
             .map(|e3| {

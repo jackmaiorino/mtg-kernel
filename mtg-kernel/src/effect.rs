@@ -219,6 +219,13 @@ pub enum LibraryCardFilter {
     /// A card with this card type ("a sorcery card", Personal Tutor).
     /// Appended for the eternal catalog.
     CardWithTypeV1(CardType),
+    /// An artifact card with mana value at most this (Tezzeret, Cruel
+    /// Captain). Appended for the eternal catalog.
+    ArtifactManaValueAtMostV1(u16),
+    /// An artifact card whose mana cost is {0} or {1} (Urza's Saga): no
+    /// colored or X symbols and at most one generic. Lands and tokens have
+    /// no mana cost and never match. Appended for the eternal catalog.
+    ArtifactManaCostZeroOrOneV1,
 }
 
 impl LibraryCardFilter {
@@ -7073,7 +7080,7 @@ pub(crate) fn validate_initiative_trigger_binding(
     if binding.source.controller != binding.player
         || binding.source.zone != Zone::Battlefield
         || binding.source.attached_to.is_some()
-        || definition.name != "Avenging Hunter"
+        || !crate::eternal_vintage_v1::initiative_granter(definition.name)
         || !definition.is_executable()
         || source.card_def != binding.source.card_def
         || source.owner != binding.source.owner
@@ -7442,7 +7449,9 @@ fn take_initiative(
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
         || crate::card_def::CARD_DEFS
             .get(source.card_def as usize)
-            .is_none_or(|definition| definition.name != "Avenging Hunter")
+            .is_none_or(|definition| {
+                !crate::eternal_vintage_v1::initiative_granter(definition.name)
+            })
     {
         return Err("Initiative source contract is malformed".to_string());
     }
@@ -16024,6 +16033,17 @@ fn library_filter_matches(
             .iter()
             .any(|subtype| subtype.is_in_subtype_ids(subtype_ids)),
         LibraryCardFilter::CardWithTypeV1(card_type) => def.has_type(card_type),
+        LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
+            def.has_type(CardType::Artifact) && def.mana_value <= maximum
+        }
+        LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => {
+            def.has_type(CardType::Artifact)
+                && !def.is_land
+                && !def.is_token
+                && def.cost.pips.is_empty()
+                && def.cost.x_count == 0
+                && def.cost.generic <= 1
+        }
     })
 }
 
@@ -16067,6 +16087,10 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         LibraryCardFilter::CardWithTypeV1(card_type) => {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 12), card_type as u64)
         }
+        LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 41), u64::from(maximum))
+        }
+        LibraryCardFilter::ArtifactManaCostZeroOrOneV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 42),
     }
 }
 

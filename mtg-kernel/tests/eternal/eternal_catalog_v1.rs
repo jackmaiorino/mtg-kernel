@@ -16,7 +16,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails.
 /// Companion decks stay out until the engine supports companions.
-const PLAYABLE: [(&str, &str); 18] = [
+const PLAYABLE: [(&str, &str); 20] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -47,6 +47,8 @@ const PLAYABLE: [(&str, &str); 18] = [
     ("legacy", "legacy-sneak-and-show"),
     ("legacy", "legacy-aluren"),
     ("legacy", "legacy-omni-tell"),
+    ("vintage", "vintage-jewel-shops"),
+    ("vintage", "vintage-mono-white-initiative"),
 ];
 
 fn read_json(relative: &str) -> Value {
@@ -167,18 +169,29 @@ fn rank(action: &Value) -> u8 {
 /// Whether the public session can follow this action. Policy observation v5
 /// fails closed while an Escape cast stages its graveyard exile (Sleep of the
 /// Dead) and once an extra turn is scheduled (Emrakul, the Aeons Torn's cast
-/// trigger), so these games never begin either; every other action is
-/// admitted.
+/// trigger, Time Walk, Time Vault's ability), so these games never begin
+/// either; the engine paths are covered by the rules tests. Every other
+/// action is admitted.
 fn session_can_follow(action: &Value) -> bool {
     let s = &action["semantic"];
-    if s["action_kind"] != "cast_spell" {
+    if !matches!(
+        s["action_kind"].as_str(),
+        Some("cast_spell" | "activate_ability")
+    ) {
         return true;
     }
-    let id = s["source"]["card_db_id"].as_u64().unwrap() as usize;
-    if CARD_DEFS[id].name == "Emrakul, the Aeons Torn" {
+    let Some(id) = s["source"]["card_db_id"].as_u64() else {
+        return true;
+    };
+    let id = id as usize;
+    if matches!(
+        CARD_DEFS[id].name,
+        "Emrakul, the Aeons Torn" | "Time Walk" | "Time Vault"
+    ) {
         return false;
     }
-    s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
+    s["action_kind"] != "cast_spell"
+        || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
         || CARD_DEFS[id].escape.is_none()
 }
 

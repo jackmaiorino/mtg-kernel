@@ -306,7 +306,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Wasteland" => &WASTELAND,
         "Mishra's Bauble" => &MISHRAS_BAUBLE,
         "Urza's Bauble" => &URZAS_BAUBLE,
-        _ => &[],
+        _ => super::build_eternal_vintage_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -392,7 +392,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OpponentSpellOrNonlandPermanentV1)",
             program: "crate::eternal_cards_v1::sink_into_stupor",
         },
-        _ => return None,
+        _ => return super::build_eternal_vintage_v1::special_for(name),
     })
 }
 
@@ -418,7 +418,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         ],
         "Raph & Mikey, Troublemakers" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
         "The Atropal" => &["Keywords::DEATHTOUCH"],
-        _ => &[],
+        _ => super::build_eternal_vintage_v1::keywords_for(name),
     }
 }
 
@@ -495,7 +495,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Cavern of Souls" => {
             "as_enters:choose_creature_type_of_owned_creature_cards;restricted_mana_spell_cant_be_countered"
         }
-        _ => "none",
+        _ => super::build_eternal_vintage_v1::trigger_recipe_for(name),
     }
 }
 
@@ -533,7 +533,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         "Lion's Eye Diamond" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1, amount: ManaAbilityAmountDef::Fixed(3), controller_damage: 0, max_activations_per_turn: None })",
         // "{T}: Add {C}{C}."
         "City of Traitors" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_vintage_v1::mana_ability_def_for(name),
     }
 }
 
@@ -622,7 +622,7 @@ pub(super) fn transform_face_for(name: &str) -> &'static str {
         "Tamiyo, Inquisitive Student" => "Some(TransformFaceDef { name: \"Tamiyo, Seasoned Scholar\", types: &[CardType::Planeswalker], subtypes: &[Subtype::Tamiyo], colors: &[ManaColor::U, ManaColor::G], power: None, toughness: None, keywords: Keywords::NONE })",
         // A modal double-faced card's land face, played from hand.
         "Sink into Stupor" => "Some(TransformFaceDef { name: \"Soporific Springs\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
-        _ => "None",
+        _ => super::build_eternal_vintage_v1::transform_face_for(name),
     }
 }
 
@@ -630,7 +630,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Tamiyo, Inquisitive Student" => Some("Tamiyo, Seasoned Scholar"),
         "Sink into Stupor" => Some("Soporific Springs"),
-        _ => None,
+        _ => super::build_eternal_vintage_v1::transform_face_name_for(name),
     }
 }
 

@@ -364,6 +364,11 @@ pub enum Subtype {
     Wraith,
     Mutant,
     Jace,
+    /// Appended for the eternal catalog's Vintage decks (Archon of Emeria,
+    /// and the planeswalker types Karn and Tezzeret).
+    Archon,
+    Karn,
+    Tezzeret,
 }
 
 impl Subtype {
@@ -680,6 +685,8 @@ impl Subtype {
         Subtype::Wraith,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mutant,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Archon,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -777,6 +784,7 @@ impl Subtype {
                     | Subtype::Halfling
                     | Subtype::Wraith
                     | Subtype::Mutant
+                    | Subtype::Archon
             )
         {
             return true;
@@ -1138,6 +1146,9 @@ pub enum TargetSpec {
     /// graveyard. The signed bound is captured source power, not a fixed
     /// printed mana value. A negative bound offers no targets.
     AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(i32),
+    /// Exactly one spell with this mana value (Mental Misstep's "target
+    /// spell with mana value 1"). Appended for the eternal catalog.
+    SpellWithManaValueV1(u16),
 }
 
 impl TargetSpec {
@@ -1232,6 +1243,7 @@ impl TargetSpec {
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
             TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
             TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => 103,
+            TargetSpec::SpellWithManaValueV1(_) => 140,
         }
     }
 }
@@ -1866,6 +1878,9 @@ pub enum ManaSpendRestrictionDef {
     /// (Cavern of Souls): the creature type chosen as the source entered.
     /// Appended for the eternal catalog.
     CreatureSpellOfChosenTypeV1,
+    /// "Spend this mana only to cast artifact spells" (Mishra's Workshop).
+    /// Appended for the eternal catalog.
+    ArtifactSpellV1,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
@@ -3056,7 +3071,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xcef9_b272_218b_a862;
+        const EXPECTED_ETERNAL: u64 = 0x3abe_dc8b_a56b_87d3;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
