@@ -1344,3 +1344,6 @@ fn forward_encoded_chunk_dims_v1<D: NetDimsV1>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod wide_refusal_tests;

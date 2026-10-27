@@ -6248,6 +6248,7 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     mod narrow_dims_refactor_bit_pins_v1;
+    mod wide_train_step_v1;
 
     const FORWARD_JSON: &str =
         include_str!("../../data/native_policy_value_net_v1/runner_fixed_forward_goldens_v1.json");
