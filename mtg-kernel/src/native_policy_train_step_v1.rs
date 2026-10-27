@@ -113,11 +113,67 @@ thread_local! {
     static ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1: RefCell<Option<Arc<PackedRecomputeTestControlV1>>> = const { RefCell::new(None) };
     static ACTIVE_FIXED_PARTITION_BACKWARD_TEST_CONTROL_V1: RefCell<Option<Arc<FixedPartitionBackwardTestControlV1>>> = const { RefCell::new(None) };
     static EFFECTIVE_UPDATE_WORKERS_FOR_TEST_V1: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
-    static LINEAR_BACKWARD_CAPTURE_V1: RefCell<Option<Vec<LinearBackwardCaptureV1>>> = const { RefCell::new(None) };
+    static TRAIN_STEP_CAPTURE_V1: RefCell<Option<TrainStepCaptureV1>> = const { RefCell::new(None) };
 }
 
-/// Test-only: one `linear_backward_into` call's operands and results, the
-/// weight and bias gradients before and after its accumulation.
+/// Test-only (amendment 5.1-A1 section 3.2): what one train step on this
+/// thread computed, read at the capture points c1 to c5. Capturing only
+/// copies values; it writes no arithmetic state.
+#[cfg(test)]
+#[derive(Default)]
+struct TrainStepCaptureV1 {
+    /// c1: every tanh site's linear output before the in-place tanh and the
+    /// activation after it.
+    forward: Vec<ForwardTanhCaptureV1>,
+    /// c2: each tanh-gradient step's incoming activation gradient.
+    upstream: Vec<TanhUpstreamCaptureV1>,
+    /// c3: each group's loss inputs, in group order.
+    group_roots: Vec<GroupRootCaptureV1>,
+    /// c3: the loss roots of each substep, in backward visiting order.
+    roots: Vec<LossRootCaptureV1>,
+    /// c4: every `linear_backward_into` call.
+    backward: Vec<LinearBackwardCaptureV1>,
+    /// c5: the gradient before the gauge projection.
+    projection: Vec<ProjectionCaptureV1>,
+}
+
+/// c1: one `tanh_span_in_place_v1` call, before and after.
+#[cfg(test)]
+struct ForwardTanhCaptureV1 {
+    pre: Vec<f32>,
+    post: Vec<f32>,
+}
+
+/// c3: one group's loss inputs as the driver constructs them.
+#[cfg(test)]
+struct GroupRootCaptureV1 {
+    advantage: f32,
+    target: f32,
+    value_error: f32,
+}
+
+/// c2: the activation gradient a tanh-gradient step receives, tagged with
+/// the layer whose pre-activation gradient it becomes.
+#[cfg(test)]
+struct TanhUpstreamCaptureV1 {
+    weight_index: usize,
+    d_activation: Vec<f32>,
+}
+
+/// c3: one substep's loss roots as the sequential backward builds them.
+#[cfg(test)]
+struct LossRootCaptureV1 {
+    substep_index: usize,
+    selected_action_index: usize,
+    log_probabilities: Vec<f32>,
+    d_joint_log_probability: f32,
+    d_value: f32,
+    grad_output_sum: f32,
+    d_logits: Vec<f32>,
+}
+
+/// c4: one `linear_backward_into` call's operands and results, the weight
+/// and bias gradients before and after its accumulation.
 #[cfg(test)]
 struct LinearBackwardCaptureV1 {
     weight_index: usize,
@@ -135,23 +191,45 @@ struct LinearBackwardCaptureV1 {
     d_bias_after: Vec<f32>,
 }
 
-/// Test-only: runs `work` with every `linear_backward_into` call on this
-/// thread captured, and returns the captures in call order. Capturing only
-/// copies operands and results; it changes no arithmetic.
+/// c5: the gradient vector before the gauge's projection, and the gauge
+/// record's raw residual bits.
 #[cfg(test)]
-fn capture_linear_backward_for_test_v1<R>(
-    work: impl FnOnce() -> R,
-) -> (R, Vec<LinearBackwardCaptureV1>) {
+struct ProjectionCaptureV1 {
+    gradients: Vec<Vec<f32>>,
+    residual_bits: u32,
+}
+
+/// Test-only: whether a train-step capture is installed on this thread.
+#[cfg(test)]
+fn train_step_capture_active_v1() -> bool {
+    TRAIN_STEP_CAPTURE_V1.with(|capture| capture.borrow().is_some())
+}
+
+/// Test-only: hands the installed capture, if any, to `record`.
+#[cfg(test)]
+fn record_train_step_v1(record: impl FnOnce(&mut TrainStepCaptureV1)) {
+    TRAIN_STEP_CAPTURE_V1.with(|capture| {
+        if let Some(capture) = capture.borrow_mut().as_mut() {
+            record(capture);
+        }
+    });
+}
+
+/// Test-only: runs `work` with a train-step capture installed on this
+/// thread and returns what it captured.
+#[cfg(test)]
+fn capture_train_step_for_test_v1<R>(work: impl FnOnce() -> R) -> (R, TrainStepCaptureV1) {
     struct ResetV1;
     impl Drop for ResetV1 {
         fn drop(&mut self) {
-            LINEAR_BACKWARD_CAPTURE_V1.with(|capture| *capture.borrow_mut() = None);
+            TRAIN_STEP_CAPTURE_V1.with(|capture| *capture.borrow_mut() = None);
         }
     }
-    LINEAR_BACKWARD_CAPTURE_V1.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    TRAIN_STEP_CAPTURE_V1
+        .with(|capture| *capture.borrow_mut() = Some(TrainStepCaptureV1::default()));
     let reset = ResetV1;
     let result = work();
-    let captured = LINEAR_BACKWARD_CAPTURE_V1
+    let captured = TRAIN_STEP_CAPTURE_V1
         .with(|capture| capture.borrow_mut().take())
         .expect("the capture stays installed while work runs");
     drop(reset);
@@ -2913,6 +2991,14 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             let advantage = target - value;
             let policy_term = -joint_log_probability * advantage;
             let value_error = value - target;
+            #[cfg(test)]
+            record_train_step_v1(|capture| {
+                capture.group_roots.push(GroupRootCaptureV1 {
+                    advantage,
+                    target,
+                    value_error,
+                });
+            });
             let value_term = value_error * value_error;
             policy_sum += policy_term;
             value_sum += value_term;
@@ -2981,6 +3067,18 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                                 *gradient - math.exp_f32_v1(*log_probability) * grad_output_sum,
                             );
                         }
+                        #[cfg(test)]
+                        record_train_step_v1(|capture| {
+                            capture.roots.push(LossRootCaptureV1 {
+                                substep_index,
+                                selected_action_index: selected.selected_action_index,
+                                log_probabilities: selected.log_probabilities.clone(),
+                                d_joint_log_probability,
+                                d_value: if substep_index == 0 { d_value } else { 0.0 },
+                                grad_output_sum,
+                                d_logits: reverse_workspace.d_logits.clone(),
+                            });
+                        });
                         gauge_accumulator.observe(
                             selected.tape.logits_v1(),
                             selected.selected_action_index,
@@ -3034,6 +3132,13 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         let scorer_bias_before_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
         let mut scorer_bias_gauge =
             gauge_accumulator.finish(raw_scorer_bias_residual, scorer_bias_before_bits)?;
+        #[cfg(test)]
+        record_train_step_v1(|capture| {
+            capture.projection.push(ProjectionCaptureV1 {
+                gradients: gradients.clone(),
+                residual_bits: scorer_bias_gauge.raw_gradient_residual.to_bits(),
+            });
+        });
         gradients[SCORER_SECOND_BIAS][0] = 0.0;
         phase_recorder.finish_v1(backward_gauge_timer);
 
@@ -5019,6 +5124,13 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
         d_logits,
         d_scorer_hidden,
     )?;
+    #[cfg(test)]
+    record_train_step_v1(|capture| {
+        capture.upstream.push(TanhUpstreamCaptureV1 {
+            weight_index: SCORER_FIRST_WEIGHT,
+            d_activation: d_scorer_hidden.to_vec(),
+        });
+    });
     apply_tanh_gradient(tape.f32_values_v1(tape.scorer_hidden), d_scorer_hidden)?;
     sink.linear_v1(
         parameters,
@@ -5054,6 +5166,13 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
         &d_value_output,
         d_value_hidden,
     )?;
+    #[cfg(test)]
+    record_train_step_v1(|capture| {
+        capture.upstream.push(TanhUpstreamCaptureV1 {
+            weight_index: VALUE_FIRST_WEIGHT,
+            d_activation: d_value_hidden.to_vec(),
+        });
+    });
     apply_tanh_gradient(tape.f32_values_v1(tape.value_hidden), d_value_hidden)?;
     sink.linear_v1(
         parameters,
@@ -5221,7 +5340,14 @@ fn resize_tape_scratch_v1(
 }
 
 fn tanh_span_in_place_v1(arena: &mut [f32], span: TapeSpanV1, math: TrainingMathV1) {
+    #[cfg(test)]
+    let pre = train_step_capture_active_v1().then(|| span.values_v1(arena).to_vec());
     math.tanh_in_place_v1(span.values_mut_v1(arena));
+    #[cfg(test)]
+    if let Some(pre) = pre {
+        let post = span.values_v1(arena).to_vec();
+        record_train_step_v1(|capture| capture.forward.push(ForwardTanhCaptureV1 { pre, post }));
+    }
 }
 
 fn two_layer_forward_into_arena_v1(
@@ -5322,6 +5448,13 @@ fn two_layer_backward_into_dims_v1<'t, D: NetDimsV1>(
     d_first_output: &mut Vec<f32>,
     d_input: &mut Vec<f32>,
 ) -> Result<(), NativePolicyTrainErrorV1> {
+    #[cfg(test)]
+    record_train_step_v1(|capture| {
+        capture.upstream.push(TanhUpstreamCaptureV1 {
+            weight_index: spec.second_weight,
+            d_activation: d_output.to_vec(),
+        });
+    });
     d_second_pre.clear();
     d_second_pre.extend_from_slice(d_output);
     apply_tanh_gradient(tape.second_output.values_v1(arena), d_second_pre)?;
@@ -5519,13 +5652,11 @@ fn linear_backward_into(
     }
     resize_zeroed_v1(d_input, rows * input_dim);
     #[cfg(test)]
-    let captured_before = LINEAR_BACKWARD_CAPTURE_V1.with(|capture| {
-        capture.borrow().is_some().then(|| {
-            (
-                gradients[weight_index].clone(),
-                gradients[bias_index].clone(),
-            )
-        })
+    let captured_before = train_step_capture_active_v1().then(|| {
+        (
+            gradients[weight_index].clone(),
+            gradients[bias_index].clone(),
+        )
     });
     linear_backward_rows_v1(
         &LinearBackwardRowsV1 {
@@ -5571,13 +5702,7 @@ fn linear_backward_into(
             d_bias_before,
             d_bias_after: gradients[bias_index].clone(),
         };
-        LINEAR_BACKWARD_CAPTURE_V1.with(|captures| {
-            captures
-                .borrow_mut()
-                .as_mut()
-                .expect("a capture is installed")
-                .push(capture);
-        });
+        record_train_step_v1(|captures| captures.backward.push(capture));
     }
     Ok(())
 }

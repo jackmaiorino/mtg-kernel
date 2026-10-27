@@ -882,6 +882,14 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             let value_target = value_targets[group_index];
             let policy_term = -joint_log_probability * advantage;
             let value_error = value - value_target;
+            #[cfg(test)]
+            record_train_step_v1(|capture| {
+                capture.group_roots.push(GroupRootCaptureV1 {
+                    advantage,
+                    target: value_target,
+                    value_error,
+                });
+            });
             let value_term = value_error * value_error;
             policy_sum += policy_term;
             value_sum += value_term;
@@ -1022,6 +1030,18 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                                 beta / group_count,
                             )?;
                         }
+                        #[cfg(test)]
+                        record_train_step_v1(|capture| {
+                            capture.roots.push(LossRootCaptureV1 {
+                                substep_index,
+                                selected_action_index: selected.selected_action_index,
+                                log_probabilities: selected.log_probabilities.clone(),
+                                d_joint_log_probability,
+                                d_value: if substep_index == 0 { d_value } else { 0.0 },
+                                grad_output_sum,
+                                d_logits: reverse_workspace.d_logits.clone(),
+                            });
+                        });
                         gauge_accumulator.observe(
                             selected.tape.logits_v1(),
                             selected.selected_action_index,
@@ -1087,6 +1107,13 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         let scorer_bias_before_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
         let mut scorer_bias_gauge =
             gauge_accumulator.finish(raw_scorer_bias_residual, scorer_bias_before_bits)?;
+        #[cfg(test)]
+        record_train_step_v1(|capture| {
+            capture.projection.push(ProjectionCaptureV1 {
+                gradients: gradients.clone(),
+                residual_bits: scorer_bias_gauge.raw_gradient_residual.to_bits(),
+            });
+        });
         gradients[SCORER_SECOND_BIAS][0] = 0.0;
 
         phase_recorder.finish_v1(backward_timer);
