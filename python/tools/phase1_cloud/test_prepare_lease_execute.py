@@ -350,6 +350,35 @@ class ResponsibilityTests(unittest.TestCase):
             self.assertEqual(world.deletes[0], 'pod123')
             self.assertNotIn('pod123', world.pods)
 
+    def test_recovered_handoff_reports_a_guarded_pod_and_writes_the_receipt(self):
+        # round 9: the POST handoff fails, the cleanup's census hands the ID off durably: the Pod is
+        # alive and guarded, not deleted, and its receipt is written
+        from lease_test_support import FakeClock, World, no_network
+        import external_guard
+        with tempfile.TemporaryDirectory() as temporary:
+            output = prepared_output(temporary)
+            snapshot = snapshot_path(temporary)
+            world = World([pod_response()])
+            api = Mock(); api.create.return_value = pod_response()
+            clock = FakeClock(lease()['deadline_epoch'] - 60)
+            release = {'provider': world.provider, 'pods': world.list, 'clock': clock, 'sleep': clock.sleep}
+            real = external_guard.handoff_in; fired = []
+
+            def handoff(folder, pod_id, role, epoch):
+                if not fired:
+                    fired.append(pod_id)
+                    raise OSError('transient')
+                return real(folder, pod_id, role, epoch)
+            with no_network(), patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}), \
+                    patch.object(external_guard, 'handoff_in', side_effect=handoff):
+                result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
+                                           now=NOW, release=release)
+            self.assertEqual(result['id'], 'pod123')
+            self.assertEqual(world.deletes, [])
+            self.assertEqual(read(output / 'created-pod.json')['id'], 'pod123')
+            self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
+            self.assertIn('alive and guarded', read(output / 'create-handoff-recovered.json')['state'])
+
     def test_failed_handoff_and_failed_release_fail_loudly(self):
         from lease_test_support import World
         with tempfile.TemporaryDirectory() as temporary:

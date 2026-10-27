@@ -505,6 +505,11 @@ def release_unhanded(client, pod_ids, deadline, sleep=None):
             return []
         state = {}
         for pod_id in sorted(targets):
+            if client.durable_now(pod_id):
+                # handed off since the pass began (for example by its creator while an earlier
+                # target's provider call was in flight): the guardian's, never deleted here
+                targets.discard(pod_id)
+                continue
             try:
                 client.delete(pod_id)
             except Exception:  # noqa: BLE001 - retried

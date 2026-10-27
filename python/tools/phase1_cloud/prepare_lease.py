@@ -318,9 +318,18 @@ def _post_and_record(client, api, body, output, now, deadline, clock, sleep):
     pod_id = returned.get('id') if isinstance(returned, dict) and valid_id(returned.get('id')) else None
     if client.unpersisted:
         # I4: without a durable handoff this process releases the Pod itself, or fails loudly.
-        resolve_or_alert(client, max(deadline, clock() + MIN_RELEASE_SECONDS), output / 'ALERT-pod-not-released.json',
-                         sleep)
-        raise RuntimeError('create handoff failed; the Pod was deleted and verified absent')
+        released = resolve_or_alert(client, max(deadline, clock() + MIN_RELEASE_SECONDS),
+                                    output / 'ALERT-pod-not-released.json', sleep)
+        if pod_id in released:
+            raise RuntimeError('create handoff failed; the Pod was deleted and verified absent')
+        # The cleanup's own census or GET handed the ID off durably: the Pod is alive, billed and
+        # guarded. Say so, and continue so its receipt (created-pod.json) is written below.
+        try:
+            write(output / 'create-handoff-recovered.json', {'epoch': now, 'pod_id': pod_id,
+                  'state': 'alive and guarded: the handoff was recovered by the cleanup, not deleted'},
+                  replace=True)
+        except Exception:  # noqa: BLE001 - the known-Pod record already hands it to the guardian
+            pass
     sanitized = None
     if error is None:
         try:

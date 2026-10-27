@@ -20,13 +20,14 @@ def pod(pid='pod1', **changes):
     return {'id': pid, 'name': NAME, 'costPerHr': 0.96, **changes}
 
 
-def failing_handoff(ids, first=None):
-    """Handoffs of `ids` fail with OSError; with `first`, the first such call raises that instead."""
+def failing_handoff(ids, first=None, first_only_once=False):
+    """Handoffs of `ids` fail with OSError; with `first`, the first such call per ID (or, with
+    `first_only_once`, only the very first call) raises that instead."""
     real = eg.handoff_in; fired = []
 
     def handoff(folder, pod_id, role, epoch):
         if pod_id in ids:
-            if first is not None and pod_id not in fired:
+            if first is not None and pod_id not in fired and not (first_only_once and fired):
                 fired.append(pod_id)
                 raise first()
             raise OSError('read-only store')
@@ -1025,6 +1026,59 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), 'first')
         self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['A', 'B', 'C'])
         self.assertEqual(world.deletes, [])
+
+
+class RecheckTests(unittest.TestCase):
+    """Round 9: durability is rechecked immediately before each DELETE; a failed release that runs out
+    its deadline after a single interrupt writes the ALERT."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.folder = self.root / 'lease/known-pods'
+
+    def test_handoff_published_during_another_targets_provider_call_is_never_deleted(self):
+        world = World([pod('A'), pod('B')]); clock = FakeClock(1000.)
+        published = []
+        real_provider = world.provider
+
+        def provider(key, pod_id):
+            api = real_provider(key, pod_id); call = api.call
+
+            def wrapped(method):
+                if pod_id == 'A' and not published:   # B's creator publishes its handoff mid-pass
+                    published.append(method)
+                    eg.remember_in(self.folder, 'B', 'receipt', 1000.)
+                    write(self.root / 'lease/created-pod.json', {'id': 'B', 'name': NAME})
+                return call(method)
+            api.call = wrapped
+            return api
+        with no_network(), failing_handoff({'A', 'B'}), \
+                eg.LeaseClient(self.folder, NAME, 'k', provider, world.list, clock, clock.sleep,
+                               self.root / 'ALERT-pod-not-released.json') as client:
+            pending = eg.release_unhanded(client, ['A', 'B'], 1300., clock.sleep)
+        self.assertEqual(published, ['DELETE'])
+        self.assertEqual(pending, [])
+        self.assertNotIn('B', world.deletes)
+        self.assertIn('B', world.pods)
+        self.assertIn('A', world.deletes)
+
+    def test_failed_release_after_one_interrupt_runs_out_the_deadline_and_alerts(self):
+        world = World([pod('B'), pod('C'), pod('D')]); world.delete_failures = -1
+        calls = [0]
+
+        def census(current):
+            calls[0] += 1
+            return current if calls[0] == 1 else []
+        world.census = census
+        clock = FakeClock(1000.)
+        with self.assertRaises(KeyboardInterrupt), no_network(), \
+                failing_handoff({'B', 'C', 'D'}, first=KeyboardInterrupt, first_only_once=True), \
+                eg.LeaseClient(self.folder, NAME, 'k', world.provider, world.list, clock, clock.sleep,
+                               self.root / 'ALERT-pod-not-released.json') as client:
+            client.census()
+        self.assertGreaterEqual(clock.t, 1000. + 120)                # the deadline ran out
+        self.assertEqual(read(self.root / 'ALERT-pod-not-released.json')['pod_ids'], ['B', 'C', 'D'])
 
 
 if __name__ == '__main__':
