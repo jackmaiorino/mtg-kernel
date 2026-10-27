@@ -20,6 +20,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -229,13 +230,25 @@ def smoke(binary: Path) -> dict:
 
 
 DRAFTZERO_SAMPLE = REPO_ROOT / "data/limited/draftzero_sample_v1"
+# Full cards whose engine cost makes games outlast any game timeout. A hung game holding one says nothing
+# about the other cards in it.
+KNOWN_SLOW_FULL = {"Drake Hatcher": "mtg-kernel#375"}
+ADMISSION_MIN_GAMES = 20
+ADMISSION_ALPHA = 0.05
+
+
+def binomial_tail(n: int, halted: int, rate: float) -> float:
+    """P(at least `halted` halts in `n` games) when each game halts with probability `rate`."""
+    return sum(math.comb(n, k) * rate ** k * (1 - rate) ** (n - k) for k in range(halted, n + 1))
 
 
 def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4, game_timeout_s: float = 60.0) -> dict:
     """DraftZero's 80 sample decks: playable decks per session, then `pairs` random rules-only games on each of
     the train and eval splits with every executable card admitted. Each game runs in its own process; one that
     passes `game_timeout_s` is killed and counted as a hang. A halted or hung game counts against every
-    non-Full card in its two decks, so a card that appears only in natural games is an admission candidate."""
+    non-Full card in its two decks, except that a hung game holding a KNOWN_SLOW_FULL card is not counted for
+    any card. A card is an admission candidate when it has ADMISSION_MIN_GAMES counted games and its halt rate is
+    not significantly above the halt rate of games with only Full cards (one-sided binomial, ADMISSION_ALPHA)."""
     decks, pool = DRAFTZERO_SAMPLE / "decks", DRAFTZERO_SAMPLE / "pool.tsv"
     report: dict = {"coverage": {}}
     non_full: set[str] = set()
@@ -269,9 +282,14 @@ def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4, g
     wall = time.monotonic() - started
     contents = {f.stem: {c["name"] for c in json.loads(f.read_text())["cards"]} for f in decks.glob("*.json")}
     seen: dict[str, list[int]] = {}
+    inconclusive = 0
     for g in games:
+        cards = set().union(*(contents[d] for d in g["decks"]))
+        if g["result"] == "hang" and cards & KNOWN_SLOW_FULL.keys():
+            inconclusive += 1
+            continue
         halted = g["result"] in ("error", "hang")
-        for name in set().union(*(contents[d] for d in g["decks"])) & non_full:
+        for name in cards & non_full:
             tally = seen.setdefault(name, [0, 0])
             tally[0] += 1
             tally[1] += halted
@@ -288,10 +306,19 @@ def draftzero(binary: Path, pairs: int = 200, seed: int = 1, workers: int = 4, g
     full_only = [g for g in games if not set().union(*(contents[d] for d in g["decks"])) & non_full]
     report["full_only_baseline"] = {"games": len(full_only),
                                     "halted_games": sum(g["result"] in ("error", "hang") for g in full_only)}
+    report["known_slow_full"] = {"cards": KNOWN_SLOW_FULL, "hung_games_not_counted": inconclusive}
     report["unplayed_non_full"] = sorted(non_full - set(seen))
-    report["partial_cards"] = {name: {"games": n, "halted_games": h} for name, (n, h) in sorted(seen.items())}
+    base_rate = report["full_only_baseline"]["halted_games"] / max(1, report["full_only_baseline"]["games"])
+    report["partial_cards"] = {name: {"games": n, "halted_games": h, "p_above_baseline": binomial_tail(n, h, base_rate)}
+                               for name, (n, h) in sorted(seen.items())}
     report["games"] = [[g["split"], g["pair"], *g["decks"], g["result"], g.get("error", "")[:120]] for g in games]
-    report["admission_candidates"] = sorted(name for name, (n, h) in seen.items() if n and not h)
+    # Full-only games halt too (engine faults no admission causes), so a card is held only when its halt rate is
+    # clearly above that baseline, or when it has too few games to tell.
+    report["admission_rule"] = {"min_games": ADMISSION_MIN_GAMES, "alpha": ADMISSION_ALPHA,
+                                "baseline_halt_rate": base_rate}
+    report["admission_candidates"] = sorted(
+        name for name, v in report["partial_cards"].items()
+        if v["games"] >= ADMISSION_MIN_GAMES and v["p_above_baseline"] >= ADMISSION_ALPHA)
     return report
 
 

@@ -63,17 +63,42 @@ elif args[0] == "play":
 
 
 class DraftZeroReportTest(unittest.TestCase):
+    def report(self, known_slow_full: dict) -> dict:
+        old = match.KNOWN_SLOW_FULL, match.ADMISSION_MIN_GAMES
+        match.KNOWN_SLOW_FULL, match.ADMISSION_MIN_GAMES = known_slow_full, 2
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                stub = Path(tmp) / "dz_stub.py"
+                stub.write_text(DZ_STUB)
+                return match.draftzero([sys.executable, stub], pairs=2, workers=4, game_timeout_s=3)
+        finally:
+            match.KNOWN_SLOW_FULL, match.ADMISSION_MIN_GAMES = old
+
     def test_a_hung_game_counts_against_its_cards(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            stub = Path(tmp) / "dz_stub.py"
-            stub.write_text(DZ_STUB)
-            report = match.draftzero([sys.executable, stub], pairs=2, workers=4, game_timeout_s=3)
+        report = self.report({})
         self.assertEqual(report["play"]["results"]["hang"], 2)
         self.assertEqual(report["play"]["results"]["A"], 2)
         self.assertEqual([(h["split"], h["pair"], h["decks"]) for h in report["play"]["hangs"]],
                          [("train", 1, ["FDN_top_02819_WU"] * 2), ("eval", 1, ["FDN_top_02819_WU"] * 2)])
-        self.assertEqual(report["partial_cards"], {"Arahbo, the First Fang": {"games": 2, "halted_games": 2},
-                                                   "Brineborn Cutthroat": {"games": 2, "halted_games": 0}})
+        # Every stub game holds a non-Full card, so the Full-only baseline is empty and its rate is zero.
+        self.assertEqual(report["full_only_baseline"], {"games": 0, "halted_games": 0})
+        self.assertEqual(report["partial_cards"],
+                         {"Arahbo, the First Fang": {"games": 2, "halted_games": 2, "p_above_baseline": 0.0},
+                          "Brineborn Cutthroat": {"games": 2, "halted_games": 0, "p_above_baseline": 1.0}})
+        self.assertEqual(report["admission_candidates"], ["Brineborn Cutthroat"])
+        self.assertEqual(report["known_slow_full"]["hung_games_not_counted"], 0)
+
+    def test_binomial_tail(self):
+        self.assertAlmostEqual(match.binomial_tail(4, 0, 0.3), 1.0)
+        self.assertAlmostEqual(match.binomial_tail(2, 2, 0.5), 0.25)
+        self.assertAlmostEqual(match.binomial_tail(3, 2, 0.5), 0.5)
+
+    def test_a_hung_game_with_a_known_slow_full_card_counts_against_nothing(self):
+        # FDN_top_02819_WU holds Drake Hatcher, the default known slow Full card.
+        report = self.report(dict(match.KNOWN_SLOW_FULL))
+        self.assertEqual(report["play"]["results"]["hang"], 2)
+        self.assertEqual(report["known_slow_full"]["hung_games_not_counted"], 2)
+        self.assertNotIn("Arahbo, the First Fang", report["partial_cards"])
         self.assertEqual(report["admission_candidates"], ["Brineborn Cutthroat"])
 
 
