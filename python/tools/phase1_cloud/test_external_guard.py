@@ -613,13 +613,14 @@ class ReleaseUnhandedTests(unittest.TestCase):
     def run_release(self, world, deadline_after=120, ids=('A',), sleep=None):
         clock = FakeClock(1000.)
         folder = Path(self.temporary.name) / 'known-pods'
-        pending = None
+        pending = None; returned_at = FakeClock(0.)
         try:
             with no_network(), failing_handoff(set(ids)),                     eg.LeaseClient(folder, NAME, 'k', world.provider, world.list, clock, clock.sleep) as client:
                 pending = eg.release_unhanded(client, list(ids), 1000. + deadline_after, sleep or clock.sleep)
+                returned_at.t = clock.t           # the release's own end, before the client's exit
         except eg.AlertError:
             self.assertTrue(pending)            # the exit could not release them either and raised loudly
-        return pending, clock
+        return pending, returned_at
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
@@ -927,7 +928,7 @@ class InterruptTests(unittest.TestCase):
 
         def poster(body):
             world.pods['A'] = pod('A'); return pod('A')
-        with self.assertRaises(KeyboardInterrupt), no_network(), self.interrupting({'A'}),                 self.client(world, clock) as client:
+        with self.assertRaises(KeyboardInterrupt), no_network(), failing_handoff({'A'}, first=KeyboardInterrupt),                 self.client(world, clock) as client:
             client.post({'name': NAME}, poster=poster)
         self.assertIn('A', world.deletes)
         self.assertEqual(world.pods, {})
