@@ -1055,7 +1055,10 @@ fn wide_gradients_match_f64_central_differences_with_detection_power() {
             narrow_report.outside
         );
         let r_n = narrow_report.max_ratio;
-        assert!(r_n.is_finite(), "narrow {objective:?}: non-finite r_n {r_n:e}");
+        assert!(
+            r_n.is_finite(),
+            "narrow {objective:?}: non-finite r_n {r_n:e}"
+        );
         let waiver = clause_2_waiver_v1(objective);
         // D2 runs over this very FD call, so it is captured when the waiver
         // path can be taken (amendment 5.1-A1 3.2 and 3.4).
@@ -1854,11 +1857,15 @@ impl D2TallyV1 {
     /// Informational: `|f32 result - f64 function of the same input|` in ulp32.
     fn ulps(&mut self, kind: &'static str, actual: f32, exact: f64) {
         let entry = self.info.entry(kind).or_default();
-        entry.0 = entry.0.max((f64::from(actual) - exact).abs() / ulp32_v1(exact));
+        entry.0 = entry
+            .0
+            .max((f64::from(actual) - exact).abs() / ulp32_v1(exact));
     }
 
     fn passed(&self) -> bool {
-        self.checks.values().all(|&(_, mismatches, _)| mismatches == 0)
+        self.checks
+            .values()
+            .all(|&(_, mismatches, _)| mismatches == 0)
     }
 }
 
@@ -1966,7 +1973,12 @@ fn backward_inventory_dims_v1<D: NetDimsV1>(decision: &GradientDecisionV1) -> Ve
         OBJECT_FIRST_WEIGHT,
     ]
     .into_iter()
-    .filter_map(|weight| forward.iter().find(|application| application.0 == weight).copied())
+    .filter_map(|weight| {
+        forward
+            .iter()
+            .find(|application| application.0 == weight)
+            .copied()
+    })
     .collect()
 }
 
@@ -1991,7 +2003,8 @@ fn upstream_inventory_dims_v1<D: NetDimsV1>(decision: &GradientDecisionV1) -> Ve
 
 /// One substep's captures, bound to the inventory.
 struct SubstepCapturesV1<'c> {
-    forward: BTreeMap<usize, &'c ForwardTanhCaptureV1>,
+    forward: BTreeMap<usize, &'c ForwardLinearCaptureV1>,
+    tanh: BTreeMap<usize, &'c ForwardTanhCaptureV1>,
     backward: BTreeMap<usize, &'c LinearBackwardCaptureV1>,
     upstream: BTreeMap<usize, &'c [f32]>,
     root: &'c LossRootCaptureV1,
@@ -2007,23 +2020,32 @@ fn bind_captures_dims_v1<'c, D: NetDimsV1>(
 ) -> Option<Vec<SubstepCapturesV1<'c>>> {
     let substeps = flattened_substeps_v1();
     let order = visit_order_v1();
-    let expected_forward: Vec<usize> = substeps
+    let expected_forward: Vec<ApplicationV1> = substeps
         .iter()
-        .flat_map(|&(_, decision, _)| tanh_inventory_dims_v1::<D>(&decisions[decision]))
-        .map(|(_, elements)| elements)
+        .flat_map(|&(_, decision, _)| forward_inventory_dims_v1::<D>(&decisions[decision]))
         .collect();
-    let actual_forward: Vec<usize> = capture
+    let actual_forward: Vec<ApplicationV1> = capture
         .forward
         .iter()
-        .map(|site| site.pre.len())
+        .map(|call| (call.weight_index, call.rows, call.input_dim, call.output_dim))
         .collect();
     let forward_bound = actual_forward == expected_forward
         && capture
             .forward
             .iter()
-            .all(|site| site.post.len() == site.pre.len());
+            .all(|call| call.bias_index == call.weight_index + 1);
     tally.check("inventory", forward_bound, || {
-        format!("tanh sites {actual_forward:?} != {expected_forward:?}")
+        format!("forward {actual_forward:?} != {expected_forward:?}")
+    });
+    let expected_tanh: Vec<usize> = substeps
+        .iter()
+        .flat_map(|&(_, decision, _)| tanh_inventory_dims_v1::<D>(&decisions[decision]))
+        .map(|(_, elements)| elements)
+        .collect();
+    let actual_tanh: Vec<usize> = capture.tanh.iter().map(|site| site.post.len()).collect();
+    let tanh_bound = actual_tanh == expected_tanh;
+    tally.check("inventory", tanh_bound, || {
+        format!("tanh sites {actual_tanh:?} != {expected_tanh:?}")
     });
     let groups_bound = capture.group_roots.len() == GRADIENT_BATCH_V1.len();
     tally.check("inventory", groups_bound, || {
@@ -2036,7 +2058,14 @@ fn bind_captures_dims_v1<'c, D: NetDimsV1>(
     let actual_backward: Vec<ApplicationV1> = capture
         .backward
         .iter()
-        .map(|call| (call.weight_index, call.rows, call.input_dim, call.output_dim))
+        .map(|call| {
+            (
+                call.weight_index,
+                call.rows,
+                call.input_dim,
+                call.output_dim,
+            )
+        })
         .collect();
     let backward_bound = actual_backward == expected_backward
         && capture
@@ -2074,6 +2103,7 @@ fn bind_captures_dims_v1<'c, D: NetDimsV1>(
         format!("{} projections", capture.projection.len())
     });
     if !(forward_bound
+        && tanh_bound
         && groups_bound
         && backward_bound
         && actual_upstream == expected_upstream
@@ -2083,12 +2113,24 @@ fn bind_captures_dims_v1<'c, D: NetDimsV1>(
         return None;
     }
     let mut forward = capture.forward.iter();
-    let forward_maps: Vec<BTreeMap<usize, &ForwardTanhCaptureV1>> = substeps
+    let forward_maps: Vec<BTreeMap<usize, &ForwardLinearCaptureV1>> = substeps
+        .iter()
+        .map(|&(_, decision, _)| {
+            let count = forward_inventory_dims_v1::<D>(&decisions[decision]).len();
+            forward
+                .by_ref()
+                .take(count)
+                .map(|call| (call.weight_index, call))
+                .collect()
+        })
+        .collect();
+    let mut tanh = capture.tanh.iter();
+    let tanh_maps: Vec<BTreeMap<usize, &ForwardTanhCaptureV1>> = substeps
         .iter()
         .map(|&(_, decision, _)| {
             tanh_inventory_dims_v1::<D>(&decisions[decision])
                 .into_iter()
-                .map(|(weight, _)| (weight, forward.next().expect("inventory checked")))
+                .map(|(weight, _)| (weight, tanh.next().expect("inventory checked")))
                 .collect()
         })
         .collect();
@@ -2101,6 +2143,7 @@ fn bind_captures_dims_v1<'c, D: NetDimsV1>(
         let upstream_count = upstream_inventory_dims_v1::<D>(decision).len();
         visits[substep] = Some(SubstepCapturesV1 {
             forward: forward_maps[substep].clone(),
+            tanh: tanh_maps[substep].clone(),
             backward: backward
                 .by_ref()
                 .take(backward_count)
@@ -2229,14 +2272,14 @@ struct ForwardReplayV1 {
 struct ForwardContextV1<'a> {
     parameters: &'a [NativeNamedParameterV1],
     math: TrainingMathV1,
-    captured: &'a BTreeMap<usize, &'a ForwardTanhCaptureV1>,
+    captured: &'a BTreeMap<usize, &'a ForwardLinearCaptureV1>,
+    tanh: &'a BTreeMap<usize, &'a ForwardTanhCaptureV1>,
 }
 
 impl ForwardContextV1<'_> {
-    /// One forward layer replayed from the replay's own input: at a tanh
-    /// site the linear output against c1's pre-tanh value and the activation
-    /// against c1's post-tanh value. (The input is compared with the tape's
-    /// at the layer's backward call, which reads it.)
+    /// One forward layer replayed from the replay's own input: the input and
+    /// the linear output (forward affine sums start from the bias) against
+    /// c1's, then at a tanh site the activation against c1t's.
     fn layer(
         &self,
         tally: &mut D2TallyV1,
@@ -2250,7 +2293,10 @@ impl ForwardContextV1<'_> {
         let input_dim = input.len() / rows;
         let weights = &self.parameters[weight].values;
         let bias = &self.parameters[weight + 1].values;
+        let call = self.captured[&weight];
+        tally.bits("forward input", name, &call.input, &input);
         let output = replay_linear_v1(weights, bias, &input, rows, input_dim);
+        tally.bits("forward linear", name, &call.output, &output);
         let output_dim = bias.len();
         for row in 0..rows {
             for (index, &bias) in bias.iter().enumerate() {
@@ -2273,10 +2319,8 @@ impl ForwardContextV1<'_> {
         if !tanh {
             return output;
         }
-        let site = self.captured[&weight];
-        tally.bits("forward linear (pre-tanh)", name, &site.pre, &output);
         let activation = replay_tanh_v1(self.math, &output);
-        tally.bits("forward tanh (post-tanh)", name, &site.post, &activation);
+        tally.bits("forward tanh", name, &self.tanh[&weight].post, &activation);
         for (pre, activation) in output.iter().zip(&activation) {
             tally.ulps("libm tanh ulp32", *activation, f64::from(*pre).tanh());
         }
@@ -2292,7 +2336,8 @@ fn replay_forward_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     math: TrainingMathV1,
     decision: &GradientDecisionV1,
-    captured: &BTreeMap<usize, &ForwardTanhCaptureV1>,
+    captured: &BTreeMap<usize, &ForwardLinearCaptureV1>,
+    tanh: &BTreeMap<usize, &ForwardTanhCaptureV1>,
 ) -> ForwardReplayV1 {
     let hidden = D::HIDDEN;
     let ids = indices_v1(&decision.object_card_ids);
@@ -2309,15 +2354,34 @@ fn replay_forward_dims_v1<D: NetDimsV1>(
         parameters,
         math,
         captured,
+        tanh,
     };
 
     let mut object_input = Vec::new();
     for (object, &token) in ids.iter().enumerate() {
-        object_input.extend_from_slice(row_v1(&decision.object_features, OBJECT_FEATURE_DIM_V1, object));
+        object_input.extend_from_slice(row_v1(
+            &decision.object_features,
+            OBJECT_FEATURE_DIM_V1,
+            object,
+        ));
         object_input.extend_from_slice(row_v1(embedding, D::CARD_EMBEDDING, token));
     }
-    let object_first = context.layer(tally, &mut replay, OBJECT_FIRST_WEIGHT, object_input, objects, true);
-    let object_second = context.layer(tally, &mut replay, OBJECT_SECOND_WEIGHT, object_first, objects, true);
+    let object_first = context.layer(
+        tally,
+        &mut replay,
+        OBJECT_FIRST_WEIGHT,
+        object_input,
+        objects,
+        true,
+    );
+    let object_second = context.layer(
+        tally,
+        &mut replay,
+        OBJECT_SECOND_WEIGHT,
+        object_first,
+        objects,
+        true,
+    );
 
     // Edge pooling into each object: sources, then targets, each in edge
     // order (native_policy_train_step_v1.rs forward, the two
@@ -2326,13 +2390,31 @@ fn replay_forward_dims_v1<D: NetDimsV1>(
     if !sources.is_empty() {
         let mut edge_input = Vec::new();
         for (edge, (&source, &target)) in sources.iter().zip(&targets).enumerate() {
-            edge_input.extend_from_slice(row_v1(&decision.edge_features, EDGE_FEATURE_DIM_V1, edge));
+            edge_input.extend_from_slice(row_v1(
+                &decision.edge_features,
+                EDGE_FEATURE_DIM_V1,
+                edge,
+            ));
             edge_input.extend_from_slice(row_v1(&object_second, hidden, source));
             edge_input.extend_from_slice(row_v1(&object_second, hidden, target));
         }
         let edges = sources.len();
-        let edge_first = context.layer(tally, &mut replay, EDGE_FIRST_WEIGHT, edge_input, edges, true);
-        let edge_second = context.layer(tally, &mut replay, EDGE_SECOND_WEIGHT, edge_first, edges, true);
+        let edge_first = context.layer(
+            tally,
+            &mut replay,
+            EDGE_FIRST_WEIGHT,
+            edge_input,
+            edges,
+            true,
+        );
+        let edge_second = context.layer(
+            tally,
+            &mut replay,
+            EDGE_SECOND_WEIGHT,
+            edge_first,
+            edges,
+            true,
+        );
         for indices in [&sources, &targets] {
             for (edge, &object) in indices.iter().enumerate() {
                 for element in 0..hidden {
@@ -2346,8 +2428,22 @@ fn replay_forward_dims_v1<D: NetDimsV1>(
         node_input.extend_from_slice(row_v1(&object_second, hidden, object));
         node_input.extend_from_slice(row_v1(&edge_pooled, hidden, object));
     }
-    let node_first = context.layer(tally, &mut replay, NODE_FIRST_WEIGHT, node_input, objects, true);
-    let node_second = context.layer(tally, &mut replay, NODE_SECOND_WEIGHT, node_first, objects, true);
+    let node_first = context.layer(
+        tally,
+        &mut replay,
+        NODE_FIRST_WEIGHT,
+        node_input,
+        objects,
+        true,
+    );
+    let node_second = context.layer(
+        tally,
+        &mut replay,
+        NODE_SECOND_WEIGHT,
+        node_first,
+        objects,
+        true,
+    );
 
     // Group pooling in object order (add_indexed_rows_dims_v1 over the
     // object groups).
@@ -2360,7 +2456,14 @@ fn replay_forward_dims_v1<D: NetDimsV1>(
     }
     state_input.extend_from_slice(&group_pooled);
     let state_first = context.layer(tally, &mut replay, STATE_FIRST_WEIGHT, state_input, 1, true);
-    let state_second = context.layer(tally, &mut replay, STATE_SECOND_WEIGHT, state_first, 1, true);
+    let state_second = context.layer(
+        tally,
+        &mut replay,
+        STATE_SECOND_WEIGHT,
+        state_first,
+        1,
+        true,
+    );
 
     // Action-ref pooling into each action in ref order.
     let mut ref_pooled = vec![0.0f32; actions * hidden];
@@ -2375,8 +2478,22 @@ fn replay_forward_dims_v1<D: NetDimsV1>(
             ref_input.extend_from_slice(row_v1(&node_second, hidden, node));
         }
         let refs = ref_nodes.len();
-        let ref_first = context.layer(tally, &mut replay, ACTION_REF_FIRST_WEIGHT, ref_input, refs, true);
-        let ref_second = context.layer(tally, &mut replay, ACTION_REF_SECOND_WEIGHT, ref_first, refs, true);
+        let ref_first = context.layer(
+            tally,
+            &mut replay,
+            ACTION_REF_FIRST_WEIGHT,
+            ref_input,
+            refs,
+            true,
+        );
+        let ref_second = context.layer(
+            tally,
+            &mut replay,
+            ACTION_REF_SECOND_WEIGHT,
+            ref_first,
+            refs,
+            true,
+        );
         for (action_ref, &action) in ref_actions.iter().enumerate() {
             for element in 0..hidden {
                 ref_pooled[action * hidden + element] += ref_second[action_ref * hidden + element];
@@ -2385,21 +2502,67 @@ fn replay_forward_dims_v1<D: NetDimsV1>(
     }
     let mut action_input = Vec::new();
     for action in 0..actions {
-        action_input.extend_from_slice(row_v1(&decision.action_features, ACTION_FEATURE_DIM_V1, action));
+        action_input.extend_from_slice(row_v1(
+            &decision.action_features,
+            ACTION_FEATURE_DIM_V1,
+            action,
+        ));
         action_input.extend_from_slice(row_v1(&ref_pooled, hidden, action));
     }
-    let action_first = context.layer(tally, &mut replay, ACTION_FIRST_WEIGHT, action_input, actions, true);
-    let action_second = context.layer(tally, &mut replay, ACTION_SECOND_WEIGHT, action_first, actions, true);
+    let action_first = context.layer(
+        tally,
+        &mut replay,
+        ACTION_FIRST_WEIGHT,
+        action_input,
+        actions,
+        true,
+    );
+    let action_second = context.layer(
+        tally,
+        &mut replay,
+        ACTION_SECOND_WEIGHT,
+        action_first,
+        actions,
+        true,
+    );
 
     let mut scorer_input = Vec::new();
     for action in 0..actions {
         scorer_input.extend_from_slice(&state_second);
         scorer_input.extend_from_slice(row_v1(&action_second, hidden, action));
     }
-    let scorer_hidden = context.layer(tally, &mut replay, SCORER_FIRST_WEIGHT, scorer_input, actions, true);
-    let logits = context.layer(tally, &mut replay, SCORER_SECOND_WEIGHT, scorer_hidden, actions, false);
-    let value_hidden = context.layer(tally, &mut replay, VALUE_FIRST_WEIGHT, state_second, 1, true);
-    let value = context.layer(tally, &mut replay, VALUE_SECOND_WEIGHT, value_hidden, 1, false);
+    let scorer_hidden = context.layer(
+        tally,
+        &mut replay,
+        SCORER_FIRST_WEIGHT,
+        scorer_input,
+        actions,
+        true,
+    );
+    let logits = context.layer(
+        tally,
+        &mut replay,
+        SCORER_SECOND_WEIGHT,
+        scorer_hidden,
+        actions,
+        false,
+    );
+    let value_hidden = context.layer(
+        tally,
+        &mut replay,
+        VALUE_FIRST_WEIGHT,
+        state_second,
+        1,
+        true,
+    );
+    let value = context.layer(
+        tally,
+        &mut replay,
+        VALUE_SECOND_WEIGHT,
+        value_hidden,
+        1,
+        false,
+    );
     replay.logits = logits;
     replay.value = value[0];
     replay
@@ -2475,13 +2638,21 @@ fn replay_loss_roots_v1(
     let mut d_logits = Vec::with_capacity(logits.len());
     for (gradient, log_probability) in grad_output.iter().zip(&log_probabilities) {
         let probability = math.exp_f32_v1(*log_probability);
-        tally.ulps("libm exp ulp32", probability, f64::from(*log_probability).exp());
+        tally.ulps(
+            "libm exp ulp32",
+            probability,
+            f64::from(*log_probability).exp(),
+        );
         d_logits.push(*gradient - probability * grad_output_sum);
     }
     tally.bits(
         "loss roots",
         "d_joint, d_value, grad_output_sum",
-        &[root.d_joint_log_probability, root.d_value, root.grad_output_sum],
+        &[
+            root.d_joint_log_probability,
+            root.d_value,
+            root.grad_output_sum,
+        ],
         &[d_joint_log_probability, d_value, grad_output_sum],
     );
     tally.bits("loss roots", "d_logits", &root.d_logits, &d_logits);
@@ -2529,15 +2700,27 @@ fn replay_backward_call_v1(
             );
         }
     }
-    tally.bits("gradient before call", name, &call.d_weight_before, &gradients[weight]);
+    tally.bits(
+        "gradient before call",
+        name,
+        &call.d_weight_before,
+        &gradients[weight],
+    );
     tally.bits(
         "gradient before call",
         name,
         &call.d_bias_before,
         &gradients[weight + 1],
     );
-    replay_parameter_gradient_v1(gradients, weight, input, d_output, rows, input_dim, output_dim);
-    tally.bits("gradient after call", name, &call.d_weight_after, &gradients[weight]);
+    replay_parameter_gradient_v1(
+        gradients, weight, input, d_output, rows, input_dim, output_dim,
+    );
+    tally.bits(
+        "gradient after call",
+        name,
+        &call.d_weight_after,
+        &gradients[weight],
+    );
     tally.bits(
         "gradient after call",
         name,
@@ -3015,8 +3198,11 @@ where
         .training_math_dims_v1();
     let mut tally = D2TallyV1::default();
     for site in &capture.forward {
-        tally.finite("c1 pre-tanh", &site.pre);
-        tally.finite("c1 post-tanh", &site.post);
+        tally.finite("c1 input", &site.input);
+        tally.finite("c1 output", &site.output);
+    }
+    for site in &capture.tanh {
+        tally.finite("c1t", &site.post);
     }
     for root in &capture.group_roots {
         tally.finite("c3 group", &[root.advantage, root.target, root.value_error]);
@@ -3065,6 +3251,7 @@ where
                     math,
                     &decisions[decision],
                     &bound[substep].forward,
+                    &bound[substep].tanh,
                 )
             })
             .collect();
@@ -3087,7 +3274,12 @@ where
                 tally.check(
                     "loss inputs",
                     f64::from(advantage).to_bits() == report.advantages[group].to_bits(),
-                    || format!("group {group}: advantage {advantage:e} != oracle {:e}", report.advantages[group]),
+                    || {
+                        format!(
+                            "group {group}: advantage {advantage:e} != oracle {:e}",
+                            report.advantages[group]
+                        )
+                    },
                 );
             }
         }
@@ -3117,7 +3309,12 @@ where
         }
         let projection = &capture.projection[0];
         for (tensor, (replayed, raw)) in gradients.iter().zip(&projection.gradients).enumerate() {
-            tally.bits("raw gradient", EXPECTED_PARAMETER_NAMES[tensor], raw, replayed);
+            tally.bits(
+                "raw gradient",
+                EXPECTED_PARAMETER_NAMES[tensor],
+                raw,
+                replayed,
+            );
         }
         tally.check(
             "gauge residual",
@@ -3215,21 +3412,33 @@ fn d2_wide_v1() -> NativePolicyValueNetWideV1 {
 #[test]
 #[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
 fn wide_fd_d2_net8_gae() {
-    assert!(d2_cell_dims_v1::<Net8DimsV1>("net-8", &d2_narrow_v1(), ObjectiveV1::Gae));
+    assert!(d2_cell_dims_v1::<Net8DimsV1>(
+        "net-8",
+        &d2_narrow_v1(),
+        ObjectiveV1::Gae
+    ));
 }
 
 /// Amendment 5.1-A1 D2 cell: net-8, terminal.
 #[test]
 #[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
 fn wide_fd_d2_net8_terminal() {
-    assert!(d2_cell_dims_v1::<Net8DimsV1>("net-8", &d2_narrow_v1(), ObjectiveV1::Terminal));
+    assert!(d2_cell_dims_v1::<Net8DimsV1>(
+        "net-8",
+        &d2_narrow_v1(),
+        ObjectiveV1::Terminal
+    ));
 }
 
 /// Amendment 5.1-A1 D2 cell: net-8w128, GAE.
 #[test]
 #[ignore = "D2 stays unrun and unread until the amendment reviewers agree"]
 fn wide_fd_d2_net8w128_gae() {
-    assert!(d2_cell_dims_v1::<Net8W128DimsV1>("net-8w128", &d2_wide_v1(), ObjectiveV1::Gae));
+    assert!(d2_cell_dims_v1::<Net8W128DimsV1>(
+        "net-8w128",
+        &d2_wide_v1(),
+        ObjectiveV1::Gae
+    ));
 }
 
 /// Amendment 5.1-A1 D2 cell: net-8w128, terminal.

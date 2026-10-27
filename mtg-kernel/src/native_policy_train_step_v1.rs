@@ -122,9 +122,11 @@ thread_local! {
 #[cfg(test)]
 #[derive(Default)]
 struct TrainStepCaptureV1 {
-    /// c1: every tanh site's linear output before the in-place tanh and the
-    /// activation after it.
-    forward: Vec<ForwardTanhCaptureV1>,
+    /// c1: every forward linear application, its input and its output (the
+    /// pre-activation), the scorer and value affine layers included.
+    forward: Vec<ForwardLinearCaptureV1>,
+    /// c1t: every tanh site's activation after the in-place tanh.
+    tanh: Vec<ForwardTanhCaptureV1>,
     /// c2: each tanh-gradient step's incoming activation gradient.
     upstream: Vec<TanhUpstreamCaptureV1>,
     /// c3: each group's loss inputs, in group order.
@@ -137,10 +139,21 @@ struct TrainStepCaptureV1 {
     projection: Vec<ProjectionCaptureV1>,
 }
 
-/// c1: one `tanh_span_in_place_v1` call, before and after.
+/// c1: one `linear_forward_into_arena_v1` application.
+#[cfg(test)]
+struct ForwardLinearCaptureV1 {
+    weight_index: usize,
+    bias_index: usize,
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    input: Vec<f32>,
+    output: Vec<f32>,
+}
+
+/// c1t: one `tanh_span_in_place_v1` call's activation.
 #[cfg(test)]
 struct ForwardTanhCaptureV1 {
-    pre: Vec<f32>,
     post: Vec<f32>,
 }
 
@@ -5340,13 +5353,13 @@ fn resize_tape_scratch_v1(
 }
 
 fn tanh_span_in_place_v1(arena: &mut [f32], span: TapeSpanV1, math: TrainingMathV1) {
-    #[cfg(test)]
-    let pre = train_step_capture_active_v1().then(|| span.values_v1(arena).to_vec());
     math.tanh_in_place_v1(span.values_mut_v1(arena));
     #[cfg(test)]
-    if let Some(pre) = pre {
-        let post = span.values_v1(arena).to_vec();
-        record_train_step_v1(|capture| capture.forward.push(ForwardTanhCaptureV1 { pre, post }));
+    if train_step_capture_active_v1() {
+        let capture = ForwardTanhCaptureV1 {
+            post: span.values_v1(arena).to_vec(),
+        };
+        record_train_step_v1(|captures| captures.tanh.push(capture));
     }
 }
 
@@ -5589,6 +5602,19 @@ fn linear_forward_into_arena_v1(
         }
     }
     validate_finite_slice("linear_forward", output.values_v1(arena))?;
+    #[cfg(test)]
+    if train_step_capture_active_v1() {
+        let capture = ForwardLinearCaptureV1 {
+            weight_index,
+            bias_index,
+            rows,
+            input_dim,
+            output_dim,
+            input: input.values_v1(arena).to_vec(),
+            output: output.values_v1(arena).to_vec(),
+        };
+        record_train_step_v1(|captures| captures.forward.push(capture));
+    }
     Ok(output)
 }
 
