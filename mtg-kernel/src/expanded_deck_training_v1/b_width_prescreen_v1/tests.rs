@@ -180,10 +180,10 @@ fn seeds_split_and_schedule_match_the_note() {
         assert_eq!(plans[0].id, format!("bwps-k{chain}-f0-o0-i0"));
         assert_eq!(plans[404].id, format!("bwps-k{chain}-f8-o8-i4"));
     }
-    assert_eq!(
-        chain_schedule_v1(&config, 8)[404].seed,
-        13_076_049_139_035_602_503
-    );
+    // (k, f, o, i) = (8, 8, 7, 4) is schedule position 8 * 45 + 7 * 5 + 4.
+    let plan = &chain_schedule_v1(&config, 8)[399];
+    assert_eq!(plan.id, "bwps-k8-f8-o7-i4");
+    assert_eq!(plan.seed, 13_076_049_139_035_602_503);
 }
 
 #[test]
@@ -555,12 +555,12 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
     assert_eq!(w64["report"]["heldout"][0], w128["report"]["heldout"][0]);
     assert_eq!(w64["report"]["config"]["steps"], json!(data.record.steps));
 
-    // Resume: a lost report is rerun from the same inputs to the same bytes,
-    // and present reports are kept.
+    // Resume: a lost report is rerun from the same inputs (at another fit
+    // concurrency) to the same bytes, and present reports are kept.
     let w128_bytes = read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap();
     fs::remove_file(fit_path_v1(root, 1, 1, "w128")).unwrap();
     assert_eq!(
-        fit_chain_stage_v1(loaded, root, &chain, 3, 2).unwrap()["fits_written"],
+        fit_chain_stage_v1(loaded, root, &chain, 2, 1).unwrap()["fits_written"],
         json!(1)
     );
     assert_eq!(
