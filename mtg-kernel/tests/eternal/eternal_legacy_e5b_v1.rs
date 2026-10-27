@@ -563,7 +563,10 @@ fn abundant_countryside_adds_any_color_only_for_creature_spells_and_makes_shapes
     );
     assert!(!castable(&mut state, bolt), "not for a noncreature spell");
     next(&mut state);
-    act(&mut state, Action::ActivateManaAbility(countryside));
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(countryside, ManaColor::C),
+    );
     assert_eq!(state.players[0].mana_pool[ManaColor::C.pool_index()], 1);
 
     let mut state = islands();
@@ -597,9 +600,13 @@ fn eldrazi_temple_pays_two_for_colorless_eldrazi_spells_only() {
         !castable(&mut state, binding),
         "the Temple pays one of {{5}}{{W}}"
     );
+    let before = state.players[0].mana_pool[ManaColor::C.pool_index()];
     next(&mut state);
     act(&mut state, Action::ActivateManaAbility(temple));
-    assert_eq!(state.players[0].mana_pool[ManaColor::C.pool_index()], 1);
+    assert_eq!(
+        state.players[0].mana_pool[ManaColor::C.pool_index()],
+        before + 1
+    );
 }
 
 #[test]
@@ -961,15 +968,16 @@ fn terminus_puts_every_creature_on_the_bottom_in_its_owners_order() {
 
 #[test]
 fn terminus_miracle_reveals_the_first_draw_and_casts_for_white() {
-    let mut state = game(&["Terminus", "Island", "Island", "Island"]);
-    let terminus = state.players[0].library[0];
-    // P1's turn: P0 draws Terminus as their first card this turn.
-    state.active_player = P1;
-    state.priority_player = P1;
+    let mut state = islands();
+    // P0 draws Terminus as the first card of their next turn.
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
     let plains = put(&mut state, P0, "Plains", Zone::Battlefield);
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
-    event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
-    assert!(hand_contains(&state, P0, terminus));
+    run_until(
+        &mut state,
+        |state| hand_contains(state, P0, terminus),
+        |_, _| None,
+    );
     // The reveal is offered to P0 before anything else happens.
     let decision = next(&mut state);
     assert!(
@@ -1776,4 +1784,20 @@ fn vexing_bauble_counters_a_pitched_force_of_will() {
     });
     assert_eq!(zone(&state, force), Zone::Graveyard);
     assert_eq!(state.players[0].life, 20 - 1 - 3, "the Bolt resolved");
+}
+
+#[test]
+fn counterspell_counters_brain_freeze() {
+    let mut state = islands();
+    state.priority_player = P1;
+    let freeze = put(&mut state, P1, "Brain Freeze", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::U], 1);
+    cast(&mut state, freeze, &[Target::Player(P0)]);
+    let counterspell = put(&mut state, P0, "Counterspell", Zone::Hand);
+    run_until(&mut state, |state| state.priority_player == P0, |_, _| None);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, counterspell, &[Target::Object(freeze)]);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, freeze), Zone::Graveyard);
+    assert_eq!(state.players[0].library.len(), 20, "nothing milled");
 }

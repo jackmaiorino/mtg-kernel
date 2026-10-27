@@ -12915,7 +12915,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                         .optional_additional_cost_paid = Some(false);
                     return drain_pending_cast_or_decide(state);
                 }
-                Err(_) => {
+                Err(_diag) => {
+                    eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
                         pending.spell,
@@ -13288,7 +13289,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 if !pending.optional_additional_cost_selection_finished {
                     let candidates = match collect_evidence_candidates(pending.controller, state) {
                         Ok(candidates) => candidates,
-                        Err(_) => {
+                        Err(_diag) => {
+                            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -13308,7 +13310,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                         &pending.optional_additional_cost_chosen,
                     ) {
                         Ok(sum) => sum,
-                        Err(_) => {
+                        Err(_diag) => {
+                            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -13335,7 +13338,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     }
                     let max_targets = match u16::try_from(candidates.len()) {
                         Ok(count) => count,
-                        Err(_) => {
+                        Err(_diag) => {
+                            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -13362,7 +13366,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 if pending.optional_additional_cost_chosen.is_empty() {
                     let candidates = match bargain_candidates(kind, pending.controller, state) {
                         Ok(candidates) => candidates,
-                        Err(_) => {
+                        Err(_diag) => {
+                            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                             state.engine.halted = Some((
                                 UnsupportedMechanic::InvalidEffectContinuation,
                                 pending.spell,
@@ -15964,17 +15969,34 @@ pub(crate) fn stack_targets_still_legal(
                                 .inline_effect
                                 .as_ref()
                                 .ok_or("triggered stack item lost its effect program")?;
-                            let source_contract =
-                                if crate::faebloom_trick_v43::capture_of(effect).is_some() {
-                                    // This reflexive retains its genuine spell source contract.
-                                    // Full metadata and capture authority were authenticated above.
-                                    None
-                                } else {
+                            if crate::faebloom_trick_v43::capture_of(effect).is_some() {
+                                // This reflexive retains its genuine spell source contract.
+                                // Full metadata and capture authority were authenticated above.
+                                triggered_ability_targeting_source(item.source, None, effect)
+                            } else if let (None, Some(spell)) =
+                                (item.v4.ability_source_contract, item.v4.source_contract)
+                            {
+                                // A targeted "when you cast this spell" trigger (Wastescape
+                                // Battlemage) targets from its producing spell's incarnation,
+                                // authenticated above by `validate_spell_sourced_trigger`.
+                                Some(TargetingSource {
+                                    types_override: None,
+                                    object: item.source,
+                                    card_def: spell.card_def,
+                                    zone: spell.zone,
+                                    zone_change_count: spell.zone_change_count,
+                                    other_than: None,
+                                    original_source_incarnation_only: false,
+                                })
+                            } else {
+                                triggered_ability_targeting_source(
+                                    item.source,
                                     Some(item.v4.ability_source_contract.ok_or(
                                         "triggered stack item lost its source incarnation",
-                                    )?)
-                                };
-                            triggered_ability_targeting_source(item.source, source_contract, effect)
+                                    )?),
+                                    effect,
+                                )
+                            }
                         }
                         StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
                             unreachable!("handled or untargeted")
@@ -16563,7 +16585,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let fake_death_owner =
         match crate::fake_your_own_death_v50::death_custody::acquire_resolution(state, item) {
             Ok(owner) => owner,
-            Err(_) => {
+            Err(_diag) => {
+                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16574,9 +16597,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let hunter_owner =
         match crate::high_society_hunter_custody_v45::acquire(state, item, true, false) {
             Ok(owner) => owner,
-            Err(_error) => {
-                #[cfg(test)]
-                eprintln!("Hunter resolution acquisition rejected: {_error}");
+            Err(_diag) => {
+                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16586,7 +16608,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         };
     let conqueror_owner = match crate::bloodthirsty_conqueror_v49::custody::acquire(state, item) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16596,7 +16619,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let panda_owner = match crate::fiendish_panda_v1::custody::acquire(state, item) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16606,7 +16630,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, item, true) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16616,9 +16641,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let targets_legal = match stack_targets_still_legal(item, state) {
         Ok(legal) => legal,
-        Err(_error) => {
-            #[cfg(test)]
-            eprintln!("Resolution target preflight rejected: {_error}");
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16632,7 +16656,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         true,
     ) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16646,7 +16671,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         true,
     ) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16667,7 +16693,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             true,
         ) {
             Ok(owner) => owner,
-            Err(_) => {
+            Err(_diag) => {
+                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16681,7 +16708,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let crystal_owner = if targets_legal {
         match effect::crystal_prevention_v1::acquire_owner(state, item, true) {
             Ok(owner) => owner,
-            Err(_) => {
+            Err(_diag) => {
+                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16703,7 +16731,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let fixed_removal_owner = match crate::fixed_source_damage_v3::acquire_removal(state, &current)
     {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 current.source,
@@ -16724,7 +16753,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let stromkirk_owner = match crate::stromkirk_dispatch_v1::preflight_resolution(state, &current)
     {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16735,7 +16765,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let temporal_owner =
         match crate::extra_turn_v1::acquire(state, state.stack.last().expect("resolving item")) {
             Ok(owner) => owner,
-            Err(_) => {
+            Err(_diag) => {
+                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -16748,7 +16779,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         state.stack.last().expect("resolving item"),
     ) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16762,7 +16794,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         targets_legal,
     ) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16772,7 +16805,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let banishing_owner = match crate::banishing_light_v1::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16782,7 +16816,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let zul_owner = match crate::zul_ashur_v1::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16797,9 +16832,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     let arahbo_owner = match crate::arahbo_v1::before_remove(state, &current) {
         Ok(owner) => owner,
-        Err(_error) => {
-            #[cfg(test)]
-            eprintln!("Arahbo pre-pop removal rejected: {_error}");
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16809,7 +16843,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let garruk_owner = match crate::garruks_uprising_v1::before_remove(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16819,7 +16854,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let ajani_owner = match crate::ajani_full_v42::lifecycle::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16829,7 +16865,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let krenko_owner = match crate::krenko_v1::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16839,7 +16876,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let drake_owner = match crate::drake_hatcher_v1::custody::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16849,7 +16887,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let ravenous_owner = match crate::ravenous_amulet_v1::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16866,7 +16905,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
     let fishing_owner = match crate::fishing_pole_v39::lifecycle::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16876,7 +16916,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let faebloom_owner = match crate::faebloom_trick_v43::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16886,7 +16927,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let fake_owner = match crate::fake_your_own_death_v50::spell_custody::acquire(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16912,9 +16954,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
-            Err(_error) => {
-                #[cfg(test)]
-                eprintln!("Permanent entry pre-pop acquisition rejected: {_error}");
+            Err(_diag) => {
+                eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
@@ -24239,7 +24280,8 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     match resolution_cast_v1::finish_child(state) {
         Ok(true) => return,
         Ok(false) => {}
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.spell,
@@ -24287,7 +24329,8 @@ fn finalize_activation(state: &mut GameState) {
     }
     let ajani_payment_owner = match crate::ajani_full_v42::lifecycle::acquire_payment(state) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 staged.source,
@@ -24297,7 +24340,8 @@ fn finalize_activation(state: &mut GameState) {
     };
     let fixed_payment_owner = match crate::fixed_source_damage_v3::acquire_payment(state) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 state.engine.pending_activation.as_ref().unwrap().source,
@@ -24321,7 +24365,8 @@ fn finalize_activation(state: &mut GameState) {
     frozen.drake_payment = match crate::drake_hatcher_v1::custody::capture_payment(state, &pending)
     {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -24331,7 +24376,8 @@ fn finalize_activation(state: &mut GameState) {
     };
     frozen.ravenous_payment = match crate::ravenous_amulet_v1::capture_payment(state, &pending) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -24362,7 +24408,8 @@ fn finalize_activation(state: &mut GameState) {
         .unwrap_or_else(|| activation_x_value(ability, &pending.targets_chosen, state))
     {
         Ok(value) => value,
-        Err(_) => {
+        Err(_diag) => {
+            eprintln!("E5B-DIAG {}:{}: {:?}", file!(), line!(), _diag);
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
