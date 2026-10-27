@@ -5660,7 +5660,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 hand_exile_count += 1;
                 saw_source_changing_component = true;
             }
-            CostComponent::ExileCardsFromHandWithColorV1 { count, .. } => {
+            CostComponent::ExileCardsFromHandWithColorV1 { count, .. }
+            | CostComponent::DiscardLandCardsV1(count) => {
                 if *count == 0 {
                     return false;
                 }
@@ -5850,6 +5851,7 @@ fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
                         | CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand
                         | CostComponent::ExileCardFromHandWithColorV1(_)
                         | CostComponent::ExileCardsFromHandWithColorV1 { .. }
+                        | CostComponent::DiscardLandCardsV1(_)
                         | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
                         | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
                         | CostComponent::TapUntappedControlledPermanentsV1 { .. }
@@ -6188,6 +6190,9 @@ fn can_pay_components(
             CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
                 hand_exile_cost_candidates(player, source, *color, state).len()
                     >= usize::from(*count)
+            }
+            CostComponent::DiscardLandCardsV1(count) => {
+                hand_land_discard_candidates(player, source, state).len() >= usize::from(*count)
             }
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
                 checked_graveyard_exile_candidates(player, source, state, &[]).is_some_and(
@@ -6533,6 +6538,23 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
+    let land_discards = components.iter().find_map(|component| match component {
+        CostComponent::DiscardLandCardsV1(count) => Some(usize::from(*count)),
+        _ => None,
+    });
+    if let Some(needed) = land_discards {
+        let candidates = hand_land_discard_candidates(player, source, state);
+        let duplicate = object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        if object_cost_chosen.len() != needed
+            || duplicate
+            || object_cost_chosen.iter().any(|id| !candidates.contains(id))
+        {
+            return None;
+        }
+    }
     let graveyard_types_needed = components.iter().find_map(|component| match component {
         CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => Some(*minimum),
         _ => None,
@@ -6613,6 +6635,8 @@ fn validate_cost_component_choices_v1(
         && return_filter.is_none()
         && returns_permanents.is_none()
         && hand_exile_color.is_none()
+        && hand_exiles.is_none()
+        && land_discards.is_none()
         && graveyard_types_needed.is_none()
         && !returns_unblocked_attacker
         && tap_other_subtype.is_none()
@@ -6897,6 +6921,11 @@ fn commit_cost_components_from_plan_v1(
                         .map(|&card| ProposedEvent::zone_change(card, Zone::Exile))
                         .collect(),
                 );
+            }
+            CostComponent::DiscardLandCardsV1(_) => {
+                for &card in object_cost_chosen {
+                    commit_discarded_card(state, card);
+                }
             }
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_) => {
                 commit_graveyard_exile(state, object_cost_chosen);
@@ -7679,8 +7708,33 @@ pub(crate) fn hand_exile_cost_candidates(
         .collect()
 }
 
+/// The land cards in `player`'s hand other than `source`, for retrace's
+/// "discard a land card".
+pub(crate) fn hand_land_discard_candidates(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .hand
+        .iter()
+        .copied()
+        .filter(|&id| {
+            id != source
+                && state.objects.try_get(id).is_some_and(|object| {
+                    object.zone == Zone::Hand
+                        && object.owner == player
+                        && card_def::CARD_DEFS
+                            .get(usize::from(object.card_def))
+                            .is_some_and(|def| def.is_land)
+                })
+        })
+        .collect()
+}
+
 /// An alternative cost paid with chosen objects: Daze's returned Island,
 /// Force of Will's exiled blue card, or Gush's two returned Islands.
+/// Retrace's discarded land card shares this staging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CastSingleObjectCostV1 {
     ReturnPermanent(PermanentFilterDef),
@@ -7699,7 +7753,8 @@ impl CastSingleObjectCostV1 {
         match self {
             CastSingleObjectCostV1::ReturnPermanents(_, count)
             | CastSingleObjectCostV1::TapPermanents(_, count)
-            | CastSingleObjectCostV1::ExileHandCards(_, count) => count,
+            | CastSingleObjectCostV1::ExileHandCards(_, count)
+            | CastSingleObjectCostV1::DiscardLandCards(count) => count,
             CastSingleObjectCostV1::ReturnPermanent(_)
             | CastSingleObjectCostV1::ExileHandCard(_) => 1,
         }
@@ -7709,7 +7764,15 @@ impl CastSingleObjectCostV1 {
 fn cast_single_object_cost_needed(
     pending: &PendingCast,
     def: &card_def::CardDef,
+    state: &GameState,
 ) -> Option<CastSingleObjectCostV1> {
+    // Retrace: "discard a land card in addition to paying their other costs".
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_e7b_v1::pending_retrace(state, pending) {
+        return Some(CastSingleObjectCostV1::DiscardLandCards(1));
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let _ = state;
     if pending.is_flashback {
         return def
             .flashback
@@ -7763,6 +7826,12 @@ fn cast_single_object_cost_candidates(
         }
         CastSingleObjectCostV1::ExileHandCards(color, _) => {
             hand_exile_cost_candidates(pending.controller, pending.spell, color, state)
+                .into_iter()
+                .filter(|object| !pending.sacrifice_chosen.contains(object))
+                .collect()
+        }
+        CastSingleObjectCostV1::DiscardLandCards(_) => {
+            hand_land_discard_candidates(pending.controller, pending.spell, state)
                 .into_iter()
                 .filter(|object| !pending.sacrifice_chosen.contains(object))
                 .collect()
@@ -12849,7 +12918,7 @@ pub(crate) fn validate_pending_cast(
     let graveyard_exile_needed = graveyard_exile_cards_needed(pending, def, state);
     let controlled_sacrifice = controlled_permanent_sacrifice_needed(pending, def);
     let tap_permanent_filter = cast_tap_permanent_filter_needed(pending, def);
-    let single_object_cost = cast_single_object_cost_needed(pending, def);
+    let single_object_cost = cast_single_object_cost_needed(pending, def, state);
     let active_object_cost_families = u8::from(sacrifice_needed != 0)
         + u8::from(graveyard_exile_needed != 0)
         + u8::from(controlled_sacrifice.is_some())
@@ -13618,7 +13687,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    if let Some(cost) = cast_single_object_cost_needed(&pending, def) {
+    if let Some(cost) = cast_single_object_cost_needed(&pending, def, state) {
         if pending.sacrifice_chosen.len() < usize::from(cost.count()) {
             let candidates = cast_single_object_cost_candidates(&pending, cost, state);
             let remaining = cost.count() - pending.sacrifice_chosen.len() as u8;
@@ -13646,8 +13715,10 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     | CastSingleObjectCostV1::ReturnPermanents(..) => {
                         CostKind::ReturnPermanentsToHand
                     }
-                    CastSingleObjectCostV1::ExileHandCard(_) => CostKind::ExileFromHandV1,
+                    CastSingleObjectCostV1::ExileHandCard(_)
+                    | CastSingleObjectCostV1::ExileHandCards(..) => CostKind::ExileFromHandV1,
                     CastSingleObjectCostV1::TapPermanents(..) => CostKind::TapPermanents,
+                    CastSingleObjectCostV1::DiscardLandCards(_) => CostKind::DiscardCards,
                 },
                 remaining,
                 candidates,
@@ -20937,7 +21008,7 @@ fn pending_cast_action_stage(
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
-    if cast_single_object_cost_needed(pending, def)
+    if cast_single_object_cost_needed(pending, def, state)
         .is_some_and(|cost| pending.sacrifice_chosen.len() < usize::from(cost.count()))
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
@@ -22135,7 +22206,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 return Ok(());
             }
         }
-        if let Some(cost) = cast_single_object_cost_needed(&pending, def) {
+        if let Some(cost) = cast_single_object_cost_needed(&pending, def, state) {
             if pending.sacrifice_chosen.len() < usize::from(cost.count()) {
                 let active_target_spec = selected_spell_target_spec(
                     def,

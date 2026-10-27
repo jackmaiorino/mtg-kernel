@@ -30,8 +30,9 @@
 //!   from multicolored (Stonecoil Serpent), regeneration (Golgari
 //!   Grave-Troll) and Hollow One's discard count;
 //! - planeswalkers (Dack Fayden, Wrenn and Six, Minsc & Boo), emblems,
-//!   empower Jace's planeswalker token and the loyalty ability Avatar of
-//!   Burgeoning Echoes grants.
+//!   retrace from Wrenn and Six's emblem, empower Jace's planeswalker token
+//!   and the loyalty ability Avatar of Burgeoning Echoes grants;
+//! - Serum Powder's exile-and-redraw before each London mulligan choice.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 pub(crate) mod dredge;
@@ -112,9 +113,6 @@ pub struct E7bStateV1 {
     /// Wrenn and Six emblems each player has.
     #[serde(default, skip_serializing_if = "no_emblems")]
     pub wrenn_emblems: [u8; 2],
-    /// Instant and sorcery spells cast with retrace, by stack incarnation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub retrace_casts: Vec<ObjectLinkV4>,
     /// The player whose draw-step draw waits for their dredge choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dredge_draw: Option<PlayerId>,
@@ -122,6 +120,10 @@ pub struct E7bStateV1 {
     /// them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub casters: Vec<(StackItemId, PlayerId)>,
+    /// Opening hands whose Serum Powder choice the player declined, cleared
+    /// once the mulligans end.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub powder_declined: Vec<(PlayerId, Vec<ObjectLinkV4>)>,
 }
 
 fn no_emblems(emblems: &[u8; 2]) -> bool {
@@ -788,6 +790,81 @@ pub fn wrenn_minus_one() -> EffectOp {
 /// your graveyard have retrace.'"
 pub fn wrenn_minus_seven() -> EffectOp {
     e7b(E7bOpV1::WrennEmblemV1)
+}
+
+/// Retrace (702.81), from Wrenn and Six's emblem: "You may cast this card
+/// from your graveyard by discarding a land card in addition to paying its
+/// other costs." Whether `holder` may cast `object` from their graveyard
+/// that way: an instant or sorcery card they own while they have the
+/// emblem. Callers check the graveyard incarnation.
+pub(crate) fn retrace_permission(state: &GameState, object: ObjectId, holder: PlayerId) -> bool {
+    read_state(state).is_some_and(|e7b| e7b.wrenn_emblems[holder.index()] > 0)
+        && state.objects.try_get(object).is_some_and(|live| {
+            live.owner == holder
+                && !live.v4.is_token
+                && live.spell_copy_origin.is_none()
+                && CARD_DEFS
+                    .get(usize::from(live.card_def))
+                    .is_some_and(|def| {
+                        def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery)
+                    })
+        })
+}
+
+/// Whether casting the graveyard incarnation (`object`, `zone_change_count`)
+/// is a retrace cast: retrace allows it and no other permission does (a
+/// card another permission allows is cast without the land discard).
+fn retrace_cast(
+    state: &GameState,
+    object: ObjectId,
+    holder: PlayerId,
+    zone_change_count: u32,
+) -> bool {
+    retrace_permission(state, object, holder)
+        && !crate::standard_cards_v1::graveyard_cast_granted_without_retrace(
+            state,
+            object,
+            holder,
+            zone_change_count,
+        )
+}
+
+/// Whether the pending cast is a retrace cast.
+pub(crate) fn pending_retrace(state: &GameState, pending: &crate::engine::PendingCast) -> bool {
+    pending.origin_zone == Zone::Graveyard
+        && pending
+            .source_contract
+            .spell_cast_origin
+            .is_some_and(|origin| {
+                origin.origin_zone == Zone::Graveyard
+                    && matches!(
+                        origin.route,
+                        crate::state::SpellCastRouteV4::GraveyardPermissionV1 { holder, .. }
+                            if holder == pending.controller
+                    )
+                    && retrace_cast(
+                        state,
+                        pending.spell,
+                        pending.controller,
+                        origin.origin_zone_change_count,
+                    )
+            })
+}
+
+/// Whether a quote for `player` casting `source` includes retrace's land
+/// discard: the pending cast of `source`, or `source` in a graveyard.
+pub(crate) fn retrace_quote(state: &GameState, source: ObjectId, player: PlayerId) -> bool {
+    if let Some(pending) = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|pending| pending.spell == source)
+    {
+        return pending.controller == player && pending_retrace(state, pending);
+    }
+    state.objects.try_get(source).is_some_and(|live| {
+        live.zone == Zone::Graveyard && retrace_cast(state, source, player, live.zone_change_count)
+    })
 }
 
 /// Minsc & Boo's +1: "Put three +1/+1 counters on up to one target creature
@@ -2165,9 +2242,9 @@ pub(crate) fn delayed_triggers(
         .collect()
 }
 
-/// Spells cast this turn: evoke and dash casts, Uro's escape, retrace, the
-/// creature spells Vengevine counts, Vengevine's triggers and the Dack
-/// Fayden emblem's.
+/// Spells cast this turn: evoke and dash casts, Uro's escape, the creature
+/// spells Vengevine counts, Vengevine's triggers and the Dack Fayden
+/// emblem's.
 fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
     for event in events {
         let CommittedEvent::SpellCast { spell, controller } = *event else {
@@ -2535,7 +2612,6 @@ fn prune(state: &mut GameState) {
         })
         .collect::<Vec<_>>();
     let graveyard_casts = on_stack(&e7b.graveyard_casts);
-    let retrace = on_stack(&e7b.retrace_casts);
     let dashed = e7b
         .dashed
         .iter()
@@ -2559,7 +2635,6 @@ fn prune(state: &mut GameState) {
         || evoked.len() != e7b.evoked_casts.len()
         || dash.len() != e7b.dash_casts.len()
         || escaped.len() != e7b.escaped_casts.len()
-        || retrace.len() != e7b.retrace_casts.len()
         || dashed.len() != e7b.dashed.len()
         || shields.len() != e7b.shields.len();
     if changed {
@@ -2569,7 +2644,6 @@ fn prune(state: &mut GameState) {
         e7b.evoked_casts = evoked;
         e7b.dash_casts = dash;
         e7b.escaped_casts = escaped;
-        e7b.retrace_casts = retrace;
         e7b.dashed = dashed;
         e7b.shields = shields;
     }

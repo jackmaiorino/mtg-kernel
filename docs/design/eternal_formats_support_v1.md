@@ -269,9 +269,13 @@ New, each built once in the first wave that needs it:
   Avatar of Burgeoning Echoes' -10 granted one index past a planeswalker's printed
   abilities. Hollow One counts discards (cycling included) per turn. New target shapes
   cover graveyard cards of a type, any number of spells, a creature or planeswalker spell,
-  a permanent an opponent controls and a creature with trample or haste. Known gaps:
-  Serum Powder's mulligan exile is not offered (it plays as a mana rock), and Wrenn and
-  Six's emblem is recorded but retrace casting is not yet offered.
+  a permanent an opponent controls and a creature with trample or haste. Serum Powder's
+  exile-and-redraw is offered before each London mulligan choice while it is in hand.
+  Wrenn and Six's emblem grants retrace as a graveyard cast permission whose quote adds
+  `CostComponent::DiscardLandCardsV1` (a land card chosen privately from hand); a card
+  another permission already lets its owner cast (Snapcaster's flashback, Yawgmoth's
+  Will) is cast through that permission instead, and retrace is not combined with a
+  second object-choosing cost (an alternative or additional cost that picks objects).
 
 ## Card contract and verification
 

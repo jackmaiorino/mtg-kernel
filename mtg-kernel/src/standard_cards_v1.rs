@@ -3529,6 +3529,19 @@ pub(crate) fn graveyard_cast_granted(
     holder: PlayerId,
     zone_change_count: u32,
 ) -> bool {
+    graveyard_cast_granted_without_retrace(state, object, holder, zone_change_count)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_vintage_e7b_v1::retrace_permission(state, object, holder))
+}
+
+/// The graveyard cast grants other than retrace (Wrenn and Six's emblem),
+/// which adds a cost the others don't.
+pub(crate) fn graveyard_cast_granted_without_retrace(
+    state: &GameState,
+    object: ObjectId,
+    holder: PlayerId,
+    zone_change_count: u32,
+) -> bool {
     standard_graveyard_cast_granted(state, object, holder, zone_change_count)
         || (cfg!(feature = "eternal-fixtures")
             && (crate::eternal_e5a_v1::permissions::will_permission(state, object, holder)

@@ -528,6 +528,63 @@ fn serum_powder_taps_for_colorless() {
     assert_eq!(mana(&state, P0, ManaColor::C), 1);
 }
 
+#[test]
+fn serum_powder_exiles_the_hand_and_draws_that_many_before_the_mulligan_choice() {
+    let powders = vec![id("Serum Powder"); 40];
+    let islands = vec![id("Island"); 40];
+    let mut state =
+        mtg_kernel::rl::build_deck_pair_state_with_starting_player_v1(7, &powders, &islands, P0)
+            .unwrap();
+    mtg_kernel::london_mulligan_v1::enable_london_mulligans_v1(&mut state).unwrap();
+    let first_hand = state.players[0].hand.clone();
+    match engine::advance_until_decision(&mut state) {
+        Decision::ChooseEffectOption {
+            player,
+            source,
+            option_count,
+        } => {
+            assert_eq!((player, option_count), (P0, 2));
+            assert!(first_hand.contains(&source));
+        }
+        other => panic!("{other:?}"),
+    }
+    act(&mut state, Action::ChooseEffectOption(1));
+    assert_eq!(state.exile.len(), 7);
+    assert!(first_hand
+        .iter()
+        .all(|card| zone(&state, *card) == Zone::Exile));
+    assert_eq!(state.players[0].hand.len(), 7);
+    assert_eq!(state.players[0].library.len(), 26);
+    // The new hand is offered again; declining leaves the mulligan choice.
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseEffectOption { player: P0, .. }
+    ));
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert_eq!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseLondonMulligan {
+            player: P0,
+            mulligan_count: 0,
+        }
+    );
+    act(&mut state, Action::ChooseLondonMulligan { mulligan: false });
+    assert_eq!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseLondonMulligan {
+            player: P1,
+            mulligan_count: 0,
+        }
+    );
+    act(&mut state, Action::ChooseLondonMulligan { mulligan: false });
+    engine::advance_until_decision(&mut state);
+    assert!(state
+        .london_mulligans_v1
+        .as_ref()
+        .is_some_and(|pregame| pregame.is_complete()));
+    assert_eq!(state.players[0].hand.len(), 7);
+}
+
 // ---- Dredge -----------------------------------------------------------------------
 
 #[test]
@@ -1527,6 +1584,47 @@ fn wrenn_and_six_returns_lands_pings_and_makes_an_emblem() {
     settled(&mut state);
     assert_eq!(zone(&state, delver), Zone::Graveyard);
     assert_eq!(loyalty(&state, wrenn), Some(3));
+}
+
+#[test]
+fn wrenn_and_six_emblem_gives_graveyard_instants_and_sorceries_retrace() {
+    let mut state = islands();
+    let wrenn = put(&mut state, P0, "Wrenn and Six", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
+    cast(&mut state, wrenn, &[]);
+    settled(&mut state);
+    mtg_kernel::planeswalker_v1::change_loyalty(&mut state, wrenn, 4);
+    activate(&mut state, wrenn, 2, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, wrenn), Zone::Graveyard, "no loyalty left");
+
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(!castable(&mut state, bolt), "no land card to discard");
+    let delver = put(&mut state, P0, "Delver of Secrets", Zone::Hand);
+    assert!(!castable(&mut state, bolt), "a nonland card can't pay");
+    let island = put(&mut state, P0, "Island", Zone::Hand);
+    let bayou = put(&mut state, P0, "Bayou", Zone::Hand);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert!(candidates.contains(&island) && candidates.contains(&bayou));
+            assert!(!candidates.contains(&delver));
+        }
+        other => panic!("{other:?}"),
+    }
+    act(&mut state, Action::ChooseCostTarget(bayou));
+    settled(&mut state);
+    assert_eq!(zone(&state, bayou), Zone::Graveyard, "discarded");
+    assert!(hand_contains(&state, P0, island) && hand_contains(&state, P0, delver));
+    assert_eq!(state.players[1].life, 17);
+    assert_eq!(
+        zone(&state, bolt),
+        Zone::Graveyard,
+        "a retraced card returns"
+    );
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(castable(&mut state, bolt), "and may be cast again");
 }
 
 #[test]

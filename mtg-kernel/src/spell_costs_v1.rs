@@ -144,6 +144,9 @@ pub(super) struct SpellComponentChoicesV1 {
 }
 
 pub(super) struct SelectedSpellManaCostsV1 {
+    /// Whether the last component group is retrace's land discard
+    /// (Wrenn and Six's emblem), added after any definition-owned groups.
+    pub(super) retrace: bool,
     pub(super) legendary_spell: bool,
     pub(super) costs: Vec<Cost>,
     pub(super) component_groups: Vec<&'static [CostComponent]>,
@@ -182,15 +185,24 @@ impl SelectedSpellManaCostsV1 {
             _ => None,
         };
         let additional_cost = additional_cost_for_method_v1(definition, method);
+        let retrace = self.retrace.then_some(RETRACE_COST);
+        let additional_slot = self
+            .component_groups
+            .len()
+            .checked_sub(1 + usize::from(retrace.is_some()));
         let original_groups = base
             .into_iter()
             .chain(additional_cost.map(|group| {
                 if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
-                    self.component_groups.last().copied().unwrap_or(group)
+                    additional_slot
+                        .and_then(|slot| self.component_groups.get(slot))
+                        .copied()
+                        .unwrap_or(group)
                 } else {
                     group
                 }
             }))
+            .chain(retrace)
             .collect::<Vec<_>>();
         if original_groups != self.component_groups {
             return None;
@@ -222,18 +234,22 @@ impl SelectedSpellManaCostsV1 {
             });
         let mut chosen_by_group = Vec::with_capacity(original_groups.len());
         if base.is_some() {
-            chosen_by_group.push(if additional_owns_objects {
+            chosen_by_group.push(if additional_owns_objects || retrace.is_some() {
                 Vec::new()
             } else {
                 ordered_objects.clone()
             });
         }
         if additional_cost.is_some() {
-            chosen_by_group.push(if additional_owns_objects {
+            chosen_by_group.push(if additional_owns_objects && retrace.is_none() {
                 ordered_objects.clone()
             } else {
                 Vec::new()
             });
+        }
+        // Retrace's discarded land cards are the cast's one object family.
+        if retrace.is_some() {
+            chosen_by_group.push(ordered_objects.clone());
         }
         Some(SpellComponentChoicesV1 {
             ordered_objects,
@@ -461,6 +477,7 @@ pub(super) fn selected_spell_mana_costs_v1(
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
     let mut selected = SelectedSpellManaCostsV1 {
+        retrace: false,
         legendary_spell: definition
             .supertypes
             .contains(&card_def::Supertype::Legendary)
@@ -545,6 +562,9 @@ pub(super) fn selected_spell_mana_costs_v1(
     Some(selected)
 }
 
+/// Retrace's additional cost: "discard a land card".
+const RETRACE_COST: &[CostComponent] = &[CostComponent::DiscardLandCardsV1(1)];
+
 /// A definition's mandatory additional cost for a cast by `method`. Demand
 /// Answers' alternative cost replaces its discard
 /// (`eternal_pauper_e6b_v1::alternative_skips_additional_cost`).
@@ -628,6 +648,14 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
         // Anointed Peacekeeper: spells with the chosen name cost {2} more.
         selected.own_generic_increase =
             crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player);
+        // Retrace (Wrenn and Six's emblem): discard a land card in addition
+        // to the other costs.
+        if matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+            && crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player)
+        {
+            selected.components(RETRACE_COST);
+            selected.retrace = true;
+        }
         // Eye of Ugin, It That Heralds the End, Leyline Binding's domain.
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_legacy_e5b_v1::spell_cost_reduction(state, definition, player),
@@ -779,6 +807,12 @@ pub(super) fn selected_spell_quote_branch_v1(
     )?;
     if let Some(pay_mana) = forced_branch {
         let mana = super::mandatory_cast_cost_v1::mana_branch(definition)?;
+        // Retrace's group follows the mandatory additional cost.
+        let retrace = if selected.retrace {
+            selected.component_groups.pop()
+        } else {
+            None
+        };
         let original = selected.component_groups.pop()?;
         if let [CostComponent::Mana(_)] = original {
             selected.costs.pop()?;
@@ -788,6 +822,7 @@ pub(super) fn selected_spell_quote_branch_v1(
         } else {
             super::mandatory_cast_cost_v1::SACRIFICE
         });
+        selected.component_groups.extend(retrace);
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     let mut family = None;
@@ -846,6 +881,10 @@ pub(super) fn selected_spell_quote_branch_v1(
             CostComponent::ExileCardsFromHandWithColorV1 { count, color } => Some((
                 usize::from(*count),
                 super::hand_exile_cost_candidates(player, source, *color, state),
+            )),
+            CostComponent::DiscardLandCardsV1(count) => Some((
+                usize::from(*count),
+                super::hand_land_discard_candidates(player, source, state),
             )),
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
                 graveyard_types_needed = Some(*minimum);

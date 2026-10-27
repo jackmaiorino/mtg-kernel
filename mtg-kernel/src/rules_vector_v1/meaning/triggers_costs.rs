@@ -683,6 +683,18 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             move_cost(out, ZoneF::Hand, ZoneF::Exile, ObjF::AnyCard, count);
             out.atoms.push(Atom::Opaque);
         }
+        CostComponent::DiscardLandCardsV1(count) => {
+            // `count` land cards, other than the source, move from the
+            // payer's hand to their graveyard as a discard.
+            move_cost(
+                out,
+                ZoneF::Hand,
+                ZoneF::Graveyard,
+                ObjF::Typed(CardTypeF::Land),
+                count,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::Crew(required) => {
             // The payer selects untapped creatures, excluding the source,
             // whose total crew power meets the threshold, then taps them.

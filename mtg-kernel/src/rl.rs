@@ -10797,9 +10797,13 @@ fn pending_cast_semantic_v2(
                 )
             })
         });
+    // Retrace's discarded land card is not a sacrifice either.
+    let object_cost_is_retrace = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_vintage_e7b_v1::pending_retrace(state, p);
     let sacrifice_chosen = if p.source_contract.cast_method == CastMethodV4::Escape
         || object_cost_is_tap
         || object_cost_is_alternative
+        || object_cost_is_retrace
     {
         Vec::new()
     } else {

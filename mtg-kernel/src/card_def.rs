@@ -1630,6 +1630,11 @@ pub enum CostComponent {
     /// "Remove a +1/+1 counter from this creature" (Golgari Grave-Troll).
     /// Appended for the eternal catalog.
     RemovePlusOneCounterFromSelfV1,
+    /// "Discard a land card" (retrace, which Wrenn and Six's emblem grants):
+    /// `count` distinct land cards from the payer's hand, chosen privately
+    /// one at a time through `Decision::ChooseCostTargets`. Appended for the
+    /// eternal catalog.
+    DiscardLandCardsV1(u8),
 }
 
 impl CostComponent {

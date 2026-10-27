@@ -12,7 +12,7 @@ use super::{
 };
 use crate::card_def::{CardType, Keywords, CARD_DEFS};
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{AbilitySourceContractV4, GameState, Zone};
+use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 
 const COLLECTOR_OUPHE: &str = "Collector Ouphe";
 const HOLLOW_ONE: &str = "Hollow One";
@@ -20,9 +20,55 @@ const CRUCIBLE_OF_WORLDS: &str = "Crucible of Worlds";
 const KARN_ARGENT_DEFENDER: &str = "Karn, Argent Defender";
 const LODESTONE_GOLEM: &str = "Lodestone Golem";
 const PHYREXIAN_REVOKER: &str = "Phyrexian Revoker";
+const SERUM_POWDER: &str = "Serum Powder";
 const STONECOIL_SERPENT: &str = "Stonecoil Serpent";
 const THORN_OF_AMETHYST: &str = "Thorn of Amethyst";
 const TORPOR_ORB: &str = "Torpor Orb";
+
+// ---- Serum Powder -------------------------------------------------------------------
+
+fn hand_links(state: &GameState, player: PlayerId) -> Vec<ObjectLinkV4> {
+    state.players[player.index()]
+        .hand
+        .iter()
+        .map(|&object| live_link(state, object))
+        .collect()
+}
+
+/// Serum Powder: "Any time you could mulligan and this card is in your
+/// hand, you may exile all the cards from your hand, then draw that many
+/// cards." The Serum Powder in `player`'s hand to offer while they decide
+/// whether to mulligan, unless they declined it for this exact hand.
+pub(crate) fn serum_powder_offer(state: &GameState, player: PlayerId) -> Option<ObjectId> {
+    let powder = state.players[player.index()]
+        .hand
+        .iter()
+        .copied()
+        .find(|&card| definition_name(state, card) == Some(SERUM_POWDER))?;
+    let hand = hand_links(state, player);
+    let declined = read_state(state).is_some_and(|e7b| {
+        e7b.powder_declined
+            .iter()
+            .any(|(holder, declined)| *holder == player && *declined == hand)
+    });
+    (!declined).then_some(powder)
+}
+
+/// Records that `player` keeps their current hand past Serum Powder's
+/// offer (they still choose whether to mulligan).
+pub(crate) fn decline_serum_powder(state: &mut GameState, player: PlayerId) {
+    let hand = hand_links(state, player);
+    let e7b = e7b_state(state);
+    e7b.powder_declined.retain(|(holder, _)| *holder != player);
+    e7b.powder_declined.push((player, hand));
+}
+
+/// Forgets the declined Serum Powder offers once the mulligans end.
+pub(crate) fn end_mulligans(state: &mut GameState) {
+    if read_state(state).is_some_and(|e7b| !e7b.powder_declined.is_empty()) {
+        e7b_state(state).powder_declined.clear();
+    }
+}
 
 // ---- Spell taxes --------------------------------------------------------------------
 
