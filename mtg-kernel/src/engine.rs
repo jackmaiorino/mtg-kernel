@@ -7745,6 +7745,8 @@ enum CastSingleObjectCostV1 {
     /// A flashback cost that taps `count` matching permanents (Battle
     /// Screech).
     TapPermanents(PermanentFilterDef, u8),
+    /// Retrace's discarded land cards (Wrenn and Six's emblem).
+    DiscardLandCards(u8),
 }
 
 impl CastSingleObjectCostV1 {
