@@ -643,12 +643,25 @@ mod tests {
             .detail
             .contains(&format!("first differing candidate {last}: root Some(")));
         assert!(fewer.detail.ends_with("sampled None"));
-        // A sampled world whose live menu no longer matches the decision fails
-        // to encode: the error is unchanged and the sink names the stage.
+        // A sampled world whose stack item lost its frozen source contract
+        // (as when a hook relabels a hidden ability source) fails to encode:
+        // the error is unchanged and the sink names the stage and check.
         let unencodable = |state: &mut GameState, actor: PlayerId| {
-            for mana in state.players[actor.index()].mana_pool.iter_mut() {
-                *mana = 0;
-            }
+            let source = state.players[actor.index()].library[0];
+            state.stack.push(crate::state::StackItem {
+                kind: crate::state::StackItemKind::ActivatedAbility,
+                source,
+                controller: actor,
+                targets: Vec::new(),
+                is_copy: false,
+                inline_effect: None,
+                discarded: Vec::new(),
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                v4: crate::state::StackStateV4::default(),
+            });
             Ok(())
         };
         let mut sink = None;
@@ -658,16 +671,18 @@ mod tests {
             unencodable,
             &mut sink,
         );
-        assert!(matches!(result, Err(Error::SampleBoundaryEncodingFailed)));
-        let recorded = sink.expect("encoding failure recorded");
-        // The live menu shrank, so the decision input fails and the kind
-        // names the failing check after the variant.
         assert!(
-            recorded.kind.starts_with("decision_input:") && recorded.kind.contains('@'),
+            matches!(result, Err(Error::SampleBoundaryEncodingFailed)),
+            "{:?} {sink:?}",
+            result.as_ref().err()
+        );
+        let recorded = sink.expect("encoding failure recorded");
+        assert!(
+            recorded.kind.starts_with("decision_input:") && recorded.kind.ends_with("@extensions"),
             "{recorded:?}"
         );
         assert!(
-            recorded.detail.contains("first differing candidate"),
+            recorded.detail.contains("candidates unchanged"),
             "{recorded:?}"
         );
         // Without a sink the same sample gives the same error.
