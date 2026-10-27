@@ -75,6 +75,7 @@ reserved.
 | E3 | Legacy combo decks: Doomsday, Sneak and Show, Aluren, Omni-Tell (Show and Tell, Sneak Attack, Omniscience, Aluren, Doomsday, Thassa's Oracle, Jace, Emrakul, Atraxa, Acererak and the three Forgotten Realms dungeons, Chrome Mox, Lion's Eye Diamond, The One Ring, Cavern of Souls, Misdirection, Flusterstorm, Veil of Summer) | 27 and four tokens | Legacy 19.3% to 33.5% |
 | E4 | Vintage Jewel Shops and Mono-White Initiative: Power Nine (with Mana Crypt, Mana Vault and Sol Ring), Workshop, Academy, Strip Mine, Karakas, Urza's Saga, Time Vault, Tinker, Karn, Tezzeret, Phyrexian Metamorph, Coveted Jewel, Trinisphere, the Initiative creatures, Archon of Emeria, Clarion Conqueror, Chancellor of the Annex, Anointed Peacekeeper, Witch Enchanter; six shared cards come from E3 | 36 | Vintage 0% to 28.4% |
 | E4b | Vintage Lurrus lists (Esper and Dimir Lurrus Control, Lurrus PO, Lurrus Breach, Jeskai Lurrus, 4c Psychic Frog): companions, Lurrus of the Dream-Den, Demonic Tutor, Mana Drain, Force of Negation, Gush, Dig Through Time, Treasure Cruise, Snapcaster Mage, Underworld Breach, Brain Freeze, Psychic Frog, Hexing Squelcher, Null Rod, Pithing Needle, Mox Opal and the rest of the lists | 29 and two tokens | Vintage 28.4% to 62.3% |
+| E5a | Vintage Raker Shops, Oath of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy Mystic Forge: Mystic Forge, Bolas's Citadel, Yawgmoth's Will, Chalice of the Void, Sensei's Divining Top, Oath of Druids, Oko, Ugin, Kozilek's Command, Talon Gates of Madara and the rest of the lists | 28 and a token | Vintage 62.3% to 80.0%, Legacy 33.7% to 37.2% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -156,6 +157,30 @@ New, each built once in the first wave that needs it:
   Hexing Squelcher grants "Ward--Pay 2 life" and makes its controller's spells
   uncounterable; Null Rod and Pithing Needle prohibit activations (the Needle names a
   card visible to its controller); Mox Opal's metalcraft gates its mana ability.
+- E5a, built in `src/eternal_e5a_v1.rs` (with `choices`, `permissions`, `phasing`,
+  `statics` and `triggers` submodules) and `build_eternal_e5a_v1.rs`: casting the top
+  card of the library is a new cast route (`SpellCastRouteV4::LibraryPermissionV1`,
+  recorded per library incarnation so a spell keeps it on the stack); Mystic Forge
+  allows artifact and colorless spells, Bolas's Citadel any spell for life equal to its
+  mana value (the mana cost is waived like Omniscience's, X is 0) and land plays from
+  the top. Yawgmoth's Will joins the graveyard cast grants, adds graveyard land plays
+  and exiles cards headed to its controller's graveyard through the zone-change
+  replacement hook Suplex's "exile it instead" also uses. Phasing moves a permanent and
+  its attachments out of every zone list under the command-zone marker, keeping its
+  incarnation, until its controller's next untap step. Serra's Emissary's protection
+  from a card type covers targeting, damage and blocking for its controller and their
+  creatures. Oko's Elks lose their abilities through the removal timestamp, become
+  creatures only, green Elks and base 3/3. Chalice of the Void enters with X charge
+  counters and reuses Vexing Bauble's "counter that spell" binding. Kozilek's Command's
+  six pairs of modes use per-slot targets, and X may not be less than the targeted
+  creature's mana value or the number of graveyard targets (X is announced after
+  targets here). The E3 choice framework carries this wave's resolution choices
+  (Beseech the Mirror's search and free cast from the hand, Flash, Vampiric Tutor,
+  Ugin's search). Oath of Druids and Forbidden Orchard are hook-queued triggers;
+  Urza's Workshop's two colorless abilities are one with the larger yield.
+  Extrapolate the Impossible, like Karn's wish, finds nothing outside the game in a
+  best-of-one mainboard game. Kozilek's Command is an Eldrazi instant; the Kindred card
+  type is not modeled.
 
 ## Card contract and verification
 

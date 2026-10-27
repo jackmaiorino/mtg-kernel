@@ -265,11 +265,9 @@ impl E5aOpV1 {
     }
 }
 
-pub(crate) const BESEECH_THE_MIRROR: &str = "Beseech the Mirror";
 pub(crate) const BOLAS_CITADEL: &str = "Bolas's Citadel";
 pub(crate) const CHALICE_OF_THE_VOID: &str = "Chalice of the Void";
 pub(crate) const COUNCIL_OF_REEDS: &str = "Council of Reeds";
-pub(crate) const COUNCIL_OF_REEDS_TOKEN: &str = "Council of Reeds Token";
 pub(crate) const FORBIDDEN_ORCHARD: &str = "Forbidden Orchard";
 pub(crate) const GLARING_FLESHRAKER: &str = "Glaring Fleshraker";
 pub(crate) const GRIM_MONOLITH: &str = "Grim Monolith";
@@ -277,18 +275,13 @@ pub(crate) const INVENTORS_FAIR: &str = "Inventors' Fair";
 pub(crate) const KOZILEKS_COMMAND: &str = "Kozilek's Command";
 pub(crate) const MYSTIC_FORGE: &str = "Mystic Forge";
 pub(crate) const OATH_OF_DRUIDS: &str = "Oath of Druids";
-pub(crate) const OKO: &str = "Oko, Thief of Crowns";
 pub(crate) const SCRAWLING_CRAWLER: &str = "Scrawling Crawler";
 pub(crate) const SERRAS_EMISSARY: &str = "Serra's Emissary";
-pub(crate) const SUPLEX: &str = "Suplex";
 pub(crate) const TALON_GATES: &str = "Talon Gates of Madara";
-pub(crate) const TENDRILS_OF_AGONY: &str = "Tendrils of Agony";
 pub(crate) const THE_ENDSTONE: &str = "The Endstone";
 pub(crate) const THE_FANTASTICAR: &str = "The Fantasticar";
 pub(crate) const FANTASTICAR_CONSTRUCT_TOKEN: &str = "Fantasticar Construct Token";
 pub(crate) const UGIN: &str = "Ugin, Eye of the Storms";
-pub(crate) const URZAS_WORKSHOP: &str = "Urza's Workshop";
-pub(crate) const YAWGMOTHS_WILL: &str = "Yawgmoth's Will";
 const ELDRAZI_SPAWN_TOKEN: &str = "Eldrazi Spawn Token";
 const FOOD_TOKEN: &str = "Food Token";
 const COLORLESS_SPIRIT_TOKEN: &str = "Colorless Spirit Token";
