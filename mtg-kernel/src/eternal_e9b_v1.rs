@@ -258,6 +258,7 @@ const NUTRIENT_BLOCK: &str = "Nutrient Block";
 const PESTILENCE: &str = "Pestilence";
 const RADIANT_FOUNTAIN: &str = "Radiant Fountain";
 const SIMIC_GROWTH_CHAMBER: &str = "Simic Growth Chamber";
+const SECLUDED_COURTYARD: &str = "Secluded Courtyard";
 const SOWING_MYCOSPAWN: &str = "Sowing Mycospawn";
 const THIEF_OF_EXISTENCE: &str = "Thief of Existence";
 const VAMPIRE_SOVEREIGN: &str = "Vampire Sovereign";
@@ -1231,15 +1232,16 @@ pub(crate) fn drive(
             Ok(false)
         }
         E9bOpV1::DenialMayDrawV1 { player } => {
-            let (who, chooser) = if *player == controller {
-                (PlayerRef::Controller, PlayerRef::Controller)
+            // The countered spell's controller chooses and draws.
+            let who = if *player == controller {
+                PlayerRef::Controller
             } else {
-                (PlayerRef::Opponent, PlayerRef::Opponent)
+                PlayerRef::Opponent
             };
             push_frame(
                 continuation,
                 EffectOp::Choice {
-                    controller: chooser,
+                    controller: who,
                     options: vec![
                         nothing(),
                         EffectOp::DrawCards {
@@ -2095,6 +2097,40 @@ pub(crate) fn mana_abilities_active(
 /// designation.
 pub(crate) fn starts_engines(name: &str) -> bool {
     cfg!(feature = "eternal-fixtures") && name == MOMENTUM_BREAKER
+}
+
+/// Secluded Courtyard: "As this land enters, choose a creature type." It
+/// chooses as Cavern of Souls does (`eternal_cards_v1::e3`), and its
+/// restricted mana pays for a creature spell of that type the same way.
+pub(crate) fn chooses_creature_type(card_def: u16) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && CARD_DEFS
+            .get(usize::from(card_def))
+            .is_some_and(|def| def.name == SECLUDED_COURTYARD)
+}
+
+/// Whether `player` controls a Secluded Courtyard.
+pub(crate) fn controls_courtyard(state: &GameState, player: PlayerId) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && state.players[player.index()]
+            .battlefield
+            .iter()
+            .any(|&object| active_named(state, object, SECLUDED_COURTYARD))
+}
+
+/// Secluded Courtyard: "Spend this mana only to cast a creature spell of the
+/// chosen type or activate an ability of a creature source of the chosen
+/// type." Whether `courtyard`'s mana may pay for an ability of `source`.
+pub(crate) fn courtyard_permits_ability(
+    state: &GameState,
+    courtyard: ObjectId,
+    source: ObjectId,
+) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && active_named(state, courtyard, SECLUDED_COURTYARD)
+        && is_creature(state, source)
+        && crate::eternal_cards_v1::e3::cavern_chosen_type(state, courtyard)
+            .is_some_and(|chosen| crate::engine::has_effective_subtype(state, source, chosen))
 }
 
 // ---- Targets ------------------------------------------------------------------------

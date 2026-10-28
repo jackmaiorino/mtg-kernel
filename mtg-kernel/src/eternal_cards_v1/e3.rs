@@ -1476,7 +1476,10 @@ fn cavern_needing_type(state: &GameState) -> Option<ObjectId> {
         .into_iter()
         .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
         .find(|&object| {
-            state.objects.get(object).card_def == id && cavern_chosen_type(state, object).is_none()
+            let card_def = state.objects.get(object).card_def;
+            // Wave E9b's Secluded Courtyard chooses its type the same way.
+            (card_def == id || crate::eternal_e9b_v1::chooses_creature_type(card_def))
+                && cavern_chosen_type(state, object).is_none()
         })
 }
 

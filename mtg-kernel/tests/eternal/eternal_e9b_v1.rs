@@ -16,7 +16,7 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const E9B_CARDS: [&str; 43] = [
+const E9B_CARDS: [&str; 44] = [
     "Annoyed Altisaur",
     "Arbor Elf",
     "Arcane Denial",
@@ -50,6 +50,7 @@ const E9B_CARDS: [&str; 43] = [
     "Radiant Fountain",
     "Ram Through",
     "Respite",
+    "Secluded Courtyard",
     "Simic Growth Chamber",
     "Sowing Mycospawn",
     "Step Through",
@@ -688,6 +689,62 @@ fn black_dragon_gate_chooses_a_color_other_than_black() {
         Action::ActivateManaAbilityChoice(gate, ManaColor::G)
     )
     .is_err());
+}
+
+/// Plays P0's Secluded Courtyard naming `subtype`.
+fn courtyard_naming(state: &mut GameState, subtype: Subtype) -> ObjectId {
+    let courtyard = put(state, P0, "Secluded Courtyard", Zone::Hand);
+    let options = mtg_kernel::eternal_cards_v1::e3::cavern_type_options(state, P0);
+    let index = options
+        .iter()
+        .position(|option| *option == subtype)
+        .expect("a creature type of an owned creature card");
+    next(state);
+    act(state, Action::PlayLand(courtyard));
+    match next(state) {
+        Decision::ChooseEffectOption { source, .. } => {
+            assert_eq!(source, courtyard);
+            act(
+                state,
+                Action::ChooseEffectOption(u16::try_from(index).unwrap()),
+            );
+        }
+        other => panic!("expected the creature type, got {other:?}"),
+    }
+    assert!(!state.objects.get(courtyard).tapped);
+    courtyard
+}
+
+#[test]
+fn secluded_courtyard_pays_for_creature_spells_and_abilities_of_its_type() {
+    let mut state = plains();
+    let repurposer = put(&mut state, P0, "Eldrazi Repurposer", Zone::Hand);
+    let thief = put(&mut state, P0, "Jewel Thief", Zone::Hand);
+    let courtyard = courtyard_naming(&mut state, Subtype::Eldrazi);
+    let mut colorless = state.clone();
+    next(&mut colorless);
+    act(&mut colorless, Action::ActivateManaAbility(courtyard));
+    assert_eq!(mana(&colorless, P0, ManaColor::C), 1);
+    pool(&mut state, P0, &[], 2);
+    assert!(
+        castable(&mut state, repurposer),
+        "an Eldrazi creature spell"
+    );
+    assert!(!castable(&mut state, thief), "a Cat creature spell");
+    cast(&mut state, repurposer, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, repurposer), Zone::Battlefield);
+    assert!(state.objects.get(courtyard).tapped);
+
+    // An ability of a creature source of the chosen type.
+    let mut state = plains();
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    let krushok = put(&mut state, P0, "Bannerhide Krushok", Zone::Hand);
+    courtyard_naming(&mut state, Subtype::Beast);
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, krushok, 0, &[Target::Object(inspector)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(inspector).counters.plus1_plus1, 2);
 }
 
 /// Plays the land face of the modal double-faced card `name`, paying 3 life

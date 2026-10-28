@@ -10699,8 +10699,13 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(
             out,
             "        restricted_mana_abilities: {},",
-            if executable && c.name == "Secluded Courtyard" {
+            if executable && c.name == "Secluded Courtyard" && !eternal_fixtures() {
                 "&[RestrictedManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], restriction: ManaSpendRestrictionDef::ChosenCreatureTypeV60(None) }]"
+            } else if executable && c.name == "Secluded Courtyard" {
+                // The eternal catalog's copy chooses its type as Cavern of
+                // Souls does; its creature-ability spending is
+                // `eternal_e9b_v1::courtyard_permits_ability`.
+                "&[RestrictedManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], restriction: ManaSpendRestrictionDef::CreatureSpellOfChosenTypeV1 }]"
             } else { standard.restricted_mana_abilities.as_str() }
         )
         .unwrap();
@@ -10732,7 +10737,7 @@ fn codegen(cards: &[CardJson]) -> String {
             "        creature_type_entry_v1: {},",
             if executable && c.name == "Banner of Kinship" {
                 "Some(CreatureTypeEntryDefV1::FellowshipAndChosenTypeAnthem)"
-            } else if executable && c.name == "Secluded Courtyard" {
+            } else if executable && c.name == "Secluded Courtyard" && !eternal_fixtures() {
                 "Some(CreatureTypeEntryDefV1::ChosenTypeCreatureSpellOrAbilityMana)"
             } else {
                 "None"
@@ -11046,7 +11051,14 @@ fn codegen(cards: &[CardJson]) -> String {
             canon
                 .push_str("as_enters_color_choice_v1=AnyWubrg|chosen_color_creature_boost_v1=1,0|");
         }
-        if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Secluded Courtyard" {
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && c.name == "Secluded Courtyard"
+            && eternal_fixtures()
+        {
+            canon.push_str("restricted_mana_abilities=WUBRG:CreatureSpellOfChosenTypeV1:or_chosen_type_creature_source_ability|");
+        } else if c.engine_capability != EngineCapabilityJson::NoEffect
+            && c.name == "Secluded Courtyard"
+        {
             canon.push_str("creature_type_entry_v1=ChosenTypeCreatureSpellOrAbilityMana:domain324:original_entry_incarnation|tap:C_unrestricted_or_WUBRG_chosen_type_creature_spell_or_creature_card_activation|floating_restriction_retains_original_choice|");
         }
         if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Banner of Kinship" {

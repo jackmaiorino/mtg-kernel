@@ -1697,7 +1697,7 @@ pub(crate) fn plan_activation_mana_v1(
         crate::engine::object_has_type(state, source, crate::card_def::CardType::Creature);
     let has_courtyard = state.players[player.index()].battlefield.iter().any(|id| {
         crate::banner_of_kinship_v1::entry::owns_courtyard(state.objects.get(*id).card_def)
-    });
+    }) || crate::eternal_e9b_v1::controls_courtyard(state, player);
     if !eligible
         || (state.players[player.index()]
             .restricted_mana_pool
@@ -1731,6 +1731,21 @@ pub(crate) fn plan_activation_mana_v1(
         .filter(|s| !excluded.contains(&s.id))
         .collect::<Vec<_>>();
     for mana_source in &mut sources {
+        // The eternal catalog's Secluded Courtyard (wave E9b).
+        if crate::eternal_e9b_v1::courtyard_permits_ability(state, mana_source.id, source) {
+            for color in [
+                ManaColor::W,
+                ManaColor::U,
+                ManaColor::B,
+                ManaColor::R,
+                ManaColor::G,
+            ] {
+                if !mana_source.choices.contains(&color) {
+                    mana_source.choices.push(color);
+                }
+            }
+            continue;
+        }
         let object = state.objects.get(mana_source.id);
         if !crate::banner_of_kinship_v1::entry::owns_courtyard(object.card_def) {
             continue;
