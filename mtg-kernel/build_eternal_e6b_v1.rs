@@ -280,7 +280,7 @@ pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str
         "Rakdos Carnarium" => Some(vec!["B"]),
         "Cliffgate" => Some(vec!["R"]),
         "Manor Gate" => Some(vec!["G"]),
-        _ => None,
+        _ => super::build_eternal_e8b_v1::primary_mana_ability_colors(name),
     }
 }
 
@@ -305,7 +305,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         "Boros Garrison" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::R, ManaColor::W]), controller_damage: 0, max_activations_per_turn: None })",
         // "{T}: Add {B}{R}."
         "Rakdos Carnarium" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::B, ManaColor::R]), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_e8b_v1::mana_ability_def_for(name),
     }
 }
 
@@ -314,7 +314,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
 pub(super) fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
     match name {
         "Idyllic Grange" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Plains, minimum_count: 3 })",
-        _ => super::build_eternal_e8a_v1::enters_battlefield_tapped_unless_for(name),
+        _ => super::build_eternal_e8b_v1::enters_battlefield_tapped_unless_for(name),
     }
 }
 

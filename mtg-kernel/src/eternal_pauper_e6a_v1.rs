@@ -441,9 +441,13 @@ pub fn ephemerate() -> EffectOp {
 /// Ethereal Haze: "Prevent all damage that would be dealt by creatures this
 /// turn."
 pub fn ethereal_haze() -> EffectOp {
-    e6a(E6aOpV1::FogV1 {
-        kind: FogKindV1::DamageByCreaturesV1,
-    })
+    // An Arcane instant: spliced Desperate Rituals add their text.
+    EffectOp::Sequence(vec![
+        e6a(E6aOpV1::FogV1 {
+            kind: FogKindV1::DamageByCreaturesV1,
+        }),
+        crate::eternal_pauper_e8b_v1::spliced_effects(),
+    ])
 }
 
 /// Ghostly Flicker: "Exile two target artifacts, creatures, and/or lands

@@ -18,7 +18,7 @@ pub(crate) fn validate_collection_workers_v1(workers: usize) -> Result<(), Strin
 }
 
 #[derive(Debug, Serialize)]
-struct WorkerTimingV1 {
+pub(super) struct WorkerTimingV1 {
     worker: usize,
     completed_episodes: usize,
     busy_seconds: f64,
@@ -36,7 +36,7 @@ struct CollectorV1 {
 /// alive on return. A failed job or panic cancels new dispatch; already active
 /// jobs join before the caller can attempt an update or publish completion.
 /// A worker that finds no job left calls `on_idle` once before it stops.
-fn ordered_parallel_jobs_v1<W, T, F, I>(
+pub(super) fn ordered_parallel_jobs_v1<W, T, F, I>(
     contexts: Vec<W>,
     job_count: usize,
     work: F,

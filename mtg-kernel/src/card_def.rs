@@ -418,6 +418,9 @@ pub enum Subtype {
     /// Planeswalker type (Vivien Reid), appended after the eternal catalog's
     /// types; Sphinx (Curator of Destinies) is listed above.
     Vivien,
+    /// Appended for the eternal catalog's wave E8b (Crimson Fleet
+    /// Commodore).
+    Ogre,
 }
 
 impl Subtype {
@@ -764,6 +767,8 @@ impl Subtype {
         Subtype::Snake,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Hamster,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Ogre,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -989,6 +994,7 @@ impl Subtype {
             192 => Subtype::Wrenn,
             193 => Subtype::Hamster,
             194 => Subtype::Vivien,
+            195 => Subtype::Ogre,
             _ => return None,
         })
     }
@@ -1193,6 +1199,7 @@ impl Subtype {
             Subtype::Snake => true,
             Subtype::Wrenn => false,
             Subtype::Hamster => true,
+            Subtype::Ogre => true,
         }
     }
 
@@ -1282,6 +1289,7 @@ impl Subtype {
                     | Subtype::Incarnation
                     | Subtype::Snake
                     | Subtype::Hamster
+                    | Subtype::Ogre
             )
         {
             return true;
@@ -2225,6 +2233,12 @@ pub enum AltCostCondition {
     DashV1,
     /// All effective battlefield creatures, under either controller.
     BattlefieldCreatureCountAtLeast(u16),
+    /// Teamwork N (Crossover Collaboration): its optional additional cost of
+    /// tapping any number of untapped creatures you control with total
+    /// power N or more, modeled as an alternative cost of the same mana plus
+    /// that tapping. The creatures are chosen through the convoke selection
+    /// (`standard_cast_convoke`). Appended for the eternal catalog.
+    TeamworkV1(u8),
     /// "If this spell is the first spell you've cast this game" (Once Upon a
     /// Time, `eternal_legacy_e8a_v1`). Appended for the eternal catalog.
     FirstSpellThisGameV1,
@@ -2629,6 +2643,9 @@ pub enum DynamicCountDef {
     /// controls that remain in the native combat attacker's roster. This is
     /// not the declaration/event count and becomes zero after combat ends.
     ControllerAttackingCreatures,
+    /// One iff a chosen spell target is a tapped battlefield permanent
+    /// (Ride's End). Appended for the eternal catalog.
+    SpellTargetsTappedPermanentV1,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -3722,7 +3739,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xd2ec_2edb_d7d6_4dbe;
+        const EXPECTED_ETERNAL: u64 = 0x23ab_837b_9470_1e4d;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

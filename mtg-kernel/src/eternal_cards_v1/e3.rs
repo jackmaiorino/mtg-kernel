@@ -279,6 +279,8 @@ pub enum E3ChoiceKindV1 {
     /// A choice owned by the Vintage graveyard and tempo lists' module
     /// (`eternal_vintage_e7b_v1`).
     E7bV1(crate::eternal_vintage_e7b_v1::E7bChoiceV1),
+    /// A wave E8b choice (`eternal_pauper_e8b_v1`).
+    E8bV1(crate::eternal_pauper_e8b_v1::E8bChoiceV1),
     /// A wave E8a choice (`eternal_legacy_e8a_v1`).
     E8aV1(crate::eternal_legacy_e8a_v1::E8aChoiceV1),
 }
@@ -317,6 +319,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::E7bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::E8bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         if let E3ChoiceKindV1::E8aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
@@ -353,6 +358,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E6bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E7aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E7bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::E8bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
@@ -401,6 +407,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E6bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E7aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E7bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::E8bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E8aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
@@ -648,6 +655,13 @@ pub(crate) fn finish_selection(
             crate::eternal_e5a_v1::choices::finish(state, continuation, choice, kind, bindings)
         }
         E3ChoiceKindV1::E7aV1(kind) => crate::eternal_legacy_e7a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::E8bV1(kind) => crate::eternal_pauper_e8b_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -947,6 +961,9 @@ pub(crate) fn drive(
         }
         EternalOpV1::E7bV1(op) => {
             crate::eternal_vintage_e7b_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::E8bV1(op) => {
+            crate::eternal_pauper_e8b_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::E8aV1(op) => {
             crate::eternal_legacy_e8a_v1::drive(state, continuation, op, path)

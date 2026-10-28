@@ -265,7 +265,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Minsc & Boo, Timeless Heroes" => &MINSC_AND_BOO,
         "Jace Token" => &JACE_TOKEN,
         "Avatar of Burgeoning Echoes" => &AVATAR_OF_BURGEONING_ECHOES,
-        _ => super::build_eternal_e8a_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_e8b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -323,7 +323,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_vintage_e7b_v1::stonecoil_serpent",
         ),
-        _ => return super::build_eternal_e8a_v1::special_for(name),
+        _ => return super::build_eternal_e8b_v1::special_for(name),
     })
 }
 
@@ -337,7 +337,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Stonecoil Serpent" => &["Keywords::REACH", "Keywords::TRAMPLE"],
         "Subtlety" => &["Keywords::FLASH", "Keywords::FLYING"],
         "Boo Token" => &["Keywords::TRAMPLE", "Keywords::HASTE"],
-        _ => super::build_eternal_e8a_v1::keywords_for(name),
+        _ => super::build_eternal_e8b_v1::keywords_for(name),
     }
 }
 
@@ -354,7 +354,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Commandeer" => "Some(AltCostDef { components: &[CostComponent::ExileCardsFromHandWithColorV1 { count: 2, color: ManaColor::U }], condition: AltCostCondition::Always })",
         "Mindbreak Trap" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 0, x_count: 0 })], condition: AltCostCondition::OpponentCastThreeSpellsThisTurnV1 })",
         "Ragavan, Nimble Pilferer" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 })], condition: AltCostCondition::DashV1 })",
-        _ => super::build_eternal_e8a_v1::alt_cost_for(name),
+        _ => super::build_eternal_e8b_v1::alt_cost_for(name),
     }
 }
 
@@ -371,7 +371,7 @@ pub(super) fn madness_cost_for(name: &str) -> Option<&'static str> {
 pub(super) fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
         "Hollow One" => "Some(GenericCostReductionDef { generic_per_count: 2, count: DynamicCountDef::CardsCycledOrDiscardedThisTurnV1 })",
-        _ => super::build_eternal_e8a_v1::generic_cost_reduction_for(name),
+        _ => super::build_eternal_e8b_v1::generic_cost_reduction_for(name),
     }
 }
 
@@ -479,6 +479,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Vengevine" => "graveyard:second_creature_spell_cast_this_turn:may_return_to_battlefield",
         "Wrenn and Six" => "minus7:emblem:instant_sorcery_graveyard_retrace",
-        _ => super::build_eternal_e8a_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_e8b_v1::trigger_recipe_for(name),
     }
 }

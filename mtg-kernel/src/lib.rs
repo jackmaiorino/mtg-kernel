@@ -284,6 +284,9 @@ pub mod eternal_pauper_e6a_v1;
 /// Pauper Bogles, white aggro, Rakdos Madness and Gates card programs of
 /// the eternal catalog (wave E6b).
 pub mod eternal_pauper_e6b_v1;
+/// Pauper Ruby Storm, Golgari Gardens, Familiars and Jeskai Ephemerate card
+/// programs of the eternal catalog (wave E8b).
+pub mod eternal_pauper_e8b_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;
@@ -384,6 +387,8 @@ pub mod limited_elenda_session_v4;
 #[cfg(feature = "limited-fdn-fixtures")]
 pub mod limited_match_v1;
 pub mod limited_prepared_session_v5;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub mod limited_rules_only_v1;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;
 pub mod mana;

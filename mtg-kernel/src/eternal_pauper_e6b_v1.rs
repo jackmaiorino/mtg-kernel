@@ -1446,6 +1446,7 @@ pub(crate) fn adjust_zone_change(state: &GameState, change: &mut event::ZoneChan
 /// "Whenever equipped creature attacks"), so their declarations are logged.
 pub(crate) fn observes_attacks(state: &GameState) -> bool {
     active_permanents(state, GREATSWORD_OF_TYR).next().is_some()
+        || crate::eternal_pauper_e8b_v1::observes_attacks(state)
 }
 
 /// Ancestral Mask: "+2/+2 for each other enchantment on the battlefield."
@@ -1646,6 +1647,11 @@ pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<Ma
 /// mana ability (605.1b): it resolves at once. Called after `land` was
 /// tapped for mana.
 pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
+    // Hickory Woodlot and Sandstone Needle remove a depletion counter.
+    crate::eternal_pauper_e8b_v1::after_tapped_for_mana(state, land);
+    if state.objects.get(land).zone != Zone::Battlefield {
+        return;
+    }
     let colors = attached_named(state, land, UTOPIA_SPRAWL)
         .filter_map(|sprawl| state.objects.get(sprawl).v4.chosen_color)
         .collect::<Vec<_>>();

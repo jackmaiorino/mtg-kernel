@@ -732,6 +732,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => ObjF::Permanent,
         S::ForestV1 => typed(CardType::Land),
         S::UpToOneOpponentCreatureV1 => creature(),
+        S::CreatureOrVehicleV1 => ObjF::Permanent,
         S::ArtifactCardInOwnGraveyardV1 | S::ArtifactCardInOwnGraveyardManaValueAtMostV1(_) => {
             typed(CardType::Artifact)
         }
@@ -826,6 +827,7 @@ pub(super) fn standard_target_origin(
         | S::UpToOneColoredPermanentV1
         | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
         | S::ForestV1
+        | S::CreatureOrVehicleV1
         | S::ArtifactThenArtifactCardInItsControllersGraveyardV1
         | S::NonlandPermanentManaValueAtMostV1(_)
         | S::UpToOneCreatureWithTrampleOrHasteV1
@@ -1058,6 +1060,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::UpToOneOpponentCreatureV1 => {
             object(out, creature(), relation, zone);
             out.target(TargetAtom::UpTo);
+        }
+        S::CreatureOrVehicleV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Artifact), relation, zone);
+            // Vocabulary gap: the Vehicle subtype has no facet.
+            out.atoms.push(Atom::Opaque);
         }
         S::ArtifactCardInOwnGraveyardV1 | S::CreatureCardInAGraveyardV1 => {
             object(out, standard_target_obj(filter), relation, zone);

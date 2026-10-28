@@ -123,6 +123,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_vintage_e7b_v1::E7bStateV1::is_empty"
     )]
     pub e7b: crate::eternal_vintage_e7b_v1::E7bStateV1,
+    /// Wave E8b's state (`eternal_pauper_e8b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_pauper_e8b_v1::E8bStateV1::is_empty"
+    )]
+    pub e8b: crate::eternal_pauper_e8b_v1::E8bStateV1,
     /// Wave E8a's state (`eternal_legacy_e8a_v1`).
     #[serde(
         default,
@@ -197,6 +203,8 @@ pub enum EternalTriggerV1 {
     E7aV1(crate::eternal_legacy_e7a_v1::E7aTriggerV1),
     /// A condition owned by the Vintage graveyard and tempo lists' module.
     E7bV1(crate::eternal_vintage_e7b_v1::E7bTriggerV1),
+    /// A condition owned by wave E8b's module.
+    E8bV1(crate::eternal_pauper_e8b_v1::E8bTriggerV1),
     /// A condition owned by wave E8a's module.
     E8aV1(crate::eternal_legacy_e8a_v1::E8aTriggerV1),
 }
@@ -328,6 +336,8 @@ pub enum EternalOpV1 {
     E7aV1(crate::eternal_legacy_e7a_v1::E7aOpV1),
     /// A leaf owned by the Vintage graveyard and tempo lists' module.
     E7bV1(crate::eternal_vintage_e7b_v1::E7bOpV1),
+    /// A leaf owned by wave E8b's module.
+    E8bV1(crate::eternal_pauper_e8b_v1::E8bOpV1),
     /// A leaf owned by wave E8a's module.
     E8aV1(crate::eternal_legacy_e8a_v1::E8aOpV1),
 }
@@ -360,6 +370,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 EternalTriggerV1::E7bV1(condition) => {
                     crate::eternal_vintage_e7b_v1::arrival_condition(condition)
                 }
+                EternalTriggerV1::E8bV1(condition) => {
+                    crate::eternal_pauper_e8b_v1::arrival_condition(condition)
+                }
                 EternalTriggerV1::E8aV1(condition) => {
                     crate::eternal_legacy_e8a_v1::arrival_condition(condition)
                 }
@@ -376,6 +389,7 @@ impl EternalOpV1 {
         match self {
             EternalOpV1::E5aV1(op) => op.contains_player_choice(),
             EternalOpV1::E7aV1(op) => op.contains_player_choice(),
+            EternalOpV1::E8bV1(op) => op.contains_player_choice(),
             EternalOpV1::E8aV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
@@ -867,6 +881,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E6bV1(op) => crate::eternal_pauper_e6b_v1::execute(op, ctx, state),
         EternalOpV1::E7aV1(op) => crate::eternal_legacy_e7a_v1::execute(op, ctx, state),
         EternalOpV1::E7bV1(op) => crate::eternal_vintage_e7b_v1::execute(op, ctx, state),
+        EternalOpV1::E8bV1(op) => crate::eternal_pauper_e8b_v1::execute(op, ctx, state),
         EternalOpV1::E8aV1(op) => crate::eternal_legacy_e8a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
@@ -1338,12 +1353,17 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_pauper_e6b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_legacy_e7a_v1::blocker_allowed(state, attacker, blocker)
         && !crate::eternal_vintage_e7b_v1::statics::protected_from_source(state, attacker, blocker)
+        && crate::eternal_pauper_e8b_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
 /// among cards in your graveyard and its toughness is equal to that number
 /// plus 1." A characteristic-defining ability works in every zone.
 pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    // Seize the Storm's Elemental token sets both stats.
+    if let Some(value) = crate::eternal_pauper_e8b_v1::characteristic_defining_power(state, id) {
+        return Some(value);
+    }
     if definition_name(state, id)? != NETHERGOYF {
         // Skyclave Apparition's Illusion tokens (wave E8a).
         if let Some(size) =
@@ -1358,6 +1378,9 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
 }
 
 pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    if let Some(value) = crate::eternal_pauper_e8b_v1::characteristic_defining_power(state, id) {
+        return Some(value);
+    }
     if definition_name(state, id)? != NETHERGOYF {
         // Karn's and the Tezzeret emblem's animations and the Illusion
         // tokens set both stats.
@@ -1538,6 +1561,9 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_vintage_e7b_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_pauper_e8b_v1::delayed_triggers(
+        state, events,
+    ));
     triggers.extend(crate::eternal_legacy_e8a_v1::delayed_triggers(
         state, events,
     ));
@@ -1584,7 +1610,9 @@ fn legacy_delayed_triggers(
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     // Abilities other permanents grant any creature (The Tabernacle at
     // Pendrell Vale), or that a Curie keeps as a copy of any creature.
-    if crate::eternal_legacy_e7a_v1::granted_trigger_effect(effect) {
+    if crate::eternal_legacy_e7a_v1::granted_trigger_effect(effect)
+        || crate::eternal_pauper_e8b_v1::granted_trigger_effect(effect)
+    {
         return true;
     }
     if e3::delayed_effect_matches(name, effect) {
@@ -1768,6 +1796,9 @@ pub(crate) fn trigger_matches(
         }
         EternalTriggerV1::E7aV1(condition) => {
             crate::eternal_legacy_e7a_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::E8bV1(condition) => {
+            crate::eternal_pauper_e8b_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {
