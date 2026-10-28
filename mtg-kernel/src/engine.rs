@@ -25303,10 +25303,13 @@ fn freeze_activation_source(
             .activated_abilities
             .len()
     {
-        let (equipment, _) =
-            equipped_granted_activated_ability_with_equipment(state, pending.source)
-                .expect("validated equipment-granted activation");
-        Some(AbilitySourceContractV4::capture(state, equipment))
+        match equipped_granted_activated_ability_with_equipment(state, pending.source) {
+            Some((equipment, _)) => Some(AbilitySourceContractV4::capture(state, equipment)),
+            // Avatar of Burgeoning Echoes' granted loyalty ability (eternal
+            // wave E7b) uses the same index and carries no granter.
+            None if cfg!(feature = "eternal-fixtures") => None,
+            None => panic!("validated equipment-granted activation"),
+        }
     } else {
         None
     };
