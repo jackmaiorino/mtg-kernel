@@ -1075,7 +1075,8 @@ class AnalyzerTests(unittest.TestCase):
             status, read, error = run(tree, self.template_section7)
         self.assertEqual((status, read["verdict"]), (0, "FUND_B"), error)
         self.assertIn("warning", error)
-        self.assertIn(str(lock), error)
+        # The warning names the lock (by the resolved root, which may spell the temporary folder differently).
+        self.assertIn(str(lock.resolve()), error)
         self.assertNotIn("refused", error)
         self.assertTrue(lock.exists())
         # A re-render takes no lock, so it runs with the stale lock in place; a new read is refused until the
