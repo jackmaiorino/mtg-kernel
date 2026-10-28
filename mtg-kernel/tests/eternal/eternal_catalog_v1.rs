@@ -17,7 +17,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 83] = [
+const PLAYABLE: [(&str, &str); 92] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -131,6 +131,18 @@ const PLAYABLE: [(&str, &str); 83] = [
     ("vintage", "vintage-stiflenought"),
     ("vintage", "vintage-sphere-shops"),
     ("vintage", "vintage-sultai-psychic-frog"),
+    (
+        "pauper",
+        "pauper-turbo-fog-fe589501-15e6-4511-b259-e066f9f36c51",
+    ),
+    ("pauper", "pauper-gruul-ponza"),
+    ("pauper", "pauper-gruul-ramp"),
+    ("pauper", "pauper-food-gardens"),
+    ("pauper", "pauper-4c-pestilence"),
+    ("pauper", "pauper-esper-faeries"),
+    ("vintage", "vintage-scam"),
+    ("vintage", "vintage-grixis-lurrus-control"),
+    ("vintage", "vintage-underworld-breach"),
 ];
 
 fn read_json(relative: &str) -> Value {

@@ -1147,6 +1147,12 @@ pub enum LibraryCardFilter {
     /// The caller supplies its already chosen X; this filter does not choose
     /// or pay X and grants no permission to activate an ability.
     CreatureManaValueAtMost(u16),
+    /// An instant or sorcery card (Mystical Tutor). Appended for the eternal
+    /// catalog.
+    InstantOrSorceryCardV1,
+    /// A card with this effective subtype, of any card type ("a Wizard
+    /// card", wizardcycling). Appended for the eternal catalog.
+    CardWithSubtypeV1(Subtype),
 }
 
 impl LibraryCardFilter {
@@ -18710,6 +18716,10 @@ fn library_filter_matches(
         LibraryCardFilter::InstantOrFlashV1 => {
             def.has_type(CardType::Instant) || def.keywords.has(crate::card_def::Keywords::FLASH)
         }
+        LibraryCardFilter::InstantOrSorceryCardV1 => {
+            def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery)
+        }
+        LibraryCardFilter::CardWithSubtypeV1(subtype) => subtype.is_in_subtype_ids(subtype_ids),
     })
 }
 
@@ -18763,6 +18773,11 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         LibraryCardFilter::CreatureManaValueAtMost(maximum) => {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 62), u64::from(maximum))
         }
+        LibraryCardFilter::InstantOrSorceryCardV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 63),
+        LibraryCardFilter::CardWithSubtypeV1(subtype) => fnv1a_u64(
+            fnv1a_u64(0xcbf2_9ce4_8422_2325, 64),
+            u64::from(subtype.stable_id()),
+        ),
     }
 }
 

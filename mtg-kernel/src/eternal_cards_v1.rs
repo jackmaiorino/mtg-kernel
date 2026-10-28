@@ -129,6 +129,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_pauper_e8b_v1::E8bStateV1::is_empty"
     )]
     pub e8b: crate::eternal_pauper_e8b_v1::E8bStateV1,
+    /// Wave E9b's state (`eternal_e9b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_e9b_v1::E9bStateV1::is_empty"
+    )]
+    pub e9b: crate::eternal_e9b_v1::E9bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -330,6 +336,8 @@ pub enum EternalOpV1 {
     E7bV1(crate::eternal_vintage_e7b_v1::E7bOpV1),
     /// A leaf owned by wave E8b's module.
     E8bV1(crate::eternal_pauper_e8b_v1::E8bOpV1),
+    /// A leaf owned by wave E9b's module.
+    E9bV1(crate::eternal_e9b_v1::E9bOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -377,6 +385,7 @@ impl EternalOpV1 {
             EternalOpV1::E5aV1(op) => op.contains_player_choice(),
             EternalOpV1::E7aV1(op) => op.contains_player_choice(),
             EternalOpV1::E8bV1(op) => op.contains_player_choice(),
+            EternalOpV1::E9bV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -868,6 +877,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E7aV1(op) => crate::eternal_legacy_e7a_v1::execute(op, ctx, state),
         EternalOpV1::E7bV1(op) => crate::eternal_vintage_e7b_v1::execute(op, ctx, state),
         EternalOpV1::E8bV1(op) => crate::eternal_pauper_e8b_v1::execute(op, ctx, state),
+        EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1339,12 +1349,16 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_legacy_e7a_v1::blocker_allowed(state, attacker, blocker)
         && !crate::eternal_vintage_e7b_v1::statics::protected_from_source(state, attacker, blocker)
         && crate::eternal_pauper_e8b_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_e9b_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
 /// among cards in your graveyard and its toughness is equal to that number
 /// plus 1." A characteristic-defining ability works in every zone.
 pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_power(state, id) {
+        return Some(value);
+    }
     // Seize the Storm's Elemental token sets both stats.
     if let Some(value) = crate::eternal_pauper_e8b_v1::characteristic_defining_power(state, id) {
         return Some(value);
@@ -1357,6 +1371,10 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
 }
 
 pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    // Barrowgoyf's toughness is its power plus 1.
+    if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_toughness(state, id) {
+        return Some(value);
+    }
     if let Some(value) = crate::eternal_pauper_e8b_v1::characteristic_defining_power(state, id) {
         return Some(value);
     }
@@ -1541,6 +1559,7 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_pauper_e8b_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_e9b_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -1589,7 +1608,9 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     {
         return true;
     }
-    if e3::delayed_effect_matches(name, effect) {
+    if e3::delayed_effect_matches(name, effect)
+        || crate::eternal_e9b_v1::delayed_effect_matches(name, effect)
+    {
         return true;
     }
     match name {

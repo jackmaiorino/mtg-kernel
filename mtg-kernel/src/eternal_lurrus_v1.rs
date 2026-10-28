@@ -1274,7 +1274,8 @@ pub(crate) fn mana_abilities_active(
     name: &str,
 ) -> Option<bool> {
     if name != MOX_OPAL {
-        return None;
+        // The modal double-faced cards' land faces (wave E9b).
+        return crate::eternal_e9b_v1::mana_abilities_active(state, object, name);
     }
     let controller = state.objects.get(object).controller;
     let artifacts = state.players[controller.index()]

@@ -421,6 +421,11 @@ pub enum Subtype {
     /// Appended for the eternal catalog's wave E8b (Crimson Fleet
     /// Commodore).
     Ogre,
+    /// Appended for the eternal catalog's wave E9b (Dauthi Voidwalker, Mai,
+    /// Scornful Striker and Sowing Mycospawn).
+    Dauthi,
+    Ally,
+    Fungus,
 }
 
 impl Subtype {
@@ -769,6 +774,12 @@ impl Subtype {
         Subtype::Hamster,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Ogre,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Dauthi,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Ally,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Fungus,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -995,6 +1006,9 @@ impl Subtype {
             193 => Subtype::Hamster,
             194 => Subtype::Vivien,
             195 => Subtype::Ogre,
+            196 => Subtype::Dauthi,
+            197 => Subtype::Ally,
+            198 => Subtype::Fungus,
             _ => return None,
         })
     }
@@ -1200,6 +1214,9 @@ impl Subtype {
             Subtype::Wrenn => false,
             Subtype::Hamster => true,
             Subtype::Ogre => true,
+            Subtype::Dauthi => true,
+            Subtype::Ally => true,
+            Subtype::Fungus => true,
         }
     }
 
@@ -1290,6 +1307,9 @@ impl Subtype {
                     | Subtype::Snake
                     | Subtype::Hamster
                     | Subtype::Ogre
+                    | Subtype::Dauthi
+                    | Subtype::Ally
+                    | Subtype::Fungus
             )
         {
             return true;

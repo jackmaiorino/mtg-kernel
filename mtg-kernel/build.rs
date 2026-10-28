@@ -28,6 +28,7 @@ mod build_eternal_e6b_v1;
 mod build_eternal_e7a_v1;
 mod build_eternal_e7b_v1;
 mod build_eternal_e8b_v1;
+mod build_eternal_e9b_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -3317,6 +3318,9 @@ enum PermanentFilterRecipe {
     Desert,
     /// A controlled nonland permanent (Bolas's Citadel).
     Nonland,
+    /// A controlled Food other than the source (Cauldron Familiar's
+    /// "Sacrifice a Food", activated from its graveyard).
+    AnotherFood,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6536,6 +6540,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Land => "PermanentFilter::Land",
         PermanentFilterRecipe::Desert => "PermanentFilter::DesertV1",
         PermanentFilterRecipe::Nonland => "PermanentFilter::NonlandV1",
+        PermanentFilterRecipe::AnotherFood => "PermanentFilter::AnotherWithSubtype(Subtype::Food)",
     }
 }
 
@@ -6550,6 +6555,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Land => "land",
         PermanentFilterRecipe::Desert => "desert",
         PermanentFilterRecipe::Nonland => "nonland",
+        PermanentFilterRecipe::AnotherFood => "another_with_subtype:Food",
     }
 }
 
@@ -11452,6 +11458,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Eye" => "Subtype::Eye",
         "Dreadnought" => "Subtype::Dreadnought",
         "Ogre" => "Subtype::Ogre",
+        "Dauthi" => "Subtype::Dauthi",
+        "Ally" => "Subtype::Ally",
+        "Fungus" => "Subtype::Fungus",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

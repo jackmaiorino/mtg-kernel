@@ -4425,7 +4425,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         return true;
     }
 
-    if card.name == "Burnout Bashtronaut" && matches!(effect, EffectOp::IncreaseSpeed { .. }) {
+    if (card.name == "Burnout Bashtronaut" || crate::eternal_e9b_v1::starts_engines(card.name))
+        && matches!(effect, EffectOp::IncreaseSpeed { .. })
+    {
         return true;
     }
     if matches!(

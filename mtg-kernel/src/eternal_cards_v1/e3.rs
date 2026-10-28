@@ -281,6 +281,8 @@ pub enum E3ChoiceKindV1 {
     E7bV1(crate::eternal_vintage_e7b_v1::E7bChoiceV1),
     /// A wave E8b choice (`eternal_pauper_e8b_v1`).
     E8bV1(crate::eternal_pauper_e8b_v1::E8bChoiceV1),
+    /// A wave E9b choice (`eternal_e9b_v1`).
+    E9bV1(crate::eternal_e9b_v1::E9bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -320,6 +322,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::E8bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::E9bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -353,6 +358,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E7aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E7bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E8bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
             | E3ChoiceKindV1::OracleV1 { .. }
@@ -401,6 +407,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E7aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E7bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E8bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -653,6 +660,9 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
         ),
+        E3ChoiceKindV1::E9bV1(kind) => {
+            crate::eternal_e9b_v1::finish_selection(state, continuation, choice, kind, bindings)
+        }
     }
 }
 
@@ -950,6 +960,7 @@ pub(crate) fn drive(
         EternalOpV1::E8bV1(op) => {
             crate::eternal_pauper_e8b_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::drive(state, continuation, op, path),
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -1316,7 +1327,9 @@ pub fn sink_into_stupor() -> EffectOp {
 /// Sink into Stupor // Soporific Springs and wave E4's Witch Enchanter //
 /// Witch-Blessed Meadow.
 pub(crate) fn has_land_back_face(name: &str) -> bool {
-    name == SINK_INTO_STUPOR || name == "Witch Enchanter"
+    name == SINK_INTO_STUPOR
+        || name == "Witch Enchanter"
+        || crate::eternal_e9b_v1::has_land_back_face(name)
 }
 
 /// Whether `card` is a modal double-faced card in its owner's hand whose

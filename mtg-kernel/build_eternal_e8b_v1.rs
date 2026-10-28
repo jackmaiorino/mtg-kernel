@@ -179,7 +179,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Heaped Harvest" => &HEAPED_HARVEST,
         "Mirran Banesplitter" => &MIRRAN_BANESPLITTER,
         "Reckless Lackey" => &RECKLESS_LACKEY,
-        _ => &[],
+        _ => super::build_eternal_e9b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -264,7 +264,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
         // "Exile the top two cards of your library. Until the end of your
         // next turn, you may play those cards." Reckless Impulse's program.
         "Wrenn's Resolve" => Special::RecklessImpulse,
-        _ => return None,
+        _ => return super::build_eternal_e9b_v1::special_for(name),
     })
 }
 
@@ -277,7 +277,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Mirran Banesplitter" => &["Keywords::FLASH"],
         "Reckless Lackey" => &["Keywords::FIRST_STRIKE", "Keywords::HASTE"],
         "Red Elemental Token" => &["Keywords::TRAMPLE"],
-        _ => &[],
+        _ => super::build_eternal_e9b_v1::keywords_for(name),
     }
 }
 
@@ -352,7 +352,7 @@ pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str
         "Golgari Rot Farm" => Some(vec!["B"]),
         "Orzhov Basilica" => Some(vec!["W"]),
         "Geothermal Crevice" => Some(vec!["R"]),
-        _ => None,
+        _ => super::build_eternal_e9b_v1::primary_mana_ability_colors(name),
     }
 }
 
@@ -368,7 +368,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         // "{T}, Remove a depletion counter from this land: Add {G}{G}." The
         // counter and the sacrifice are `eternal_pauper_e8b_v1` hooks.
         "Hickory Woodlot" | "Sandstone Needle" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_e9b_v1::mana_ability_def_for(name),
     }
 }
 
@@ -439,6 +439,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Twinned Vision" => "spell:draw_1_or_2_if_not_cast_from_hand",
         "Desert" => "activate_only_during_end_of_combat_step",
         "Geothermal Crevice" => "mana:tap_sacrifice:add_bg",
-        _ => "none",
+        _ => super::build_eternal_e9b_v1::trigger_recipe_for(name),
     }
 }

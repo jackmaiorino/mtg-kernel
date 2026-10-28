@@ -2971,7 +2971,8 @@ pub(crate) fn is_special_activation(state: &GameState, source: ObjectId, index: 
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => live.zone == Zone::Battlefield,
         Some(GAEAS_WILL) => live.zone == Zone::Hand,
-        _ => false,
+        // Elvish Spirit Guide's mana ability (wave E9b).
+        _ => crate::eternal_e9b_v1::is_special_activation(state, source, index),
     }
 }
 
@@ -2985,7 +2986,7 @@ pub(crate) fn special_activation(
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => activate_arena(state, player, source),
         Some(GAEAS_WILL) => suspend(state, player, source),
-        _ => Err("not a special activation".to_string()),
+        _ => crate::eternal_e9b_v1::special_activation(state, player, source),
     }
 }
 

@@ -747,6 +747,10 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         | S::LandCardInOwnGraveyardV1 => typed(CardType::Land),
         S::InstantOrSorceryCardInAGraveyardV1 => ObjF::AnyCard,
         S::UpToOneCreatureWithTrampleOrHasteV1 => creature(),
+        S::ControlledCreatureThenUpToOneOpponentCreatureV1 | S::TwoDistinctCreaturesV1 => {
+            creature()
+        }
+        S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_) => ObjF::NonlandPermanent,
     }
 }
 
@@ -779,7 +783,10 @@ pub(super) fn standard_target_origin(
         | S::TappedOpponentCreature
         | S::OpponentSpellOrNonlandPermanentV1
         | S::UpToOneOpponentCreatureV1
-        | S::OpponentPermanentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        | S::OpponentPermanentV1
+        | S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_) => {
+            (Some(ZoneF::Battlefield), Some(RelF::Opponent))
+        }
         S::LandCardInAGraveyardV1 | S::InstantOrSorceryCardInAGraveyardV1 => {
             (Some(ZoneF::Graveyard), None)
         }
@@ -818,6 +825,8 @@ pub(super) fn standard_target_origin(
         | S::ArtifactThenArtifactCardInItsControllersGraveyardV1
         | S::NonlandPermanentManaValueAtMostV1(_)
         | S::UpToOneCreatureWithTrampleOrHasteV1
+        | S::ControlledCreatureThenUpToOneOpponentCreatureV1
+        | S::TwoDistinctCreaturesV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -1110,6 +1119,30 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             out.target(TargetAtom::UpTo);
             // The trample or haste refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::ControlledCreatureThenUpToOneOpponentCreatureV1 => {
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+            // Which slot takes which controller has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::TwoDistinctCreaturesV1 => {
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+        }
+        S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: ObjF::NonlandPermanent,
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+            out.target(TargetAtom::UpTo);
+            // The noncreature refinement has no facet.
             out.atoms.push(Atom::Opaque);
         }
     }
