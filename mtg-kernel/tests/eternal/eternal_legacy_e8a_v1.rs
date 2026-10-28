@@ -1414,7 +1414,21 @@ fn lichs_relic_may_pay_two_to_destroy_and_equips_for_two_one() {
         }
     });
     assert_eq!(state.players[0].mana_pool, [0; 6], "{seen:?}");
-    assert_eq!(zone(&state, angler), Zone::Graveyard, "{seen:?}");
+    if zone(&state, angler) != Zone::Graveyard {
+        let log = &state.engine.event_log;
+        panic!(
+            "the reflexive trigger did not destroy the target
+seen: {seen:?}
+queued: {:?}
+pending: {:?}
+stack: {:?}
+events: {:#?}",
+            state.eternal_v1.as_ref().map(|eternal| &eternal.e8a.queued_triggers),
+            state.engine.pending_triggers,
+            state.stack,
+            &log[log.len().saturating_sub(12)..],
+        );
+    }
     let delver = put(&mut state, P0, "Delver of Secrets", Zone::Battlefield);
     pool(&mut state, P0, &[], 2);
     activate(&mut state, relic, 0, &[Target::Object(delver)]);
