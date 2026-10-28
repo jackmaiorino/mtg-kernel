@@ -87,17 +87,20 @@ def item_records(placement: dict, checkpoints: dict, imports: dict) -> str | Non
     if not placement.get("item4") or not placement.get("item5"):
         return "the placement record cites no item 4 and item 5 records"
     four, five = read_pinned(placement["item4"]), read_pinned(placement["item5"])
-    run = four.get("run")
+
+    def binds(run, checkpoint, play_import) -> bool:  # a qualified lineage, both identities present and equal
+        return (run in checkpoints and run in imports and isinstance(checkpoint, str) and len(checkpoint) == 64
+                and checkpoint == checkpoints[run] and isinstance(play_import, str) and play_import == imports[run])
     if four.get("schema") != ITEM4_SCHEMA or four.get("passed") is not True \
             or four.get("runtime_rules", {}).get("value") != g.RUNTIME_RULES \
-            or four.get("checkpoint", {}).get("recorded", {}).get("sha256") != checkpoints.get(run) \
-            or four.get("play_import", {}).get("recorded", {}).get("sha256") != imports.get(run):
+            or not binds(four.get("run"), four.get("checkpoint", {}).get("recorded", {}).get("sha256"),
+                         four.get("play_import", {}).get("recorded", {}).get("sha256")):
         return "the item 4 record is not a passing evaluator load of a qualified block-2 checkpoint"
-    if five.get("schema") != ITEM5_SCHEMA or five.get("passed") is not True \
-            or five.get("checkpoint_sha256") != checkpoints.get(five.get("run")) \
-            or five.get("play_import_sha256") != imports.get(five.get("run")) \
+    # DESIGN section 6 item 5: G1's block-2 checkpoint through the Spellbench scorer with its own play import.
+    if five.get("schema") != ITEM5_SCHEMA or five.get("passed") is not True or five.get("run") != "G1" \
+            or not binds("G1", five.get("checkpoint_sha256"), five.get("play_import_sha256")) \
             or not five.get("games_completed"):
-        return "the item 5 record is not a passing Spellbench load of a qualified block-2 checkpoint"
+        return "the item 5 record is not a passing Spellbench load of G1's qualified block-2 checkpoint"
     return None
 
 

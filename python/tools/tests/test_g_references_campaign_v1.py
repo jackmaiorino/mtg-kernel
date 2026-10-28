@@ -265,7 +265,14 @@ class DriverTests(unittest.TestCase):
                  (qualification, "desktop", four("b4", runtime_rules={"value": None}), good5, False),
                  (qualification, "desktop", four("c4", checkpoint={"recorded": {"sha256": "x" * 64}}), good5, False),
                  (qualification, "desktop", good4, five("b5", passed=False), False),
-                 (qualification, "desktop", good4, five("c5", play_import_sha256="y" * 64), False))
+                 (qualification, "desktop", good4, five("c5", play_import_sha256="y" * 64), False),
+                 (qualification, "desktop", record("e4", schema=driver.ITEM4_SCHEMA, passed=True,
+                                                   runtime_rules={"value": "resolution-boundary-v1"}),
+                  record("e5", schema=driver.ITEM5_SCHEMA, passed=True, games_completed=1), False),  # no identities
+                 (qualification, "desktop", four("g2", run="G2", checkpoint={"recorded": {"sha256": block2["G2"]}},
+                                                 play_import={"recorded": {"sha256": imports["G2"]}}), good5, True),
+                 (qualification, "desktop", good4, five("f5", run="G2", checkpoint_sha256=block2["G2"],
+                                                        play_import_sha256=imports["G2"]), False))  # item 5 is G1's
         for index, (cited, host, item4, item5, admitted) in enumerate(cases):
             raw["placement_record"] = record(f"p{index}", schema=driver.PLACEMENT_SCHEMA, host=host,
                                              qualification=cited, item4=item4, item5=item5)

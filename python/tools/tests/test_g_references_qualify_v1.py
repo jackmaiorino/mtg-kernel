@@ -131,6 +131,21 @@ class QualifyTests(unittest.TestCase):
         copy_ = qualify.scratch(self.campaign, "synthetic", 4, self.root / "q", synthetic=True)
         self.assertEqual(copy_.wall_root(), self.campaign.wall_root())
 
+    def test_trials_are_bounded_by_the_claim_time_left(self):
+        inventory = save(self.root / "inventory.json", b"{}")
+        spec = {"storage": {"accounting_roots": [str(self.root)]}, "wall_seconds": 3600, "inventory": inventory}
+        value = json.loads(Path(qualify.plan(self.path, spec, self.root / "q")["path"]).read_text())
+        request = value["families"]["empty-pool"]["trials"]["w1"]
+        self.assertEqual(qualify.bounded(self.campaign, request), request)  # plenty of time: unchanged
+        wall = self.campaign.wall_root()
+        wall.mkdir(parents=True)
+        (wall / "1-1.json").write_text(json.dumps({"start": 0, "last": 60 * 3600 - 900}))
+        bounded = qualify.bounded(self.campaign, request)
+        self.assertEqual(json.loads(Path(bounded["path"]).read_text())["wall_seconds"], 300)
+        (wall / "1-1.json").write_text(json.dumps({"start": 0, "last": 60 * 3600 - 630}))
+        with self.assertRaises(SystemExit):
+            qualify.bounded(self.campaign, request)
+
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):
             qualify.run(self.path, self.root / "plan.json")

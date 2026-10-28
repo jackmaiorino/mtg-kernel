@@ -49,6 +49,7 @@ import argparse
 import copy
 import gzip
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -141,17 +142,47 @@ def nested(args: list[str]) -> dict:
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-def trials_and_pack(family: dict, out: Path, log) -> dict:
+def bounded(campaign: driver.Campaign, request: dict) -> dict:
+    """Refuse a trial that cannot fit the study's remaining claim time on Jack's PC, and pin a request whose
+    launcher timeout ends inside it (the driver's rule for blocks)."""
+    left = campaign.wall_left()
+    if left is None:
+        return request
+    limit = math.floor(left - driver.base.LEASE_MARGIN_SECONDS)
+    if limit < 60:
+        raise SystemExit("study_wall_cap: no claim time left for a qualification trial")
+    value = read(request["path"])
+    if value["wall_seconds"] <= limit:
+        return request
+    return write_json(Path(request["path"]).with_name(Path(request["path"]).stem + f"-bounded-{limit}.json"),
+                      dict(value, wall_seconds=limit))
+
+
+def trials_and_pack(campaign: driver.Campaign, family: dict, out: Path, log) -> dict:
     reports = {}
     for name, request in family["trials"].items():
         report = Path(read(request["path"])["root"]) / "report.json"
         if not report.exists():
+            request = bounded(campaign, request)
             result = nested([str(TOOLS / "native_expanded_dispatch_v1.py"), "qualify", request["path"]])
             wait_report(report.parent, result["pid"])
         reports[name] = pin(report)
         log(kind="trial", name=name, report=reports[name])
     pack_index = Path(read(family["pack"]["path"])["root"]) / "pack.json"
     if not pack_index.exists():
+        plan_ = read(family["pack"]["path"])
+        left = campaign.wall_left()
+        if left is not None:  # the pack's trial timeout and its base request end inside the claim time
+            base_request = read(plan_["base_request"]["path"])
+            limit = math.floor(left - driver.base.LEASE_MARGIN_SECONDS)
+            if limit < 60:
+                raise SystemExit("study_wall_cap: no claim time left for the pack qualification")
+            if base_request["wall_seconds"] > limit or plan_["timeout_seconds"] > limit:
+                base_pin = write_json(Path(plan_["base_request"]["path"]).with_name(f"pack-base-bounded-{limit}.json"),
+                                      dict(base_request, wall_seconds=min(base_request["wall_seconds"], limit)))
+                family = dict(family, pack=write_json(Path(family["pack"]["path"]).with_name(
+                    f"pack-plan-bounded-{limit}.json"), dict(plan_, base_request=base_pin,
+                                                             timeout_seconds=min(plan_["timeout_seconds"], limit))))
         done = subprocess.run([sys.executable, "-B", str(TOOLS / "native_expanded_pack_v1.py"), "qualify",
                                family["pack"]["path"]], capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
         (pack_index.parent.parent / "pack.stdout").write_text(done.stdout, encoding="utf-8")
@@ -358,10 +389,10 @@ def run(campaign_path: Path, plan_path: Path) -> int:
         clock.start()
     try:
         log(kind="start", host=campaign.host())
-        evidence = {"empty-pool": trials_and_pack(value["families"]["empty-pool"], out, log)}
+        evidence = {"empty-pool": trials_and_pack(campaign, value["families"]["empty-pool"], out, log)}
         history = value["families"].get("history")
         if history and (Path(read(history["pack"]["path"])["root"]) / "pack.json").exists():
-            evidence["history"] = trials_and_pack(history, out, log)  # a restart keeps both families' choice
+            evidence["history"] = trials_and_pack(campaign, history, out, log)  # a restart keeps both families' choice
         log(kind="choice", pins=make_choice(campaign, value, evidence))
         # Item 1: G1 alone, then the eight together (G1's rerun in a scratch campaign as the eighth).
         def waves():
@@ -419,7 +450,7 @@ def run(campaign_path: Path, plan_path: Path) -> int:
             if "history" not in value["families"]:
                 value["families"]["history"] = trial_plan(campaign, history_config, value["spec"], out, "history")
                 write_json(plan_path, value)
-            evidence["history"] = trials_and_pack(value["families"]["history"], out, log)
+            evidence["history"] = trials_and_pack(campaign, value["families"]["history"], out, log)
             log(kind="choice", pins=make_choice(campaign, value, evidence))
             # Item 6: the synthetic history block, straight and interrupted, discarded afterwards.
             drive_all([(straight, "G1")])
