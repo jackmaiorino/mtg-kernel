@@ -38,10 +38,16 @@
 //!   report. A chain's step-0 held-out reports of w64 and w128 must then be
 //!   bit-identical. A fit-entry refusal is recorded durably
 //!   (`fits/k<k>-s<s>-<arm>.refused.json`), which makes the screen VOID; it is
-//!   never rerun. Only publication (I/O) is retried. A resumed fit stage first
-//!   promotes any interrupted refusal publication to its refusal file (it is
-//!   refusal evidence), then removes earlier processes' other interrupted
-//!   publications.
+//!   never rerun. Only publication (I/O) is retried. The first fit invocation
+//!   publishes `fits/FIT-LAUNCH.json` (forward workers, concurrent fits and
+//!   the build), and every later one must use the same settings. A resumed fit
+//!   stage first promotes any interrupted refusal or mismatch publication to
+//!   its record (it is evidence). A report temporary that parses completely
+//!   (a finished report whose publication was interrupted) is kept: the rerun
+//!   must reproduce its bytes, and a difference is recorded durably
+//!   (`fits/k<k>-s<s>-<arm>.mismatch.json`, the earlier report kept beside
+//!   it), which makes the screen VOID (note: a rerun must reproduce the same
+//!   report). Other interrupted publications of earlier processes are removed.
 //!
 //! **One build per run root.** `LAUNCH.json` names the engine commit and the
 //! binary's SHA-256; every later stage refuses another build, and every
@@ -91,6 +97,8 @@ const SECTION7_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-section7/v1";
 const PRESERVATION_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-preservation/v1";
 const FIT_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-fit/v1";
 const REFUSAL_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-fit-refusal/v1";
+const MISMATCH_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-fit-mismatch/v1";
+const FIT_LAUNCH_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-fit-launch/v1";
 const LAUNCH_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-launch/v1";
 const ATTEMPT_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-game-attempt/v1";
 const RESULT_SCHEMA_V1: &str = "mtg-kernel-b-width-prescreen-game-result/v1";
@@ -2394,24 +2402,61 @@ pub(crate) fn fit_chain_stage_v1(
     )?;
     let seeds = &loaded.config.fitting.fitting_seeds;
     let binary = launch_binary_v1(loaded, root)?;
-    // An interrupted refusal publication is still refusal evidence: it is
-    // promoted to its refusal file before other temporaries are removed.
-    let promoted = promote_refusal_temporaries_v1(&root.join("fits"))?;
-    let removed = remove_stale_temporaries_v1(&root.join("fits"))?;
+    // The fit stage runs with the settings it started with.
+    ensure_fit_launch_v1(loaded, root, &binary, fit_workers, forward_workers)?;
+    // An interrupted refusal or mismatch publication is still evidence: it is
+    // promoted to its record. A complete report temporary is retained for the
+    // rerun comparison; other temporaries are removed.
+    let promoted = promote_evidence_temporaries_v1(&root.join("fits"))?;
+    let (retained, removed) = sort_fit_temporaries_v1(&root.join("fits"))?;
+    let mismatch_of = |seed: u32, arm: &str, rerun: &[u8]| -> Result<String, String> {
+        let name = fit_name_v1(chain.index, seed, arm);
+        let prior = retained.get(&name).map_or(&[][..], Vec::as_slice);
+        let record = json!({"schema": MISMATCH_SCHEMA_V1, "config_sha256": loaded.sha256,
+            "data_record_sha256": data_sha256, "engine_commit": engine_commit_v1(),
+            "binary_sha256": binary, "chain": chain.index, "seed": seed, "arm": arm,
+            "retained": prior.iter().map(|(name, bytes)| json!({"name": name,
+                "bytes": bytes.len(), "sha256": sha(bytes)})).collect::<Vec<_>>(),
+            "rerun_bytes": rerun.len(), "rerun_sha256": sha(rerun)});
+        write_file_v1(
+            &mismatch_path_v1(root, chain.index, seed, arm),
+            &json_bytes_v1(&record)?,
+            false,
+        )?;
+        Ok(format!(
+            "chain {} seed {seed} {arm}: the rerun's report differs from the complete report an \
+             earlier run left; the mismatch is recorded (the screen is VOID) and the earlier \
+             report is kept beside it",
+            chain.index
+        ))
+    };
     let mut jobs = Vec::new();
     for &seed in seeds {
         for arm in ARM_NAMES_V1 {
-            let refusal = refusal_path_v1(root, chain.index, seed, arm);
-            ensure(
-                !refusal.exists(),
-                &format!(
-                    "{} records a fit-entry refusal: the screen is VOID and the fit is not rerun",
-                    refusal.display()
-                ),
-            )?;
+            for (evidence, what) in [
+                (refusal_path_v1(root, chain.index, seed, arm), "a fit-entry refusal"),
+                (mismatch_path_v1(root, chain.index, seed, arm), "a rerun mismatch"),
+            ] {
+                ensure(
+                    !evidence.exists(),
+                    &format!(
+                        "{} records {what}: the screen is VOID and the fit is not rerun",
+                        evidence.display()
+                    ),
+                )?;
+            }
             let path = fit_path_v1(root, chain.index, seed, arm);
             if path.exists() {
                 existing_fit_matches_v1(&path, loaded, &data_sha256)?;
+                // A complete temporary beside a published report must hold the
+                // same bytes.
+                let published = read_v1(&path)?;
+                if let Some(prior) = retained.get(&fit_name_v1(chain.index, seed, arm)) {
+                    if prior.iter().any(|(_, bytes)| *bytes != published) {
+                        return Err(mismatch_of(seed, arm, &published)?);
+                    }
+                    remove_retained_v1(&root.join("fits"), prior)?;
+                }
             } else {
                 jobs.push((seed, arm));
             }
@@ -2451,7 +2496,19 @@ pub(crate) fn fit_chain_stage_v1(
                 .unwrap_or_else(|_| Err("the fit panicked".into()));
                 match computed {
                     Ok(bytes) => {
-                        write_file_v1(&fit_path_v1(root, chain.index, seed, arm), &bytes, false)
+                        // A rerun must reproduce a complete report an earlier
+                        // run left (note: a mismatch is VOID).
+                        let prior = retained.get(&fit_name_v1(chain.index, seed, arm));
+                        if let Some(prior) = prior {
+                            if prior.iter().any(|(_, old)| *old != bytes) {
+                                return Err(mismatch_of(seed, arm, &bytes)?);
+                            }
+                        }
+                        write_file_v1(&fit_path_v1(root, chain.index, seed, arm), &bytes, false)?;
+                        if let Some(prior) = prior {
+                            remove_retained_v1(&root.join("fits"), prior)?;
+                        }
+                        Ok(())
                     }
                     Err(error) => {
                         let refusal = json!({"schema": REFUSAL_SCHEMA_V1,
@@ -2474,13 +2531,159 @@ pub(crate) fn fit_chain_stage_v1(
         )?;
     }
     step0_reports_identical_v1(root, chain.index, seeds)?;
+    let compared: Vec<&String> = retained
+        .values()
+        .flatten()
+        .map(|(name, _)| name)
+        .collect();
     Ok(json!({"chain": chain.index, "fits_written": jobs.len(),
         "fits_present": seeds.len() * ARM_NAMES_V1.len(),
-        "stale_temporaries_removed": removed, "refusal_temporaries_promoted": promoted,
+        "stale_temporaries_removed": removed, "evidence_temporaries_promoted": promoted,
+        "complete_temporaries_compared": compared,
         "elapsed_seconds": started.elapsed().as_secs_f64()}))
 }
 
-/// The published name of an interrupted publication ([`is_temporary_name_v1`]).
+/// The fit stage's settings record (`fits/FIT-LAUNCH.json`): published once,
+/// exclusively, when the fit stage first starts, with the settings a report
+/// serializes or that its execution uses (forward workers, concurrent fits)
+/// and the build. Every later fit invocation must use the same settings, so a
+/// requalification cannot change a resumed fit stage.
+fn ensure_fit_launch_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+    binary: &str,
+    fit_workers: usize,
+    forward_workers: usize,
+) -> Result<(), String> {
+    let path = fit_launch_path_v1(root);
+    let record = json!({"schema": FIT_LAUNCH_SCHEMA_V1, "config_sha256": loaded.sha256,
+        "engine_commit": engine_commit_v1(), "binary_sha256": binary,
+        "fit_workers": fit_workers, "forward_workers": forward_workers});
+    if !path.exists() {
+        publish_exclusive_v1(&path, &json_bytes_v1(&record)?)?;
+    }
+    let existing: Value = serde_json::from_slice(&read_v1(&path)?).map_err(err)?;
+    ensure(
+        existing == record,
+        &format!(
+            "the fit stage is bound to {} ({existing}); this invocation (fit workers \
+             {fit_workers}, forward workers {forward_workers}) differs, so it is refused",
+            path.display()
+        ),
+    )
+}
+
+pub(crate) fn fit_launch_path_v1(root: &Path) -> PathBuf {
+    root.join("fits").join("FIT-LAUNCH.json")
+}
+
+/// Publishes `bytes` at `path` only if nothing is there: the whole file is
+/// written and synced under a temporary name, then hard-linked into place
+/// (never replacing), so `path` appears whole or not at all. If another
+/// process published first, its file stands.
+fn publish_exclusive_v1(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(err)?;
+    }
+    let name = path
+        .file_name()
+        .ok_or("output path has no file name")?
+        .to_string_lossy()
+        .into_owned();
+    let temporary = path.with_file_name(format!(".{name}.tmp-{}", std::process::id()));
+    {
+        let mut file = fs::File::create(&temporary).map_err(err)?;
+        file.write_all(bytes).map_err(err)?;
+        file.sync_all().map_err(err)?;
+    }
+    let linked = fs::hard_link(&temporary, path);
+    fs::remove_file(&temporary).map_err(err)?;
+    match linked {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    }
+}
+
+/// A fit report's file name (`k<k>-s<s>-<arm>.json`).
+fn fit_name_v1(chain: u32, seed: u32, arm: &str) -> String {
+    format!("k{chain}-s{seed}-{arm}.json")
+}
+
+/// A rerun mismatch record (`fits/k<k>-s<s>-<arm>.mismatch.json`).
+pub(crate) fn mismatch_path_v1(root: &Path, chain: u32, seed: u32, arm: &str) -> PathBuf {
+    root.join("fits")
+        .join(format!("k{chain}-s{seed}-{arm}.mismatch.json"))
+}
+
+/// Complete report temporaries an earlier run left, by report name: each
+/// one's file name and bytes.
+type RetainedReportsV1 = std::collections::BTreeMap<String, Vec<(String, Vec<u8>)>>;
+
+/// Sorts the interrupted publications in `directory`: a report temporary
+/// (`.k<k>-s<s>-<arm>.json.tmp-<pid>`) that parses completely is a finished
+/// report whose publication was interrupted. It is never deleted here: it is
+/// retained, for the rerun to reproduce. Every other temporary of an earlier
+/// process (an incomplete report, an interrupted `FIT-LAUNCH.json`) is
+/// removed. Returns the retained reports and the removed names.
+fn sort_fit_temporaries_v1(directory: &Path) -> Result<(RetainedReportsV1, Vec<String>), String> {
+    let mut retained = RetainedReportsV1::new();
+    let mut removed = Vec::new();
+    if !directory.is_dir() {
+        return Ok((retained, removed));
+    }
+    let own = format!(".tmp-{}", std::process::id());
+    let mut names = Vec::new();
+    for entry in fs::read_dir(directory).map_err(err)? {
+        names.push(
+            entry
+                .map_err(err)?
+                .file_name()
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    names.sort();
+    for name in names {
+        let Some(stem) = temporary_stem_v1(&name) else {
+            continue;
+        };
+        let report = stem.starts_with('k')
+            && stem.ends_with(".json")
+            && !stem.ends_with(".refused.json")
+            && !stem.ends_with(".mismatch.json");
+        if report {
+            let bytes = read_v1(&directory.join(&name))?;
+            if serde_json::from_slice::<Value>(&bytes).is_ok() {
+                retained
+                    .entry(stem.to_owned())
+                    .or_default()
+                    .push((name, bytes));
+                continue;
+            }
+        }
+        if !name.ends_with(&own) {
+            fs::remove_file(directory.join(&name)).map_err(err)?;
+            removed.push(name);
+        }
+    }
+    Ok((retained, removed))
+}
+
+/// Removes retained report temporaries once their report is published with
+/// the same bytes (one may already have been renamed into place).
+fn remove_retained_v1(directory: &Path, prior: &[(String, Vec<u8>)]) -> Result<(), String> {
+    for (name, _) in prior {
+        match fs::remove_file(directory.join(name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{name}: {error}")),
+        }
+    }
+    Ok(())
+}
+
+/// The published name of an interrupted publication (`.<name>.tmp-<pid>`).
 pub(crate) fn temporary_stem_v1(name: &str) -> Option<&str> {
     name.strip_prefix('.')
         .and_then(|rest| rest.rsplit_once(".tmp-"))
@@ -2490,11 +2693,12 @@ pub(crate) fn temporary_stem_v1(name: &str) -> Option<&str> {
         .map(|(stem, _)| stem)
 }
 
-/// Promotes every interrupted refusal publication in `directory`
-/// (`.<k..>.refused.json.tmp-<pid>`) to its refusal file, whatever its bytes:
-/// a refusal that began to be published is refusal evidence, so the fit is
-/// never requeued. Returns the promoted names.
-fn promote_refusal_temporaries_v1(directory: &Path) -> Result<Vec<String>, String> {
+/// Promotes every interrupted refusal or mismatch publication in `directory`
+/// (`.<k..>.refused.json.tmp-<pid>`, `.<k..>.mismatch.json.tmp-<pid>`) to its
+/// record, whatever its bytes: a refusal or mismatch that began to be
+/// published is evidence, so the fit is never requeued. Returns the promoted
+/// names.
+fn promote_evidence_temporaries_v1(directory: &Path) -> Result<Vec<String>, String> {
     let mut promoted = Vec::new();
     if !directory.is_dir() {
         return Ok(promoted);
@@ -2505,8 +2709,9 @@ fn promote_refusal_temporaries_v1(directory: &Path) -> Result<Vec<String>, Strin
             .file_name()
             .to_string_lossy()
             .into_owned();
-        let Some(stem) = temporary_stem_v1(&name).filter(|stem| stem.ends_with(".refused.json"))
-        else {
+        let Some(stem) = temporary_stem_v1(&name).filter(|stem| {
+            stem.ends_with(".refused.json") || stem.ends_with(".mismatch.json")
+        }) else {
             continue;
         };
         let target = directory.join(stem);
@@ -2528,30 +2733,9 @@ pub(crate) fn refusal_path_v1(root: &Path, chain: u32, seed: u32, arm: &str) -> 
 
 /// Whether `name` is an interrupted publication of [`write_file_v1`]:
 /// `.<name>.tmp-<pid>`.
+#[cfg(test)]
 pub(crate) fn is_temporary_name_v1(name: &str) -> bool {
     temporary_stem_v1(name).is_some()
-}
-
-/// Removes interrupted publications ([`is_temporary_name_v1`]) left in
-/// `directory` by an earlier process; returns their names.
-fn remove_stale_temporaries_v1(directory: &Path) -> Result<Vec<String>, String> {
-    let mut removed = Vec::new();
-    if !directory.is_dir() {
-        return Ok(removed);
-    }
-    let own = format!(".tmp-{}", std::process::id());
-    for entry in fs::read_dir(directory).map_err(err)? {
-        let name = entry
-            .map_err(err)?
-            .file_name()
-            .to_string_lossy()
-            .into_owned();
-        if is_temporary_name_v1(&name) && !name.ends_with(&own) {
-            fs::remove_file(directory.join(&name)).map_err(err)?;
-            removed.push(name);
-        }
-    }
-    Ok(removed)
 }
 
 // ---------------------------------------------------------------------------

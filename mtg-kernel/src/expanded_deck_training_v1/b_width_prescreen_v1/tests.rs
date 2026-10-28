@@ -584,14 +584,32 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
     assert_eq!(w64["report"]["heldout"][0], w128["report"]["heldout"][0]);
     assert_eq!(w64["report"]["config"]["steps"], json!(data.record.steps));
 
-    // Resume: a lost report is rerun from the same inputs (at another fit
-    // concurrency) to the same bytes, and present reports are kept. An
-    // interrupted publication's temporary file is removed.
+    // The fit stage is bound to the settings it started with: another fit
+    // concurrency or forward-worker count is refused, whatever a later
+    // qualification says.
+    let launch_record: Value =
+        serde_json::from_slice(&read_v1(&fit_launch_path_v1(root)).unwrap()).unwrap();
+    assert_eq!(
+        (
+            &launch_record["fit_workers"],
+            &launch_record["forward_workers"]
+        ),
+        (&json!(3), &json!(1))
+    );
+    for (fit_workers, forward_workers) in [(2, 1), (3, 2)] {
+        let error =
+            fit_chain_stage_v1(loaded, root, &chain, fit_workers, forward_workers).unwrap_err();
+        assert!(error.contains("FIT-LAUNCH.json"), "{error}");
+    }
+
+    // Resume: a lost report is rerun from the same inputs to the same bytes,
+    // and present reports are kept. An incomplete interrupted publication is
+    // removed.
     let w128_bytes = read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap();
     fs::remove_file(fit_path_v1(root, 1, 1, "w128")).unwrap();
     let stale = root.join("fits/.k1-s1-w128.json.tmp-4294967295");
     fs::write(&stale, b"{").unwrap();
-    let resumed = fit_chain_stage_v1(loaded, root, &chain, 2, 1).unwrap();
+    let resumed = fit_chain_stage_v1(loaded, root, &chain, 3, 1).unwrap();
     assert_eq!(resumed["fits_written"], json!(1));
     assert_eq!(
         resumed["stale_temporaries_removed"],
@@ -602,6 +620,45 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
         read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap(),
         w128_bytes
     );
+
+    // A complete report whose publication was interrupted is kept, and the
+    // rerun must reproduce it: identical bytes are published.
+    let complete = root.join("fits/.k1-s1-w128.json.tmp-4294967294");
+    fs::remove_file(fit_path_v1(root, 1, 1, "w128")).unwrap();
+    fs::write(&complete, &w128_bytes).unwrap();
+    let matched = fit_chain_stage_v1(loaded, root, &chain, 3, 1).unwrap();
+    assert_eq!(matched["fits_written"], json!(1));
+    assert_eq!(
+        matched["complete_temporaries_compared"],
+        json!([".k1-s1-w128.json.tmp-4294967294"])
+    );
+    assert!(!complete.exists());
+    assert_eq!(
+        read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap(),
+        w128_bytes
+    );
+    // A complete report that the rerun does not reproduce: the mismatch is
+    // recorded durably (the screen is VOID), the earlier report is kept beside
+    // it, nothing is published, and the fit is not rerun again.
+    let w32_bytes = read_v1(&fit_path_v1(root, 1, 1, "w32")).unwrap();
+    let mut forged: Value = serde_json::from_slice(&w32_bytes).unwrap();
+    forged["report"]["config"]["forward_workers"] = json!(2);
+    let forged = json_bytes_v1(&forged).unwrap();
+    let earlier = root.join("fits/.k1-s1-w32.json.tmp-4294967293");
+    fs::remove_file(fit_path_v1(root, 1, 1, "w32")).unwrap();
+    fs::write(&earlier, &forged).unwrap();
+    let error = fit_chain_stage_v1(loaded, root, &chain, 3, 1).unwrap_err();
+    assert!(error.contains("differs from the complete report"), "{error}");
+    let mismatch: Value =
+        serde_json::from_slice(&read_v1(&mismatch_path_v1(root, 1, 1, "w32")).unwrap()).unwrap();
+    assert_eq!(mismatch["schema"], json!(MISMATCH_SCHEMA_V1));
+    assert_eq!(mismatch["retained"][0]["sha256"], json!(sha(&forged)));
+    assert_eq!(mismatch["rerun_sha256"], json!(sha(&w32_bytes)));
+    assert_eq!(read_v1(&earlier).unwrap(), forged);
+    assert!(!fit_path_v1(root, 1, 1, "w32").exists());
+    let again = fit_chain_stage_v1(loaded, root, &chain, 3, 1).unwrap_err();
+    assert!(again.contains("records a rerun mismatch"), "{again}");
+    assert!(earlier.exists());
 
     // A rerun collection reproduces the record's bytes.
     let rerun = fixture_v1("stages-rerun");
