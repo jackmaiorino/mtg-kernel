@@ -723,7 +723,10 @@ fn secluded_courtyard_pays_for_creature_spells_and_abilities_of_its_type() {
     let courtyard = courtyard_naming(&mut state, Subtype::Eldrazi);
     let mut colorless = state.clone();
     next(&mut colorless);
-    act(&mut colorless, Action::ActivateManaAbility(courtyard));
+    act(
+        &mut colorless,
+        Action::ActivateManaAbilityChoice(courtyard, ManaColor::C),
+    );
     assert_eq!(mana(&colorless, P0, ManaColor::C), 1);
     pool(&mut state, P0, &[], 2);
     assert!(
