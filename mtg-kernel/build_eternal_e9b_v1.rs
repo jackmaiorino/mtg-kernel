@@ -350,6 +350,8 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
 
 /// Card-database tokens for the triggered abilities in
 /// `eternal_e9b_v1::triggers_for`, its hooks and its statics.
+/// Secluded Courtyard is also an FDN card, so its eternal token lives in
+/// `build.rs` beside the FDN one and never in these shared tables.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Annoyed Altisaur" | "Boarding Party" => {
@@ -389,9 +391,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Radiant Fountain" => "etb:gain_life:2",
         "Respite" => "spell:prevent_all_combat_damage_this_turn:gain_1_per_attacking_creature",
         "Simic Growth Chamber" => "etb:return_chosen_controlled_land_to_owners_hand:untargeted",
-        "Secluded Courtyard" => {
-            "as_enters:choose_creature_type_of_owned_creature_cards;restricted_mana_creature_spell_or_creature_source_ability"
-        }
         "Sowing Mycospawn" => {
             "cast_self:search_land_to_battlefield;cast_self_if_kicked:exile_target_land"
         }
