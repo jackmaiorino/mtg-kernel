@@ -281,6 +281,9 @@ class Tree:
                   {"schema": reader.PRESERVATION_SCHEMA, "config_sha256": config_sha, "engine_commit": ENGINE,
                    "binary_sha256": BINARY, "chain": k, "data_record_sha256": sha(data_bytes), "parent_state_sha256": parent_state,
                    "inputs": fit_groups + holdout_groups, "seeds": preservation_seeds, "pass": True})
+        write(self.root / reader.FIT_LAUNCH, {"schema": reader.FIT_LAUNCH_SCHEMA, "config_sha256": config_sha,
+                                              "engine_commit": ENGINE, "binary_sha256": BINARY, "fit_workers": 4,
+                                              "forward_workers": 1})
         section7 = {"schema": reader.SECTION7_SCHEMA, "note": config["note"], "config_sha256": config_sha,
                     "analyzer": config["analyzer"], "engine_commit": ENGINE, "binary_sha256": BINARY,
                     "launch": {"sha256": sha(launch_bytes), "launched_at_unix": NOW - 3600},
@@ -649,6 +652,27 @@ class AnalyzerTests(unittest.TestCase):
             write(t.path("fits/k3-s2-w32.refused.json"), {"error": "BatchLargerThanFitSet"})
             return t.resign()
 
+        def mismatch_file(t: Tree) -> str:
+            write(t.path("fits/k3-s2-w32.mismatch.json"), {"rerun_sha256": "0" * 64})
+            return t.resign()
+
+        def mismatch_replaces_report(t: Tree) -> str:
+            # A rerun that did not reproduce the earlier complete report: the mismatch record stands in its place.
+            t.path("fits/k3-s2-w32.json").rename(t.path("fits/.k3-s2-w32.json.tmp-12"))
+            write(t.path("fits/k3-s2-w32.mismatch.json"), {"rerun_sha256": "0" * 64})
+            return t.resign()
+
+        def mismatch_temporary(t: Tree) -> str:
+            t.path("fits/k3-s2-w32.json").unlink()
+            (t.path("fits") / ".k3-s2-w32.mismatch.json.tmp-9").write_bytes(b"{")
+            return t.resign()
+
+        def fit_launch_edit(change):
+            def damage(t: Tree) -> str:
+                t.edit(reader.FIT_LAUNCH, change)
+                return t.resign()
+            return damage
+
         def fits_folder(t: Tree) -> str:
             (t.path("fits") / "extra").mkdir()
             return t.resign()
@@ -700,6 +724,15 @@ class AnalyzerTests(unittest.TestCase):
             # Fits.
             "report missing but refusal present": ("fits", report_refused),
             "duplicate report": ("fits", extra_file),
+            "rerun mismatch record": ("fits", mismatch_file),
+            "rerun mismatch record in place of the report": ("fits", mismatch_replaces_report),
+            "interrupted rerun mismatch publication": ("fits", mismatch_temporary),
+            "report forward workers differ from the fit launch": ("fits", report_edit(
+                "k2-s2-w64.json", lambda v: v["config"].__setitem__("forward_workers", 2))),
+            "fit launch of another build": ("fits", fit_launch_edit(
+                lambda v: v.__setitem__("binary_sha256", "0" * 64))),
+            "fit launch forward workers": ("fits", fit_launch_edit(
+                lambda v: v.__setitem__("forward_workers", 2))),
             "folder in the fits folder": ("fits", fits_folder),
             "report in a fits subfolder": ("fits", fits_nested_report),
             "entry refusal": ("fits", refusal_file),
@@ -779,6 +812,7 @@ class AnalyzerTests(unittest.TestCase):
             "missing preservation record": lambda t: t.path("preserve/k6.json").unlink(),
             "missing store": lambda t: t.path("collect/k2/games.bin").unlink(),
             "missing launch record": lambda t: t.path("LAUNCH.json").unlink(),
+            "missing fit launch record": lambda t: t.path(reader.FIT_LAUNCH).unlink(),
             "fits folder absent": lambda t: shutil.rmtree(t.path("fits")),
         }
         for name, damage in cases.items():
@@ -1086,6 +1120,31 @@ class AnalyzerTests(unittest.TestCase):
         status, _, error = run(tree, self.template_section7)
         self.assertEqual(status, 2)
         self.assertIn("another analyzer holds this root", error)
+
+    def test_a_temporary_left_after_publication_is_a_warning(self) -> None:
+        tree = self.copy("temporary-left")
+        original = os.unlink
+
+        def unlink(path, *arguments, **options):
+            if reader.READ_TEMPORARY.match(Path(path).name):
+                raise PermissionError(13, "simulated", str(path))
+            return original(path, *arguments, **options)
+
+        with mock.patch.object(reader.os, "unlink", unlink):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read["verdict"]), (0, "FUND_B"), error)
+        self.assertIn("warning: the read is published", error)
+        self.assertNotIn("refused", error)
+        temporaries = list(tree.root.glob(".READ.json.tmp-*"))
+        self.assertEqual(len(temporaries), 1)
+        self.assertEqual(temporaries[0].read_bytes(), tree.path(reader.READ_NAME).read_bytes())
+        self.assertFalse(tree.path(reader.LOCK_NAME).exists())
+        # The root has been read: a new read is refused, and a re-render reproduces the published read.
+        status, _, error = run(tree, self.template_section7)
+        self.assertEqual(status, 2)
+        self.assertIn("has been read", error)
+        status, _, error = run(tree, self.template_section7, "--rerender")
+        self.assertEqual(status, 0, error)
 
     def test_an_interrupted_read_publication_never_yields_two_reads(self) -> None:
         # A crash between writing the read and publishing it: the complete temporary file stays, READ.json does

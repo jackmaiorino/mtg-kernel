@@ -13,12 +13,15 @@ preservation, numerical validity, sensitivity control, decision). Any failure ma
 analysis is never "not funded".
 
 Inputs: the required inputs (LAUNCH.json, SECTION7.json, each chain's data, collection, store and preservation
-records, each fit's report or refusal, the torn attempt records each collection record lists, and each parent's
-pinned files: the checkpoint, the import and the import's direct pins, discovered from the import's own hashed
-bytes) plus every other file found under the root's record folders are read in full and hashed before the
-analysis, which consumes exactly those bytes. A required input that is absent refuses; so does any file or folder
-that cannot be listed or read. The read's fingerprint is built from those hashes, SECTION7.json's must be the one
-section 7 records, and every input is inventoried and hashed again before publication (any change refuses).
+records, the fit stage's FIT-LAUNCH.json, each fit's report or its refusal or rerun mismatch record, the torn attempt
+records each collection record lists, and each parent's pinned files: the checkpoint, the import and the import's
+direct pins, discovered from the import's own hashed bytes) plus every other file found under the root's record
+folders are read in full and hashed before the analysis, which consumes exactly those bytes. A required input that
+is absent refuses; so does any file or folder that cannot be listed or read. The read's fingerprint is built from
+those hashes, SECTION7.json's must be the one section 7 records, and every input is inventoried and hashed again
+before publication (any change refuses). A fit's rerun mismatch record (a rerun that did not reproduce the complete
+report an interrupted run left) makes the read VOID, as does a refusal; every report must serialize the forward
+worker count FIT-LAUNCH.json binds.
 
 The read is bound to the run root: it is written once to ``<root>/READ.json`` (``--out`` only exports a copy), and
 any later run on the same root is refused unless ``--rerender`` re-renders that read from identical inputs, at its
@@ -32,8 +35,8 @@ between writing and publishing) re-renders it at its recorded read time and publ
 bytes are the same, so there are never two completed reads to choose between. A temporary that cannot be read
 refuses the run and is kept; one that was read in full and is not a whole read is removed.
 
-Exit status: 0 when a read (any verdict) was written or re-rendered (a lock or export that could not be completed
-after publication is reported as a warning), 2 when the analyzer refused to run.
+Exit status: 0 when a read (any verdict) was written or re-rendered (a temporary, lock or export that could not be
+completed after publication is reported as a warning), 2 when the analyzer refused to run.
 """
 
 from __future__ import annotations
@@ -57,6 +60,9 @@ COLLECTION_SCHEMA = "mtg-kernel-b-width-prescreen-collection/v1"
 SECTION7_SCHEMA = "mtg-kernel-b-width-prescreen-section7/v1"
 PRESERVATION_SCHEMA = "mtg-kernel-b-width-prescreen-preservation/v1"
 FIT_SCHEMA = "mtg-kernel-b-width-prescreen-fit/v1"
+FIT_LAUNCH_SCHEMA = "mtg-kernel-b-width-prescreen-fit-launch/v1"
+# The fit stage's settings record (forward workers, concurrent fits, the build), published when it first starts.
+FIT_LAUNCH = "fits/FIT-LAUNCH.json"
 LAUNCH_SCHEMA = "mtg-kernel-b-width-prescreen-launch/v1"
 STORE_MAGIC = b"mtg-kernel-b-width-prescreen-store/v1\n"
 DRAW_ORDER = "occurrence-seeds-then-pairs-v1"
@@ -367,6 +373,7 @@ class Inventory:
 
         need("LAUNCH.json", root / "LAUNCH.json")
         need("data/SECTION7.json", root / "data" / "SECTION7.json")
+        need(FIT_LAUNCH, root / FIT_LAUNCH)
         for chain in config["chains"]:
             k = chain["index"]
             for relative in (f"data/k{k}.json", f"collect/k{k}/games.bin", f"preserve/k{k}.json"):
@@ -378,9 +385,13 @@ class Inventory:
             for s in config["fitting"]["fitting_seeds"]:
                 for arm in ARMS:
                     name = f"k{k}-s{s}-{arm}"
-                    forms = [label for label in discovered if label in (f"fits/{name}.json",
-                                                                         f"fits/{name}.refused.json")
-                             or (label.startswith(f"fits/.{name}.refused.json.tmp-")
+                    # The report, or the evidence that replaces it: a refusal or rerun mismatch record, or
+                    # an interrupted publication of either.
+                    forms = [label for label in discovered
+                             if label in (f"fits/{name}.json", f"fits/{name}.refused.json",
+                                          f"fits/{name}.mismatch.json")
+                             or ((label.startswith(f"fits/.{name}.refused.json.tmp-")
+                                  or label.startswith(f"fits/.{name}.mismatch.json.tmp-"))
                                  and TEMPORARY.match(label[len("fits/"):]))]
                     for label in forms:
                         need(label, root / label)
@@ -686,13 +697,25 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float, hashes
                       for name in (label[len("fits/"):] for label in hashes if label.startswith("fits/"))})
     temporaries = [name for name in present if TEMPORARY.match(name)]
     reports = [name for name in present if name not in temporaries]
-    # A refusal file, or an interrupted refusal publication, is an entry refusal: VOID.
-    refusals = [name for name in reports if name.endswith(".refused.json")] + [
-        name for name in temporaries if TEMPORARY.match(name).group(1).endswith(".refused.json")]
-    require(not refusals, "fits", {"entry_refusals": refusals})
+    # A refusal file, or an interrupted refusal publication, is an entry refusal: VOID. So is a rerun mismatch
+    # record (a rerun did not reproduce a complete report an earlier run left; the note requires the same report).
+    def evidence(suffix: str) -> list[str]:
+        return [name for name in reports if name.endswith(suffix)] + [
+            name for name in temporaries if TEMPORARY.match(name).group(1).endswith(suffix)]
+
+    require(not evidence(".refused.json"), "fits", {"entry_refusals": evidence(".refused.json")})
+    require(not evidence(".mismatch.json"), "fits", {"rerun_mismatches": evidence(".mismatch.json")})
+    expected.add(FIT_LAUNCH[len("fits/"):])
     require(set(reports) == expected and len(reports) == len(expected), "fits",
             {"missing": sorted(expected - set(reports)), "unexpected": sorted(set(reports) - expected)})
     body["ignored_interrupted_publications"] = temporaries
+    # The fit stage ran with one set of settings, which every report serializes.
+    fit_launch, _ = inputs.read(FIT_LAUNCH, "fits")
+    require(fit_launch.get("schema") == FIT_LAUNCH_SCHEMA and fit_launch.get("config_sha256") == config_sha256
+            and (fit_launch.get("engine_commit"), fit_launch.get("binary_sha256")) == build
+            and all(isinstance(fit_launch.get(field), int) and not isinstance(fit_launch.get(field), bool)
+                    and fit_launch[field] >= 1 for field in ("fit_workers", "forward_workers")), "fits",
+            "FIT-LAUNCH.json is not this run's fit settings record")
     lr_bits, vc_bits = f32_bits(fitting["learning_rate"]), f32_bits(fitting["value_coefficient"])
     fits: dict[tuple[int, int, str], dict] = {}
     for k in chains:
@@ -720,6 +743,7 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float, hashes
                         and report.get("value_coefficient_bits") == vc_bits
                         and cfg.get("minibatch_seed") == minibatch_seed == fit.get("minibatch_seed")
                         and cfg.get("heldout_every_steps") == every
+                        and cfg.get("forward_workers") == fit_launch["forward_workers"]
                         and report.get("initial_adam_step") == 0
                         and report.get("architecture") == ARCHITECTURES[arm]
                         and report.get("input_generation") == config["input_generation"], "fits",
@@ -1031,23 +1055,35 @@ def check_hard_links(root: Path) -> None:
                 pass
 
 
-def publish_read(root: Path, canonical: Path, data: bytes) -> None:
+def publish_read(root: Path, canonical: Path, data: bytes) -> list[str]:
     """Writes the full read to a temporary file in the root and syncs it, then publishes it without replacing:
     a hard link to READ.json (refused if it exists, on NTFS as on POSIX) and the temporary's removal. A crash
-    leaves either no READ.json or a complete one."""
+    leaves either no READ.json or a complete one. Returns the warnings of ``publish_temporary``."""
     check_hard_links(root)
     temporary = root / f".{READ_NAME}.tmp-{os.getpid()}"
     with open(temporary, "xb") as handle:
         handle.write(data)
         handle.flush()
         os.fsync(handle.fileno())
-    publish_temporary(temporary, canonical)
+    return publish_temporary(temporary, canonical)
 
 
-def publish_temporary(temporary: Path, canonical: Path) -> None:
+def publish_temporary(temporary: Path, canonical: Path) -> list[str]:
+    """Links the temporary to READ.json, which publishes the read; a failure before that refuses. Once the link
+    exists the read is published, so a failure to remove the temporary (a second link to the same bytes) or to
+    sync the folder is returned as a warning, never a refusal."""
     os.link(temporary, canonical)
-    os.unlink(temporary)
-    sync_directory(canonical.parent)
+    warnings = []
+    try:
+        os.unlink(temporary)
+    except OSError as error:
+        warnings.append(f"the read is published, but {temporary} (a second link to the same bytes) could not be "
+                        f"removed ({error}); it may be removed")
+    try:
+        sync_directory(canonical.parent)
+    except OSError as error:
+        warnings.append(f"the read is published, but its folder could not be synced ({error})")
+    return warnings
 
 
 def unpublished_reads(root: Path) -> tuple[list[tuple[Path, bytes, dict]], list[Path]]:
@@ -1194,14 +1230,19 @@ def export(out: Path | None, data: bytes) -> None:
         handle.write(data)
 
 
-def exported(summary: dict, out: Path | None, data: bytes) -> dict:
-    """The summary of a published read, after its ``--out`` copy. The read is published either way, so a copy that
-    cannot be written is a warning (a later ``--rerender --out`` writes it), not a refusal."""
+def published(summary: dict, out: Path | None, data: bytes, warnings: list[str]) -> dict:
+    """The summary of a published read, after its ``--out`` copy. The read is published either way, so a temporary
+    that could not be removed, or a copy that cannot be written (a later ``--rerender --out`` writes it), is a
+    warning, not a refusal."""
     try:
         export(out, data)
     except (Refused, OSError) as error:
         summary["export_warning"] = f"the read is published, but its --out copy was not written: {error}"
-        print(f"warning: {summary['export_warning']}", file=sys.stderr)
+        warnings = [*warnings, summary["export_warning"]]
+    if warnings:
+        summary["warnings"] = warnings
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
     return summary
 
 
@@ -1257,17 +1298,17 @@ def read_root(config: dict, config_sha256: str, analyzer_sha256: str, root: Path
             raise Refused(f"{temporary.name} does not re-render from its inputs; nothing was published")
         verify_unchanged(config, root, hashes, pins)
         check_hard_links(root)
-        publish_temporary(temporary, canonical)
+        warnings = publish_temporary(temporary, canonical)
         summary = summary_of(previous, canonical)
         summary["published_interrupted_read"] = temporary.name
-        return exported(summary, out, previous_bytes)
+        return published(summary, out, previous_bytes, warnings)
     for path in incomplete:
         path.unlink()
     read = render(config, config_sha256, analyzer_sha256, root, section7_sha256, int(current_time()), hashes, pins)
     data = read_bytes(read)
     verify_unchanged(config, root, hashes, pins)
-    publish_read(root, canonical, data)
-    return exported(summary_of(read, canonical), out, data)
+    warnings = publish_read(root, canonical, data)
+    return published(summary_of(read, canonical), out, data, warnings)
 
 
 if __name__ == "__main__":
