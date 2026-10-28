@@ -1147,6 +1147,15 @@ fn origin_digest_v2_ignores_the_chain_cache_and_binds_the_history() {
     assert_ne!(edited_digest, warm);
     assert_eq!(digests(&replay(&edited)).1, edited_digest);
     // Only the state's own history is omitted from the state bytes.
+    let omitted = state
+        .engine
+        .event_history
+        .omitted_v2(|| serde_json::to_value(&state).unwrap());
+    assert_eq!(omitted["engine"]["event_history"], serde_json::json!([]));
+    assert_ne!(
+        serde_json::to_value(&state).unwrap()["engine"]["event_history"],
+        serde_json::json!([])
+    );
     let mut moved = state.clone();
     moved.turn += 1;
     assert_ne!(digests(&moved).1, warm);
