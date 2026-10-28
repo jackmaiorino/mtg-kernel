@@ -2453,7 +2453,7 @@ pub(crate) fn fit_chain_stage_v1(
                 let published = read_v1(&path)?;
                 if let Some(prior) = retained.get(&fit_name_v1(chain.index, seed, arm)) {
                     if prior.iter().any(|(_, bytes)| *bytes != published) {
-                        return Err(mismatch_of(seed, arm, &published)?);
+                        return Err(mismatch_of(seed, arm, &published[..])?);
                     }
                     remove_retained_v1(&root.join("fits"), prior)?;
                 }
@@ -2501,7 +2501,7 @@ pub(crate) fn fit_chain_stage_v1(
                         let prior = retained.get(&fit_name_v1(chain.index, seed, arm));
                         if let Some(prior) = prior {
                             if prior.iter().any(|(_, old)| *old != bytes) {
-                                return Err(mismatch_of(seed, arm, &bytes)?);
+                                return Err(mismatch_of(seed, arm, &bytes[..])?);
                             }
                         }
                         write_file_v1(&fit_path_v1(root, chain.index, seed, arm), &bytes, false)?;
@@ -2531,11 +2531,7 @@ pub(crate) fn fit_chain_stage_v1(
         )?;
     }
     step0_reports_identical_v1(root, chain.index, seeds)?;
-    let compared: Vec<&String> = retained
-        .values()
-        .flatten()
-        .map(|(name, _)| name)
-        .collect();
+    let compared: Vec<&String> = retained.values().flatten().map(|(name, _)| name).collect();
     Ok(json!({"chain": chain.index, "fits_written": jobs.len(),
         "fits_present": seeds.len() * ARM_NAMES_V1.len(),
         "stale_temporaries_removed": removed, "evidence_temporaries_promoted": promoted,
@@ -2709,11 +2705,12 @@ fn promote_evidence_temporaries_v1(directory: &Path) -> Result<Vec<String>, Stri
             .file_name()
             .to_string_lossy()
             .into_owned();
-        let Some(stem) = temporary_stem_v1(&name).filter(|stem| {
-            stem.ends_with(".refused.json") || stem.ends_with(".mismatch.json")
-        }) else {
+        let Some(stem) = temporary_stem_v1(&name) else {
             continue;
         };
+        if !(stem.ends_with(".refused.json") || stem.ends_with(".mismatch.json")) {
+            continue;
+        }
         let target = directory.join(stem);
         if target.exists() {
             fs::remove_file(directory.join(&name)).map_err(err)?;

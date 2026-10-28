@@ -589,13 +589,8 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
     // qualification says.
     let launch_record: Value =
         serde_json::from_slice(&read_v1(&fit_launch_path_v1(root)).unwrap()).unwrap();
-    assert_eq!(
-        (
-            &launch_record["fit_workers"],
-            &launch_record["forward_workers"]
-        ),
-        (&json!(3), &json!(1))
-    );
+    assert_eq!(launch_record["fit_workers"], json!(3));
+    assert_eq!(launch_record["forward_workers"], json!(1));
     for (fit_workers, forward_workers) in [(2, 1), (3, 2)] {
         let error =
             fit_chain_stage_v1(loaded, root, &chain, fit_workers, forward_workers).unwrap_err();
