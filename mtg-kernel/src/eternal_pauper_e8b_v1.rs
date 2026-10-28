@@ -135,6 +135,8 @@ pub struct GlimpseV1 {
 pub struct RingSacrificeV1 {
     pub controller: PlayerId,
     pub blocker: ObjectLinkV4,
+    /// The Ring-bearer the blocked trigger came from.
+    pub source: AbilitySourceContractV4,
 }
 
 /// A triggered ability queued by a hook.
@@ -1101,6 +1103,9 @@ pub(crate) fn execute(op: &E8bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let record = RingSacrificeV1 {
                 controller: ctx.controller,
                 blocker: *blocker,
+                source: ctx
+                    .ability_source_contract
+                    .unwrap_or_else(|| AbilitySourceContractV4::capture(state, ctx.source)),
             };
             e8b_state(state).ring_sacrifices.push(record);
         }
@@ -1366,7 +1371,9 @@ pub(crate) fn begin_end_of_combat(state: &mut GameState) -> bool {
         if !link_live_in(state, record.blocker, Zone::Battlefield) {
             continue;
         }
-        let source = AbilitySourceContractV4::capture(state, record.blocker.object);
+        // The delayed trigger belongs to the Ring-bearer, wherever it is now.
+        let mut source = AbilitySourceContractV4::capture(state, record.source.source);
+        source.controller = record.controller;
         queue_trigger(
             state,
             source,
@@ -1689,6 +1696,11 @@ pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
         event::log_sacrifice(state, land);
         event::propose_and_commit(state, ProposedEvent::zone_change(land, Zone::Graveyard));
     }
+}
+
+/// Goliath Paladin: "When this creature enters, you take the initiative."
+pub(crate) fn initiative_granter(name: &str) -> bool {
+    name == GOLIATH_PALADIN
 }
 
 /// Desert: "Activate only during the end of combat step."
