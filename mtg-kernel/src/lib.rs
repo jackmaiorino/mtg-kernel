@@ -281,6 +281,9 @@ pub mod eternal_pauper_e6a_v1;
 /// Pauper Bogles, white aggro, Rakdos Madness and Gates card programs of
 /// the eternal catalog (wave E6b).
 pub mod eternal_pauper_e6b_v1;
+/// Pauper Ruby Storm, Golgari Gardens, Familiars and Jeskai Ephemerate card
+/// programs of the eternal catalog (wave E8b).
+pub mod eternal_pauper_e8b_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;

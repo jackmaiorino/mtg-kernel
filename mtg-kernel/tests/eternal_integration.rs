@@ -16,6 +16,8 @@ mod eternal_pauper_e1_v1;
 mod eternal_pauper_e6a_v1;
 #[path = "eternal/eternal_pauper_e6b_v1.rs"]
 mod eternal_pauper_e6b_v1;
+#[path = "eternal/eternal_pauper_e8b_v1.rs"]
+mod eternal_pauper_e8b_v1;
 #[path = "eternal/eternal_vintage_e4_v1.rs"]
 mod eternal_vintage_e4_v1;
 #[path = "eternal/eternal_vintage_e4b_v1.rs"]

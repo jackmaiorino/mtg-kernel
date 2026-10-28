@@ -244,7 +244,8 @@ const CHANCELLOR: &str = "Chancellor of the Annex";
 pub(crate) fn initiative_granter(name: &str) -> bool {
     name == "Avenging Hunter"
         || (cfg!(feature = "eternal-fixtures")
-            && matches!(name, SEASONED_DUNGEONEER | WHITE_PLUME_ADVENTURER))
+            && (matches!(name, SEASONED_DUNGEONEER | WHITE_PLUME_ADVENTURER)
+                || crate::eternal_pauper_e8b_v1::initiative_granter(name)))
 }
 
 const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> TriggeredAbilityDef {
@@ -1137,6 +1138,7 @@ pub(crate) fn activation_allowed(
         && crate::eternal_pauper_e6a_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_e5a_v1::statics::activation_allowed(state, source, name)
         && crate::eternal_vintage_e7b_v1::statics::activation_allowed(state, source, name)
+        && crate::eternal_pauper_e8b_v1::activation_allowed(state, name, ability_index)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed

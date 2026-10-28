@@ -12932,6 +12932,1496 @@
     "prepare_spell",
     "library_search"
    ]
+  },
+  {
+   "name": "Accursed Marauder",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-golgari-gardens"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "each_player_sacrifices"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AccursedMarauder.java"
+  },
+  {
+   "name": "Azorius Chancery",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U"
+   ],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "bounce_land"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AzoriusChancery.java"
+  },
+  {
+   "name": "Contaminated Landscape",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "tap_ability",
+    "fetch_effect",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ContaminatedLandscape.java"
+  },
+  {
+   "name": "Crimson Fleet Commodore",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Ogre",
+    "Pirate"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-izzet-terror",
+    "pauper-izzet-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "trample",
+    "etb_trigger",
+    "monarch"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CrimsonFleetCommodore.java"
+  },
+  {
+   "name": "Crossover Collaboration",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "teamwork",
+    "impulse_draw",
+    "token_creation"
+   ]
+  },
+  {
+   "name": "Crypt Rats",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Rat"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-golgari-gardens"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "x_cost",
+    "damage",
+    "mana_spend_restriction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CryptRats.java"
+  },
+  {
+   "name": "Defile",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-golgari-gardens",
+    "pauper-devotion"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "pump",
+    "count_subtype"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Defile.java"
+  },
+  {
+   "name": "Desert",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Desert"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "pauper-golgari-gardens"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "tap_ability",
+    "damage",
+    "activation_timing"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Desert.java"
+  },
+  {
+   "name": "Desperate Ritual",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Arcane"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "ritual",
+    "add_mana",
+    "splice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DesperateRitual.java"
+  },
+  {
+   "name": "First Day of Class",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "delayed_trigger",
+    "counters",
+    "haste_grant",
+    "learn"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FirstDayOfClass.java"
+  },
+  {
+   "name": "Geothermal Crevice",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R",
+    "B",
+    "G"
+   ],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "sacrifice_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GeothermalCrevice.java"
+  },
+  {
+   "name": "Glimpse the Impossible",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "impulse_draw",
+    "delayed_trigger",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GlimpseTheImpossible.java"
+  },
+  {
+   "name": "Glorious Gale",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "counterspell",
+    "ring_tempts"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GloriousGale.java"
+  },
+  {
+   "name": "God-Pharaoh's Faithful",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "cast_trigger",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GodPharaohsFaithful.java"
+  },
+  {
+   "name": "Goblin Anarchomancer",
+   "engine_capability": "full",
+   "mana_cost": "{R}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G",
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Shaman"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_reduction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinAnarchomancer.java"
+  },
+  {
+   "name": "Goldmire Bridge",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "B"
+   ],
+   "decks": [
+    "pauper-glintblade",
+    "pauper-4c-synthesizer-f5246896-123e-417c-9560-63c3c542a0da"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "dual_land",
+    "enters_tapped",
+    "indestructible",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoldmireBridge.java"
+  },
+  {
+   "name": "Goliath Paladin",
+   "engine_capability": "full",
+   "mana_cost": "{4}{W}",
+   "mana_value": 5,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Giant",
+    "Knight"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-jeskai-ephemerate"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "vigilance",
+    "etb_trigger",
+    "initiative"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoliathPaladin.java"
+  },
+  {
+   "name": "Golgari Rot Farm",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B",
+    "G"
+   ],
+   "decks": [
+    "pauper-golgari-gardens",
+    "pauper-food-gardens"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "bounce_land"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GolgariRotFarm.java"
+  },
+  {
+   "name": "Haunted Mire",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Swamp",
+    "Forest"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B",
+    "G"
+   ],
+   "decks": [
+    "pauper-golgari-gardens",
+    "pauper-food-gardens",
+    "pauper-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "enters_tapped",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HauntedMire.java"
+  },
+  {
+   "name": "Heaped Harvest",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Food"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-golgari-gardens"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "sacrifice_trigger",
+    "fetch_effect",
+    "food"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HeapedHarvest.java"
+  },
+  {
+   "name": "Hickory Woodlot",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "G"
+   ],
+   "decks": [
+    "pauper-ruby-storm",
+    "pauper-poison-storm",
+    "pauper-infect-09cfa92b-ebe6-4cfb-be11-6f64e5cb7bf6",
+    "legacy-creative-technique"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "depletion_counters",
+    "sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HickoryWoodlot.java"
+  },
+  {
+   "name": "Khalni Garden",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "G"
+   ],
+   "decks": [
+    "pauper-golgari-gardens",
+    "pauper-food-gardens",
+    "pauper-dredge"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KhalniGarden.java"
+  },
+  {
+   "name": "Lonely Arroyo",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Desert"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "U"
+   ],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_tapped",
+    "etb_trigger",
+    "damage",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LonelyArroyo.java"
+  },
+  {
+   "name": "Manamorphose",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R/G}",
+   "mana_value": 2,
+   "colors": [
+    "G",
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm",
+    "pauper-poison-storm",
+    "legacy-necrodominance-combo"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "add_mana",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/Manamorphose.java"
+  },
+  {
+   "name": "Meeting of Minds",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "convoke",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MeetingOfMinds.java"
+  },
+  {
+   "name": "Mirran Banesplitter",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Equipment"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "burn-3854fe58-5ff9-4046-bac9-ae9617c3caf5"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "etb_trigger",
+    "etb_attach_controlled_creature",
+    "equipment",
+    "equip"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MirranBanesplitter.java"
+  },
+  {
+   "name": "Mortuary Mire",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B"
+   ],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "library_top"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MortuaryMire.java"
+  },
+  {
+   "name": "Oroku Saki, Shredder Rising",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Ninja"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-glintblade"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "sneak",
+    "alt_cost",
+    "combat_damage_trigger",
+    "draw_card"
+   ]
+  },
+  {
+   "name": "Orzhov Basilica",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W",
+    "B"
+   ],
+   "decks": [
+    "pauper-glintblade"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "bounce_land"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OrzhovBasilica.java"
+  },
+  {
+   "name": "Perilous Landscape",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "pauper-jeskai-ephemerate",
+    "pauper-izzet-faeries"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "tap_ability",
+    "fetch_effect",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PerilousLandscape.java"
+  },
+  {
+   "name": "Rally the Peasants",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-boros-bully"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "pump",
+    "flashback"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RallyThePeasants.java"
+  },
+  {
+   "name": "Rancid Earth",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-golgari-gardens"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "land_destruction",
+    "threshold",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RancidEarth.java"
+  },
+  {
+   "name": "Reckless Lackey",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Pirate"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "burn-3854fe58-5ff9-4046-bac9-ae9617c3caf5"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "first_strike",
+    "haste",
+    "sacrifice_cost",
+    "draw_card",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RecklessLackey.java"
+  },
+  {
+   "name": "Ride's End",
+   "engine_capability": "full",
+   "mana_cost": "{4}{W}",
+   "mana_value": 5,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-jeskai-ephemerate"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "exile",
+    "cost_reduction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RidesEnd.java"
+  },
+  {
+   "name": "Sandstone Needle",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R"
+   ],
+   "decks": [
+    "pauper-ruby-storm",
+    "pauper-poison-storm",
+    "legacy-creative-technique"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "depletion_counters",
+    "sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SandstoneNeedle.java"
+  },
+  {
+   "name": "Sea Gate Oracle",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "card_selection"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SeaGateOracle.java"
+  },
+  {
+   "name": "Seething Song",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm",
+    "legacy-the-epic-gamble"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "ritual",
+    "add_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SeethingSong.java"
+  },
+  {
+   "name": "Seize the Storm",
+   "engine_capability": "full",
+   "mana_cost": "{4}{R}",
+   "mana_value": 5,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "token_creation",
+    "characteristic_defining",
+    "flashback"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SeizeTheStorm.java"
+  },
+  {
+   "name": "Skred",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-jeskai-ephemerate",
+    "pauper-izzet-terror",
+    "pauper-izzet-faeries",
+    "pauper-4c-ephemerate"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "damage",
+    "count_snow"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Skred.java"
+  },
+  {
+   "name": "Snow-Covered Mountain",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Mountain"
+   ],
+   "supertypes": [
+    "Basic",
+    "Snow"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R"
+   ],
+   "decks": [
+    "pauper-jeskai-ephemerate",
+    "pauper-gruul-ponza",
+    "pauper-izzet-terror",
+    "pauper-izzet-faeries",
+    "pauper-4c-ephemerate"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SnowCoveredMountain.java"
+  },
+  {
+   "name": "Sunscape Familiar",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Wall"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-familiars"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "defender",
+    "cost_reduction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SunscapeFamiliar.java"
+  },
+  {
+   "name": "Thornscape Familiar",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_reduction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThornscapeFamiliar.java"
+  },
+  {
+   "name": "Twinned Vision",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U/R}",
+   "mana_value": 2,
+   "colors": [
+    "R",
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "draw_card",
+    "flashback",
+    "discard_cost"
+   ]
+  },
+  {
+   "name": "Volatile Fjord",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Island",
+    "Mountain"
+   ],
+   "supertypes": [
+    "Snow"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "U",
+    "R"
+   ],
+   "decks": [
+    "pauper-jeskai-ephemerate",
+    "pauper-izzet-terror",
+    "pauper-izzet-faeries",
+    "pauper-4c-ephemerate"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "enters_tapped",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VolatileFjord.java"
+  },
+  {
+   "name": "Witch's Cottage",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Swamp"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "B"
+   ],
+   "decks": [
+    "pauper-golgari-gardens",
+    "pauper-devotion"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped_unless",
+    "etb_trigger",
+    "library_top"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WitchsCottage.java"
+  },
+  {
+   "name": "Wrenn's Resolve",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ruby-storm",
+    "pauper-mono-red-pingers"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "impulse_draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WrennsResolve.java"
+  },
+  {
+   "name": "Plant Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Plant"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/PlantToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Red Elemental Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "token_creation",
+    "trample",
+    "characteristic_defining"
+   ],
+   "is_token": true
   }
  ]
 }

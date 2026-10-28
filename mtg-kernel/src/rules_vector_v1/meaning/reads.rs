@@ -510,6 +510,17 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             }
             AmtF::Dynamic
         }
+        DynamicCountDef::SpellTargetsTappedPermanentV1 => {
+            // One iff a chosen target is a tapped battlefield permanent
+            // (Ride's End). The same vocabulary gap as below.
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Characteristic,
+            );
+            AmtF::Dynamic
+        }
         DynamicCountDef::SpellTargetsTappedCreature => {
             // One iff a chosen target is a tapped battlefield creature.
             // Vocabulary gap: no tapped-status aggregate; nearest is a
