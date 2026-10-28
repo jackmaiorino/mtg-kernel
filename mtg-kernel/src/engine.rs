@@ -23377,7 +23377,8 @@ pub(crate) fn step_without_linked_aura_v1(
             if !land_drop_candidates(p, state).contains(&id) {
                 return Err(format!("{id} is not a legal land drop for {p:?}"));
             }
-            if state.objects.get(id).zone == Zone::Graveyard {
+            // Other graveyard land permissions (Eternal) take the ordinary path.
+            if state.objects.get(id).zone == Zone::Graveyard && muldrotha_v1::allowed(state, id, p) {
                 return muldrotha_v1::begin(state, id, p, true);
             }
             #[cfg(feature = "eternal-fixtures")]

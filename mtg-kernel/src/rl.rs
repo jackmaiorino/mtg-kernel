@@ -3972,6 +3972,12 @@ pub(crate) fn require_declared_cards_for_scope(
     scope: CommonProjectionScopeV42,
     cards: &[u16],
 ) -> std::result::Result<(), String> {
+    // Card ids 459 and up are FDN printings only in the FDN catalog build;
+    // the Standard and Eternal catalogs assign those ids to other cards.
+    let fdn_ids = cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ));
     for &id in cards {
         let definition = CARD_DEFS
             .get(usize::from(id))
@@ -4017,76 +4023,77 @@ pub(crate) fn require_declared_cards_for_scope(
                         | CommonProjectionScopeV42::ChandraV74
                         | CommonProjectionScopeV42::KaitoV75
                 ))
-            || (id == 459
-                && !matches!(
-                    scope,
-                    CommonProjectionScopeV42::CallV62
-                        | CommonProjectionScopeV42::EndTurnV68
-                        | CommonProjectionScopeV42::GenesisWaveV69
-                        | CommonProjectionScopeV42::VivienV70
-                        | CommonProjectionScopeV42::MuldrothaV71
-                        | CommonProjectionScopeV42::TinybonesV72
-                        | CommonProjectionScopeV42::LilianaV73
-                        | CommonProjectionScopeV42::ChandraV74
-                        | CommonProjectionScopeV42::KaitoV75
-                ))
-            || (scope == CommonProjectionScopeV42::CallV62 && id >= 460)
-            || (scope == CommonProjectionScopeV42::MuldrothaV71
-                && id >= 460
-                && !crate::engine::time_stop_v1::definition(id)
-                && !crate::effect::genesis_wave_v1::definition(id)
-                && !crate::effect::vivien_reid_v1::definition(id)
-                && !crate::engine::muldrotha_v1::definition(id))
-            || (scope == CommonProjectionScopeV42::LilianaV73
-                && id >= 460
-                && !crate::engine::time_stop_v1::definition(id)
-                && !crate::effect::genesis_wave_v1::definition(id)
-                && !crate::effect::vivien_reid_v1::definition(id)
-                && !crate::engine::muldrotha_v1::definition(id)
-                && !crate::engine::tinybones_v72::definition(id)
-                && !crate::effect::liliana_dreadhorde_v1::definition(id)
-                && !crate::effect::liliana_dreadhorde_v1::token_definition(id))
-            || (scope == CommonProjectionScopeV42::ChandraV74
-                && id >= 460
-                && !crate::engine::time_stop_v1::definition(id)
-                && !crate::effect::genesis_wave_v1::definition(id)
-                && !crate::effect::vivien_reid_v1::definition(id)
-                && !crate::engine::muldrotha_v1::definition(id)
-                && !crate::engine::tinybones_v72::definition(id)
-                && !crate::effect::liliana_dreadhorde_v1::definition(id)
-                && !crate::effect::liliana_dreadhorde_v1::token_definition(id)
-                && !crate::effect::chandra_flameshaper_v1::definition(id))
-            || (scope == CommonProjectionScopeV42::KaitoV75
-                && id >= 460
-                && !crate::engine::time_stop_v1::definition(id)
-                && !crate::effect::genesis_wave_v1::definition(id)
-                && !crate::effect::vivien_reid_v1::definition(id)
-                && !crate::engine::muldrotha_v1::definition(id)
-                && !crate::engine::tinybones_v72::definition(id)
-                && !crate::effect::liliana_dreadhorde_v1::definition(id)
-                && !crate::effect::liliana_dreadhorde_v1::token_definition(id)
-                && !crate::effect::chandra_flameshaper_v1::definition(id)
-                && !crate::effect::kaito_cunning_v75::definition(id)
-                && !crate::effect::kaito_cunning_v75::token_definition(id))
-            || (scope == CommonProjectionScopeV42::TinybonesV72
-                && id >= 460
-                && !crate::engine::time_stop_v1::definition(id)
-                && !crate::effect::genesis_wave_v1::definition(id)
-                && !crate::effect::vivien_reid_v1::definition(id)
-                && !crate::engine::muldrotha_v1::definition(id)
-                && !crate::engine::tinybones_v72::definition(id))
-            || (scope == CommonProjectionScopeV42::VivienV70
-                && id >= 460
-                && !crate::engine::time_stop_v1::definition(id)
-                && !crate::effect::genesis_wave_v1::definition(id)
-                && !crate::effect::vivien_reid_v1::definition(id))
-            || (scope == CommonProjectionScopeV42::GenesisWaveV69
-                && id >= 460
-                && !crate::engine::time_stop_v1::definition(id)
-                && !crate::effect::genesis_wave_v1::definition(id))
-            || (scope == CommonProjectionScopeV42::EndTurnV68
-                && id >= 460
-                && !crate::engine::time_stop_v1::definition(id))
+            || (fdn_ids
+                && ((id == 459
+                    && !matches!(
+                        scope,
+                        CommonProjectionScopeV42::CallV62
+                            | CommonProjectionScopeV42::EndTurnV68
+                            | CommonProjectionScopeV42::GenesisWaveV69
+                            | CommonProjectionScopeV42::VivienV70
+                            | CommonProjectionScopeV42::MuldrothaV71
+                            | CommonProjectionScopeV42::TinybonesV72
+                            | CommonProjectionScopeV42::LilianaV73
+                            | CommonProjectionScopeV42::ChandraV74
+                            | CommonProjectionScopeV42::KaitoV75
+                    ))
+                    || (scope == CommonProjectionScopeV42::CallV62 && id >= 460)
+                    || (scope == CommonProjectionScopeV42::MuldrothaV71
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id))
+                    || (scope == CommonProjectionScopeV42::LilianaV73
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id)
+                        && !crate::engine::tinybones_v72::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::token_definition(id))
+                    || (scope == CommonProjectionScopeV42::ChandraV74
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id)
+                        && !crate::engine::tinybones_v72::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::token_definition(id)
+                        && !crate::effect::chandra_flameshaper_v1::definition(id))
+                    || (scope == CommonProjectionScopeV42::KaitoV75
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id)
+                        && !crate::engine::tinybones_v72::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::definition(id)
+                        && !crate::effect::liliana_dreadhorde_v1::token_definition(id)
+                        && !crate::effect::chandra_flameshaper_v1::definition(id)
+                        && !crate::effect::kaito_cunning_v75::definition(id)
+                        && !crate::effect::kaito_cunning_v75::token_definition(id))
+                    || (scope == CommonProjectionScopeV42::TinybonesV72
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id)
+                        && !crate::engine::muldrotha_v1::definition(id)
+                        && !crate::engine::tinybones_v72::definition(id))
+                    || (scope == CommonProjectionScopeV42::VivienV70
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id)
+                        && !crate::effect::vivien_reid_v1::definition(id))
+                    || (scope == CommonProjectionScopeV42::GenesisWaveV69
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id)
+                        && !crate::effect::genesis_wave_v1::definition(id))
+                    || (scope == CommonProjectionScopeV42::EndTurnV68
+                        && id >= 460
+                        && !crate::engine::time_stop_v1::definition(id))))
         {
             return Err("declared mainboard requires its distinct complete consumer".into());
         }
