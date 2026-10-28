@@ -818,6 +818,24 @@ class BackfillAdmissionTests(unittest.TestCase):
         self.assertEqual(out.returncode, slots.EXIT_USAGE, out.stderr)
         self.assertFalse(log.exists())
 
+    def test_a_new_ticket_always_queues_after_every_published_ticket(self):
+        # review r4: the name is chosen under the mutex at publication, never earlier
+        ahead = f"queue-{time.time_ns() + 10**12:020d}-{'e' * 32}.json"
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()  # its ticket is reaped when read, so the new request can then enter
+        slots.write_json(self.host / "TESTHOST.slots" / ahead, {"id": "e" * 32, "pid": gone.pid, "creation_time": 1,
+                                                                "cores_wanted": 1})
+        for queue_class in ("", "z-"):
+            name = slots._ticket_path(queue_class, "f" * 32).name
+            self.assertGreater(name.removeprefix("queue-").removeprefix("z-"), ahead.removeprefix("queue-"))
+        seen = []
+        real = slots.write_json
+        with patch.object(slots, "write_json", side_effect=lambda path, value: (
+                seen.append(Path(path).name), real(path, value))[1]),                 patch.object(slots, "_run_claimed", return_value=0):
+            slots.run("probe", "late", 1, ["unused"], claim_id="f" * 32, wait=True)
+        published = [name for name in seen if name.startswith("queue-")][0]
+        self.assertGreater(published, ahead)
+
     def test_ordinary_claim_records_are_unchanged(self):
         seen = []
         with patch.object(slots, "_run_claimed", side_effect=lambda claim, *a, **k: seen.append(

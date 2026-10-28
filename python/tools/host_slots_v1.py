@@ -689,6 +689,18 @@ def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, t
     return cores
 
 
+def _ticket_path(queue_class: str, claim_id: str) -> Path:
+    """A queue ticket name that sorts after every ticket already queued. Called under the admission
+    mutex, so a launcher paused before publishing can never queue ahead of a head that a backfill
+    was proved against."""
+    stamp = time.time_ns()
+    for existing in slots_dir().glob("queue-*.json"):
+        match = re.match(r"queue-(?:z-)?(\d{20})-", existing.name)
+        if match:
+            stamp = max(stamp, int(match.group(1)) + 1)
+    return slots_dir() / f"queue-{queue_class}{stamp:020d}-{claim_id}.json"
+
+
 def config_digest(config: dict) -> str:
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -930,13 +942,13 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     # Sort background filenames after ordinary ones so both generations agree
     # on who may enter. Otherwise each can wait for the other's first ticket.
     queue_class = "z-" if background else ""
-    ticket = slots_dir() / f"queue-{queue_class}{time.time_ns():020d}-{claim_id}.json"
     claim = slots_dir() / f"claim-{claim_id}.json"
     deadline = None if wait_timeout is None else time.monotonic() + wait_timeout
     request = {**base, "cores_wanted": cores_wanted, "enqueued_at": now_utc(), "config_sha256": config_digest(config)}
     if max_seconds is not None:
         request["max_seconds"] = max_seconds
     with Mutex():
+        ticket = _ticket_path(queue_class, claim_id)
         write_json(ticket, request)
     backfill = None
     try:
