@@ -124,8 +124,12 @@ thread_local! {
 // executable authority and never replace custody/world/replay validation.
 // Limits bound event count and canonical JSON volume, not resident heap bytes:
 // typed allocations, spare capacity, and SHA bookkeeping have different sizes.
-const REPLAY_PREFIX_EVENTS: usize = 512;
-const REPLAY_PREFIX_CANONICAL_BYTES: usize = 64 * 1024 * 1024;
+// Drake combats keep whole worlds in history (about 44 KB of JSON per event in
+// a 1,700-event random game), and every row past the prefix is serialized and
+// parsed again on each validation, so the budget covers a long game about
+// three times over.
+pub(super) const REPLAY_PREFIX_EVENTS: usize = 1 << 14;
+pub(super) const REPLAY_PREFIX_CANONICAL_BYTES: usize = 256 * 1024 * 1024;
 struct ReplayPrefixRow {
     event: CommittedEvent,
     canonical_bytes: usize,

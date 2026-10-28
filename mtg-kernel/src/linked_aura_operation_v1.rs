@@ -748,7 +748,25 @@ fn operation_has_color_entry(state: &GameState, operation: &OperationV1) -> bool
 }
 
 fn original_sha256(state: &GameState) -> String {
-    Sha256::digest(serde_json::to_vec(state).expect("genuine origin serializes"))
+    // The same canonical bytes, streamed instead of materialized: a history
+    // holding saved worlds can serialize to tens of megabytes.
+    struct DigestWriter<'a>(&'a mut Sha256);
+    impl std::io::Write for DigestWriter<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut digest = Sha256::new();
+    let mut writer = std::io::BufWriter::with_capacity(1 << 16, DigestWriter(&mut digest));
+    serde_json::to_writer(&mut writer, state).expect("genuine origin serializes");
+    std::io::Write::flush(&mut writer).expect("digest writes never fail");
+    drop(writer);
+    digest
+        .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
