@@ -73,6 +73,9 @@ def prepare(spec, output, now=None, allow_mutable_image=False):
     require(spec['quoted_cpu_usd_hour'] <= lease['rate_ceiling_usd_hour'], 'quote above ceiling')
     require(re.fullmatch('ssh-ed25519 [A-Za-z0-9+/=]+(?: [^\r\n]+)?', spec['public_ssh_key']),
             'single public ed25519 key required')
+    # Pod-local disk for hot outputs (default 40 GB); the dispatcher keeps a 60 GiB reserve on every root's volume.
+    container_disk = spec.get('container_disk_gb', 40)
+    require(type(container_disk) is int and 20 <= container_disk <= 400, 'container disk must be 20 to 400 GB')
     run_id = lease['name']
     guard_root = '/run/phase1/' + run_id
     durable = '/workspace/phase1/' + run_id
@@ -150,7 +153,7 @@ raise SystemExit(0)
                base64.b64encode(bootstrap.encode()).decode() + "'))"]
     body = {'name': run_id, 'cloudType': 'SECURE', 'computeType': 'CPU',
             'cpuFlavorIds': ['cpu3c'], 'cpuFlavorPriority': 'custom', 'vcpuCount': 32,
-            'containerDiskInGb': 40, 'volumeInGb': 0,
+            'containerDiskInGb': container_disk, 'volumeInGb': 0,
             'imageName': image_name,
             'interruptible': False, 'supportPublicIp': True, 'ports': ['22/tcp'],
             'networkVolumeId': lease['network_volume_id'], 'volumeMountPath': '/workspace',

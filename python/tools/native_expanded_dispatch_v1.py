@@ -132,7 +132,7 @@ def positive(value, name):
     return value
 
 
-SCHEDULE_FAMILIES = (None, "permuted-units-v1")
+SCHEDULE_FAMILIES = (None, "permuted-units-v1", "permuted-units-own-history-v1")
 
 
 def workload(config, kind, keep_seeds=False, family=None):
@@ -149,6 +149,15 @@ def workload(config, kind, keep_seeds=False, family=None):
     assignment, limits) and the same number of episodes in each update, in a
     block-specific order, and start from admitted weights with the same import,
     feature contract and parameter layout. Everything else stays bound.
+
+    ``family="permuted-units-own-history-v1"`` (a self-play lineage that plays
+    its own earlier checkpoints, collab LANES/g-references-20261028) binds the
+    same, except: blocks may start from a fresh initialization or from any
+    checkpoint of that same import and feature transfer, every named opponent
+    must be a checkpoint of that same import and feature transfer, and a named
+    (``fixed``) assignment counts as one more frozen same-model opponent, like
+    ``initial``. The opponent list therefore grows with the lineage's history
+    inside one family; its size stays bounded by the config's own limits.
     """
     require(family in SCHEDULE_FAMILIES, "unknown schedule family")
     require(family is None or kind == "training", "schedule families apply to training only")
@@ -177,8 +186,19 @@ def workload(config, kind, keep_seeds=False, family=None):
         for slots in value.get("e_supported", {}).get("slots", []):
             for slot in slots:
                 slot.pop("case_id")
-        if family == "permuted-units-v1":
+        if family == "permuted-units-own-history-v1":
+            start = {key: value["initial_source"][key] for key in ("play_import", "feature_transfer")}
+            require(all({key: item["source"].get(key) for key in start} == start
+                        for item in value.get("opponents", [])),
+                    "own-history opponents must share the start's import and feature transfer")
+            value["initial_source"], value["opponents"] = start, "own-history"
+            for update in value["iterations"]:
+                for item in update["episodes"]:
+                    if isinstance(item["opponent"], dict) and item["opponent"].get("kind") == "fixed":
+                        item["opponent"] = {"kind": "initial"}
+        elif family == "permuted-units-v1":
             value["initial_source"]["checkpoint"] = inference_shape(value["initial_source"])
+        if family is not None:
             shapes = sorted(json.dumps(item, sort_keys=True, separators=(",", ":"))
                             for update in value["iterations"] for item in update["episodes"])
             value["iterations"] = {"sizes": [len(update["episodes"]) for update in value["iterations"]],

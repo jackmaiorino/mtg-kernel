@@ -1,0 +1,236 @@
+"""G(i) campaign driver pieces that need no reservation or native execution."""
+import gzip
+import hashlib
+import json
+import os
+from pathlib import Path
+import struct
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+import g_references_campaign_v1 as driver
+import g_references_v1 as g
+from test_nine_deck_campaign_v1 import lease_guard_files
+
+REPO = Path(__file__).resolve().parents[3]
+
+
+def save(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+class DriverTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.play = {run: {"path": f"C:/in/{run}/play-import.json", "sha256": str(index) * 64}
+                     for index, run in enumerate(g.RUNS, 1)}
+        raw = {"recipe": "g-references-v1", "lane": "gi", "decks": str(REPO / "data" / "runtime_decks_v1.json"),
+               "play_imports": self.play, "placement": {"host": "desktop", "workers": 8, "preparation_workers": 8},
+               "runtime": {"path": "r", "sha256": "r" * 64}, "storage": {}, "wall_seconds": 10,
+               "choice": {"path": "c"}, "choice_verification": {"path": "v"}, "cold_keep_blocks": 1,
+               "roots": {name: str(self.root / name) for name in ("state", "cold", "retained", "checkpoints",
+                                                                    "exposure", "hot", "doses")} | {"hot_by_run": {}}}
+        self.path = self.root / "campaign.json"
+        self.write(raw)
+
+    def write(self, raw):
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        self.campaign = driver.Campaign(self.path)
+
+    def kept(self, run, blocks):
+        state = {"run": run, "status": "running", "blocks": {}}
+        for block in blocks:
+            data = json.dumps({"state_sha256": f"{block:064d}", "block": block}).encode()
+            item = save(driver.checkpoint_path(self.campaign, run, block), data)
+            state["blocks"][str(block)] = {"attempts": [], "done": True, "final_checkpoint": item,
+                                           "checkpoint_state": "kept", "final_adam_step": block * 162}
+        return state
+
+    def test_recipe_and_stop_block(self):
+        self.assertEqual(self.campaign.stop_after, 494)
+        raw = json.loads(self.path.read_text())
+        raw["recipe"] = "nine-deck-baseline-v1"
+        with self.assertRaises(SystemExit):
+            self.write(raw)
+        raw["recipe"], raw["stop_after_block"] = "g-references-v1", 742
+        with self.assertRaises(SystemExit):
+            self.write(raw)
+        raw["stop_after_block"] = 2
+        self.write(raw)
+        self.assertEqual(self.campaign.stop_after, 2)
+
+    def test_block_specs_chain_and_draw_history(self):
+        state = self.kept("G2", range(1, 20))
+        first = driver.block_spec(self.campaign, "G2", 1, {"blocks": {}}, self.root / "n")
+        self.assertIsNone(first["start_checkpoint"])
+        self.assertEqual(first["history"], {})
+        self.assertEqual(first["play_import"], self.play["G2"])
+        spec = driver.block_spec(self.campaign, "G2", 20, state, self.root / "n")
+        self.assertEqual(spec["start_checkpoint"], state["blocks"]["19"]["final_checkpoint"])
+        self.assertEqual(sorted(map(int, spec["history"])), [1, 2, 4, 8, 16])
+        config = g.block_config(spec)
+        self.assertEqual(config["initial_source"]["checkpoint"], state["blocks"]["19"]["final_checkpoint"])
+        self.assertEqual(len(config["opponents"]), 5)
+        state["blocks"]["16"]["checkpoint_state"] = "compressed"
+        with self.assertRaises(RuntimeError):
+            driver.block_spec(self.campaign, "G2", 20, state, self.root / "n")
+
+    def test_request_uses_the_own_history_family_and_choice_pins(self):
+        request = driver.request_for(self.campaign, "G1", {"path": "x", "sha256": "y"}, self.root / "a", self.root / "b")
+        self.assertEqual(request["schedule_family"], "permuted-units-own-history-v1")
+        self.assertEqual(request["non_natural_tolerance"], 0.2)
+        self.assertEqual(request["choice"], {"path": "c"})
+        pins = self.root / "choice-pins.json"
+        pins.write_text(json.dumps({"choice": {"path": "c2"}, "choice_verification": {"path": "v2"}}))
+        raw = json.loads(self.path.read_text())
+        raw["choice_pins"] = str(pins)
+        self.write(raw)
+        request = driver.request_for(self.campaign, "G1", {"path": "x", "sha256": "y"}, self.root / "a", self.root / "b")
+        self.assertEqual((request["choice"], request["choice_verification"]), ({"path": "c2"}, {"path": "v2"}))
+
+    def test_ancestry_is_compressed_without_a_receipt(self):
+        state = self.kept("G1", range(1, 21))
+        driver.retire(self.campaign, "G1", 20, state)
+        states = {int(k): v["checkpoint_state"] for k, v in state["blocks"].items()}
+        self.assertEqual({b for b, s in states.items() if s == "kept"}, {1, 2, 4, 8, 16, 19, 20})
+        self.assertEqual({b for b, s in states.items() if s == "compressed"},
+                         set(range(1, 19)) - {1, 2, 4, 8, 16})
+        entry = state["blocks"]["5"]
+        self.assertFalse(Path(entry["final_checkpoint"]["path"]).exists())
+        with gzip.open(entry["compressed_checkpoint"]["path"], "rb") as stream:
+            self.assertEqual(hashlib.sha256(stream.read()).hexdigest(), entry["final_checkpoint"]["sha256"])
+        log = [json.loads(line) for line in self.campaign.prune_log.read_text().splitlines()]
+        five = next(row for row in log if row["block"] == 5)
+        self.assertEqual(five["regenerate"]["from_permanent_block"], 4)
+        self.assertEqual(five["checkpoint_sha256"], entry["final_checkpoint"]["sha256"])
+        # A second pass changes nothing without a receipt.
+        driver.retire(self.campaign, "G1", 20, state)
+        self.assertEqual(len(self.campaign.prune_log.read_text().splitlines()), len(log))
+
+    def test_ancestry_is_deleted_under_a_receipt(self):
+        state = self.kept("G1", range(1, 8))
+        driver.retire(self.campaign, "G1", 7, state)
+        self.assertEqual(state["blocks"]["3"]["checkpoint_state"], "compressed")
+        bad = save(self.root / "receipt.json", json.dumps({"schema": driver.RECEIPT_SCHEMA, "byte_identical": False,
+                                                           "runtime": "r" * 64}).encode())
+        raw = json.loads(self.path.read_text())
+        raw["ancestry_receipt"] = bad
+        self.write(raw)
+        with self.assertRaises(SystemExit):
+            driver.retire(self.campaign, "G1", 7, state)
+        good = save(self.root / "receipt2.json", json.dumps({"schema": driver.RECEIPT_SCHEMA, "byte_identical": True,
+                                                             "runtime": "r" * 64}).encode())
+        raw["ancestry_receipt"] = good
+        self.write(raw)
+        driver.retire(self.campaign, "G1", 7, state)
+        states = {int(k): v["checkpoint_state"] for k, v in state["blocks"].items()}
+        self.assertEqual(states, {1: "kept", 2: "kept", 3: "deleted", 4: "kept", 5: "deleted", 6: "kept", 7: "kept"})
+        log = [json.loads(line) for line in self.campaign.prune_log.read_text().splitlines()]
+        deleted = [row for row in log if row.get("pruned")]
+        self.assertEqual(sorted(row["block"] for row in deleted), [3, 5])
+        self.assertTrue(all(row["receipt"] == {"path": good["path"], "sha256": good["sha256"]} for row in deleted))
+        self.assertTrue(all(row["state_sha256"] is None or len(row["state_sha256"]) == 64 for row in deleted))
+        raw["ancestry_receipt"]["sha256"] = "0" * 64
+        self.write(raw)
+        with self.assertRaises(ValueError):
+            driver.receipt(self.campaign)
+
+    def test_dose_record(self):
+        state = self.kept("G3", [247])
+        record = driver.write_dose(self.campaign, "G3", 247, state["blocks"]["247"])
+        value = json.loads(Path(record["path"]).read_text())
+        self.assertEqual(Path(record["path"]).name, "G3-b0247.json")
+        self.assertEqual((value["schema"], value["dose"], value["block"], value["updates"]),
+                         ("g-references-v1/dose", "D_a", 247, 40014))
+        self.assertEqual(value["source"]["play_import"], self.play["G3"])
+        self.assertEqual(value["source"]["checkpoint"], state["blocks"]["247"]["final_checkpoint"])
+        self.assertEqual(value["source"]["feature_transfer"], g.FEATURE_TRANSFER)
+
+    def test_fresh_embedding_reads_the_initialization_payload(self):
+        values = [0x3F800000 + index for index in range(3 * 2)]
+        payload = struct.pack("<2I", 7, 7) + struct.pack(f"<{len(values)}I", *values)
+        parameters = save(self.root / "init" / "parameters.f32le", payload)
+        manifest = {"parameters": [{"name": "other", "byte_offset": 0, "byte_count": 8, "shape": [2]},
+                                   {"name": "card_embedding.weight", "byte_offset": 8, "byte_count": 24,
+                                    "shape": [3, 2]}]}
+        initialization = save(self.root / "init" / "initialization.json", json.dumps(manifest).encode())
+        descriptor = save(self.root / "init" / "play-import.json", json.dumps(
+            {"schema": g.FRESH_SOURCE_SCHEMA, "initialization": initialization, "parameters": parameters}).encode())
+        tensor = driver.fresh_embedding(descriptor)["parameters"][0]
+        self.assertEqual((tensor["name"], tensor["shape"], tensor["values"]), ("card_embedding.weight", [3, 2], values))
+
+    def test_completed_updates_counts_update_records(self):
+        native = self.root / "native"
+        self.assertEqual(driver.completed_updates(native), 0)
+        for update in range(3):
+            folder = native / "iterations" / f"{update:06d}" / "attempt-000000"
+            (folder / "collect").mkdir(parents=True)
+            if update < 2:
+                (folder / "update").mkdir()
+                (folder / "update" / "update.json").write_text("{}")
+        self.assertEqual(driver.completed_updates(native), 2)
+
+    def test_lease_activity_advances_only_with_completed_work(self):
+        guard = self.root / "guard"
+        lease_guard_files(guard)
+        native = self.root / "hot" / "native"
+        (self.root / "hot" / "dispatch").mkdir(parents=True)
+        (self.root / "hot" / "dispatch" / "started.json").write_text(json.dumps({"pid": os.getpid()}))
+        with patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod", "MTG_LEASE_GUARD_DIR": str(guard)}):
+            progress = driver.LeaseProgress(self.campaign)
+        entry = {"attempts": [{"root": str(self.root / "hot" / "dispatch"), "native": str(native)}]}
+        progress.active["G1"] = entry
+        progress.activity = 0
+        progress.beat()
+        record = json.loads((guard / "progress.json").read_text())
+        self.assertEqual((record["last_activity_epoch"], record["completed_updates"]), (0, 0))
+        folder = native / "iterations" / "000000" / "attempt-000000" / "update"
+        folder.mkdir(parents=True)
+        (folder / "update.json").write_text("{}")
+        progress.beat()
+        record = json.loads((guard / "progress.json").read_text())
+        self.assertGreater(record["last_activity_epoch"], 0)
+        self.assertEqual(record["completed_updates"], 1)
+        progress.activity = 0
+        progress.beat()  # no new update, no activity
+        self.assertEqual(json.loads((guard / "progress.json").read_text())["last_activity_epoch"], 0)
+        progress.touch()
+        progress.beat()
+        self.assertGreater(json.loads((guard / "progress.json").read_text())["last_activity_epoch"], time.time() - 60)
+
+    def test_pack_slots_and_native_root(self):
+        raw = json.loads(self.path.read_text())
+        raw["placement_by_run"] = {run: {"host": "desktop", "cpu_affinity": [2 * i, 2 * i + 1], "workers": 2,
+                                         "preparation_workers": 2, "memory_bytes": 1}
+                                   for i, run in enumerate(g.RUNS)}
+        raw["roots"]["native"] = str(self.root / "container")
+        tool = self.root / "host_slots_v1.py"; tool.write_text("tool")
+        raw["host_slots"] = {"cores": "0-15", "tool": driver.pin(tool)}
+        self.write(raw)
+        self.assertEqual(driver.declared_cores(self.campaign)[-4:], ["timed", "--cores", "0-15", "--"])
+        spec = driver.block_spec(self.campaign, "G4", 1, {"blocks": {}}, self.root / "n")
+        self.assertEqual((spec["collection_workers"], spec["preparation_workers"]), (2, 2))
+        request = driver.request_for(self.campaign, "G4", {"path": "x", "sha256": "y"}, self.root / "a", self.root / "b")
+        self.assertEqual(request["placement"]["cpu_affinity"], [6, 7])
+        self.assertEqual(self.campaign.native("G4"), self.root / "container")
+        raw["host_slots"]["cores"] = "0-7"
+        self.write(raw)
+        with self.assertRaises(SystemExit):
+            driver.declared_cores(self.campaign)
+
+    def test_status_and_run_labels(self):
+        self.assertEqual(len(driver.status_lines(self.campaign)), 8)
+        for runs in ("r1", "G1,G1", "G9"):
+            with self.assertRaises(SystemExit):
+                driver.main(["run", "--campaign", str(self.path), "--runs", runs])
+
+
+if __name__ == "__main__":
+    unittest.main()

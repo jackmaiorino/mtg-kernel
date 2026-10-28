@@ -656,6 +656,51 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         with self.assertRaisesRegex(ValueError, "unknown schedule family"):
             dispatch.workload(block, "training", family="other")
 
+    def test_own_history_family_covers_fresh_start_and_growing_history(self):
+        import g_references_v1 as g
+        decks = str(Path(__file__).resolve().parents[3] / "data" / "runtime_decks_v1.json")
+        play = {"path": "C:/x/G1/play-import.json", "sha256": "1" * 64}
+
+        def block(run, number):
+            def fake(name):
+                return {"path": f"C:/x/{name}.json", "sha256": format(abs(hash(name)) % 16**64, "064x")}
+            return g.block_config({"run": run, "block": number, "runtime_decks": decks, "play_import": play,
+                                   "start_checkpoint": None if number == 1 else fake(f"{run}-{number - 1}"),
+                                   "history": {str(end): fake(f"{run}-{end}") for end in g.history_pool(number)},
+                                   "update_backend": {"kind": "cpu"}, "collection_workers": 8,
+                                   "preparation_workers": 8, "output_directory": "C:/x/out"})
+        family = "permuted-units-own-history-v1"
+        first, later, last = block("G1", 1), block("G1", 5), block("G1", 741)
+        keys = {dispatch.workload(config, "training", family=family) for config in (first, later, last, block("G3", 2))}
+        self.assertEqual(len(keys), 1)  # one qualification covers a fresh start, a small pool and 52 history ids
+        self.assertNotEqual(dispatch.workload(first, "training"), dispatch.workload(later, "training"))
+        changed = copy.deepcopy(later)
+        item = next(item for update in changed["iterations"] for item in update["episodes"]
+                    if item["opponent"]["kind"] != "current")
+        item["opponent"] = {"kind": "current"}
+        self.assertNotEqual(dispatch.workload(changed, "training", family=family),
+                            dispatch.workload(later, "training", family=family))
+        for key, value in (("learning_rate", .001), ("max_non_natural_episode_fraction", .1)):
+            changed = copy.deepcopy(later); changed[key] = value
+            self.assertNotEqual(dispatch.workload(changed, "training", family=family),
+                                dispatch.workload(later, "training", family=family))
+        other = copy.deepcopy(later)
+        other["initial_source"]["play_import"] = {"path": "C:/x/G2/play-import.json", "sha256": "2" * 64}
+        with self.assertRaisesRegex(ValueError, "share the start's import"):
+            dispatch.workload(other, "training", family=family)
+        for source in other["opponents"]:
+            source["source"]["play_import"] = other["initial_source"]["play_import"]
+        self.assertNotEqual(dispatch.workload(other, "training", family=family),
+                            dispatch.workload(later, "training", family=family))
+        foreign = copy.deepcopy(later)
+        foreign["opponents"][0]["source"]["feature_transfer"] = {"expected_feature_contract_digest": "x"}
+        with self.assertRaisesRegex(ValueError, "share the start's import"):
+            dispatch.workload(foreign, "training", family=family)
+        moved = copy.deepcopy(later)
+        moved["iterations"][0]["episodes"].append(moved["iterations"][1]["episodes"].pop())
+        self.assertNotEqual(dispatch.workload(moved, "training", family=family),
+                            dispatch.workload(later, "training", family=family))
+
     def test_non_natural_tolerance_must_be_declared(self):
         self.config["max_non_natural_episode_fraction"] = 0.2
         request = self.request(1)

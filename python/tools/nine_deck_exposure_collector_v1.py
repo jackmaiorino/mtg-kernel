@@ -93,23 +93,28 @@ def derived_retry_seed(episode_id: str, original_seed: int, retry_index: int) ->
     return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
 
 
-def parse_episode_id(episode_id: str, run: str, block: int) -> tuple[int, int, int, int]:
-    prefix = f"{ndb.PREFIX}-{run}-b{block:02d}-"
+def block_label(block: int, generator=ndb) -> str:
+    """``b`` and the block number, zero-padded to the generator's width (two for the baseline)."""
+    return f"b{block:0{getattr(generator, 'EPISODE_BLOCK_DIGITS', 2)}d}"
+
+
+def parse_episode_id(episode_id: str, run: str, block: int, generator=ndb) -> tuple[int, int, int, int]:
+    prefix = f"{generator.PREFIX}-{run}-{block_label(block, generator)}-"
     if not episode_id.startswith(prefix):
         raise ValueError(f"episode {episode_id} is not from {run} block {block}")
     parts = dict((field[0], int(field[1:])) for field in episode_id[len(prefix):].split("-"))
     return parts["o"], parts["t"], parts["j"], parts["s"]
 
 
-def retained_updates(run: str, block: int) -> list[int]:
+def retained_updates(run: str, block: int, generator=ndb) -> list[int]:
     """The seeded 2% sample of updates whose full trajectories are kept."""
     keys = sorted(range(ndb.UPDATES_PER_BLOCK), key=lambda index: hashlib.sha256(
-        ndb.key_bytes([f"{ndb.PREFIX}/retain", run, block, index])).hexdigest())
+        ndb.key_bytes([f"{generator.PREFIX}/retain", run, block, index])).hexdigest())
     return sorted(keys[:RETAIN_UPDATES_PER_BLOCK])
 
 
 def episode_row(trajectory: dict, pin: dict, scheduled: dict, ledgered: list[dict], run: str, block: int,
-                iteration: int, slot: int, opponent: dict) -> dict:
+                iteration: int, slot: int, opponent: dict, generator=ndb) -> dict:
     episode = trajectory["episode"]
     if episode["id"] != scheduled["id"]:
         raise ValueError(f"slot {iteration}/{slot} holds {episode['id']}, scheduled {scheduled['id']}")
@@ -122,7 +127,7 @@ def episode_row(trajectory: dict, pin: dict, scheduled: dict, ledgered: list[dic
         scheduled["id"], scheduled["seed"], retries)
     if episode["seed"] != expected_seed:
         raise ValueError(f"episode {episode['id']} seed does not reconcile with its retries")
-    own, other, repeat, seat = parse_episode_id(episode["id"], run, block)
+    own, other, repeat, seat = parse_episode_id(episode["id"], run, block, generator)
     learner = episode["learner_seat"]
     terminal = trajectory["terminal"]
     learner_rows = [row for row in trajectory["decisions"] if row["actor"] == learner]
@@ -149,12 +154,14 @@ def episode_row(trajectory: dict, pin: dict, scheduled: dict, ledgered: list[dic
 
 
 def collect(run: str, block: int, native: Path, decks_path: Path, out: Path,
-            exposure_inputs: dict | None = None) -> dict:
+            exposure_inputs: dict | None = None, generator=ndb) -> dict:
+    """``generator`` is the schedule's module: the baseline's, or a variant with its
+    own PREFIX, ``block_iterations`` and EPISODE_BLOCK_DIGITS (g_references_v1)."""
     native = Path(native)
     decks = ndb.load_decks(decks_path)
     manifest = json.loads((native / "run.json").read_bytes())
     config = manifest["config"]
-    expected = ndb.block_iterations(run, block, decks)
+    expected = generator.block_iterations(run, block, decks)
     schedule_matches = config["iterations"] == expected
     if not schedule_matches:
         raise ValueError("run schedule differs from the generator's block schedule")
@@ -169,7 +176,7 @@ def collect(run: str, block: int, native: Path, decks_path: Path, out: Path,
         if cached["schema"] != INPUT_SCHEMA or len(cached["iterations"]) != len(completion["iterations"]):
             raise ValueError("exposure projection coverage differs")
         projections = cached["iterations"]
-    keep = set(retained_updates(run, block))
+    keep = set(retained_updates(run, block, generator))
     rows, ledger_rows, updates = [], [], []
     for iteration, item in enumerate(completion["iterations"]):
         complete = read_json_pinned(item)
@@ -197,14 +204,14 @@ def collect(run: str, block: int, native: Path, decks_path: Path, out: Path,
             trajectory = (read_json_pinned(pin) if projections is None else
                           read_projected_trajectory(pin, projections[iteration][slot]))
             row = episode_row(trajectory, pin, scheduled[slot]["episode"], entries, run, block, iteration, slot,
-                              scheduled[slot]["opponent"])
+                              scheduled[slot]["opponent"], generator)
             if row["terminal_classification"] != "natural":
                 raise ValueError(f"kept trajectory {row['trajectory_sha256']} is not natural")
             substeps += row["learner_policy_substeps"]
             row["retained_trajectory"] = iteration in keep
             rows.append(row)
             for entry in entries:
-                own, other, repeat, seat = parse_episode_id(entry["episode_id"], run, block)
+                own, other, repeat, seat = parse_episode_id(entry["episode_id"], run, block, generator)
                 ledger_rows.append({"iteration": iteration, "slot": slot, "attempt": entry["attempt"],
                                     "learner_deck": own, "opponent_deck": other, "seed": entry["seed"],
                                     "terminal_classification": entry["terminal_classification"],
@@ -222,7 +229,7 @@ def collect(run: str, block: int, native: Path, decks_path: Path, out: Path,
     checks["finite_losses"] = {"pass": not nonfinite, "fields": list(FINITE_FIELDS), "nonfinite_iterations": nonfinite}
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    rows_path = out / f"{run}-b{block:02d}-episodes.jsonl"
+    rows_path = out / f"{run}-{block_label(block, generator)}-episodes.jsonl"
     data = "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows).encode()
     with rows_path.open("xb") as stream:
         stream.write(data)
@@ -233,7 +240,7 @@ def collect(run: str, block: int, native: Path, decks_path: Path, out: Path,
                "ledger": ledger_rows, "updates": updates, "retained_updates": sorted(keep),
                "final_checkpoint_sha256": final["checkpoint_sha256"], "final_adam_step": final["adam_step"],
                "checks": checks, "verdict": "pass" if all(c["pass"] for c in checks.values()) else "fail"}
-    summary_path = out / f"{run}-b{block:02d}-exposure.json"
+    summary_path = out / f"{run}-{block_label(block, generator)}-exposure.json"
     with summary_path.open("x", encoding="utf-8") as stream:
         json.dump(summary, stream, sort_keys=True, indent=1)
     return summary
