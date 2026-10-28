@@ -182,7 +182,9 @@ def scratch(campaign: driver.Campaign, name: str, stop_after: int, out: Path) ->
     path = base / "campaign.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(raw, indent=1), encoding="utf-8")
-    return driver.Campaign(path)
+    copy_ = driver.Campaign(path)
+    copy_.lease = campaign.lease  # on a pod, scratch blocks keep the guard's progress record advancing too
+    return copy_
 
 
 def seeded_state(source: driver.Campaign, run: str, blocks: dict[int, int]) -> dict:
@@ -398,8 +400,37 @@ def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120
                  "repeat_g1": read(root / "REPEAT-G1.json"),
                  "choice": read(campaign.raw["choice_pins"]) if campaign.raw.get("choice_pins") else None,
                  "nonnatural_blocks_1_2": nonnatural(campaign),
+                 "item7": runtime_record(campaign, root),
                  "events": events}
     return write_json(out, value_out)
+
+
+def runtime_record(campaign: driver.Campaign, root: Path) -> dict:
+    """Item 7 (AMENDMENT-1.md): every block config this qualification dispatched, its hash, and that all of its
+    1,620 episodes carry the profile; plus the driver's refusal of a config with one episode stripped."""
+    configs = sorted({path for path in [campaign.state / "configs", *(root / "scratch").glob("*/state/configs")]
+                      if path.is_dir()})
+    rows = []
+    for folder in configs:
+        for path in sorted(folder.glob("*.json")):
+            config = read(path)
+            try:
+                count, ok = g.require_runtime_rules(config), True
+            except ValueError:
+                count, ok = None, False
+            rows.append({"config": pin(path), "episodes": count, "profile_on_every_episode": ok})
+    probe = read(rows[0]["config"]["path"]) if rows else None
+    refused = None
+    if probe is not None:
+        probe["iterations"][0]["episodes"][0]["episode"].pop("runtime_rules", None)
+        try:
+            g.require_runtime_rules(probe)
+            refused = False
+        except ValueError:
+            refused = True
+    return {"runtime_rules": g.RUNTIME_RULES, "configs": rows,
+            "pass": bool(rows) and all(row["profile_on_every_episode"] for row in rows) and refused is True,
+            "refusal_of_a_stripped_episode": refused}
 
 
 def nonnatural(campaign: driver.Campaign) -> dict:

@@ -4,7 +4,7 @@ Tooling for eight self-play lineages, G1 to G8, each trained from its own fresh 
 
 | File | Role |
 |---|---|
-| `python/tools/g_references_v1.py` | Block configs: the nine-deck baseline with three fields changed (fresh start, own-history `fixed` slot, `g-references-v1/*` namespaces); fresh-initialization requests, descriptors and the distinct-starts check |
+| `python/tools/g_references_v1.py` | Block configs: the nine-deck baseline with four fields changed (fresh start, own-history `fixed` slot, `g-references-v1/*` namespaces, runtime profile); fresh-initialization requests, descriptors and the distinct-starts check |
 | `python/tools/g_references_namespaces_v1.py` | The study's namespaces against every registered one (code only) |
 | `python/tools/g_references_campaign_v1.py` | Campaign driver (Windows or a Linux pod): chained 162-update blocks through the supported launcher, own history, stop block, checkpoint retirement, dose records |
 | `python/tools/g_references_qualify_v1.py` | Qualification on one host: launcher trials and pack, the choice, blocks 1 and 2 alone and eight at once, the interrupted-block receipt, the synthetic history block, bytes |
@@ -16,6 +16,7 @@ Everything not listed is `nine_deck_baseline_v1.py`'s own code: units, opponent 
 
 - **Start.** Block 1's `initial_source` is the lineage's fresh-initialization descriptor (`play_import`) with `checkpoint: null`; block b starts from block b-1's checkpoint.
 - **History.** The pool for block b is the lineage's permanent block ends at or below b-2: 1, 2, 4, 8, every 16th block, and the doses 247, 494 and 741. A unit with repeat 8 or 9 plays pool index `u mod n`, where u is the first 8 bytes (little-endian) of SHA256 of `["g-references-v1/history", run, block, o, t, j]` in compact JSON. An empty pool (blocks 1 and 2) plays `initial`. Block 741 lists 52 history opponents; the engine's 32-opponent cap applies per 10-episode preparation.
+- **Runtime rules** (the collab lane's AMENDMENT-1.md). Every one of a block's 1,620 episodes carries `runtime_rules: "resolution-boundary-v1"`; the baseline sets none. The trainer leaves the profile out of state hashes, so the block config is the record. The driver refuses a config with any episode outside the profile and pins every config it dispatches. No mainboard contains a Delve card, which the profile refuses.
 - **Seeds.** `g-references-v1/order`, `/train` and `/history` per unit; `/init` gives each lineage's `base_seed`; `/panel/mirror` and `/panel/cross` belong to the evaluator.
 
 ## Launcher family

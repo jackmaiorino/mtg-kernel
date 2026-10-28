@@ -1,8 +1,8 @@
 """Explicit schedules for the G(i) fresh-init reference lineages (v1).
 
 The nine-deck baseline recipe (nine_deck_baseline_v1.py, its design v3) with
-exactly three fields changed (collab LANES/g-references-20261028/DESIGN.md
-v1.2, section 3):
+exactly four fields changed (collab LANES/g-references-20261028/DESIGN.md
+v1.2, section 3, and AMENDMENT-1.md v1.2):
 
 * Start: each lineage G1..G8 starts from its own fresh initialization
   (``mtg-kernel-fresh-initialization-source/v1`` as ``play_import``, no
@@ -17,6 +17,11 @@ v1.2, section 3):
 * Seed namespaces ``g-references-v1/order``, ``/train`` and ``/history`` with
   run labels G1..G8 (``/panel`` belongs to the evaluator; ``/init`` derives
   each lineage's ``base_seed``).
+* Runtime rules: every episode carries ``runtime_rules:
+  "resolution-boundary-v1"`` (the baseline sets none: the historical
+  runtime). The trainer excludes the profile from state hashes, so the
+  per-episode field in the block config is the record; ``require_runtime_rules``
+  is the drivers' refusal.
 
 Everything else (units, kinds by j, starting player, SHA-sorted order packed
 five per update, 162 updates a block, frozen method fields, episode limits,
@@ -49,6 +54,7 @@ DOSES = {"D_a": 247, "D_b": 494, "D_c": 741}
 BLOCKS = DOSES["D_c"]
 STOP_RULE_BLOCK = DOSES["D_b"]  # every lineage stops here until D_b's panels are read
 EPISODE_BLOCK_DIGITS = 3  # episode ids name the block as b001..b741
+RUNTIME_RULES = "resolution-boundary-v1"  # amendment 1; refused by the engine for a game with a Delve card
 NAMESPACES = tuple(f"{PREFIX}/{name}" for name in ("order", "train", "history", "panel", "init"))
 FRESH_SOURCE_SCHEMA = "mtg-kernel-fresh-initialization-source/v1"
 INIT_REQUEST_SCHEMA = "mtg-kernel-fresh-initialization-request/v1"
@@ -126,8 +132,10 @@ def block_units(run: str, block: int) -> list[list[tuple[int, int, int]]]:
     return [units[index:index + ndb.UNITS_PER_UPDATE] for index in range(0, len(units), ndb.UNITS_PER_UPDATE)]
 
 
-def unit_episodes(run: str, block: int, unit: tuple[int, int, int], decks: list[dict]) -> list[dict]:
-    """The unit's two scheduled episodes: learner in seat 0, then seat 1 (the baseline's episode fields)."""
+def unit_episodes(run: str, block: int, unit: tuple[int, int, int], decks: list[dict],
+                  runtime_rules: str | None = RUNTIME_RULES) -> list[dict]:
+    """The unit's two scheduled episodes: learner in seat 0, then seat 1 (the baseline's episode fields, plus
+    the runtime profile unless ``runtime_rules`` is None, which only tests use to compare with the baseline)."""
     own, other, repeat = unit
     seed = unit_seed(run, block, own, other, repeat)
     opponent = unit_opponent(run, block, unit)
@@ -145,15 +153,33 @@ def unit_episodes(run: str, block: int, unit: tuple[int, int, int], decks: list[
                 "postboard": False,
                 "max_physical_decisions": ndb.MAX_PHYSICAL_DECISIONS,
                 "max_policy_steps": ndb.MAX_POLICY_STEPS,
+                **({} if runtime_rules is None else {"runtime_rules": runtime_rules}),
             },
             "opponent": dict(opponent),
         })
     return episodes
 
 
-def block_iterations(run: str, block: int, decks: list[dict]) -> list[dict]:
-    return [{"episodes": [episode for unit in update for episode in unit_episodes(run, block, unit, decks)]}
+def block_iterations(run: str, block: int, decks: list[dict], runtime_rules: str | None = RUNTIME_RULES) -> list[dict]:
+    return [{"episodes": [episode for unit in update for episode in unit_episodes(run, block, unit, decks, runtime_rules)]}
             for update in block_units(run, block)]
+
+
+def require_runtime_rules(config: dict) -> int:
+    """The drivers' refusal (amendment 1): every episode of a block config carries the runtime profile."""
+    episodes = [item["episode"] for update in config["iterations"] for item in update["episodes"]]
+    missing = sum(1 for episode in episodes if episode.get("runtime_rules") != RUNTIME_RULES)
+    if missing or len(episodes) != ndb.UPDATES_PER_BLOCK * 10:
+        raise ValueError(f"block config refused: {missing} of {len(episodes)} episodes lack runtime_rules "
+                         f"{RUNTIME_RULES!r}")
+    return len(episodes)
+
+
+def delve_cards(decks: list[dict], registry: Path) -> list[str]:
+    """Cards with the Delve mechanic in the mainboards (the engine refuses the profile for such a game)."""
+    cards = json.loads(Path(registry).read_bytes())["cards"]
+    used = {card for deck in decks for card in deck["mainboard"]}
+    return sorted(cards[index]["name"] for index in used if "delve" in cards[index].get("mechanics", []))
 
 
 def fresh_source(play_import: dict) -> dict:
@@ -173,7 +199,7 @@ def block_config(spec: dict) -> dict:
     source descriptor pin), start_checkpoint (block b-1's final checkpoint pin,
     absent for block 1), history ({block end: checkpoint pin} holding exactly
     the pool), update_backend, collection_workers, preparation_workers,
-    output_directory.
+    output_directory; ``runtime_rules`` (default the amendment's profile; None only in tests).
     """
     run, block = spec["run"], spec["block"]
     check_unit(run, block, 0, 0, 0)
@@ -186,12 +212,13 @@ def block_config(spec: dict) -> dict:
     if sorted(history) != pool:
         raise ValueError(f"history checkpoints {sorted(history)} differ from block {block}'s pool {pool}")
     decks = ndb.load_decks(Path(spec["runtime_decks"]))
+    runtime_rules = spec.get("runtime_rules", RUNTIME_RULES)
     config = {
         "schema": ndb.SCHEMA,
         "initial_source": fresh_source(play_import) if start is None else continued_source(play_import, start),
         "opponents": [{"id": history_id(run, end), "source": continued_source(play_import, history[end])}
                       for end in pool],
-        "iterations": block_iterations(run, block, decks),
+        "iterations": block_iterations(run, block, decks, runtime_rules),
         **json.loads(json.dumps(ndb.FROZEN)),
         "update_backend": spec["update_backend"],
         "collection_workers": spec["collection_workers"],

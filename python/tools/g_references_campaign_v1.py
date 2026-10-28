@@ -14,6 +14,9 @@ sections 3, 4 and 6, and FROZEN.md):
 * Blocks run up to ``stop_after_block`` (the D_b pause, 494, unless an
   amendment continues to 741). At a dose block the driver writes
   ``doses/<run>-b<block:04d>.json`` for the evaluator.
+* Every block config is refused unless all 1,620 episodes carry
+  ``runtime_rules: "resolution-boundary-v1"`` (AMENDMENT-1.md); each attempt
+  records its config pin, which the run manifest pins.
 * Failure: an interrupted block reruns from its starting checkpoint, up to
   three attempts; a block classified ``invalid`` (the baseline driver's
   INVALIDITY_MARKERS and classify_failure) or one with non-finite losses ends
@@ -235,13 +238,14 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         native, root = campaign.native(run) / run / f"{label(block)}-a{attempt}" / "native", folder / "dispatch"
         cold = campaign.cold / run / f"{label(block)}-a{attempt}"
         config = g.block_config(block_spec(campaign, run, block, state, native))
+        g.require_runtime_rules(config)  # amendment 1: refuse a block with any episode outside the profile
         config_path = campaign.state / "configs" / f"{run}-{label(block)}-a{attempt}.json"
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
         request_pin = write_json(campaign.state / "requests" / f"{run}-{label(block)}-a{attempt}.json",
                                  request_for(campaign, run, pin(config_path), root, cold, estimate))
         record = {"attempt": attempt, "root": str(root), "native": str(native), "cold": str(cold),
-                  "request": request_pin, "started": now()}
+                  "config": pin(config_path), "request": request_pin, "started": now()}
         entry["attempts"].append(record)
         campaign.save_state(run, state)
         campaign.event(run=run, block=block, attempt=attempt, kind="dispatch")

@@ -85,9 +85,10 @@ class HistoryPoolTests(unittest.TestCase):
 
 
 class RecipeTests(unittest.TestCase):
-    """Only the three section-3 fields differ from the baseline: start, the fixed slot, the namespaces."""
+    """Only the four fields differ from the baseline: start, the fixed slot, the namespaces (DESIGN section 3)
+    and the runtime profile (AMENDMENT-1.md)."""
 
-    def test_only_the_three_fields_differ(self):
+    def test_only_the_four_fields_differ(self):
         with tempfile.TemporaryDirectory() as temp:
             for block in (1, 2, 3, 17, 741):
                 ours, theirs = block_config(g_spec("G1", block, temp)), baseline(min(block, ndb.BLOCKS), temp)
@@ -95,8 +96,20 @@ class RecipeTests(unittest.TestCase):
                 changed = ("initial_source", "opponents", "iterations")
                 self.assertEqual({k: v for k, v in ours.items() if k not in changed},
                                  {k: v for k, v in theirs.items() if k not in changed})
-                # The scheduled episodes, as a multiset without id and seed, and the update sizes are the baseline's.
-                self.assertEqual(scheduled(ours), scheduled(theirs))
+                # Every one of the 1,620 episodes carries the profile; the baseline's carry none.
+                episodes = [item["episode"] for u in ours["iterations"] for item in u["episodes"]]
+                self.assertEqual(len(episodes), 1620)
+                self.assertTrue(all(e["runtime_rules"] == "resolution-boundary-v1" for e in episodes))
+                self.assertFalse(any("runtime_rules" in item["episode"]
+                                     for u in theirs["iterations"] for item in u["episodes"]))
+                self.assertEqual(g.require_runtime_rules(ours), 1620)
+                # Without the profile (tests only), the scheduled episodes as a multiset without id and seed,
+                # and the update sizes, are the baseline's.
+                plain = block_config({**g_spec("G1", block, temp), "runtime_rules": None})
+                self.assertEqual(scheduled(plain), scheduled(theirs))
+                self.assertNotEqual(scheduled(ours), scheduled(theirs))
+                with self.assertRaises(ValueError):
+                    g.require_runtime_rules(plain)
                 self.assertEqual([len(u["episodes"]) for u in ours["iterations"]],
                                  [len(u["episodes"]) for u in theirs["iterations"]])
                 # Opponent kinds by j are the baseline's, except fixed (j 8, 9): own history, or initial when empty.
@@ -111,6 +124,17 @@ class RecipeTests(unittest.TestCase):
                         else:
                             self.assertEqual(item["opponent"]["kind"], "fixed")
                             self.assertRegex(item["opponent"]["id"], r"^G1-history-b\d{3}$")
+
+    def test_refusal_catches_one_missing_episode_and_no_deck_has_delve(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = block_config(g_spec("G2", 9, temp))
+        config["iterations"][80]["episodes"][3]["episode"].pop("runtime_rules")
+        with self.assertRaisesRegex(ValueError, "1 of 1620"):
+            g.require_runtime_rules(config)
+        config["iterations"][80]["episodes"][3]["episode"]["runtime_rules"] = "other"
+        with self.assertRaises(ValueError):
+            g.require_runtime_rules(config)
+        self.assertEqual(g.delve_cards(ndb.load_decks(DECKS), REPO / "data" / "cards_v1.json"), [])
 
     def test_frozen_fields_are_the_baselines(self):
         with tempfile.TemporaryDirectory() as temp:

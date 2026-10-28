@@ -61,9 +61,9 @@ class D1Namespaces(unittest.TestCase):
                     self.assertFalse(fresh & {pilot.panel_seed(*key, other) for key in KEYS}, (ns, other))
 
     def test_earlier_namespaces_are_kept_in_order(self):
-        self.assertEqual(pilot.PANEL_NAMESPACES[-6:-3],
+        self.assertEqual(pilot.PANEL_NAMESPACES[7:10],
                          (pilot.OH2_PANEL_NS_A, pilot.OH2_PANEL_NS_B, pilot.OH2_SCREEN_NS))
-        self.assertEqual(pilot.PANEL_NAMESPACES[-3:], D1)
+        self.assertEqual(pilot.PANEL_NAMESPACES[10:13], D1)
         self.assertEqual(len(set(pilot.PANEL_NAMESPACES)), len(pilot.PANEL_NAMESPACES))
 
     def test_an_unregistered_namespace_is_refused(self):
