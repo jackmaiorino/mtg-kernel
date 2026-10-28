@@ -1698,28 +1698,30 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     if !hit {
                         verification(|| {
                             let input = restore_world(original, prefix)?;
-                            let replay = {
-                                #[cfg(test)]
-                                let _timing = crate::rl_session::test_timing_v1::span(
-                                    crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
-                                );
-                                crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
-                                    &input,
-                                    operation,
-                                    answers,
-                                    *used_banner,
-                                )?
-                            };
-                            if replay.engine.event_history.get(*start as usize..)
-                                != state
-                                    .engine
-                                    .event_history
-                                    .get(*start as usize..row.index as usize)
-                                || world(&replay)? != **output
-                            {
-                                return Err("Drake complete enclosing original operation/history replay differs".into());
-                            }
-                            Ok(())
+                            crate::linked_aura_operation_v1::as_recorded(|| {
+                                let replay = {
+                                    #[cfg(test)]
+                                    let _timing = crate::rl_session::test_timing_v1::span(
+                                        crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
+                                    );
+                                    crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
+                                        &input,
+                                        operation,
+                                        answers,
+                                        *used_banner,
+                                    )?
+                                };
+                                if replay.engine.event_history.get(*start as usize..)
+                                    != state
+                                        .engine
+                                        .event_history
+                                        .get(*start as usize..row.index as usize)
+                                    || world(&replay)? != **output
+                                {
+                                    return Err("Drake complete enclosing original operation/history replay differs".into());
+                                }
+                                Ok(())
+                            })
                         })?;
                         if let Some(key) = key {
                             verified_keys.push(*key);

@@ -1070,3 +1070,84 @@ fn actual_printed_cast_and_etb_meaning_public_binding_both_seats() {
         assert_eq!(state.objects.get(target).zone, Zone::Exile);
     }
 }
+
+fn started_digest(state: &GameState) -> String {
+    state
+        .engine
+        .event_history
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            CommittedEvent::BanishingAuraOperationStartedV1 {
+                original_sha256, ..
+            } => Some(original_sha256.clone()),
+            _ => None,
+        })
+        .expect("linked Aura operation started")
+}
+
+/// A checkpoint recorded before origin digest v2 (#375) carries a v1 digest
+/// and still validates, restores and completes; a new one records v2.
+#[test]
+fn origin_digest_v1_checkpoint_still_validates_and_completes() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for v1 in [true, false] {
+            let (mut state, source, aura, host) = linked_aura(actor);
+            let depart = |state: &mut GameState| {
+                event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Hand))
+            };
+            if v1 {
+                crate::linked_aura_operation_v1::with_origin_v1_for_test(|| depart(&mut state));
+            } else {
+                depart(&mut state);
+            }
+            let digest = started_digest(&state);
+            assert_eq!(digest.starts_with("v2:"), !v1, "{digest}");
+            assert!(crate::linked_aura_operation_v1::origin_digest_well_formed(
+                &digest
+            ));
+            assert_owner_choice(&mut state, actor.opponent(), aura, host);
+            let mut restored = replay(&state);
+            validate_state(&restored).unwrap();
+            for branch in [&mut state, &mut restored] {
+                engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+                assert_eq!(branch.objects.get(aura).zone, Zone::Battlefield);
+                validate_state(branch).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+}
+
+/// The v2 origin digest is a function of the state alone: a warm history
+/// chain, a cold one after a restore, and one extended by appends agree, and
+/// any history change moves it.
+#[test]
+fn origin_digest_v2_ignores_the_chain_cache_and_binds_the_history() {
+    use crate::linked_aura_operation_v1::origin_digests_for_test as digests;
+    let (state, ..) = linked_aura(PlayerId::P0);
+    let (v1, warm) = digests(&state);
+    assert_eq!(digests(&state), (v1.clone(), warm.clone()));
+    assert_eq!(digests(&replay(&state)), (v1, warm.clone()));
+    let mut appended = state.clone();
+    let last = appended.engine.event_history.last().unwrap().clone();
+    appended.engine.event_history.push(last);
+    let extended = digests(&appended).1;
+    assert_ne!(extended, warm);
+    assert_eq!(digests(&replay(&appended)).1, extended);
+    appended.engine.event_history.pop();
+    assert_eq!(digests(&appended).1, warm);
+    let mut edited = state.clone();
+    let first = edited.engine.event_history[1].clone();
+    edited.engine.event_history[0] = first;
+    let edited_digest = digests(&edited).1;
+    assert_ne!(edited_digest, warm);
+    assert_eq!(digests(&replay(&edited)).1, edited_digest);
+    // Only the state's own history is omitted from the state bytes.
+    let mut moved = state.clone();
+    moved.turn += 1;
+    assert_ne!(digests(&moved).1, warm);
+}

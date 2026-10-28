@@ -13,12 +13,19 @@
 //! which marks the counts stale: while they are stale `has_any` answers
 //! true, so every scan runs as before, and the next counting method
 //! recounts.
+//!
+//! It also keeps the hash chain behind the linked Aura origin digest v2
+//! ([`EventHistoryV1::chain_digest_v2`]) for its longest unchanged prefix,
+//! so a digest hashes only the events appended since the previous one.
 
 use crate::event::CommittedEvent;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
+use std::sync::Mutex;
 
 /// One value per `CommittedEvent` variant, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -760,6 +767,54 @@ impl CommittedEvent {
     }
 }
 
+/// The v2 hash chain over a prefix of the events: the prefix length and the
+/// SHA-256 state after it. Only an acceleration: the chain is a function of
+/// the events, so it never enters a comparison, hash, print or record.
+#[derive(Default)]
+struct ChainV2(Mutex<Option<(usize, Sha256)>>);
+
+impl ChainV2 {
+    fn get(&self) -> Option<(usize, Sha256)> {
+        self.0.lock().ok().and_then(|chain| chain.clone())
+    }
+
+    fn set(&self, chain: (usize, Sha256)) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(chain);
+        }
+    }
+
+    /// Drops the chain unless it covers at most the first `len` events.
+    fn keep(&mut self, len: usize) {
+        let slot = self
+            .0
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if slot.as_ref().is_some_and(|(covered, _)| *covered > len) {
+            *slot = None;
+        }
+    }
+
+    fn forget(&mut self) {
+        *self
+            .0
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
+    }
+}
+
+impl Clone for ChainV2 {
+    fn clone(&self) -> Self {
+        Self(Mutex::new(self.get()))
+    }
+}
+
+thread_local! {
+    /// The address of the one history that serializes as `[]`, while the v2
+    /// origin digest writes the rest of its state.
+    static OMITTED_V2: Cell<usize> = const { Cell::new(0) };
+}
+
 /// `EngineState::event_history`: the events in commit order and the number
 /// of events of each kind.
 #[derive(Clone)]
@@ -768,6 +823,7 @@ pub struct EventHistoryV1 {
     counts: [u32; EVENT_KIND_COUNT_V1],
     /// Set by a mutable access outside the counting methods.
     stale: bool,
+    chain: ChainV2,
 }
 
 impl EventHistoryV1 {
@@ -776,6 +832,7 @@ impl EventHistoryV1 {
             events: Vec::new(),
             counts: [0; EVENT_KIND_COUNT_V1],
             stale: false,
+            chain: ChainV2::default(),
         }
     }
 
@@ -817,6 +874,7 @@ impl EventHistoryV1 {
         #[cfg(any(test, feature = "event-sample-harvest-v1"))]
         sample_harvest_v1::note(&event);
         self.settle();
+        self.chain.keep(index);
         let kind = event.kind_v1();
         self.events.insert(index, event);
         self.counts[kind as usize] += 1;
@@ -824,6 +882,7 @@ impl EventHistoryV1 {
 
     pub fn remove(&mut self, index: usize) -> CommittedEvent {
         self.settle();
+        self.chain.keep(index);
         let event = self.events.remove(index);
         self.counts[event.kind_v1() as usize] -= 1;
         event
@@ -832,12 +891,14 @@ impl EventHistoryV1 {
     pub fn pop(&mut self) -> Option<CommittedEvent> {
         self.settle();
         let event = self.events.pop()?;
+        self.chain.keep(self.events.len());
         self.counts[event.kind_v1() as usize] -= 1;
         Some(event)
     }
 
     pub fn retain(&mut self, mut keep: impl FnMut(&CommittedEvent) -> bool) {
         self.settle();
+        self.chain.forget();
         let Self { events, counts, .. } = self;
         events.retain(|event| {
             let kept = keep(event);
@@ -850,6 +911,7 @@ impl EventHistoryV1 {
 
     pub fn truncate(&mut self, len: usize) {
         self.settle();
+        self.chain.keep(len);
         for event in self.events.get(len..).unwrap_or_default() {
             self.counts[event.kind_v1() as usize] -= 1;
         }
@@ -860,6 +922,46 @@ impl EventHistoryV1 {
         self.events.clear();
         self.counts = [0; EVENT_KIND_COUNT_V1];
         self.stale = false;
+        self.chain.forget();
+    }
+
+    /// The v2 hash chain over every event: SHA-256 of a domain tag, then of
+    /// each event's canonical JSON length (u64, little-endian) and bytes, in
+    /// order. Hashes only the events past the longest prefix chained before.
+    pub(crate) fn chain_digest_v2(&self) -> [u8; 32] {
+        let (covered, mut chain) = self
+            .chain
+            .get()
+            .filter(|(covered, _)| *covered <= self.events.len())
+            .unwrap_or_else(|| {
+                let mut chain = Sha256::new();
+                chain.update(b"mtg-kernel/event-history-chain/v2");
+                (0, chain)
+            });
+        for event in &self.events[covered..] {
+            let bytes = serde_json::to_vec(event).expect("committed events serialize");
+            chain.update(
+                u64::try_from(bytes.len())
+                    .expect("event length")
+                    .to_le_bytes(),
+            );
+            chain.update(&bytes);
+        }
+        self.chain.set((self.events.len(), chain.clone()));
+        chain.finalize().into()
+    }
+
+    /// Runs `write` with this history (and no other) serializing as `[]`.
+    pub(crate) fn omitted_v2<T>(&self, write: impl FnOnce() -> T) -> T {
+        struct Restore(usize);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                OMITTED_V2.with(|omitted| omitted.set(self.0));
+            }
+        }
+        let _restore =
+            Restore(OMITTED_V2.with(|omitted| omitted.replace(self as *const Self as usize)));
+        write()
     }
 
     fn settle(&mut self) {
@@ -887,6 +989,7 @@ impl From<Vec<CommittedEvent>> for EventHistoryV1 {
             events,
             counts: [0; EVENT_KIND_COUNT_V1],
             stale: true,
+            chain: ChainV2::default(),
         };
         history.settle();
         history
@@ -909,10 +1012,12 @@ impl Deref for EventHistoryV1 {
     }
 }
 
-/// Any change outside the counting methods marks the counts stale.
+/// Any change outside the counting methods marks the counts stale and drops
+/// the v2 chain.
 impl DerefMut for EventHistoryV1 {
     fn deref_mut(&mut self) -> &mut Vec<CommittedEvent> {
         self.stale = true;
+        self.chain.forget();
         &mut self.events
     }
 }
@@ -983,6 +1088,9 @@ impl fmt::Debug for EventHistoryV1 {
 
 impl Serialize for EventHistoryV1 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if OMITTED_V2.with(Cell::get) == self as *const Self as usize {
+            return serializer.collect_seq(std::iter::empty::<&CommittedEvent>());
+        }
         self.events.serialize(serializer)
     }
 }

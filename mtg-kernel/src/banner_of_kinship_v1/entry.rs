@@ -387,9 +387,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             JournalV1::Started {
                 original_sha256, ..
             } => {
-                if original_sha256.len() != 64
-                    || !original_sha256.bytes().all(|c| c.is_ascii_hexdigit())
-                {
+                if !crate::linked_aura_operation_v1::origin_digest_well_formed(original_sha256) {
                     return Err("Kinship original input digest malformed".into());
                 }
                 let closed=state.engine.event_history.iter().enumerate().filter(|(_,e)|matches!(e,CommittedEvent::KinshipEntryV1{journal} if matches!(journal.as_ref(),JournalV1::Completed{operation,..} if *operation as usize==at))).collect::<Vec<_>>();

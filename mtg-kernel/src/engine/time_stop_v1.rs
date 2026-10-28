@@ -320,9 +320,10 @@ pub(crate) fn validate_enclosing_input(
         return Err("end-turn enclosing input history moved forward".into());
     }
     original.engine.event_history.truncate(original_history_len);
-    if crate::linked_aura_operation_v1::original_sha256_for_end_turn_v1(&original)
-        != original_sha256
-    {
+    if !crate::linked_aura_operation_v1::origin_digest_matches_for_end_turn_v1(
+        original_sha256,
+        &original,
+    ) {
         return Err("end-turn enclosing original world/stack/history changed".into());
     }
     Ok(())
