@@ -182,7 +182,14 @@ pub(crate) fn self_counter_boost(state: &GameState, id: ObjectId) -> (i32, i32) 
 pub(crate) fn reads_counter_lki(card_def: u16) -> bool {
     matches!(
         CARD_DEFS.get(card_def as usize).map(|def| def.name),
-        Some("Quirion Beastcaller" | "Unstoppable Slasher" | "Essence Channeler")
+        Some(
+            "Quirion Beastcaller"
+                | "Unstoppable Slasher"
+                | "Essence Channeler"
+                // Eternal catalog: Blast Zone reads its charge counters
+                // after it is sacrificed.
+                | "Blast Zone"
+        )
     )
 }
 

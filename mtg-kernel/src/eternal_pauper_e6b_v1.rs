@@ -726,7 +726,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         RAFFINES_INFORMANT => &RAFFINES_INFORMANT_TRIGGERS,
         RAGGED_SHORT_SPEAR => &RAGGED_SHORT_SPEAR_TRIGGERS,
         GREATSWORD_OF_TYR => &GREATSWORD_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_legacy_e7a_v1::triggers_for(name),
     }
 }
 
@@ -744,6 +744,10 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to E7a's cards, so they answer first.
+    if let Some(spec) = crate::eternal_legacy_e7a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }
@@ -767,6 +771,9 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
 
 /// Queued triggers and mode branches owned by this module's cards.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    if crate::eternal_legacy_e7a_v1::delayed_effect_matches(name, effect) {
+        return true;
+    }
     if name == DAWNBRINGER_CLERIC {
         return dawnbringer_modes()
             .iter()

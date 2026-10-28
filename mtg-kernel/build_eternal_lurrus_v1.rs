@@ -271,7 +271,7 @@ pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
 pub(super) fn ward_cost_for(name: &str) -> &'static str {
     match name {
         "Hexing Squelcher" => "Some(WardCostDef::PayLife(2))",
-        _ => "None",
+        _ => super::build_eternal_e7a_v1::ward_cost_for(name),
     }
 }
 

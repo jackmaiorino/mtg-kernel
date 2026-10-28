@@ -17,7 +17,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 57] = [
+const PLAYABLE: [(&str, &str); 64] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -86,6 +86,13 @@ const PLAYABLE: [(&str, &str); 57] = [
     ("legacy", "legacy-mystic-forge-combo"),
     ("legacy", "legacy-eldrazi"),
     ("legacy", "legacy-tron"),
+    ("legacy", "legacy-sewer-cam-combo"),
+    ("legacy", "legacy-rakdos-reanimator"),
+    ("legacy", "legacy-the-epic-storm"),
+    ("legacy", "legacy-stiflenought"),
+    ("legacy", "legacy-mardu-energy"),
+    ("legacy", "legacy-affinity-stompy"),
+    ("legacy", "legacy-lands"),
     ("vintage", "vintage-jewel-shops"),
     ("vintage", "vintage-mono-white-initiative"),
     ("vintage", "vintage-esper-lurrus-control"),
@@ -321,6 +328,19 @@ fn targets_ward_permanent(action: &Value) -> bool {
             .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
 }
 
+/// Whether this action chooses as a target an object whose controller
+/// controls a Hexing Squelcher, which grants its other creatures "Ward--Pay 2
+/// life" (policy observation v5 does not represent it).
+fn targets_life_warded_object(action: &Value, decision: &Value) -> bool {
+    let target = &action["semantic"]["target"];
+    target["target_kind"] == "object"
+        && controls_named(
+            decision,
+            &target["object"]["controller"],
+            "Hexing Squelcher",
+        )
+}
+
 /// Whether any public stack item's targets include a Ward permanent.
 fn public_targets_ward_permanent(value: &Value) -> bool {
     match value {
@@ -457,7 +477,7 @@ last actions:
             .iter()
             .copied()
             .filter(|action| {
-                if targets_ward_permanent(action) {
+                if targets_ward_permanent(action) || targets_life_warded_object(action, decision) {
                     return false;
                 }
                 let starts_new = matches!(

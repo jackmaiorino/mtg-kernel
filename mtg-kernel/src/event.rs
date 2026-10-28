@@ -1803,6 +1803,14 @@ pub fn apply_replacements(
             }
         }
     }
+    // Grafdigger's Cage: "Creature cards in graveyards and libraries can't
+    // enter the battlefield."
+    #[cfg(feature = "eternal-fixtures")]
+    if let ProposedEvent::ZoneChange(change) = &proposed {
+        if crate::eternal_legacy_e7a_v1::prevents_zone_change(state, change) {
+            return None;
+        }
+    }
     if let ProposedEvent::ZoneChange(change) = &mut proposed {
         if change.to_zone == Zone::Graveyard
             && state.objects.try_get(change.object).is_some_and(|o| {
@@ -3149,7 +3157,8 @@ fn commit_with_entry_batch_and_source_color(
             crate::standard_cards_v1::before_departure(state, z.object);
             if from == Zone::Battlefield
                 && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
-                    || crate::eternal_vintage_v1::active_copy(state, z.object))
+                    || crate::eternal_vintage_v1::active_copy(state, z.object)
+                    || crate::eternal_legacy_e7a_v1::active_copy(state, z.object))
             {
                 let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                     source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -3213,6 +3222,8 @@ fn commit_with_entry_batch_and_source_color(
             #[cfg(feature = "eternal-fixtures")]
             if from == Zone::Battlefield {
                 crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
             }
             commit_zone_change(
                 state,

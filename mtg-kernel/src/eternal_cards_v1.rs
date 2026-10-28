@@ -110,6 +110,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_pauper_e6b_v1::E6bStateV1::is_empty"
     )]
     pub e6b: crate::eternal_pauper_e6b_v1::E6bStateV1,
+    /// Wave E7a's state (`eternal_legacy_e7a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_legacy_e7a_v1::E7aStateV1::is_empty"
+    )]
+    pub e7a: crate::eternal_legacy_e7a_v1::E7aStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -174,6 +180,8 @@ pub enum EternalTriggerV1 {
     /// A condition owned by the Pauper Bogles, white aggro and Rakdos
     /// Madness lists' module.
     E6bV1(crate::eternal_pauper_e6b_v1::E6bTriggerV1),
+    /// A condition owned by wave E7a's module.
+    E7aV1(crate::eternal_legacy_e7a_v1::E7aTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -299,6 +307,8 @@ pub enum EternalOpV1 {
     /// A leaf owned by the Pauper Bogles, white aggro and Rakdos Madness
     /// lists' module.
     E6bV1(crate::eternal_pauper_e6b_v1::E6bOpV1),
+    /// A leaf owned by wave E7a's module.
+    E7aV1(crate::eternal_legacy_e7a_v1::E7aOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -323,6 +333,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 EternalTriggerV1::E6bV1(condition) => {
                     crate::eternal_pauper_e6b_v1::arrival_condition(condition)
                 }
+                EternalTriggerV1::E7aV1(condition) => {
+                    crate::eternal_legacy_e7a_v1::arrival_condition(condition)
+                }
                 _ => false,
             },
             _ => false,
@@ -335,6 +348,7 @@ impl EternalOpV1 {
     pub(crate) fn contains_player_choice(&self) -> bool {
         match self {
             EternalOpV1::E5aV1(op) => op.contains_player_choice(),
+            EternalOpV1::E7aV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -823,6 +837,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E6aV1(op) => crate::eternal_pauper_e6a_v1::execute(op, ctx, state),
         EternalOpV1::E5aV1(op) => crate::eternal_e5a_v1::execute(op, ctx, state),
         EternalOpV1::E6bV1(op) => crate::eternal_pauper_e6b_v1::execute(op, ctx, state),
+        EternalOpV1::E7aV1(op) => crate::eternal_legacy_e7a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1290,6 +1305,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_vintage_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_e5a_v1::statics::blocker_allowed(state, attacker, blocker)
         && crate::eternal_pauper_e6b_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_legacy_e7a_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1378,7 +1394,7 @@ pub(crate) fn apply_entry_counters(
                 ))
             }
         },
-        _ => {}
+        _ => crate::eternal_legacy_e7a_v1::apply_entry_counters(state, object),
     }
 }
 
@@ -1475,6 +1491,9 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_pauper_e6b_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_legacy_e7a_v1::delayed_triggers(
+        state, events,
+    ));
     triggers
 }
 
@@ -1516,6 +1535,11 @@ fn legacy_delayed_triggers(
 
 /// Delayed triggers this module creates, owned by their source's card.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    // Abilities other permanents grant any creature (The Tabernacle at
+    // Pendrell Vale), or that a Curie keeps as a copy of any creature.
+    if crate::eternal_legacy_e7a_v1::granted_trigger_effect(effect) {
+        return true;
+    }
     if e3::delayed_effect_matches(name, effect) {
         return true;
     }
@@ -1566,6 +1590,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_legacy_e5b_v1::begin_turn(state, player);
     crate::eternal_pauper_e6a_v1::begin_turn(state, player);
     crate::eternal_e5a_v1::begin_turn(state, player);
+    crate::eternal_legacy_e7a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -1680,6 +1705,9 @@ pub(crate) fn trigger_matches(
             crate::eternal_e5a_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::E6bV1(_) => false,
+        EternalTriggerV1::E7aV1(condition) => {
+            crate::eternal_legacy_e7a_v1::trigger_matches(condition, events, index, source, state)
+        }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {
                 object,
@@ -1771,8 +1799,11 @@ pub(crate) fn exiled_instead_of_graveyard(
     state: &GameState,
     item: &crate::state::StackItem,
 ) -> bool {
-    // Rebound (Ephemerate) exiles a resolving spell cast from hand.
-    if crate::eternal_pauper_e6a_v1::rebounds_on_departure(state, item) {
+    // Rebound (Ephemerate) exiles a resolving spell cast from hand, and
+    // Burning Wish exiles itself.
+    if crate::eternal_pauper_e6a_v1::rebounds_on_departure(state, item)
+        || crate::eternal_legacy_e7a_v1::exiles_on_departure(state, item)
+    {
         return true;
     }
     !item.is_copy
