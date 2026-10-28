@@ -380,6 +380,16 @@ fn run_until(
     panic!("condition never held");
 }
 
+/// Plays on to the active player's end step, after its beginning-of-end-step
+/// triggers resolved.
+fn end_step(state: &mut GameState) {
+    pass_until(state, |state| {
+        state.step == Step::End
+            && state.stack.is_empty()
+            && state.engine.pending_triggers.is_empty()
+    });
+}
+
 /// Plays on with first answers until `stop` holds.
 fn pass_until(state: &mut GameState, stop: impl Fn(&GameState) -> bool) {
     run_until(state, stop, |_, _| None);
@@ -824,7 +834,7 @@ fn ichorid_returns_by_exiling_a_black_creature_and_is_sacrificed_at_the_end_step
     assert_eq!(zone(&state, fodder), Zone::Exile);
     assert_eq!(zone(&state, ichorid), Zone::Battlefield);
     assert!(keyword(&state, ichorid, Keywords::HASTE));
-    pass_until(&mut state, |state| state.step == Step::Cleanup);
+    end_step(&mut state);
     assert_eq!(zone(&state, ichorid), Zone::Graveyard, "sacrificed");
 }
 
@@ -875,14 +885,14 @@ fn silversmote_ghoul_returns_at_the_end_step_after_three_life_and_draws_when_sac
     let mut state = islands();
     let ghoul = put(&mut state, P0, "Silversmote Ghoul", Zone::Graveyard);
     event::propose_and_commit(&mut state, ProposedEvent::life_gain(P0, 3));
-    pass_until(&mut state, |state| state.step == Step::Cleanup);
+    end_step(&mut state);
     assert_eq!(zone(&state, ghoul), Zone::Battlefield);
     assert!(state.objects.get(ghoul).tapped);
 
     let mut state = islands();
     let ghoul = put(&mut state, P0, "Silversmote Ghoul", Zone::Graveyard);
     event::propose_and_commit(&mut state, ProposedEvent::life_gain(P0, 2));
-    pass_until(&mut state, |state| state.step == Step::Cleanup);
+    end_step(&mut state);
     assert_eq!(zone(&state, ghoul), Zone::Graveyard, "only two life");
 
     let mut state = islands();
@@ -919,7 +929,7 @@ fn prized_amalgam_returns_at_the_next_end_step_when_a_creature_enters_from_a_gra
     });
     assert_eq!(zone(&state, narcomoeba), Zone::Battlefield);
     assert_eq!(zone(&state, amalgam), Zone::Graveyard, "not yet");
-    pass_until(&mut state, |state| state.step == Step::Cleanup);
+    end_step(&mut state);
     assert_eq!(zone(&state, amalgam), Zone::Battlefield);
     assert!(state.objects.get(amalgam).tapped);
 }
@@ -1061,6 +1071,7 @@ fn subtlety_puts_a_creature_spell_on_top_or_bottom_of_its_owners_library() {
     pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 2);
     cast(&mut state, regent, &[]);
     // P1 passes; P0 flashes Subtlety in response.
+    next(&mut state);
     act(&mut state, Action::Pass);
     assert!(castable(&mut state, subtlety));
     act(&mut state, Action::CastSpell(subtlety));
@@ -1091,6 +1102,7 @@ fn mindbreak_trap_is_free_after_three_opposing_spells_and_exiles_spells() {
     state.players[1].spells_cast_this_turn = 2;
     pool(&mut state, P1, &[ManaColor::R], 0);
     cast(&mut state, bolt, &[Target::Player(P0)]);
+    next(&mut state);
     assert_eq!(state.players[1].spells_cast_this_turn, 3);
     act(&mut state, Action::Pass);
     assert!(castable(&mut state, trap), "free with no mana");
@@ -1123,6 +1135,7 @@ fn commandeer_exiles_two_blue_cards_takes_a_spell_and_may_retarget_it() {
     opponents_main_phase(&mut state);
     pool(&mut state, P1, &[ManaColor::R], 0);
     cast(&mut state, bolt, &[Target::Player(P0)]);
+    next(&mut state);
     act(&mut state, Action::Pass);
     assert!(castable(&mut state, commandeer));
     act(&mut state, Action::CastSpell(commandeer));
@@ -1157,6 +1170,7 @@ fn commandeered_artifact_spells_enter_under_the_new_controller() {
     opponents_main_phase(&mut state);
     pool(&mut state, P1, &[], 1);
     cast(&mut state, ring, &[]);
+    next(&mut state);
     act(&mut state, Action::Pass);
     act(&mut state, Action::CastSpell(commandeer));
     settle_with(&mut state, |_, decision| match decision {
@@ -1188,7 +1202,7 @@ fn ragavan_dashes_with_haste_returns_at_end_and_pilfers_on_combat_damage() {
     assert_eq!(zone(&state, top), Zone::Exile);
     pool(&mut state, P0, &[ManaColor::R], 0);
     assert!(castable(&mut state, top), "may cast the exiled card");
-    pass_until(&mut state, |state| state.step == Step::Cleanup);
+    end_step(&mut state);
     assert!(
         hand_contains(&state, P0, ragavan),
         "returned at the end step"

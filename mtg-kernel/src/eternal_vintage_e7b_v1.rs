@@ -107,9 +107,10 @@ pub struct E7bStateV1 {
     /// Kishla Skimmers that triggered this turn.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skimmer_uses: Vec<(ObjectLinkV4, TurnCountV1)>,
-    /// Dack Fayden emblems each player has.
-    #[serde(default, skip_serializing_if = "no_emblems")]
-    pub dack_emblems: [u8; 2],
+    /// Dack Fayden emblems: their owner and the planeswalker that made each
+    /// one, whose name its triggers carry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dack_emblems: Vec<(PlayerId, AbilitySourceContractV4)>,
     /// Wrenn and Six emblems each player has.
     #[serde(default, skip_serializing_if = "no_emblems")]
     pub wrenn_emblems: [u8; 2],
@@ -1204,7 +1205,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         ),
         RAGAVAN => matches!(op, E7bOpV1::EndStepReturnV1 { .. }),
         VENGEVINE => matches!(op, E7bOpV1::MayV1(_)),
-        KISHLA_SKIMMER => false,
+        KISHLA_SKIMMER => matches!(op, E7bOpV1::DrawOneV1),
         STINKWEED_IMP => matches!(op, E7bOpV1::DestroyDamagedCreatureV1 { .. }),
         MINSC_AND_BOO => matches!(op, E7bOpV1::MinscDamageV1 { .. }),
         DACK_FAYDEN => matches!(op, E7bOpV1::GainControlOfPermanentsV1 { .. }),
@@ -1464,8 +1465,11 @@ pub(crate) fn execute(op: &E7bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         E7bOpV1::DackEmblemV1 => {
-            let emblems = &mut e7b_state(state).dack_emblems[ctx.controller.index()];
-            *emblems = emblems.saturating_add(1);
+            let Some(source) = ctx.ability_source_contract else {
+                halt(state, ctx.source);
+                return;
+            };
+            e7b_state(state).dack_emblems.push((ctx.controller, source));
         }
         E7bOpV1::GainControlOfPermanentsV1 { permanents } => {
             for permanent in permanents {
@@ -1694,6 +1698,14 @@ fn golos(state: &mut GameState, player: PlayerId) {
             continue;
         }
         let zone_change_generation = live.zone_change_count;
+        let def = &CARD_DEFS[usize::from(live.card_def)];
+        let play_or_cast = if def.is_playable_land() {
+            crate::engine::PlayOrCast::Play
+        } else if def.is_castable() {
+            crate::engine::PlayOrCast::Cast
+        } else {
+            continue;
+        };
         state
             .engine
             .exile_play_permissions
@@ -1702,7 +1714,7 @@ fn golos(state: &mut GameState, player: PlayerId) {
                 object: card,
                 holder: player,
                 zone_change_generation,
-                play_or_cast: crate::engine::PlayOrCast::Play,
+                play_or_cast,
                 expiry: crate::engine::PlayPermissionExpiry::EndOfTurn,
             });
     }
@@ -2004,7 +2016,7 @@ fn jace_tokens(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
 /// Puts `amount` loyalty counters on the Jace token `token`.
 fn empower(state: &mut GameState, token: ObjectId, amount: u8) {
     if state.objects.get(token).zone == Zone::Battlefield {
-        crate::planeswalker_v1::change_loyalty(state, token, i32::from(amount));
+        crate::planeswalker_v1::add_loyalty_counters(state, token, i32::from(amount));
     }
 }
 
@@ -2395,8 +2407,14 @@ fn vengevine_triggers(state: &mut GameState, player: PlayerId) {
 /// A Dack Fayden emblem: "Whenever you cast a spell that targets one or more
 /// permanents, gain control of those permanents." One trigger per emblem.
 fn dack_emblem_trigger(state: &mut GameState, player: PlayerId, item: &crate::state::StackItem) {
-    let emblems = read_state(state).map_or(0, |e7b| e7b.dack_emblems[player.index()]);
-    if emblems == 0 {
+    let emblems = read_state(state).map_or_else(Vec::new, |e7b| {
+        e7b.dack_emblems
+            .iter()
+            .filter(|(owner, _)| *owner == player)
+            .map(|(_, source)| *source)
+            .collect::<Vec<_>>()
+    });
+    if emblems.is_empty() {
         return;
     }
     let permanents = item
@@ -2412,8 +2430,7 @@ fn dack_emblem_trigger(state: &mut GameState, player: PlayerId, item: &crate::st
     if permanents.is_empty() {
         return;
     }
-    let source = AbilitySourceContractV4::capture(state, item.source);
-    for _ in 0..emblems {
+    for source in emblems {
         queue_trigger(
             state,
             source,
