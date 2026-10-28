@@ -1423,7 +1423,10 @@ queued: {:?}
 pending: {:?}
 stack: {:?}
 events: {:#?}",
-            state.eternal_v1.as_ref().map(|eternal| &eternal.e8a.queued_triggers),
+            state
+                .eternal_v1
+                .as_ref()
+                .map(|eternal| &eternal.e8a.queued_triggers),
             state.engine.pending_triggers,
             state.stack,
             &log[log.len().saturating_sub(12)..],
