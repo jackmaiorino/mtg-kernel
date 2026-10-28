@@ -79,6 +79,7 @@ mod seeds;
 mod sharing;
 mod tree;
 mod utility_root;
+mod win_check;
 mod wm_dump;
 #[cfg(feature = "gameplay-decision-trace-v1")]
 pub(crate) use utility_root::{authenticated_roots_v1, validate_searched_game_v1, SearchedRootV1};
@@ -115,6 +116,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-bank"
             | "s4a-bank-parity"
             | "s4a-label-replay"
+            | "s4a-win-check"
             | "s4a-bank-trace"
             | "s4a-refresh"
             | "s4a-branch"
@@ -1679,6 +1681,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-root-actions" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
+        "s4a-win-check" => return win_check::run(cfg),
         _ => {}
     }
     let shared = load_shared(cfg)?;

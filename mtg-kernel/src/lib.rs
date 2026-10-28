@@ -778,6 +778,7 @@ pub mod surface;
 pub mod surface_v2;
 pub mod trace;
 pub mod trigger;
+pub mod win_search_v1;
 mod wildwood_capture_v1;
 mod wildwood_scourge_v1;
 pub mod xmage_observed_inference_v1;
