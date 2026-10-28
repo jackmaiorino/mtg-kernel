@@ -287,21 +287,25 @@ fn kioras_loot_queues_both_second_draw_creature_triggers() {
     next(&mut state);
     engine::step(&mut state, Action::CastSpell(kiora)).unwrap();
     drain(&mut state, None);
-    for (name, expected) in [
-        ("Mischievous Mystic", 1),
-        ("Faerie Token", 1),
-        ("Homunculus Horde", 1),
-        ("Homunculus Horde Token", 1),
+    for (name, token, expected) in [
+        ("Mischievous Mystic", false, 1),
+        ("Faerie Token", true, 1),
+        ("Homunculus Horde", false, 1),
+        // A native copy retains the copied printing and its own token flag.
+        ("Homunculus Horde", true, 1),
     ] {
         let id = card_id_by_name(name).unwrap();
         assert_eq!(
             state.players[0]
                 .battlefield
                 .iter()
-                .filter(|&&object| state.objects.get(object).card_def == id)
+                .filter(|&&object| {
+                    let object = state.objects.get(object);
+                    object.card_def == id && object.v4.is_token == token
+                })
                 .count(),
             expected,
-            "{name}"
+            "{name}, token={token}"
         );
     }
     assert_eq!(state.players[0].draws_this_turn, 2);

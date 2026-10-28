@@ -137,21 +137,7 @@ fn gain(state: &mut GameState, player: PlayerId, amount: i32) {
 }
 
 fn place_counter(state: &mut GameState, object: ObjectId, player: PlayerId) {
-    let ctx = ExecCtx {
-        cauldron_grant: Default::default(),
-        stack_item_id: None,
-        source: object,
-        controller: player,
-        targets: vec![],
-        target_contracts: vec![],
-        discarded: vec![],
-        paid_cost_refs: vec![],
-        hidden_ability_source: None,
-        ability_source_contract: None,
-        kicked: false,
-        optional_additional_cost_paid: None,
-        x_value: 0,
-    };
+    let ctx = ExecCtx::no_targets(object, player);
     effect::execute(
         &EffectOp::PutPlusOnePlusOneCounter {
             object: ObjectRef::ThisSource,

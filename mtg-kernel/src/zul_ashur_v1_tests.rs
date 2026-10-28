@@ -174,7 +174,9 @@ mod future_printed {
             let mut resolved = state;
             settle(&mut resolved);
             assert!(has_active(&resolved));
-            resolved.step = crate::state::Step::End;
+            crate::engine::time_stop_v1::tests::until(&mut resolved, |state| {
+                state.active_player == actor && state.step == crate::state::Step::End
+            });
             for _ in 0..40 {
                 let d = next(&mut resolved);
                 if resolved.active_player != actor {
@@ -343,7 +345,9 @@ mod future_printed {
             let bytes = serde_json::to_vec(&offturn).unwrap();
             assert!(engine::step(&mut offturn, Action::CastSpell(target)).is_err());
             assert_eq!(bytes, serde_json::to_vec(&offturn).unwrap());
-            offturn.step = crate::state::Step::End;
+            crate::engine::time_stop_v1::tests::until(&mut offturn, |state| {
+                state.active_player == actor.opponent() && state.step == crate::state::Step::End
+            });
             for _ in 0..40 {
                 let d = next(&mut offturn);
                 if offturn.active_player == actor {

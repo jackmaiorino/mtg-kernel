@@ -736,7 +736,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             })
             .collect();
         if completions.is_empty() {
-            if live.as_slice() != [item] || !removals.is_empty() {
+            let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+            if !removals.is_empty()
+                || (!disposed && live.as_slice() != [item])
+                || (disposed && !live.is_empty())
+            {
                 return Err("Arahbo live token was dropped or changed".into());
             }
         } else {

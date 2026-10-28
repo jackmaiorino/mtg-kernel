@@ -141,11 +141,10 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
                 state.objects.try_get(host_link.object).is_some_and(|host| {
                     host.zone == Zone::Battlefield
                         && host.zone_change_count == host_link.zone_change_count
-                        && engine::object_has_type(
-                            state,
-                            host_link.object,
-                            definition.attachment.unwrap().enchanted_type(),
-                        )
+                        && definition
+                            .attachment
+                            .unwrap()
+                            .host_matches(state, host_link.object)
                         && host.attachments.contains(&id)
                 })
             });

@@ -33,6 +33,10 @@ pub enum OperationV1 {
     DrakeCounterStackV1 {
         stack_item_id: crate::ids::StackItemId,
     },
+    CopyTokenKinshipV1 {
+        source: crate::state::AbilitySourceContractV4,
+        controller: crate::ids::PlayerId,
+    },
 }
 
 impl Hash for OperationV1 {
@@ -73,6 +77,10 @@ pub enum GeneralAnswerV36 {
         choice: Box<crate::fake_your_own_death_v50::return_aura::ChoiceV50>,
         selected: EffectObjectBinding,
     },
+    KinshipV1 {
+        choice: Box<crate::banner_of_kinship_v1::entry::ChoiceV1>,
+        chosen: crate::creature_types_v60::CreatureTypeV60,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -92,6 +100,10 @@ pub enum GeneralChoiceV36 {
         choice: Box<crate::fake_your_own_death_v50::return_aura::ChoiceV50>,
         input: u64,
     },
+    KinshipV1 {
+        choice: Box<crate::banner_of_kinship_v1::entry::ChoiceV1>,
+        capture: u32,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +113,8 @@ pub struct GeneralCheckpointV36 {
     pub answers: Vec<GeneralAnswerV36>,
     pub choice: GeneralChoiceV36,
     pub operation_history_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) genesis_current_slots_v69: Option<genesis_current_slots_v69::InputV69>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ColorPlanV36 {
@@ -111,10 +125,25 @@ struct ColorPlanV36 {
     committed: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct KinshipPlanV1 {
+    choice: crate::banner_of_kinship_v1::entry::ChoiceV1,
+    capture: u32,
+    chosen: Option<crate::creature_types_v60::CreatureTypeV60>,
+    count: Option<i32>,
+    answer: Option<u32>,
+    entered: Option<crate::state::ObjectLinkV4>,
+    committed: Option<u32>,
+}
+
 /// GameState never restores runtime ownership, and other modules cannot
 /// construct it. Opaque input borrowing is confined to local family verification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RunnerV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kinship_start: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    kinship_plans: Vec<KinshipPlanV1>,
     original_stack: Vec<crate::state::StackItem>,
     original_history_len: usize,
     batch_depth: usize,
@@ -141,6 +170,8 @@ struct RunnerV1 {
 pub struct StateV1 {
     pub pending: Option<Box<CheckpointV1>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_kinship_v1: Option<Box<crate::banner_of_kinship_v1::entry::CheckpointV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_general_v36: Option<Box<GeneralCheckpointV36>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_token_attachment_v48:
@@ -153,7 +184,8 @@ pub struct StateV1 {
 }
 impl StateV1 {
     pub fn is_empty(&self) -> bool {
-        self.pending.is_none()
+        self.pending_kinship_v1.is_none()
+            && self.pending.is_none()
             && self.pending_general_v36.is_none()
             && self.pending_token_attachment_v48.is_none()
             && self.pending_fake_aura_v50.is_none()
@@ -185,6 +217,12 @@ impl Hash for StateV1 {
                 .expect("owned Banner checkpoint serializes")
                 .hash(hasher);
         }
+        if let Some(pending) = &self.pending_kinship_v1 {
+            "kinship-entry-operation/v1".hash(hasher);
+            serde_json::to_vec(pending)
+                .expect("owned Kinship checkpoint serializes")
+                .hash(hasher);
+        }
     }
 }
 
@@ -194,6 +232,9 @@ pub(crate) fn locally_owned(state: &GameState) -> bool {
 
 /// Borrow the existing enclosing operation of a published entry checkpoint.
 pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameState, &OperationV1)> {
+    if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
+        return Some((&p.original, &p.operation));
+    }
     if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
         return Some((&pending.original, &pending.operation));
     }
@@ -209,6 +250,11 @@ pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameStat
         .pending
         .as_ref()
         .map(|pending| (pending.original.as_ref(), &pending.operation))
+}
+
+/// Only the new end-turn borrow compares the same original-world framing.
+pub(crate) fn original_sha256_for_end_turn_v1(state: &GameState) -> String {
+    original_sha256(state)
 }
 
 /// An opaque input for speculative Panda verification. It cannot install a
@@ -228,6 +274,57 @@ pub(crate) fn capture_panda_replay_borrow_v1(state: &GameState) -> PandaReplayBo
     PandaReplayBorrowV1 {
         runner: state.engine.linked_aura_operation_v1.runtime.clone(),
     }
+}
+
+/// Opaque data from the actual enclosing operation, usable only in a
+/// disposable end-turn journal replay. It never restores a world's runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndTurnReplayBorrowV1 {
+    runner: Option<Box<RunnerV1>>,
+}
+impl Hash for EndTurnReplayBorrowV1 {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        serde_json::to_vec(self)
+            .expect("native end-turn replay input serializes")
+            .hash(h);
+    }
+}
+pub(crate) fn capture_end_turn_replay_borrow_v1(state: &GameState) -> EndTurnReplayBorrowV1 {
+    EndTurnReplayBorrowV1 {
+        runner: state.engine.linked_aura_operation_v1.runtime.clone(),
+    }
+}
+pub(crate) fn with_end_turn_replay_borrow_v1<T>(
+    replay: &mut GameState,
+    input: &EndTurnReplayBorrowV1,
+    expected_operation: &OperationV1,
+    run: impl FnOnce(&mut GameState) -> Result<T, String>,
+) -> Result<T, String> {
+    if locally_owned(replay) || has_pending(replay) {
+        return Err("end-turn verification cannot acquire an actual public checkpoint".into());
+    }
+    if let Some(runner) = &input.runner {
+        if &runner.operation != expected_operation
+            || runner.checkpoint.is_some()
+            || runner.batch_depth != 0
+            || !runner.deferred_departures.is_empty()
+            || runner.active_fake_aura_entry_v50.is_some()
+        {
+            return Err("end-turn replay changed its enclosing native operation".into());
+        }
+        crate::engine::time_stop_v1::validate_enclosing_input(
+            replay,
+            &runner.original_stack,
+            runner.original_history_len,
+            &runner.original_sha256,
+        )?;
+    }
+    replay.engine.linked_aura_operation_v1.runtime = input.runner.clone();
+    let result = run(replay);
+    // Even an error cannot export the replay's synchronous owner.
+    replay.engine.linked_aura_operation_v1.runtime = None;
+    result
 }
 /// Ordinary V49 keeps its frozen world payload and old non-Drake bytes.
 /// Only an actual synchronous Drake-owning operation needs this sidecar data.
@@ -357,6 +454,8 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
     // The installer is limited to this disposable atomic replay. It never
     // returns a Runner or installs one in an actual/restored game.
     replay.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
+        kinship_start: None,
+        kinship_plans: Vec::new(),
         original_stack: enclosing.original_stack.clone(),
         original_history_len: enclosing.original_history_len,
         batch_depth: 0,
@@ -386,6 +485,8 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         || runner.batch_depth != 0
         || !runner.answers.is_empty()
         || !runner.deferred_departures.is_empty()
+        || runner.kinship_start.is_some()
+        || !runner.kinship_plans.is_empty()
         || runner.banner_start.is_some()
         || !runner.color_plans.is_empty()
         || runner.attachment_input_v48.is_some()
@@ -398,8 +499,58 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
     result
 }
 
+/// A selected spell's erased local pending row is valid only inside its own
+/// exact enclosing entry operation. This query grants no execution authority;
+/// the existing complete checkpoint replay/validation remains mandatory.
+pub(crate) fn owns_entry_row_checkpoint_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> bool {
+    let scope = &state.engine.linked_aura_operation_v1;
+    let original = |world: &GameState, operation: &OperationV1| {
+        matches!(operation, OperationV1::Advance | OperationV1::Step(_))
+            && world
+                .engine
+                .pending_effect
+                .as_ref()
+                .is_some_and(|p| p.resolving_item == *item)
+            && world
+                .stack
+                .iter()
+                .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+                .eq(std::iter::once(item))
+    };
+    scope.runtime.as_ref().is_some_and(|r| {
+        r.checkpoint.is_some()
+            && matches!(r.operation, OperationV1::Advance | OperationV1::Step(_))
+            && r.original_stack
+                .iter()
+                .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+                .eq(std::iter::once(item))
+    }) || scope
+        .pending_general_v36
+        .as_ref()
+        .is_some_and(|p| original(&p.original, &p.operation))
+        || scope
+            .pending_kinship_v1
+            .as_ref()
+            .is_some_and(|p| original(&p.original, &p.operation))
+}
+pub(crate) fn entry_checkpoint_in_flight_v1(state: &GameState) -> bool {
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .is_some_and(|r| r.checkpoint.is_some())
+}
 pub fn has_pending(state: &GameState) -> bool {
-    state.engine.linked_aura_operation_v1.pending.is_some()
+    state
+        .engine
+        .linked_aura_operation_v1
+        .pending_kinship_v1
+        .is_some()
+        || state.engine.linked_aura_operation_v1.pending.is_some()
         || has_banner_pending(state)
         || crate::season_token_attachment_v48::pending(state).is_some()
         || crate::fake_your_own_death_v50::return_aura::pending(state).is_some()
@@ -528,6 +679,27 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
             );
             Ok(None)
         }
+        OperationV1::CopyTokenKinshipV1 { source, controller } => {
+            let live = state
+                .objects
+                .try_get(source.source)
+                .ok_or("Banner copy template missing")?;
+            if live.zone != crate::state::Zone::Battlefield
+                || live.zone_change_count != source.zone_change_count
+                || live.owner != source.owner
+                || live.card_def != source.card_def
+                || live.v4.face_down_v1.is_some()
+                || !crate::banner_of_kinship_v1::entry::owns_entry_definition(source.card_def)
+            {
+                return Err("Banner copy lost actual original template incarnation".into());
+            }
+            crate::standard_cards_v1::create_token_copy_without_banner_owner(
+                state,
+                source.source,
+                *controller,
+            );
+            Ok(None)
+        }
         OperationV1::Commit(event) => {
             crate::event::commit_without_linked_aura_v1(state, event.clone());
             Ok(None)
@@ -535,9 +707,28 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn potential_operation(state: &GameState) -> bool {
-    crate::drake_hatcher_v1::custody::relevant(state)
+    if state
+        .stack
+        .iter()
+        .any(|row| crate::effect::genesis_wave_v1::selected(state, row))
+    {
+        return true;
+    }
+    if state
+        .stack
+        .iter()
+        .any(|row| crate::effect::curator_v1::selected(state, row))
+    {
+        return true;
+    }
+    crate::effect::needs_electroduplicate_entry_owner_v1(state)
+        || crate::drake_hatcher_v1::custody::relevant(state)
         || potentially_returns_aura(state)
         || crate::fake_your_own_death_v50::death_custody::has_unowned_roots(state)
+        || state
+            .objects
+            .iter()
+            .any(|(_, o)| crate::banner_of_kinship_v1::entry::owns_entry_definition(o.card_def))
         || crate::heraldic_banner_v1::potentially_enters(state)
         || !crate::doubling_season_v48::sources(state, state.active_player).is_empty()
         || !crate::doubling_season_v48::sources(state, state.active_player.opponent()).is_empty()
@@ -546,6 +737,8 @@ fn potential_operation(state: &GameState) -> bool {
 fn operation_has_color_entry(state: &GameState, operation: &OperationV1) -> bool {
     let selected = |event: &ProposedEvent| {
         crate::heraldic_banner_v1::choice(state, event, 0).is_ok_and(|choice| choice.is_some())
+            || crate::banner_of_kinship_v1::entry::choice(state, event, 0)
+                .is_ok_and(|choice| choice.is_some())
     };
     match operation {
         OperationV1::Event(event) | OperationV1::Commit(event) => selected(event),
@@ -579,12 +772,26 @@ fn replay_general(
     answers: &[GeneralAnswerV36],
     used_banner: bool,
 ) -> Result<(GameState, Option<Decision>), String> {
+    replay_general_current_slots_v69(original, operation, answers, used_banner, None)
+}
+fn replay_general_current_slots_v69(
+    original: &GameState,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+    current_slots: Option<&genesis_current_slots_v69::InputV69>,
+) -> Result<(GameState, Option<Decision>), String> {
     if has_pending(original) || locally_owned(original) {
         return Err("entry operation cannot recursively own another public checkpoint".into());
     }
     crate::effect::validate_pending_effect_choice(original)?;
-    let mut staged = original.clone();
+    let mut staged = match current_slots {
+        Some(input) => genesis_current_slots_v69::materialize(original, operation, input)?,
+        None => original.clone(),
+    };
     staged.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
+        kinship_start: None,
+        kinship_plans: Vec::new(),
         original_stack: original.stack.clone(),
         original_history_len: original.engine.event_history.len(),
         batch_depth: 0,
@@ -626,6 +833,14 @@ fn replay_general(
         return Err("entry replay did not consume every confirmed answer".into());
     }
     if let Some((mut checkpoint, choice)) = runner.checkpoint {
+        if current_slots.is_some()
+            && (!runner.used_banner
+                || !matches!(choice, GeneralChoiceV36::Color { .. })
+                || runner.kinship_start.is_some()
+                || runner.attachment_input_v48.is_some())
+        {
+            return Err("Genesis current-slot replay changed its exact color-entry owner".into());
+        }
         if let GeneralChoiceV36::FakeAuraV50 { input, .. } = &choice {
             checkpoint
                 .engine
@@ -654,6 +869,19 @@ fn replay_general(
                     used_banner: runner.used_banner,
                 },
             ));
+        } else if let Some(operation_history_index) = runner.kinship_start {
+            checkpoint
+                .engine
+                .linked_aura_operation_v1
+                .pending_kinship_v1 =
+                Some(Box::new(crate::banner_of_kinship_v1::entry::CheckpointV1 {
+                    original: Box::new(original.clone()),
+                    operation: operation.clone(),
+                    answers: answers.to_vec(),
+                    choice,
+                    operation_history_index,
+                    used_banner: runner.used_banner,
+                }));
         } else if runner.used_banner {
             checkpoint
                 .engine
@@ -666,6 +894,7 @@ fn replay_general(
                 operation_history_index: runner
                     .banner_start
                     .ok_or("Banner checkpoint lost actual operation")?,
+                genesis_current_slots_v69: current_slots.cloned(),
             }));
         } else {
             let GeneralChoiceV36::Host { choice, capture } = choice else {
@@ -696,6 +925,28 @@ fn replay_general(
         return Ok((*checkpoint, None));
     }
     let result = result?;
+    if let Some(operation) = runner.kinship_start {
+        if runner.kinship_plans.is_empty()
+            || runner.kinship_plans.iter().any(|p| p.committed.is_none())
+        {
+            return Err("Kinship operation lost actual entries".into());
+        }
+        let mut entries: Vec<u32> = runner
+            .kinship_plans
+            .iter()
+            .map(|p| p.committed.unwrap())
+            .collect();
+        entries.sort_unstable();
+        staged
+            .engine
+            .event_history
+            .push(CommittedEvent::KinshipEntryV1 {
+                journal: Box::new(crate::banner_of_kinship_v1::entry::JournalV1::Completed {
+                    operation,
+                    entries,
+                }),
+            });
+    }
     if let Some(operation) = runner.banner_start {
         if runner.color_plans.is_empty()
             || runner
@@ -943,7 +1194,13 @@ pub(crate) fn return_departures(state: &mut GameState, departures: &[(crate::ids
 /// Complete checkpoint reconstruction authenticates source incarnation,
 /// owner, menu, already committed choices, actual journal and operation tail.
 pub fn validate(state: &GameState) -> Result<(), String> {
-    let owners = usize::from(state.engine.linked_aura_operation_v1.pending.is_some())
+    let owners = usize::from(
+        state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .is_some(),
+    ) + usize::from(state.engine.linked_aura_operation_v1.pending.is_some())
         + usize::from(
             state
                 .engine
@@ -955,6 +1212,23 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         + usize::from(crate::fake_your_own_death_v50::return_aura::pending(state).is_some());
     if owners > 1 || (owners != 0 && locally_owned(state)) {
         return Err("entry checkpoint has multiple or synchronous owners".into());
+    }
+    if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
+        if !matches!(crate::banner_of_kinship_v1::entry::journal(state,p.operation_history_index),Some(crate::banner_of_kinship_v1::entry::JournalV1::Started{operation,original_sha256:digest}) if **operation==p.operation && *digest==original_sha256(&p.original))
+        {
+            return Err("Kinship checkpoint lost independently committed operation".into());
+        }
+        let (expected, _) = replay_general(&p.original, &p.operation, &p.answers, p.used_banner)?;
+        if expected != *state
+            || expected
+                .engine
+                .linked_aura_operation_v1
+                .pending_kinship_v1
+                .is_none()
+        {
+            return Err("Kinship checkpoint/source/proposal/scene/stack/answers changed".into());
+        }
+        return Ok(());
     }
     if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
         if !matches!(state.engine.event_history.get(pending.input as usize),
@@ -1025,11 +1299,12 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         {
             return Err("Banner checkpoint lost independently committed operation".into());
         }
-        let (expected, _) = replay_general(
+        let (expected, _) = replay_general_current_slots_v69(
             &pending.original,
             &pending.operation,
             &pending.answers,
             true,
+            pending.genesis_current_slots_v69.as_ref(),
         )?;
         if expected != *state || !has_banner_pending(&expected) {
             return Err("Banner checkpoint/original operation changed".into());
@@ -1058,6 +1333,9 @@ pub fn validate(state: &GameState) -> Result<(), String> {
 }
 fn decision(state: &GameState) -> Result<Decision, String> {
     validate(state)?;
+    if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
+        return equipment_decision_v48(&p.choice);
+    }
     if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
         let GeneralChoiceV36::FakeAuraV50 { choice, .. } = &pending.choice else {
             return Err("Fake Aura checkpoint changed choice kind".into());
@@ -1086,7 +1364,9 @@ fn decision(state: &GameState) -> Result<Decision, String> {
         .as_ref()
     {
         return Ok(match &pending.choice {
-            GeneralChoiceV36::TokenEquipmentV48 { .. } | GeneralChoiceV36::FakeAuraV50 { .. } => {
+            GeneralChoiceV36::TokenEquipmentV48 { .. }
+            | GeneralChoiceV36::FakeAuraV50 { .. }
+            | GeneralChoiceV36::KinshipV1 { .. } => {
                 return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
             GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
@@ -1132,6 +1412,16 @@ fn decision(state: &GameState) -> Result<Decision, String> {
     })
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::event::validate_copied_token_abilities_v1(state)?;
+    if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
+        validate(state)?;
+        let answer = answer_equipment_checkpoint_v48(&p.choice, action)?;
+        let mut answers = p.answers.clone();
+        answers.push(answer);
+        let (next, _) = replay_general(&p.original, &p.operation, &answers, p.used_banner)?;
+        *state = next;
+        return Ok(());
+    }
     if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
         validate(state)?;
         let answer = answer_equipment_checkpoint_v48(&pending.choice, action)?;
@@ -1195,11 +1485,18 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
         };
         let mut answers = pending.answers.clone();
         answers.push(answer);
-        let (next, _) = replay_general(&pending.original, &pending.operation, &answers, true)?;
+        let (next, _) = replay_general_current_slots_v69(
+            &pending.original,
+            &pending.operation,
+            &answers,
+            true,
+            pending.genesis_current_slots_v69.as_ref(),
+        )?;
         *state = next;
         return Ok(());
     }
     crate::heraldic_banner_v1::validate_state(state)?;
+    crate::banner_of_kinship_v1::entry::validate_state(state)?;
     if locally_owned(state) || (!has_pending(state) && !potential_operation(state)) {
         return crate::engine::step_without_linked_aura_v1(state, action);
     }
@@ -1229,6 +1526,12 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
     Ok(())
 }
 pub(crate) fn advance(state: &mut GameState) -> Decision {
+    if crate::event::validate_copied_token_abilities_v1(state).is_err() {
+        return Decision::Halted {
+            mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source: crate::ids::ObjectId(0),
+        };
+    }
     if has_pending(state) {
         return decision(state).unwrap_or(Decision::Halted {
             mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -1241,7 +1544,9 @@ pub(crate) fn advance(state: &mut GameState) -> Decision {
                 .unwrap_or(crate::ids::ObjectId(0)),
         });
     }
-    if crate::heraldic_banner_v1::validate_state(state).is_err() {
+    if crate::heraldic_banner_v1::validate_state(state).is_err()
+        || crate::banner_of_kinship_v1::entry::validate_state(state).is_err()
+    {
         return Decision::Halted {
             mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source: crate::ids::ObjectId(0),
@@ -1272,7 +1577,10 @@ pub(crate) fn needs_event_owner(state: &GameState) -> bool {
             || crate::card_def::CARD_DEFS
                 .iter()
                 .enumerate()
-                .any(|(id, _)| crate::heraldic_banner_v1::owns_definition(id as u16)))
+                .any(|(id, _)| {
+                    crate::heraldic_banner_v1::owns_definition(id as u16)
+                        || crate::banner_of_kinship_v1::entry::owns_entry_definition(id as u16)
+                }))
 }
 
 /// Whole-resolution ownership follows the same actual selection as outer
@@ -1283,10 +1591,15 @@ pub(crate) fn needs_surrounding_operation_owner(state: &GameState) -> bool {
 }
 
 pub(crate) fn event(state: &mut GameState, operation: OperationV1) -> bool {
+    if crate::event::validate_copied_token_abilities_v1(state).is_err() {
+        return true;
+    }
     if locally_owned(state) {
         return false;
     }
-    if crate::heraldic_banner_v1::validate_state(state).is_err() {
+    if crate::heraldic_banner_v1::validate_state(state).is_err()
+        || crate::banner_of_kinship_v1::entry::validate_state(state).is_err()
+    {
         return true;
     }
     if !has_pending(state)
@@ -1306,10 +1619,10 @@ pub(crate) fn event(state: &mut GameState, operation: OperationV1) -> bool {
 
 /// Capture the complete actual entry roster before any member is committed.
 /// Answers run in APNAP order; proposal ordinals retain the original roster.
-pub(crate) fn prepare_entry_colors(
+fn capture_color_plans(
     state: &mut GameState,
     events: &[ProposedEvent],
-) -> Result<bool, String> {
+) -> Result<Vec<usize>, String> {
     let mut choices = Vec::new();
     for event in events {
         if let Some(choice) = crate::heraldic_banner_v1::choice(state, event, 0)? {
@@ -1317,7 +1630,7 @@ pub(crate) fn prepare_entry_colors(
         }
     }
     if choices.is_empty() {
-        return Ok(true);
+        return Ok(Vec::new());
     }
     let runner = state
         .engine
@@ -1326,7 +1639,7 @@ pub(crate) fn prepare_entry_colors(
         .as_ref()
         .ok_or("Banner as-enters choice has no actual operation owner")?;
     if runner.checkpoint.is_some() {
-        return Ok(false);
+        return Err("entry capture after suspended operation".into());
     }
     // A batch pre-captures these proposals. Its per-member commit consumes
     // an existing plan, never asks a second choice for the same occurrence.
@@ -1335,7 +1648,7 @@ pub(crate) fn prepare_entry_colors(
             p.committed.is_none() && p.color.is_some() && p.choice.proposal == choices[0].proposal
         })
     {
-        return Ok(true);
+        return Ok(Vec::new());
     }
     let first = runner.color_plans.len();
     let mut additions = Vec::new();
@@ -1404,7 +1717,7 @@ pub(crate) fn prepare_entry_colors(
                 committed: None,
             });
     }
-    let mut indices = (first
+    Ok((first
         ..state
             .engine
             .linked_aura_operation_v1
@@ -1413,96 +1726,469 @@ pub(crate) fn prepare_entry_colors(
             .unwrap()
             .color_plans
             .len())
-        .collect::<Vec<_>>();
-    indices.sort_by_key(|&index| {
-        let p = &state
+        .collect())
+}
+
+fn answer_color_plan(state: &mut GameState, index: usize) -> Result<bool, String> {
+    let runtime = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .unwrap();
+    let plan = runtime.color_plans[index].clone();
+    if let Some(answer) = runtime.answers.get(runtime.cursor).cloned() {
+        let GeneralAnswerV36::Color { choice, color } = answer else {
+            return Err("Banner replay changed its confirmed choice kind".into());
+        };
+        if choice.as_ref() != &plan.choice || !crate::heraldic_banner_v1::COLORS.contains(&color) {
+            return Err("Banner replay changed an actual entry/color answer".into());
+        }
+        let at = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Banner answer index overflow")?;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::BannerEntryColorChosenV1 {
+                capture: plan.capture,
+                color,
+            });
+        let runtime = state
             .engine
             .linked_aura_operation_v1
             .runtime
-            .as_ref()
-            .unwrap()
-            .color_plans[index];
-        (p.choice.controller != state.active_player, p.choice.ordinal)
-    });
-    for index in indices {
-        let runtime = state
+            .as_mut()
+            .unwrap();
+        runtime.cursor += 1;
+        runtime.color_plans[index].color = Some(color);
+        runtime.color_plans[index].answer = Some(at);
+    } else {
+        let mut snapshot = state.clone();
+        let runner = state
             .engine
             .linked_aura_operation_v1
             .runtime
             .as_ref()
             .unwrap();
-        let plan = runtime.color_plans[index].clone();
-        if let Some(answer) = runtime.answers.get(runtime.cursor).cloned() {
-            let GeneralAnswerV36::Color { choice, color } = answer else {
-                return Err("Banner replay changed its confirmed choice kind".into());
-            };
-            if choice.as_ref() != &plan.choice
-                || !crate::heraldic_banner_v1::COLORS.contains(&color)
+        if let Some(original) = runner.original_stack.last() {
+            let absent = !snapshot
+                .stack
+                .iter()
+                .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
+            let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+                matches!(event, CommittedEvent::ZoneChange { object, from: crate::state::Zone::Stack, .. } if *object == original.source));
+            if absent && !departed {
+                snapshot.stack.insert(
+                    runner
+                        .original_stack
+                        .len()
+                        .saturating_sub(1)
+                        .min(snapshot.stack.len()),
+                    original.clone(),
+                );
+            }
+        }
+        snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .checkpoint = Some((
+            Box::new(snapshot),
+            GeneralChoiceV36::Color {
+                choice: Box::new(plan.choice),
+                capture: plan.capture,
+            },
+        ));
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Capture the complete simultaneous roster before asking any owner. Choices
+/// from both Banner families share APNAP ordering; no entry commits mid-menu.
+pub(crate) fn prepare_entry_colors(
+    state: &mut GameState,
+    events: &[ProposedEvent],
+) -> Result<bool, String> {
+    if let Some(r) = state.engine.linked_aura_operation_v1.runtime.as_ref() {
+        if r.checkpoint.is_some() {
+            return Ok(false);
+        }
+        if let [event] = events {
+            if r.color_plans
+                .iter()
+                .any(|p| p.committed.is_none() && p.color.is_some() && p.choice.proposal == *event)
+                || r.kinship_plans.iter().any(|p| {
+                    p.committed.is_none() && p.chosen.is_some() && p.choice.proposal == *event
+                })
             {
-                return Err("Banner replay changed an actual entry/color answer".into());
+                return Ok(true);
             }
-            let at = u32::try_from(state.engine.event_history.len())
-                .map_err(|_| "Banner answer index overflow")?;
-            state
-                .engine
-                .event_history
-                .push(CommittedEvent::BannerEntryColorChosenV1 {
-                    capture: plan.capture,
-                    color,
-                });
-            let runtime = state
-                .engine
-                .linked_aura_operation_v1
-                .runtime
-                .as_mut()
-                .unwrap();
-            runtime.cursor += 1;
-            runtime.color_plans[index].color = Some(color);
-            runtime.color_plans[index].answer = Some(at);
+        }
+    }
+    let colors = capture_color_plans(state, events)?;
+    let kinship = capture_kinship_plans(state, events)?;
+    if colors.is_empty() && kinship.is_empty() {
+        return Ok(true);
+    }
+    let r = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("entry roster lost actual operation owner")?;
+    let mut color_cursor = 0;
+    let mut kinship_cursor = 0;
+    let mut order = Vec::new();
+    for (ordinal, event) in events.iter().enumerate() {
+        if let Some(&index) = colors.get(color_cursor) {
+            if r.color_plans[index].choice.proposal == *event {
+                order.push((
+                    r.color_plans[index].choice.controller != state.active_player,
+                    ordinal,
+                    false,
+                    index,
+                ));
+                color_cursor += 1;
+                continue;
+            }
+        }
+        if let Some(&index) = kinship.get(kinship_cursor) {
+            if r.kinship_plans[index].choice.proposal == *event {
+                order.push((
+                    r.kinship_plans[index].choice.controller != state.active_player,
+                    ordinal,
+                    true,
+                    index,
+                ));
+                kinship_cursor += 1;
+            }
+        }
+    }
+    if color_cursor != colors.len() || kinship_cursor != kinship.len() {
+        return Err("entry roster lost original proposal ordering".into());
+    }
+    order.sort_unstable();
+    for (_, _, is_kinship, index) in order {
+        let complete = if is_kinship {
+            answer_kinship_plan(state, index)?
         } else {
-            let mut snapshot = state.clone();
-            let runner = state
-                .engine
-                .linked_aura_operation_v1
-                .runtime
-                .as_ref()
-                .unwrap();
-            if let Some(original) = runner.original_stack.last() {
-                let absent = !snapshot
-                    .stack
-                    .iter()
-                    .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
-                let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
-                    matches!(event, CommittedEvent::ZoneChange { object, from: crate::state::Zone::Stack, .. } if *object == original.source));
-                if absent && !departed {
-                    snapshot.stack.insert(
-                        runner
-                            .original_stack
-                            .len()
-                            .saturating_sub(1)
-                            .min(snapshot.stack.len()),
-                        original.clone(),
-                    );
-                }
-            }
-            snapshot.engine.linked_aura_operation_v1 = StateV1::default();
-            state
-                .engine
-                .linked_aura_operation_v1
-                .runtime
-                .as_mut()
-                .unwrap()
-                .checkpoint = Some((
-                Box::new(snapshot),
-                GeneralChoiceV36::Color {
-                    choice: Box::new(plan.choice),
-                    capture: plan.capture,
-                },
-            ));
+            answer_color_plan(state, index)?
+        };
+        if !complete {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+fn capture_kinship_plans(
+    state: &mut GameState,
+    events: &[ProposedEvent],
+) -> Result<Vec<usize>, String> {
+    use crate::banner_of_kinship_v1::entry::{self, JournalV1};
+    let mut choices = Vec::new();
+    for event in events {
+        if let Some(c) = entry::choice(state, event, 0)? {
+            choices.push(c);
+        }
+    }
+    if choices.is_empty() {
+        return Ok(Vec::new());
+    }
+    let r = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Kinship entry has no actual operation owner")?;
+    if r.checkpoint.is_some() {
+        return Err("Kinship capture after suspended operation".into());
+    }
+    let first = r.kinship_plans.len();
+    if r.kinship_start.is_none() {
+        let at = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Kinship operation index overflow")?;
+        let operation = r.operation.clone();
+        let digest = r.original_sha256.clone();
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .kinship_start = Some(at);
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::KinshipEntryV1 {
+                journal: Box::new(JournalV1::Started {
+                    operation: Box::new(operation),
+                    original_sha256: digest,
+                }),
+            });
+    }
+    let operation = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .unwrap()
+        .kinship_start
+        .unwrap();
+    for (offset, mut choice) in choices.into_iter().enumerate() {
+        choice.ordinal =
+            u32::try_from(first + offset).map_err(|_| "Kinship entry ordinal overflow")?;
+        let capture = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Kinship capture index overflow")?;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::KinshipEntryV1 {
+                journal: Box::new(JournalV1::Captured {
+                    operation,
+                    choice: Box::new(choice.clone()),
+                }),
+            });
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .kinship_plans
+            .push(KinshipPlanV1 {
+                choice,
+                capture,
+                chosen: None,
+                count: None,
+                answer: None,
+                entered: None,
+                committed: None,
+            });
+    }
+    Ok((first
+        ..state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_ref()
+            .unwrap()
+            .kinship_plans
+            .len())
+        .collect())
+}
+
+fn answer_kinship_plan(state: &mut GameState, index: usize) -> Result<bool, String> {
+    use crate::banner_of_kinship_v1::entry::{self, JournalV1};
+    let r = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .unwrap();
+    let plan = r.kinship_plans[index].clone();
+    if let Some(answer) = r.answers.get(r.cursor).cloned() {
+        let GeneralAnswerV36::KinshipV1 { choice, chosen } = answer else {
+            return Err("Kinship replay changed actual choice kind".into());
+        };
+        if *choice != plan.choice {
+            return Err("Kinship replay changed actual proposal/controller/source/scene".into());
+        }
+        let count = entry::amount(&choice, chosen)?;
+        let at = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Kinship answer index overflow")?;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::KinshipEntryV1 {
+                journal: Box::new(JournalV1::Chosen {
+                    capture: plan.capture,
+                    chosen,
+                    count,
+                }),
+            });
+        let r = state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap();
+        r.cursor += 1;
+        r.kinship_plans[index].chosen = Some(chosen);
+        r.kinship_plans[index].count = Some(count);
+        r.kinship_plans[index].answer = Some(at);
+        Ok(true)
+    } else {
+        let mut snapshot = state.clone();
+        if let Some(original) = r.original_stack.last() {
+            let absent = !snapshot
+                .stack
+                .iter()
+                .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
+            let departed=snapshot.engine.event_history[r.original_history_len..].iter().any(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Stack,..}if *object==original.source));
+            if absent && !departed {
+                snapshot.stack.insert(
+                    r.original_stack
+                        .len()
+                        .saturating_sub(1)
+                        .min(snapshot.stack.len()),
+                    original.clone(),
+                );
+            }
+        }
+        snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .checkpoint = Some((
+            Box::new(snapshot),
+            GeneralChoiceV36::KinshipV1 {
+                choice: Box::new(plan.choice),
+                capture: plan.capture,
+            },
+        ));
+        Ok(false)
+    }
+}
+
+/// Actual allocator/move already reset this incarnation. Install the chosen
+/// type and all fellowship counters before any entry observer reads the scene.
+pub(crate) fn initialize_kinship_entry(
+    state: &mut GameState,
+    proposal: &ProposedEvent,
+    object: crate::ids::ObjectId,
+) -> Result<(), String> {
+    if !crate::banner_of_kinship_v1::entry::owns_entry_definition(
+        state.objects.get(object).card_def,
+    ) {
+        return Ok(());
+    }
+    let r = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Kinship entry lacks native operation owner")?;
+    let index = r
+        .kinship_plans
+        .iter()
+        .position(|p| p.entered.is_none() && p.choice.proposal == *proposal)
+        .ok_or("Kinship entry absent from original roster")?;
+    let p = &r.kinship_plans[index];
+    let chosen = p.chosen.ok_or("Kinship entry has no type answer")?;
+    let count = p.count.ok_or("Kinship entry has no checked amount")?;
+    let live = state.objects.get(object);
+    if live.zone != Zone::Battlefield
+        || live.controller != p.choice.controller
+        || live.card_def != p.choice.card_def
+        || live.v4.kinship_type_v1.is_some()
+        || live.counters.fellowship != 0
+    {
+        return Err("Kinship actual allocated entry changed".into());
+    }
+    let link = crate::state::ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    state.objects.get_mut(object).v4.kinship_type_v1 = Some(chosen);
+    state.objects.get_mut(object).counters.fellowship = count;
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .kinship_plans[index]
+        .entered = Some(link);
+    Ok(())
+}
+
+pub(crate) fn local_kinship_type(
+    state: &GameState,
+    object: crate::ids::ObjectId,
+) -> Option<crate::creature_types_v60::CreatureTypeV60> {
+    let r = state.engine.linked_aura_operation_v1.runtime.as_ref()?;
+    let live = state.objects.try_get(object)?;
+    let link = crate::state::ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    let mut plans = r.kinship_plans.iter().filter(|p| p.entered == Some(link));
+    let p = plans.next()?;
+    if plans.next().is_some()
+        || live.v4.kinship_type_v1 != p.chosen
+        || live.owner
+            != p.choice
+                .original
+                .as_ref()
+                .map_or(p.choice.controller, |o| o.owner)
+    {
+        return None;
+    }
+    p.chosen
+}
+
+pub(crate) fn commit_kinship_entry(
+    state: &mut GameState,
+    proposal: &ProposedEvent,
+    object: crate::ids::ObjectId,
+    entry: usize,
+) -> Result<(), String> {
+    use crate::banner_of_kinship_v1::entry::{EnteredV1, JournalV1};
+    if !crate::banner_of_kinship_v1::entry::owns_entry_definition(
+        state.objects.get(object).card_def,
+    ) {
+        return Ok(());
+    }
+    let r = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Kinship entry lost native owner")?;
+    let index = r
+        .kinship_plans
+        .iter()
+        .position(|p| {
+            p.committed.is_none()
+                && p.choice.proposal == *proposal
+                && p.entered.is_some_and(|l| l.object == object)
+        })
+        .ok_or("Kinship entry lost exact allocated roster member")?;
+    let p = &r.kinship_plans[index];
+    let entered = EnteredV1 {
+        operation: r.kinship_start.ok_or("Kinship operation absent")?,
+        capture: p.capture,
+        answer: p.answer.ok_or("Kinship chosen receipt absent")?,
+        entry: u32::try_from(entry).map_err(|_| "Kinship physical entry index overflow")?,
+        source: crate::state::AbilitySourceContractV4::capture(state, object),
+        chosen: p.chosen.ok_or("Kinship type absent")?,
+        count: p.count.ok_or("Kinship amount absent")?,
+    };
+    let marker = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Kinship committed index overflow")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::KinshipEntryV1 {
+            journal: Box::new(JournalV1::Committed { entered }),
+        });
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .kinship_plans[index]
+        .committed = Some(marker);
+    Ok(())
 }
 
 /// Called after the actual allocator/move and before entry observers.
@@ -1562,6 +2248,11 @@ pub(crate) fn commit_entry_color(
 
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
+        GeneralChoiceV36::KinshipV1 { choice, .. } => Ok(Decision::ChooseEntryCreatureTypeV1 {
+            player: choice.controller,
+            entry_ordinal: choice.ordinal,
+            types: crate::creature_types_v60::CreatureTypeV60::ALL.to_vec(),
+        }),
         GeneralChoiceV36::FakeAuraV50 { choice, .. } => Ok(Decision::ChooseEffectTargets {
             player: choice.owner,
             source: choice.aura.object,
@@ -1613,6 +2304,13 @@ fn answer_equipment_checkpoint_v48(
     action: Action,
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
+        (GeneralChoiceV36::KinshipV1 { choice, .. }, Action::ChooseEffectOption(index)) => {
+            Ok(GeneralAnswerV36::KinshipV1 {
+                choice: choice.clone(),
+                chosen: crate::creature_types_v60::CreatureTypeV60::from_choice_index(index)
+                    .ok_or("Kinship type index outside full legal domain")?,
+            })
+        }
         (
             GeneralChoiceV36::FakeAuraV50 { choice, .. },
             Action::ChooseEffectTarget(Target::Object(id)),
@@ -1931,6 +2629,8 @@ pub(crate) fn replay_drake_enclosing_v1(
 pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) {
     assert!(!locally_owned(state));
     let runner = RunnerV1 {
+        kinship_start: None,
+        kinship_plans: Vec::new(),
         original_stack: state.stack.clone(),
         original_history_len: state.engine.event_history.len(),
         batch_depth: 0,
@@ -1950,3 +2650,6 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
     };
     state.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
 }
+
+mod genesis_current_slots_v69;
+pub(crate) use genesis_current_slots_v69::sample_genesis_checkpoint_v69;

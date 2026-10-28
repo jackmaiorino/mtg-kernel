@@ -162,6 +162,10 @@ pub(crate) struct EntryCharacteristicsV1 {
     pub stun_counters_v48: Option<i16>,
     pub attached_to: Option<crate::state::ObjectLinkV4>,
     pub bestowed: bool,
+    /// Resolving nontoken-entry characteristic, present from the entry boundary.
+    pub added_subtype_v1: Option<crate::card_def::Subtype>,
+    /// Continuous keyword grant attached to the entering incarnation.
+    pub grant_flying_v1: bool,
 }
 pub(crate) struct PermanentEntryOwnerV1 {
     item: StackItem,
@@ -292,6 +296,8 @@ pub(crate) fn acquire_permanent_entry(
             stun_counters_v48: None,
             attached_to,
             bestowed: bestowed && targets_legal,
+            added_subtype_v1: None,
+            grant_flying_v1: false,
         },
     }))
 }
@@ -915,7 +921,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             })
             .collect();
         if completions.is_empty() {
-            if live.as_slice() != [item] || !removals.is_empty() {
+            let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+            if !removals.is_empty()
+                || (!disposed && live.as_slice() != [item])
+                || (disposed && !live.is_empty())
+            {
                 return Err("Garruk live draw was dropped or changed".into());
             }
         } else {

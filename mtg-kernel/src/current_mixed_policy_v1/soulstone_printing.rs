@@ -92,6 +92,7 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<()> {
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
 
     let land_mana = Some(EffectOp::Sequence(vec![
@@ -198,7 +199,7 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<()> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
         || !crate::trigger::triggers_for(id).is_empty()
     {
         return Err(Error::UnsupportedPrintedRoot(id));

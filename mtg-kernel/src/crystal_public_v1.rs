@@ -182,11 +182,48 @@ pub fn producer_sha256_v1() -> String {
                 include_str!("rl_session/flat_action_v4.rs"),
                 include_str!("bloodthirsty_conqueror_v49/custody.rs"),
                 include_str!("linked_aura_operation_v1.rs"),
+                include_str!("counter_target_effects_v1.rs"),
+                include_str!("zimone_paradox_sculptor_v1.rs"),
+                include_str!("standard_creatures_v1.rs"),
+                include_str!("planeswalker_v1.rs"),
+                include_str!("engine/omniscience_cast_v1.rs"),
+                include_str!("resolution_cast_v1.rs"),
+                include_str!("effect/harvester_v1.rs"),
+                include_str!("leyline_axe_v1.rs"),
+                include_str!("london_mulligan_v1.rs"),
+                include_str!("life_loss_turn_v1.rs"),
+                include_str!("soul_shackled_zombie_v1.rs"),
+                include_str!("progenitus_v1.rs"),
+                include_str!("controlled_creature_grants_v1.rs"),
+                include_str!("effect/nonland_copy_v1.rs"),
+                include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+                include_str!("effect/inspiration_resolution_v1.rs"),
+                include_str!("effect/standard_exile.rs"),
+                include_str!("snack_wide_life_v59.rs"),
+                include_str!("snack_wide_life_v59/custody.rs"),
+                include_str!("bloodthirsty_conqueror_v49.rs"),
+                include_str!("fiendish_panda_v1.rs"),
+                include_str!("fiendish_panda_v1/custody.rs"),
+                include_str!("life_gain_turn_v1.rs"),
+                include_str!("midnight_snack_v1.rs"),
+                include_str!("mana.rs"),
+                include_str!("doubling_season_v48.rs"),
+                include_str!("standard_cast_convoke.rs"),
+                include_str!("engine/mandatory_cast_cost_v1.rs"),
+                include_str!("rules_meaning_next_five_v59.rs"),
+                include_str!("effect/thousand_year_storm_v1.rs"),
+                include_str!("effect/standard_copy.rs"),
+                include_str!("standard_spell_copy.rs"),
                 include_str!("event_history_v1.rs"),
+                crate::engine::time_stop_v1::source_sha256_v1(),
+                crate::effect::genesis_wave_v1::source_sha256_v1(),
+                include_str!("engine/tinybones_v72.rs"),
             ] {
                 h.update([0]);
                 h.update(source.as_bytes());
             }
+            h.update(b"legacy-graveyard-return-guard/v61\0");
+            h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
             h.finalize().iter().map(|b| format!("{b:02x}")).collect()
         })
         .clone()
@@ -419,34 +456,14 @@ pub(crate) fn discard_menu_fake_scoped_v50(
         draws_if_discarded: 1,
     }))
 }
-fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
-    menu_inner(state, false)
-}
-fn menu_inner(state: &GameState, accept_akroma: bool) -> Result<Option<MenuV1>, RlContractError> {
-    menu_fake_scoped_v50(state, accept_akroma, false)
-}
-fn menu_fake_scoped_v50(
+// Shared read-only option projection. New public scopes must authenticate their
+// own actual native choice before calling; this supplies no execution authority.
+pub(crate) fn prevention_options(
     state: &GameState,
-    accept_akroma: bool,
-    accept_fake: bool,
-) -> Result<Option<MenuV1>, RlContractError> {
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Result<Vec<OptionV1>, RlContractError> {
     use crate::effect::crystal_prevention_v1::PreventionV1;
-    use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
-    let Some(PendingEffectChoice::ChooseOption {
-        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
-        ..
-    }) = state
-        .engine
-        .pending_effect
-        .as_ref()
-        .and_then(|p| p.choice.as_ref())
-    else {
-        return Ok(None);
-    };
-    let Target::Object(recipient) = choice.target else {
-        return Err(RlContractError("Crystal menu lost recipient".into()));
-    };
-    let options = choice.options.iter().map(|option| {
+    choice.options.iter().map(|option| {
         let (kind, id, amount) = match option {
             PreventionV1::Multiplier(source) => ("multiplier", source.source, None),
             PreventionV1::Barricade(source) => ("barricade", source.source, None),
@@ -463,7 +480,35 @@ fn menu_fake_scoped_v50(
             },
         };
         Ok(OptionV1 { kind: kind.into(), source: public_ref(state, id)?, shield_remaining: amount })
-    }).collect::<Result<Vec<_>, RlContractError>>()?;
+    }).collect::<Result<Vec<_>, RlContractError>>()
+}
+fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
+    menu_inner(state, false)
+}
+fn menu_inner(state: &GameState, accept_akroma: bool) -> Result<Option<MenuV1>, RlContractError> {
+    menu_fake_scoped_v50(state, accept_akroma, false)
+}
+fn menu_fake_scoped_v50(
+    state: &GameState,
+    accept_akroma: bool,
+    accept_fake: bool,
+) -> Result<Option<MenuV1>, RlContractError> {
+    use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+    let Some(PendingEffectChoice::ChooseOption {
+        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|p| p.choice.as_ref())
+    else {
+        return Ok(None);
+    };
+    let Target::Object(recipient) = choice.target else {
+        return Err(RlContractError("Crystal menu lost recipient".into()));
+    };
+    let options = prevention_options(state, choice)?;
     let (source, source_history, fixed_source_history, raid_source_history) =
         damage_origin(state, choice)?;
     Ok(Some(MenuV1 {
@@ -579,6 +624,23 @@ pub(crate) fn parts_for_common_scope(
         None,
     )
 }
+/// The complete Chandra consumer carries its own authenticated damage menu.
+/// Frozen consumers still construct their original menu and refuse this source.
+pub(crate) fn menu_owned_by_chandra_scope(
+    state: &GameState,
+    scope: Option<crate::rl::CommonProjectionScopeV42>,
+) -> bool {
+    matches!(
+        scope,
+        Some(
+            crate::rl::CommonProjectionScopeV42::ChandraV74
+                | crate::rl::CommonProjectionScopeV42::KaitoV75
+        )
+    ) && crate::effect::crystal_prevention_v1::is_choice(state)
+        && state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            crate::effect::chandra_flameshaper_v1::selected(state, &pending.resolving_item)
+        })
+}
 pub(crate) fn parts_for_common_scope_with_common(
     request: (crate::rl::CommonProjectionScopeV42, &GameState),
     surface: &PolicySurfaceV5,
@@ -595,10 +657,16 @@ pub(crate) fn parts_for_common_scope_with_common(
         crate::rl::CommonProjectionScopeV42::FakeV50
             | crate::rl::CommonProjectionScopeV42::RavenousV51
             | crate::rl::CommonProjectionScopeV42::PreparedV57
+            | crate::rl::CommonProjectionScopeV42::NextFiveV59
+            | crate::rl::CommonProjectionScopeV42::TinybonesV72
+            | crate::rl::CommonProjectionScopeV42::LilianaV73
+            | crate::rl::CommonProjectionScopeV42::ChandraV74
+            | crate::rl::CommonProjectionScopeV42::KaitoV75
     );
 
     validate_state(state).map_err(RlContractError)?;
-    let project_menu = !crate::twinflame_observation_v1::owns_family_menu(state);
+    let project_menu = !menu_owned_by_chandra_scope(state, Some(scope))
+        && !crate::twinflame_observation_v1::owns_family_menu(state);
     let optional_discard_menu = if project_menu {
         discard_menu_fake_scoped_v50(state, actor, true, accept_fake)?
     } else {
@@ -668,21 +736,13 @@ pub(crate) fn parts_for_common_scope_with_common(
             state.player_attacked_this_turn_v1(PlayerId::P1),
         ],
         static_sources,
-        prevention_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
-            None
-        } else {
+        prevention_menu: if project_menu {
             menu_fake_scoped_v50(state, true, accept_fake)?
-        },
-        optional_discard_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
-            None
         } else {
-            optional_discard_menu
-        },
-        optional_fight_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
             None
-        } else {
-            optional_fight_menu
         },
+        optional_discard_menu,
+        optional_fight_menu,
         equipment_damage_sources: crate::equipment_damage_source_v4::public_sources(state)
             .map_err(RlContractError)?,
         projection_sha256: String::new(),

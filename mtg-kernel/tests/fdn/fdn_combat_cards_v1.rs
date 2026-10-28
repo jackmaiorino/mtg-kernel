@@ -296,7 +296,10 @@ fn overrun_snapshots_only_current_creatures_and_expires_at_cleanup() {
         ));
     }
     assert_eq!(engine::effective_power(&state, later), 1);
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(&mut state, active, Step::End);
+    }
     state.engine.priority_passes = [false, false];
     apply(&mut surface, &mut state, Action::Pass);
     next(&mut surface, &mut state);
@@ -538,7 +541,10 @@ fn ranger_temporary_power_expires_at_the_actual_cleanup_checkpoint() {
     let mut surface = surface();
     drain(&mut surface, &mut state);
     assert_eq!(engine::effective_power(&state, ranger), 4);
-    state.step = Step::End;
+    {
+        let active = state.active_player;
+        super::fixture_turn_v1::reach(&mut state, active, Step::End);
+    }
     state.engine.priority_passes = [false, false];
     apply(&mut surface, &mut state, Action::Pass);
     next(&mut surface, &mut state);

@@ -1,7 +1,7 @@
 //! Generated-definition tables for the MageZero Standard lands batch
 //! (`docs/design/standard_lands_v1.md`). Every function is keyed by the
-//! registry name and only cards in `data/standard/magezero_v1/cards_v1.json`
-//! match, so Pauper and FDN definitions are unaffected.
+//! registry name. Giada's FDN source also reuses its typed restricted-mana
+//! descriptor; every other Pauper and FDN definition retains its old table.
 
 use super::{
     AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, PermanentFilterRecipe,
@@ -184,6 +184,9 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         );
     }
     match name {
+        "Giada, Font of Hope" => {
+            fields.restricted_mana_abilities = "&[RestrictedManaAbilityDef { colors: &[ManaColor::W], restriction: ManaSpendRestrictionDef::SpellWithSubtype(Subtype::Angel) }]".to_string();
+        }
         "Plaza of Heroes" => {
             fields.restricted_mana_abilities = format!("&[RestrictedManaAbilityDef {{ colors: {ANY_COLOR}, restriction: ManaSpendRestrictionDef::LegendarySpell }}]");
             fields.additional_mana_ability_conditions = format!("&[{}]", ["W","U","B","R","G"].map(|color| format!("Some(ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(ManaColor::{color}))")).join(", "));

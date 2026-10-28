@@ -723,6 +723,10 @@ fn decision_candidates(
 /// continuation -- see `BranchOracle.java`'s doc for why.
 fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction, String> {
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { .. }) => Err(
+            "creature-type entry and full-range cast-X require a separate replay successor".into(),
+        ),
         SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
             Err("continuation:unsupported-banner-entry-color-protocol".to_string())
         }

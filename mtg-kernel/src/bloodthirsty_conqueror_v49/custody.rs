@@ -593,7 +593,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             CommittedEvent::ConquerorJournalV49 { journal } if matches!(journal.as_ref(), JournalV49::Removed { publication, .. } if publication == published) => Some(at as u64), _ => None,
         }).collect::<Vec<_>>();
         if removals.is_empty() {
-            if live.as_slice() != [item] {
+            let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+            if (!disposed && live.as_slice() != [item]) || (disposed && !live.is_empty()) {
                 return Err("Conqueror published complete live owner erased or changed".into());
             }
             continue;

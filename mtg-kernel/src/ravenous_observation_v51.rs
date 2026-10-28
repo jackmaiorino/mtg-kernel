@@ -133,7 +133,43 @@ pub fn producer_sha256() -> String {
             include_str!("inspiration_observation_v1.rs"),
             include_str!("fishing_pole_observation_v39.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("resolution_cast_v1.rs"),
+            include_str!("effect/harvester_v1.rs"),
+            include_str!("leyline_axe_v1.rs"),
+            include_str!("london_mulligan_v1.rs"),
+            include_str!("life_loss_turn_v1.rs"),
+            include_str!("soul_shackled_zombie_v1.rs"),
+            include_str!("progenitus_v1.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("effect/nonland_copy_v1.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+            include_str!("effect/inspiration_resolution_v1.rs"),
+            include_str!("effect/standard_exile.rs"),
+            include_str!("snack_wide_life_v59.rs"),
+            include_str!("snack_wide_life_v59/custody.rs"),
+            include_str!("bloodthirsty_conqueror_v49.rs"),
+            include_str!("fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1/custody.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            include_str!("midnight_snack_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("mana.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("event.rs"),
+            include_str!("standard_cast_convoke.rs"),
+            include_str!("engine/mandatory_cast_cost_v1.rs"),
+            include_str!("rules_meaning_next_five_v59.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/standard_copy.rs"),
+            include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
+            crate::engine::time_stop_v1::source_sha256_v1(),
+            crate::effect::genesis_wave_v1::source_sha256_v1(),
+            include_str!("engine/tinybones_v72.rs"),
         ] {
             h.update([0]);
             h.update(s.as_bytes());
@@ -153,6 +189,8 @@ pub fn producer_sha256() -> String {
             h.update([1]);
             h.update(s.as_bytes());
         }
+        h.update(b"legacy-graveyard-return-guard/v61\0");
+        h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         h.finalize().iter().map(|b| format!("{b:02x}")).collect()
     })
     .clone()
@@ -167,6 +205,7 @@ pub fn commitment(value: &RavenousObservationV51) -> Result<String, RlContractEr
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::snack_wide_life_v59::require_legacy(state)?;
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     if !cfg!(all(
@@ -189,6 +228,39 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn validate_state_complete_prepared_v57(state: &GameState) -> Result<(), String> {
+    crate::snack_wide_life_v59::require_legacy(state)?;
+    validate_state_complete_inherited(state)
+}
+pub(crate) fn validate_state_complete_next_five_v59(state: &GameState) -> Result<(), String> {
+    crate::snack_wide_life_v59::validate(state)?;
+    validate_state_complete_inherited(state)
+}
+fn validate_state_complete_inherited(state: &GameState) -> Result<(), String> {
+    validate_state_complete_inherited_with_family(
+        state,
+        crate::planeswalker_v1::RecipientScopeV1::FullAjaniV42,
+    )
+}
+pub(crate) fn validate_state_complete_recipient_scope(
+    state: &GameState,
+    scope: crate::planeswalker_v1::RecipientScopeV1,
+) -> Result<(), String> {
+    use crate::planeswalker_v1::RecipientScopeV1 as S;
+    match scope {
+        S::VivienV70 | S::MuldrothaV71 => crate::snack_wide_life_v59::require_legacy(state)?,
+        S::TinybonesV72 | S::LilianaV73 | S::ChandraV74 | S::KaitoV75 => {
+            crate::snack_wide_life_v59::validate(state)?
+        }
+        S::HeartfireV12 | S::FullAjaniV42 => {
+            return Err("unsupported complete loyalty-recipient scope".into())
+        }
+    }
+    validate_state_complete_inherited_with_family(state, scope)
+}
+fn validate_state_complete_inherited_with_family(
+    state: &GameState,
+    scope: crate::planeswalker_v1::RecipientScopeV1,
+) -> Result<(), String> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -198,7 +270,7 @@ pub(crate) fn validate_state_complete_prepared_v57(state: &GameState) -> Result<
     crate::ravenous_public_v51::capture(state).map_err(|e| e.0)?;
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     crate::akroma_public_v1::roots().map_err(|e| e.0)?;
-    crate::akroma_family_public_v40::validate_state_for_divine_v44(state)?;
+    crate::akroma_family_public_v40::validate_state_for_complete_recipient_scope(state, scope)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
     crate::ajani_public_v42::facts(state).map_err(|e| e.0)?;
     crate::eaten_public_v46::validate_state(state)?;
@@ -416,14 +488,232 @@ pub(crate) fn observe_parts_complete_prepared_v57(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<RavenousPublicPartsV51, RlContractError> {
-    observe_parts_complete_prepared_v57_using_family_builder(
+    observe_parts_complete_current_scope(
         state,
         surface,
         actor_and_origin,
         step,
         physical,
         substep,
-        crate::akroma_family_public_v40::build_for_scope,
+        crate::rl::CommonProjectionScopeV42::PreparedV57,
+    )
+}
+pub(crate) fn observe_parts_complete_next_five_v59(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::NextFiveV59,
+    )
+}
+pub(crate) fn observe_parts_complete_graveyard_return_v61(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::GraveyardReturnV61,
+    )
+}
+pub(crate) fn observe_parts_complete_call_v62(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::CallV62,
+    )
+}
+pub(crate) fn observe_parts_complete_end_turn_v68(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::EndTurnV68,
+    )
+}
+pub(crate) fn observe_parts_complete_genesis_wave_v69(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::GenesisWaveV69,
+    )
+}
+pub(crate) fn observe_parts_complete_vivien_v70(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::VivienV70,
+    )
+}
+pub(crate) fn observe_parts_complete_muldrotha_v71(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::MuldrothaV71,
+    )
+}
+pub(crate) fn observe_parts_complete_tinybones_v72(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::TinybonesV72,
+    )
+}
+pub(crate) fn observe_parts_complete_liliana_v73(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::LilianaV73,
+    )
+}
+pub(crate) fn observe_parts_complete_chandra_v74(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::ChandraV74,
+    )
+}
+pub(crate) fn observe_parts_complete_kaito_v75(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::KaitoV75,
+    )
+}
+
+fn observe_parts_complete_current_scope(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope_using_family_builder(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        (scope, crate::akroma_family_public_v40::build_for_scope),
     )
 }
 
@@ -440,40 +730,98 @@ pub(crate) fn observe_parts_complete_prepared_v57_fully_rebuilt(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<RavenousPublicPartsV51, RlContractError> {
-    observe_parts_complete_prepared_v57_using_family_builder(
+    observe_parts_complete_current_scope_using_family_builder(
         state,
         surface,
         actor_and_origin,
         step,
         physical,
         substep,
-        crate::akroma_family_public_v40::build_for_scope_fully_rebuilt,
+        (
+            crate::rl::CommonProjectionScopeV42::PreparedV57,
+            crate::akroma_family_public_v40::build_for_scope_fully_rebuilt,
+        ),
     )
 }
 
-fn observe_parts_complete_prepared_v57_using_family_builder(
+fn observe_parts_complete_current_scope_using_family_builder(
     state: &GameState,
     surface: &PolicySurfaceV5,
     actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
     step: u64,
     physical: u64,
     substep: (u32, u32),
-    build_families: crate::akroma_family_public_v40::FamilyPartsBuilderV40,
+    construction: (
+        crate::rl::CommonProjectionScopeV42,
+        crate::akroma_family_public_v40::FamilyPartsBuilderV40,
+    ),
 ) -> Result<RavenousPublicPartsV51, RlContractError> {
+    let (scope, build_families) = construction;
+    let (schema, producer) = match scope {
+        crate::rl::CommonProjectionScopeV42::PreparedV57 => (
+            crate::prepared_observation_v57::COMMON_SCHEMA,
+            crate::prepared_observation_v57::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::NextFiveV59 => (
+            crate::next_five_observation_v59::COMMON_SCHEMA,
+            crate::next_five_observation_v59::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::GraveyardReturnV61 => (
+            crate::graveyard_return_observation_v61::COMMON_SCHEMA,
+            crate::graveyard_return_observation_v61::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::CallV62 => (
+            crate::call_observation_v62::COMMON_SCHEMA,
+            crate::call_observation_v62::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::EndTurnV68 => (
+            crate::end_turn_observation_v68::COMMON_SCHEMA,
+            crate::end_turn_observation_v68::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::VivienV70 => (
+            crate::vivien_observation_v70::COMMON_SCHEMA,
+            crate::vivien_observation_v70::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::MuldrothaV71 => (
+            crate::muldrotha_observation_v71::COMMON_SCHEMA,
+            crate::muldrotha_observation_v71::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::LilianaV73 => (
+            crate::liliana_observation_v73::COMMON_SCHEMA,
+            crate::liliana_observation_v73::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::ChandraV74 => (
+            crate::chandra_observation_v74::COMMON_SCHEMA,
+            crate::chandra_observation_v74::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::KaitoV75 => (
+            crate::kaito_observation_v75::COMMON_SCHEMA,
+            crate::kaito_observation_v75::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::TinybonesV72 => (
+            crate::tinybones_observation_v72::COMMON_SCHEMA,
+            crate::tinybones_observation_v72::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::GenesisWaveV69 => (
+            crate::genesis_wave_observation_v69::COMMON_SCHEMA,
+            crate::genesis_wave_observation_v69::producer_sha256(),
+        ),
+        _ => return Err(RlContractError("wrong complete compatibility scope".into())),
+    };
     let (actor, origin) = actor_and_origin;
     surface
         .validate_observation_origin_substeps_v45(state, actor, origin, substep)
         .map_err(|error| diagnose_observation_error("inherited.origin_substeps", error))
         .map_err(RlContractError)?;
     let (substep_index, substep_count) = substep;
-    let ravenous = crate::ravenous_public_v51::battlefield_prepared_v57(state)
+    let ravenous = crate::ravenous_public_v51::battlefield_complete_scope(state, scope)
         .map_err(|error| diagnose_observation_error("inherited.prepared_battlefield", error))?;
     let roots = crate::akroma_public_v1::roots()
         .map_err(|error| diagnose_observation_error("inherited.akroma_roots", error))?;
     let (grants, color_departures) = crate::akroma_public_v1::facts(state)
         .map_err(|error| diagnose_observation_error("inherited.akroma_facts", error))?;
     let base = crate::rl::common_family_observation_storage_scoped(
-        (crate::rl::CommonProjectionScopeV42::PreparedV57, state),
+        (scope, state),
         surface,
         actor,
         step,
@@ -484,22 +832,14 @@ fn observe_parts_complete_prepared_v57_using_family_builder(
     let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)
         .map_err(|error| diagnose_observation_error("inherited.extensions", error))?;
     let mut base = storage.base;
-    let mut parts = build_families(
-        state,
-        surface,
-        actor,
-        step,
-        physical,
-        substep,
-        crate::rl::CommonProjectionScopeV42::PreparedV57,
-    )
-    .map_err(|error| diagnose_observation_error("inherited.family_parts", error))?;
+    let mut parts = build_families(state, surface, actor, step, physical, substep, scope)
+        .map_err(|error| diagnose_observation_error("inherited.family_parts", error))?;
     base.projection =
         crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)
             .map_err(|error| diagnose_observation_error("inherited.family_merge", error))?;
     let mut observation = RavenousObservationV51 {
-        schema: crate::prepared_observation_v57::COMMON_SCHEMA.into(),
-        producer_sha256: crate::prepared_observation_v57::producer_sha256(),
+        schema: schema.into(),
+        producer_sha256: producer,
         kernel_version: base.kernel_version,
         surface_version: base.surface_version,
         policy_surface_version: base.policy_surface_version,
@@ -536,12 +876,34 @@ fn observe_parts_complete_prepared_v57_using_family_builder(
             .map_err(|error| diagnose_observation_error("inherited.hunter", error))?,
         eaten: crate::eaten_public_v46::capture(state, actor)
             .map_err(|error| diagnose_observation_error("inherited.eaten", error))?,
-        panda: crate::panda_public_v47::capture(state)
-            .map_err(|error| diagnose_observation_error("inherited.panda", error))?,
+        panda: (if matches!(
+            scope,
+            crate::rl::CommonProjectionScopeV42::NextFiveV59
+                | crate::rl::CommonProjectionScopeV42::TinybonesV72
+                | crate::rl::CommonProjectionScopeV42::LilianaV73
+                | crate::rl::CommonProjectionScopeV42::ChandraV74
+                | crate::rl::CommonProjectionScopeV42::KaitoV75
+        ) {
+            crate::panda_public_v47::capture_ordinary_for_next_five(state)
+        } else {
+            crate::panda_public_v47::capture(state)
+        })
+        .map_err(|error| diagnose_observation_error("inherited.panda", error))?,
         season: crate::doubling_season_public_v48::capture(state)
             .map_err(|error| diagnose_observation_error("inherited.season", error))?,
-        conqueror: crate::conqueror_public_v49::capture(state)
-            .map_err(|error| diagnose_observation_error("inherited.conqueror", error))?,
+        conqueror: (if matches!(
+            scope,
+            crate::rl::CommonProjectionScopeV42::NextFiveV59
+                | crate::rl::CommonProjectionScopeV42::TinybonesV72
+                | crate::rl::CommonProjectionScopeV42::LilianaV73
+                | crate::rl::CommonProjectionScopeV42::ChandraV74
+                | crate::rl::CommonProjectionScopeV42::KaitoV75
+        ) {
+            crate::conqueror_public_v49::capture_ordinary_for_next_five(state)
+        } else {
+            crate::conqueror_public_v49::capture(state)
+        })
+        .map_err(|error| diagnose_observation_error("inherited.conqueror", error))?,
         fake: crate::fake_your_own_death_v50::public_v50::capture(state)
             .map_err(|error| diagnose_observation_error("inherited.fake", error))?,
         battlefield: ravenous.cards,
@@ -624,6 +986,75 @@ impl RavenousObservationV51 {
             &crate::prepared_observation_v57::producer_sha256(),
         )
     }
+    pub(crate) fn validate_next_five_compatibility_v59(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::next_five_observation_v59::COMMON_SCHEMA,
+            &crate::next_five_observation_v59::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_graveyard_return_compatibility_v61(
+        &self,
+    ) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::graveyard_return_observation_v61::COMMON_SCHEMA,
+            &crate::graveyard_return_observation_v61::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_call_compatibility_v62(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::call_observation_v62::COMMON_SCHEMA,
+            &crate::call_observation_v62::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_end_turn_compatibility_v68(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::end_turn_observation_v68::COMMON_SCHEMA,
+            &crate::end_turn_observation_v68::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_genesis_wave_compatibility_v69(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::genesis_wave_observation_v69::COMMON_SCHEMA,
+            &crate::genesis_wave_observation_v69::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_vivien_compatibility_v70(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::vivien_observation_v70::COMMON_SCHEMA,
+            &crate::vivien_observation_v70::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_muldrotha_compatibility_v71(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::muldrotha_observation_v71::COMMON_SCHEMA,
+            &crate::muldrotha_observation_v71::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_tinybones_compatibility_v72(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::tinybones_observation_v72::COMMON_SCHEMA,
+            &crate::tinybones_observation_v72::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_liliana_compatibility_v73(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::liliana_observation_v73::COMMON_SCHEMA,
+            &crate::liliana_observation_v73::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_chandra_compatibility_v74(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::chandra_observation_v74::COMMON_SCHEMA,
+            &crate::chandra_observation_v74::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_kaito_compatibility_v75(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::kaito_observation_v75::COMMON_SCHEMA,
+            &crate::kaito_observation_v75::producer_sha256(),
+        )
+    }
+
     fn validate_artifact_identity(
         &self,
         schema: &str,

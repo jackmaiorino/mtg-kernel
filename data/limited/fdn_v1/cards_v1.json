@@ -7603,7 +7603,9 @@
       "java_file": "Mage.Sets/src/mage/cards/s/SpinnerOfSouls.java",
       "is_token": false,
       "other_controlled_nontoken_death_v1": "may_reveal_creature_to_hand_random_bottom",
-      "intrinsic_keywords_v1": ["reach"]
+      "intrinsic_keywords_v1": [
+        "reach"
+      ]
     },
     {
       "name": "Painful Quandary",
@@ -7758,6 +7760,1433 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/d/DoublingSeason.java",
       "is_token": false
+    },
+    {
+      "name": "Midnight Snack",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_midnight_snack_partial.dck",
+        "FDN_reference_midnight_snack_full_candidate.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "raid_endstep_food",
+        "sacrifice_source_opponent_loses_controller_total_life_gained_this_turn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MidnightSnack.java",
+      "is_token": false
+    },
+    {
+      "name": "Extravagant Replication",
+      "engine_capability": "full",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_extravagant_replication_partial.dck",
+        "FDN_reference_extravagant_replication_full_candidate.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controller_upkeep",
+        "another_controlled_nonland_target_copy",
+        "untargeted_aura_attachment_before_entry"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ExtravagantReplication.java",
+      "is_token": false
+    },
+    {
+      "name": "Infernal Vessel",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Cleric"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_infernal_vessel_partial.dck",
+        "FDN_reference_infernal_vessel_full_candidate.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "dies_if_departed_incarnation_not_demon",
+        "owner_return_with_two_plus_one_counters",
+        "add_demon_to_new_incarnation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InfernalVessel.java",
+      "is_token": false
+    },
+    {
+      "name": "Giada, Font of Hope",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [
+        "W"
+      ],
+      "decks": [
+        "FDN_reference_giada_partial.dck",
+        "FDN_reference_giada_full_candidate.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "vigilance",
+        "other_controlled_angel_enters_with_counters_per_preentry_angel",
+        "tap_white_only_to_cast_angel_spell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GiadaFontOfHope.java",
+      "is_token": false
+    },
+    {
+      "name": "Goblin Negotiation",
+      "engine_capability": "full",
+      "mana_cost": "{X}{R}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_goblin_negotiation_partial.dck",
+        "FDN_reference_goblin_negotiation_full_candidate.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "x_damage_target_creature",
+        "create_goblins_equal_actual_excess_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GoblinNegotiation.java",
+      "is_token": false
+    },
+    {
+      "name": "Alesha, Who Laughs at Fate",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{B}{R}",
+      "mana_value": 3,
+      "colors": [
+        "B",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Warrior"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_alesha_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "first_strike",
+        "attack_plus_one_counter",
+        "raid_return_creature_from_own_graveyard_mana_value_at_most_current_power"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AleshaWhoLaughsAtFate.java",
+      "is_token": false
+    },
+    {
+      "name": "Nine-Lives Familiar",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_nine_lives_familiar_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "eight_revival_counters_if_cast",
+        "death_returns_next_end_step_with_one_fewer"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/n/NineLivesFamiliar.java",
+      "is_token": false
+    },
+    {
+      "name": "Valkyrie's Call",
+      "engine_capability": "partial",
+      "mana_cost": "{3}{W}{W}",
+      "mana_value": 5,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_valkyries_call_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controlled_nontoken_nonangel_creature_death_returns_to_owner_with_counter_angel_and_flying"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/v/ValkyriesCall.java",
+      "is_token": false
+    },
+    {
+      "name": "Perforating Artist",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{B}{R}",
+      "mana_value": 3,
+      "colors": [
+        "B",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Devil"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_perforating_artist_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "deathtouch",
+        "raid_end_step_opponent_may_sacrifice_nonland_or_discard_otherwise_lose_three"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PerforatingArtist.java",
+      "is_token": false
+    },
+    {
+      "name": "Niv-Mizzet, Visionary",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{U}{R}",
+      "mana_value": 6,
+      "colors": [
+        "U",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_niv_mizzet_visionary_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "opponent_noncombat_damage_draw_actual_amount",
+        "no_maximum_hand_size_while_controlled"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/n/NivMizzetVisionary.java",
+      "is_token": false
+    },
+    {
+      "name": "Embercleave",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_embercleave_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flash",
+        "generic_reduction_current_controlled_attacking_creatures",
+        "etb_attach_exact_source_to_controlled_creature",
+        "equipped_plus_one_double_strike_trample",
+        "equip_three"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/Embercleave.java",
+      "is_token": false
+    },
+    {
+      "name": "Banner of Kinship",
+      "engine_capability": "partial",
+      "mana_cost": "{5}",
+      "mana_value": 5,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_banner_of_kinship_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "as_enters_choose_creature_type",
+        "enters_with_fellowship_for_preentry_controlled_chosen_type",
+        "chosen_type_anthem_current_fellowship"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BannerOfKinship.java",
+      "is_token": false
+    },
+    {
+      "name": "Drakuseth, Maw of Flames",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{R}{R}{R}",
+      "mana_value": 7,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 7,
+      "toughness": 7,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_drakuseth_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "attacks_mandatory_first_any_target_four",
+        "up_to_two_other_distinct_any_targets_three_each",
+        "original_positional_contracts_one_damage_batch"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DrakusethMawOfFlames.java",
+      "is_token": false
+    },
+    {
+      "name": "Zimone, Paradox Sculptor",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{G}{U}",
+      "mana_value": 4,
+      "colors": [
+        "G",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_zimone_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "beginning_controller_combat_zero_to_two_controlled_creature_counters",
+        "green_blue_tap_double_each_counter_kind_zero_to_two_controlled_artifacts_or_creatures"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/z/ZimoneParadoxSculptor.java",
+      "is_token": false
+    },
+    {
+      "name": "Sphinx's Tutelage",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_sphinxs_tutelage_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "successful_controller_draw_event_time_source_capture_target_opponent",
+        "mill_two_repeat_only_two_nonland_shared_color_original_pair",
+        "five_generic_one_blue_draw_one_then_discard_one"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SphinxsTutelage.java",
+      "is_token": false
+    },
+    {
+      "name": "Consuming Aberration",
+      "engine_capability": "partial",
+      "mana_cost": "{3}{U}{B}",
+      "mana_value": 5,
+      "colors": [
+        "U",
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_consuming_aberration_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "characteristic_defining_power_toughness_all_opponents_graveyard_cards_all_zones",
+        "controller_cast_spell_each_opponent_reveal_through_first_land_then_graveyard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ConsumingAberration.java",
+      "is_token": false
+    },
+    {
+      "name": "Lathril, Blade of the Elves",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{B}{G}",
+      "mana_value": 4,
+      "colors": [
+        "B",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Noble"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_lathril_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "menace",
+        "final_positive_combat_damage_to_player_creates_that_many_elf_warriors",
+        "tap_source_and_ten_other_untapped_controlled_elves_drain_ten"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LathrilBladeOfTheElves.java",
+      "is_token": false
+    },
+    {
+      "name": "Blasphemous Edict",
+      "engine_capability": "partial",
+      "mana_cost": "{3}{B}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_blasphemous_edict_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "optional_black_alternative_if_thirteen_effective_battlefield_creatures",
+        "apnap_each_player_chooses_thirteen_or_all_controlled_creatures",
+        "physical_owners_order_graveyard_destinations_then_simultaneous_sacrifice"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BlasphemousEdict.java",
+      "is_token": false
+    },
+    {
+      "name": "Secluded Courtyard",
+      "engine_capability": "partial",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "FDN_reference_secluded_courtyard_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "as_enters_choose_one_of_324_creature_types",
+        "tap_colorless_unrestricted",
+        "tap_any_color_only_chosen_type_creature_spell_or_creature_card_activation",
+        "floating_mana_retains_original_entry_choice"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SecludedCourtyard.java",
+      "is_token": false
+    },
+    {
+      "name": "Electroduplicate",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "mechanics": [
+        "copy_target_controlled_creature",
+        "copiable_permanent_haste_and_each_end_step_sacrifice_ability",
+        "flashback_2rr"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/Electroduplicate.java",
+      "decks": [
+        "FDN_reference_electroduplicate_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Curator of Destinies",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Sphinx"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "mechanics": [
+        "flying",
+        "cant_be_countered",
+        "etb_private_top_five_face_down_face_up_piles_opponent_chooses_hand_rest_graveyard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CuratorOfDestinies.java",
+      "decks": [
+        "FDN_reference_curator_of_destinies_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Loot, Exuberant Explorer",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Beast",
+        "Noble"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "mechanics": [
+        "additional_land_own_turn_effective_source",
+        "activated_private_top_six_creature_mv_at_most_controlled_lands_battlefield_random_bottom"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LootExuberantExplorer.java",
+      "decks": [
+        "FDN_reference_loot_exuberant_explorer_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Kykar, Zephyr Awakener",
+      "mana_cost": "{2}{W}{U}",
+      "mana_value": 4,
+      "colors": [
+        "W",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 4,
+      "mechanics": [
+        "flying",
+        "cast_noncreature_mode_at_announcement",
+        "exile_another_controlled_creature_next_end_step_owner_return",
+        "white_spirit_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KykarZephyrAwakener.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_kykar_zephyr_awakener_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Kykar Spirit Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritWhiteToken.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "is_token": true
+    },
+    {
+      "name": "Quilled Greatwurm",
+      "mana_cost": "{4}{G}{G}",
+      "mana_value": 6,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Wurm"
+      ],
+      "supertypes": [],
+      "power": 7,
+      "toughness": 7,
+      "mechanics": [
+        "trample",
+        "controlled_creature_combat_damage_own_turn_counters",
+        "graveyard_cast_remove_six_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/q/QuilledGreatwurm.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_quilled_greatwurm_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Sphinx of Forgotten Lore",
+      "mana_cost": "{2}{U}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Sphinx"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "mechanics": [
+        "flash",
+        "flying",
+        "attacks_grant_target_instant_sorcery_flashback_mana_cost_until_cleanup"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SphinxOfForgottenLore.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_sphinx_forgotten_lore_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Omniscience",
+      "mana_cost": "{7}{U}{U}{U}",
+      "mana_value": 10,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "may_cast_nonland_from_own_hand_without_mana_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/Omniscience.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_omniscience_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Abyssal Harvester",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Demon",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "mechanics": [
+        "tap_exile_target_creature_card_put_in_any_graveyard_this_turn",
+        "create_nightmare_token_copy_then_exile_other_controlled_nightmare_tokens"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AbyssalHarvester.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_abyssal_harvester_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Progenitus",
+      "mana_cost": "{W}{W}{U}{U}{B}{B}{R}{R}{G}{G}",
+      "mana_value": 10,
+      "colors": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hydra",
+        "Avatar"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 10,
+      "toughness": 10,
+      "mechanics": [
+        "protection_from_everything",
+        "mandatory_reveal_shuffle_instead_of_graveyard_from_anywhere"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/Progenitus.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_progenitus_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Etali, Primal Storm",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elder",
+        "Dinosaur"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 6,
+      "toughness": 6,
+      "mechanics": [
+        "attack_exile_each_player_top_simultaneous",
+        "may_cast_any_number_nonlands_free_during_resolution"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EtaliPrimalStorm.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_etali_primal_storm_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Leyline Axe",
+      "mana_cost": "{4}",
+      "mana_value": 4,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "may_begin_battlefield_from_kept_opening_hand",
+        "equipped_plus_one_plus_one_double_strike_trample",
+        "equip_3"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LeylineAxe.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_leyline_axe_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Fiend Artisan",
+      "mana_cost": "{B/G}{B/G}",
+      "mana_value": 2,
+      "colors": [
+        "B",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Nightmare"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "mechanics": [
+        "battlefield_plus_one_plus_one_per_controller_graveyard_creature_card",
+        "sorcery_tap_sacrifice_another_creature_choose_mana_x_search_creature_mana_value_at_most_x"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FiendArtisan.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_fiend_artisan_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Imprisoned in the Moon",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "enchant_creature_land_or_planeswalker",
+        "layer4_land_only_retain_land_subtypes_layer5_colorless_layer6_lose_other_abilities_tap_colorless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/ImprisonedInTheMoon.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_imprisoned_moon_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Thousand-Year Storm",
+      "mana_cost": "{4}{U}{R}",
+      "mana_value": 6,
+      "colors": [
+        "U",
+        "R"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "own_instant_sorcery_cast_event_time_snapshot",
+        "copy_for_each_prior_own_instant_sorcery_cast_this_turn",
+        "optional_new_targets_independently_for_each_copy_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThousandYearStorm.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_thousand_year_storm_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Time Stop",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "end_the_turn_exile_all_stack_objects_skip_to_cleanup",
+        "cleanup_discard_then_expiration_sba_trigger_priority_repeat"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TimeStop.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_time_stop_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Genesis Wave",
+      "mana_cost": "{X}{G}{G}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "reveal_top_paid_x_u16",
+        "optional_any_permanent_mana_value_at_most_x",
+        "simultaneous_entry_then_remaining_graveyard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GenesisWave.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_genesis_wave_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Vivien Reid",
+      "mana_cost": "{3}{G}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Vivien"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 5,
+      "mechanics": [
+        "loyalty_look4_optional_creature_or_land_reveal_random_bottom",
+        "loyalty_destroy_artifact_enchantment_or_flying_creature",
+        "persistent_timestamped_emblem_plus2_plus2_vigilance_trample_indestructible"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/v/VivienReid.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_vivien_reid_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Muldrotha, the Gravetide",
+      "mana_cost": "{3}{B}{G}{U}",
+      "mana_value": 6,
+      "colors": [
+        "B",
+        "G",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elemental",
+        "Avatar"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 6,
+      "toughness": 6,
+      "mechanics": [
+        "own_turn_play_permanent_from_own_graveyard",
+        "original_source_incarnation_per_turn_permanent_type_budget",
+        "explicit_source_and_multitype_permission_choice"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MuldrothaTheGravetide.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_muldrotha_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Tinybones, Bauble Burglar",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton",
+        "Rogue"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 3,
+      "mechanics": [
+        "opponent_discard_original_incarnation_exile_with_stash",
+        "dynamic_own_turn_unowned_stashed_exile_play",
+        "any_type_mana_original_pips_and_convoke",
+        "sorcery_3B_tap_opponent_discards_one"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TinybonesBaubleBurglar.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tinybones_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
+    },
+    {
+      "name": "Liliana, Dreadhorde General",
+      "mana_cost": "{4}{B}{B}",
+      "mana_value": 6,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Liliana"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "starting_loyalty": 6,
+      "mechanics": [
+        "controlled_creature_dies_draw",
+        "native_loyalty_zombie",
+        "apnap_simultaneous_sacrifice_two",
+        "opponent_keep_each_permanent_type_sacrifice_rest"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LilianaDreadhordeGeneral.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_liliana_dreadhorde_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false,
+      "power": null,
+      "toughness": null
+    },
+    {
+      "name": "Zombie Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/ZombieToken.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "is_token": true
+    },
+    {
+      "name": "Chandra, Flameshaper",
+      "engine_capability": "partial",
+      "mana_cost": "{5}{R}{R}",
+      "mana_value": 7,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Chandra"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_chandra_flameshaper_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "native_loyalty_plus_two_red_three_top_three_choose_one_play_this_turn",
+        "native_loyalty_copy_creature_copiable_haste_end_step_sacrifice",
+        "native_prepaid_divide_eight_zero_to_eight_creature_planeswalker_targets"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ChandraFlameshaper.java",
+      "is_token": false
+    },
+    {
+      "name": "Kaito, Cunning Infiltrator",
+      "mana_cost": "{1}{U}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Kaito"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_kaito_cunning_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "native_loyalty_optional_creature_evasion_draw_then_discard",
+        "native_blue_two_one_ninja",
+        "native_persistent_any_player_spell_cast_ninja_emblem",
+        "native_original_observer_final_combat_damage_loyalty"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KaitoCunningInfiltrator.java",
+      "engine_capability": "partial",
+      "is_token": false
+    },
+    {
+      "name": "Ninja Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Ninja"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/NinjaToken2.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "is_token": true
     }
   ]
 }

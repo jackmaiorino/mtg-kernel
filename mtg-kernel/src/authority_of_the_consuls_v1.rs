@@ -733,11 +733,35 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             if *capture_history_index == capture.history_index)
             })
             .count();
-        if completed > 1
+        let mut disposed = 0usize;
+        if state
+            .engine
+            .event_history
+            .has_any(&[EventKindV1::TimeStopJournalV1])
+        {
+            for event in state
+                .engine
+                .event_history
+                .scan_for_v1(&[EventKindV1::AuthorityEntryPublishedV1])
+            {
+                if let CommittedEvent::AuthorityEntryPublishedV1 {
+                    capture_history_index,
+                    item,
+                } = event
+                {
+                    if *capture_history_index == capture.history_index
+                        && crate::engine::time_stop_v1::disposed(state, item)?
+                    {
+                        disposed += 1;
+                    }
+                }
+            }
+        }
+        if completed + disposed > 1
             || operations != completed
-            || publications != usize::from(live + completed > 0)
-            || (collected == 0 && (completed != 0 || pending + live != 0))
-            || (collected == 1 && pending + live != usize::from(completed == 0))
+            || publications != usize::from(live + completed + disposed > 0)
+            || (collected == 0 && (completed + disposed != 0 || pending + live != 0))
+            || (collected == 1 && pending + live != usize::from(completed + disposed == 0))
         {
             return Err("opponent entry trigger lost or replayed its dispatch ownership".into());
         }

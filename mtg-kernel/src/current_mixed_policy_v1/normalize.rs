@@ -95,7 +95,142 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
             }
         }
         Value::Object(values) => {
-            if source == Source::PreparedV57 && super::prepared::typed_meaning(values, covered)? {
+            if source == Source::KaitoV75 && super::kaito::typed_meaning(values, covered)? {
+                return Ok(());
+            }
+            if matches!(source, Source::ChandraV74 | Source::KaitoV75)
+                && super::chandra::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::LilianaV73 | Source::ChandraV74 | Source::KaitoV75
+            ) && super::liliana::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::TinybonesV72 | Source::LilianaV73 | Source::ChandraV74 | Source::KaitoV75
+            ) && super::tinybones::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
+                    | Source::KaitoV75
+            ) && super::muldrotha::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::VivienV70
+                    | Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
+                    | Source::KaitoV75
+            ) && super::vivien::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::GenesisWaveV69
+                    | Source::VivienV70
+                    | Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
+                    | Source::KaitoV75
+            ) && super::genesis_wave::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::EndTurnV68
+                    | Source::GenesisWaveV69
+                    | Source::VivienV70
+                    | Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
+                    | Source::KaitoV75
+            ) && super::end_turn::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::CallV62
+                    | Source::EndTurnV68
+                    | Source::GenesisWaveV69
+                    | Source::VivienV70
+                    | Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
+                    | Source::KaitoV75
+            ) && super::call::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::GraveyardReturnV61
+                    | Source::CallV62
+                    | Source::EndTurnV68
+                    | Source::GenesisWaveV69
+                    | Source::VivienV70
+                    | Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
+                    | Source::KaitoV75
+            ) && super::graveyard_return::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::NextFiveV59
+                    | Source::GraveyardReturnV61
+                    | Source::CallV62
+                    | Source::EndTurnV68
+                    | Source::GenesisWaveV69
+                    | Source::VivienV70
+                    | Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
+                    | Source::KaitoV75
+            ) && super::next_five::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::PreparedV57
+                    | Source::NextFiveV59
+                    | Source::GraveyardReturnV61
+                    | Source::CallV62
+                    | Source::EndTurnV68
+                    | Source::GenesisWaveV69
+                    | Source::VivienV70
+                    | Source::MuldrothaV71
+                    | Source::TinybonesV72
+                    | Source::LilianaV73
+                    | Source::ChandraV74
+                    | Source::KaitoV75
+            ) && super::prepared::typed_meaning(values, covered)?
+            {
                 return Ok(());
             }
             if values.contains_key("root_sha256") && values.contains_key("card_id") {
@@ -251,17 +386,69 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
     })
 }
 
-pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> Result<Packet> {
+pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) -> Result<Packet> {
     #[cfg(test)]
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::NumericNormalizeInclusive,
     );
-    super::public_projection_operands::prepare(&mut state)?;
+    if matches!(
+        source,
+        Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        let observation = state
+            .get_mut("observation")
+            .ok_or_else(|| Error::UnsupportedOperand("graveyard_return_observation".into()))?;
+        super::public_projection_operands::prepare(observation)?;
+    } else {
+        super::public_projection_operands::prepare(&mut state)?;
+    }
     super::kellan_public_operands::prepare(&mut state)?;
     super::fiery_public_operands::prepare(&mut state)?;
     super::fishing_public_operands::prepare(&mut state)?;
-    if source == Source::PreparedV57 {
+    if matches!(
+        source,
+        Source::PreparedV57
+            | Source::NextFiveV59
+            | Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
         super::prepared::references(&mut state)?;
+    }
+    if matches!(
+        source,
+        Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        // V61 actions carry the complete typed candidate annotations, including
+        // their public references, in addition to the ordinary action semantic.
+        for action in &mut actions {
+            super::prepared::references(action)?;
+        }
     }
     let mut covered = BTreeSet::new();
     expand(&mut state, &mut covered, source)?;
@@ -272,10 +459,162 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     }
     let mut meanings = Vec::new();
     for id in cards.difference(&covered) {
-        if source == Source::PreparedV57 && super::prepared::printing(*id)?.is_some() {
+        if source == Source::KaitoV75 && super::kaito::printing(*id)?.is_some() {
             continue;
         }
-        meanings.push(roots::baseline(*id)?);
+        if matches!(source, Source::ChandraV74 | Source::KaitoV75)
+            && super::chandra::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::LilianaV73 | Source::ChandraV74 | Source::KaitoV75
+        ) && super::liliana::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::TinybonesV72 | Source::LilianaV73 | Source::ChandraV74 | Source::KaitoV75
+        ) && super::tinybones::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
+                | Source::KaitoV75
+        ) && super::muldrotha::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::VivienV70
+                | Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
+                | Source::KaitoV75
+        ) && super::vivien::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::GenesisWaveV69
+                | Source::VivienV70
+                | Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
+                | Source::KaitoV75
+        ) && super::genesis_wave::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::EndTurnV68
+                | Source::GenesisWaveV69
+                | Source::VivienV70
+                | Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
+                | Source::KaitoV75
+        ) && super::end_turn::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::CallV62
+                | Source::EndTurnV68
+                | Source::GenesisWaveV69
+                | Source::VivienV70
+                | Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
+                | Source::KaitoV75
+        ) && super::call::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::GraveyardReturnV61
+                | Source::CallV62
+                | Source::EndTurnV68
+                | Source::GenesisWaveV69
+                | Source::VivienV70
+                | Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
+                | Source::KaitoV75
+        ) && super::graveyard_return::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::NextFiveV59
+                | Source::GraveyardReturnV61
+                | Source::CallV62
+                | Source::EndTurnV68
+                | Source::GenesisWaveV69
+                | Source::VivienV70
+                | Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
+                | Source::KaitoV75
+        ) && super::next_five::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::PreparedV57
+                | Source::NextFiveV59
+                | Source::GraveyardReturnV61
+                | Source::CallV62
+                | Source::EndTurnV68
+                | Source::GenesisWaveV69
+                | Source::VivienV70
+                | Source::MuldrothaV71
+                | Source::TinybonesV72
+                | Source::LilianaV73
+                | Source::ChandraV74
+                | Source::KaitoV75
+        ) && super::prepared::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        // These complete ordinary printings are added once by the mandatory
+        // supplements below, even if a catalog family already covered an ID.
+        if !roots::is_gain_land(*id)
+            && !roots::is_simple_trigger_permanent(*id)
+            && !roots::is_ordinary_equipment(*id)
+            && !roots::is_ordinary_aura(*id)
+            && !roots::is_team_static_permanent(*id)
+            && !roots::is_shivan_permanent(*id)
+            && !roots::is_sacrifice_permanent(*id)
+            && !roots::is_sailor_permanent(*id)
+            && !roots::is_lookout_permanent(*id)
+            && !roots::is_evolving_permanent(*id)
+            && !roots::is_surveil_one_permanent(*id)
+            && !roots::is_paladin_permanent(*id)
+            && !roots::is_mandatory_ordinary_spell(*id)
+        {
+            meanings.push(roots::baseline(*id)?);
+        }
     }
     // A family fact/root is not a complete ordinary printing descriptor.
     // These mandatory supplements are independent of `covered`, including
@@ -291,9 +630,113 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     // V52's existing typed meaning covers the static rules. Preserve its
     // complete ordered body and add the immutable ordinary spell route only
     // for an actually actor-authorized referenced printing.
-    if source == Source::PreparedV57 {
+    if matches!(
+        source,
+        Source::PreparedV57
+            | Source::NextFiveV59
+            | Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
         for id in &cards {
             if let Some(printing) = super::prepared::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::NextFiveV59
+            | Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(printing) = super::next_five::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::GraveyardReturnV61
+            | Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(printing) = super::graveyard_return::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::CallV62
+            | Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(printing) = super::call::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(printing) = super::genesis_wave::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::EndTurnV68
+            | Source::GenesisWaveV69
+            | Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(printing) = super::end_turn::printing(*id)? {
                 meanings.push(printing);
             }
         }
@@ -302,6 +745,69 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
         if let Some(id) = crate::card_def::card_id_by_name("Elenda, Saint of Dusk") {
             if cards.contains(&id) {
                 meanings.push(roots::elenda_printing(id)?);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::VivienV70
+            | Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(p) = super::vivien::printing(*id)? {
+                meanings.push(p);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::MuldrothaV71
+            | Source::TinybonesV72
+            | Source::LilianaV73
+            | Source::ChandraV74
+            | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(p) = super::muldrotha::printing(*id)? {
+                meanings.push(p);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::TinybonesV72 | Source::LilianaV73 | Source::ChandraV74 | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(printed) = super::tinybones::printing(*id)? {
+                meanings.push(printed);
+            }
+        }
+    }
+    if matches!(
+        source,
+        Source::LilianaV73 | Source::ChandraV74 | Source::KaitoV75
+    ) {
+        for id in &cards {
+            if let Some(printed) = super::liliana::printing(*id)? {
+                meanings.push(printed);
+            }
+        }
+    }
+    if matches!(source, Source::ChandraV74 | Source::KaitoV75) {
+        for id in &cards {
+            if let Some(p) = super::chandra::printing(*id)? {
+                meanings.push(p);
+            }
+        }
+    }
+    if source == Source::KaitoV75 {
+        for id in &cards {
+            if let Some(p) = super::kaito::printing(*id)? {
+                meanings.push(p);
             }
         }
     }

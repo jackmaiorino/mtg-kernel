@@ -243,6 +243,10 @@ impl FastActorSessionV1 {
                 "invalid Ajani V42 reset",
             ));
         }
+        preflight_declared_mainboards_for_scope(
+            crate::rl::CommonProjectionScopeV42::ExistingV40,
+            [&mainboards[0], &mainboards[1]],
+        )?;
         let mut state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
             env_seed,
             &mainboards[0],
@@ -324,6 +328,11 @@ impl FastActorSessionV1 {
         } else {
             restored.environment_revision = next_revision;
         }
+        crate::graveyard_return_public_v61::require_legacy_visible(
+            &restored.state,
+            restored.current.as_ref().map(|c| c.actor),
+        )
+        .map_err(RlContractError)?;
         *self = restored;
         Ok(())
     }

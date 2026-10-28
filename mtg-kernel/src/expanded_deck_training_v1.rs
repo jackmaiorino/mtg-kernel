@@ -9956,20 +9956,20 @@ pub(crate) mod tests {
         );
     }
 
-    /// The published state after the reverse and after the forward treatment
-    /// update of this fixture (FABLE-REVIEW-20260927 change 4), pinned from
-    /// the runs of 2026-09-27 at dbab4cd0; the CUDA values are GPU 1's (RTX
-    /// 3050). Each backend is deterministic run to run (acceptance-001).
-    // Current rules/catalog baseline: exact outputs from CI run 36807239038.
+    /// CPU regression states after the caster-priority correction in b752c044c
+    /// (CR 117.3c/117.5). Paired Native235/236 inputs first differ at the actual
+    /// off-turn Ward trigger; initial parameters match. Both-seat paid Ward/
+    /// Mystic tests also verify native restore and the following priority pass.
+    // Exact CPU outputs: Native236 (Windows), CI39598628050 (Linux).
     #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "210f9027d1423e2c84615be12fc66a2623a750ebff681553089e326fd96bdb0b",
-        "cf5b62f634e083c8f81d2ea3f9409481eef95d626147fddd8be0b9bdc4408317",
+        "6f8c26c98ed04629736de73f66fda34079e6608c7a42c1e2a4de2dc0fbe0c63e",
+        "81a23cc9045ed28b0630ea34f9b4bc379d49faeef120e606d617b8450ad5dcc7",
     ];
     #[cfg(not(target_os = "windows"))]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "4fe193c8baaabf0fe5b4db8e09c14f165d02df67d665a336fa826b5feaf3afe3",
-        "579e90b83826148aefa7c17cfae19471b6c92e151962c410792c141a8a80873e",
+        "edaa78f4aa822d845aacc5cf829577cc832dc64109bbee1574671662f366b3a5",
+        "2ffea00f50926f435738cf80c5fabc1e4ad01b991e9c3328471b87f6e6e4b7d5",
     ];
     // Current GPU1 outputs: cuda_teacher_witness_bba7779a.json, 2026-10-01.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
