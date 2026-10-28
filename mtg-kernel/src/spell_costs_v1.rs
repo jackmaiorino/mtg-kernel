@@ -164,6 +164,10 @@ pub(super) struct SelectedSpellManaCostsV1 {
     /// Whether this is a colorless Eldrazi spell, for Eldrazi Temple's
     /// restricted mana.
     pub(super) colorless_eldrazi: bool,
+    /// Teamwork N (Crossover Collaboration's alternative cost): untapped
+    /// creatures the caster controls with total power N or more are tapped
+    /// along with the mana payment, and are not mana sources for it.
+    pub(super) teamwork: Option<u8>,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -325,6 +329,59 @@ impl SelectedSpellManaCostsV1 {
         reduction: u32,
         reserved: &[ObjectId],
     ) -> Option<SpellManaPaymentV1> {
+        let Some(power) = self.teamwork else {
+            return self.mana_payment_plan(x, player, state, increase, reduction, reserved);
+        };
+        // Teamwork: some untapped creatures with total power `power` or more
+        // that the mana payment can do without. Creatures without positive
+        // power never help reach the total, so at most `power` creatures
+        // matter.
+        let candidates = super::standard_cast_convoke::teamwork_candidates(state, player)
+            .into_iter()
+            .filter(|object| {
+                !reserved.contains(object) && super::effective_power(state, *object) > 0
+            })
+            .collect::<Vec<_>>();
+        let plan = |chosen: &[ObjectId]| {
+            self.teamwork_payment(x, player, state, (increase, reduction), reserved, chosen)
+        };
+        teamwork_search(&candidates, &mut Vec::new(), i64::from(power), &plan, state)
+    }
+
+    /// The teamwork payment that taps `chosen`: their total power must reach
+    /// the teamwork requirement, and they pay no mana.
+    pub(super) fn teamwork_payment(
+        &self,
+        x: u8,
+        player: PlayerId,
+        state: &GameState,
+        generic_modifiers: (u32, u32),
+        reserved: &[ObjectId],
+        chosen: &[ObjectId],
+    ) -> Option<SpellManaPaymentV1> {
+        let power = self.teamwork?;
+        if chosen.is_empty() || total_power(state, chosen) < i64::from(power) {
+            return None;
+        }
+        let mut excluded = reserved.to_vec();
+        excluded.extend(chosen.iter().copied());
+        let (increase, reduction) = generic_modifiers;
+        let mut payment =
+            self.mana_payment_plan(x, player, state, increase, reduction, &excluded)?;
+        payment.convoke_tapped = chosen.to_vec();
+        Some(payment)
+    }
+
+    /// The mana payment alone, without teamwork's tapping.
+    fn mana_payment_plan(
+        &self,
+        x: u8,
+        player: PlayerId,
+        state: &GameState,
+        increase: u32,
+        reduction: u32,
+        reserved: &[ObjectId],
+    ) -> Option<SpellManaPaymentV1> {
         // No current selected cost combines Delve and Convoke.
         if self.convoke && self.delve {
             return None;
@@ -461,6 +518,42 @@ impl SelectedSpellManaCostsV1 {
     }
 }
 
+/// The summed current power of `objects`.
+pub(super) fn total_power(state: &GameState, objects: &[ObjectId]) -> i64 {
+    objects
+        .iter()
+        .map(|object| i64::from(super::effective_power(state, *object)))
+        .sum()
+}
+
+/// A completion of `chosen` from `candidates` whose total power reaches
+/// `needed` and that `plan` can pay. Adding creatures past the requirement
+/// only removes mana sources, so the search stops there.
+pub(super) fn teamwork_search(
+    candidates: &[ObjectId],
+    chosen: &mut Vec<ObjectId>,
+    needed: i64,
+    plan: &dyn Fn(&[ObjectId]) -> Option<SpellManaPaymentV1>,
+    state: &GameState,
+) -> Option<SpellManaPaymentV1> {
+    if total_power(state, chosen) >= needed {
+        return plan(chosen);
+    }
+    for (index, object) in candidates.iter().enumerate() {
+        if chosen.contains(object) {
+            continue;
+        }
+        chosen.push(*object);
+        if let Some(payment) =
+            teamwork_search(&candidates[index + 1..], chosen, needed, plan, state)
+        {
+            return Some(payment);
+        }
+        chosen.pop();
+    }
+    None
+}
+
 pub(super) fn selected_spell_mana_costs_v1(
     definition: &card_def::CardDef,
     method: CastMethodV4,
@@ -484,10 +577,13 @@ pub(super) fn selected_spell_mana_costs_v1(
         convoke: false,
         improvise: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e7a_v1::improvise_definition(definition.name),
-        replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
+        // Splice onto Arcane is paid like replicate: once per spliced card.
+        replicate: crate::eternal_cards_v1::replicate_cost(definition.name)
+            .or_else(|| crate::eternal_pauper_e8b_v1::splice_cost(definition)),
         spell_subtype_ids: spell_subtype_ids(definition),
         colorless_eldrazi: definition.colors.is_empty()
             && definition.subtypes.contains(&card_def::Subtype::Eldrazi),
+        teamwork: None,
     };
     match method {
         CastMethodV4::Normal => {
@@ -499,7 +595,13 @@ pub(super) fn selected_spell_mana_costs_v1(
                         .saturating_mul(u32::from(reducer.generic_per_count));
             }
         }
-        CastMethodV4::Alternative => selected.components(definition.alt_cost?.components),
+        CastMethodV4::Alternative => {
+            let alt = definition.alt_cost?;
+            selected.components(alt.components);
+            if let card_def::AltCostCondition::TeamworkV1(power) = alt.condition {
+                selected.teamwork = Some(power);
+            }
+        }
         CastMethodV4::Flashback => selected.components(flashback_cost_v1(definition)?),
         CastMethodV4::Escape => selected.components(escape_cost_v1(definition)?),
         CastMethodV4::Madness => selected.costs.push(definition.madness_cost?),
@@ -522,6 +624,14 @@ pub(super) fn selected_spell_mana_costs_v1(
             selected.costs.push(supported_bestow(definition)?.cost);
             selected.types = &[CardType::Enchantment];
         }
+    }
+    // Goblin Anarchomancer and the Familiars: spells of their colors cost
+    // {1} less, whichever cost is paid.
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, player),
+        );
     }
     // Keep surcharges separate from the base so intermediate u8 saturation
     // cannot discard generic mana before the u32 total is determined.
@@ -568,6 +678,9 @@ fn additional_cost_for_method_v1(
     if crate::eternal_pauper_e6b_v1::alternative_skips_additional_cost(
         definition,
         method == CastMethodV4::Alternative,
+    ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(
+        definition,
+        method == CastMethodV4::Flashback,
     ) {
         return None;
     }
@@ -1229,7 +1342,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         ordered_objects: choices.ordered_objects,
         chosen_power_lki: None,
     };
-    if selected.convoke {
+    if selected.convoke || selected.teamwork.is_some() {
         if !pending.convoke_finished {
             return None;
         }
@@ -1243,6 +1356,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         && pending.chosen_creature_cost.is_none()
         && !selected.delve
         && !selected.convoke
+        && selected.teamwork.is_none()
     {
         return Some(prepared);
     }

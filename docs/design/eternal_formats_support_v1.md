@@ -80,6 +80,7 @@ reserved.
 | E5a | Vintage Raker Shops, Oath of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy Mystic Forge, and with E5b's cards Legacy Eldrazi and Tron: Mystic Forge, Bolas's Citadel, Yawgmoth's Will, Chalice of the Void, Sensei's Divining Top, Oath of Druids, Oko, Ugin, Kozilek's Command, Talon Gates of Madara and the rest of the lists | 28 and a token | Vintage 62.3% to 80.0%, Legacy 49.4% to 59.6% (after E5b) |
 | E6b | Pauper Bogles, White Aggro, Rakdos Madness, Boros Moxite, Mono-White Aggro, Snacker Gates and Boros Synthesizer (and Azorius Faeries): Abundant Growth, Alms of the Vein, Ancestral Mask, Angelic Gift, Armadillo Cloak, Asgardian Citadel, Ash Barrens, Battle Screech, Benevolent Blessing, Boros Garrison, Bushwhack, Cartouche of Solidarity, Cliffgate, Dawnbringer Cleric, Demand Answers, Eagles of the North, Ethereal Armor, Fortress Kin-Guard, Gladecover Scout, Greatsword of Tyr, Guardians' Pledge, Heliod's Pilgrim, Idyllic Grange, Jagged Barrens, Kitchen Imp, Leonardo, Lunarch Veteran, Malevolent Rumble, Mana Tithe, Manor Gate, Martyr's Soul, Pursue the Past, Raffine's Informant, Ragged Short Spear, Rakdos Carnarium, Ramosian Rally, Rancor, Salt Road Packbeast, Search Party Captain, Sheltering Landscape, Silhana Ledgewalker, Slippery Bogle, Spider-Man, Spirit Link, Thraben Inspector, Utopia Sprawl, Vampire's Kiss, Wind-Scarred Crag | 48 and three tokens | Pauper 69.0% to 80.5% |
 | E7a | Legacy Sewer-Cam combo, Rakdos Reanimator, The Epic Storm, Stiflenought, Mardu Energy, Affinity Stompy and Lands: Abhorrent Oculus, Animate Dead, Arena of Glory, Archon of Cruelty, Badlands, Blast Zone, Burning Wish, Cabal Therapy, Chromatic Star, Curie, Dark Depths, Dress Down, Echo of Eons, Emry, Exploration, Gaea's Will, Galvanic Relay, Gamble, Ghost Quarter, Goblin Engineer, Goblin Welder, Grafdigger's Cage, Griselbrand, Icetill Explorer, Kappa Cannoneer, Legion Extruder, Life from the Loam, Maze of Ith, Memory Guardian, Mox Diamond, Patchwork Automaton, Phyrexian Dragon Engine, Phyrexian Dreadnought, Pinnacle Emissary, Raucous Theater, Reanimate, Shadowspear, Shadowy Backstreet, Shallow Grave, Silent Clearing, Skateboard, Song of Creation, Sphere of Resistance, Taiga, The Tabernacle at Pendrell Vale, Thespian's Stage, Unmask, Verdant Catacombs, Wooded Foothills, Yavimaya | 50 and two tokens | Legacy 59.6% to 73.4% |
+| E8b | Pauper Ruby Storm, Golgari Gardens, Familiars, Jeskai Ephemerate, Glintblade, Izzet Terror, Burn and Boros Bully (and Izzet Faeries, 4c Synthesizer): Accursed Marauder, Azorius Chancery, Contaminated Landscape, Crimson Fleet Commodore, Crossover Collaboration, Crypt Rats, Defile, Desert, Desperate Ritual, First Day of Class, Geothermal Crevice, Glimpse the Impossible, Glorious Gale, God-Pharaoh's Faithful, Goblin Anarchomancer, Goldmire Bridge, Goliath Paladin, Golgari Rot Farm, Haunted Mire, Heaped Harvest, Hickory Woodlot, Khalni Garden, Lonely Arroyo, Manamorphose, Meeting of Minds, Mirran Banesplitter, Mortuary Mire, Oroku Saki, Orzhov Basilica, Perilous Landscape, Rally the Peasants, Rancid Earth, Reckless Lackey, Ride's End, Sandstone Needle, Sea Gate Oracle, Seething Song, Seize the Storm, Skred, Snow-Covered Mountain, Sunscape Familiar, Thornscape Familiar, Twinned Vision, Volatile Fjord, Witch's Cottage, Wrenn's Resolve | 46 and two tokens | Pauper 80.5% to 90.4% |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -242,6 +243,29 @@ New, each built once in the first wave that needs it:
   Extrapolate the Impossible, like Karn's wish, finds nothing outside the game in a
   best-of-one mainboard game. Kozilek's Command is an Eldrazi instant; the Kindred card
   type is not modeled.
+- E8b, built in `src/eternal_pauper_e8b_v1.rs` and `build_eternal_e8b_v1.rs`: splice
+  onto Arcane is announced like replicate's count (the spliced Desperate Rituals in hand,
+  capped by that count), paid as one {1}{R} per splice, revealed to the opponent, and
+  every Arcane spell's program ends with the spliced "Add {R}{R}{R}" leaf. Teamwork is an
+  alternative cost (`AltCostCondition::TeamworkV1`) whose creatures, total power N or
+  more, are chosen through the convoke selection and pay no mana; the spell reads its
+  finalized method. Static reductions by spell color (Goblin Anarchomancer, the
+  Familiars) join each selected cost's own reduction, so convoke, flashback and
+  alternative costs get them too; Ride's End's reduction is a target-dependent
+  `DynamicCountDef::SpellTargetsTappedPermanentV1`. Depletion counters live in module
+  state: the lands enter with two, their rich mana ability is blocked without one and
+  removes one after tapping, then sacrifices the land at zero. "The Ring tempts you"
+  keeps a per-player level and Ring-bearer: legendary (an `effective_supertypes` hook)
+  and unblockable by greater power, the attack loot, the end-of-combat sacrifice of its
+  blockers (a new end-of-combat step hook) and the combat damage drain. First Day of
+  Class registers an "enters this turn" trigger; Glimpse the Impossible's next-end-step
+  trigger moves its still-exiled cards and makes a Spawn for each; Heaped Harvest's
+  "when you sacrifice it" reads `Sacrificed` events; Seize the Storm's Elemental is a
+  characteristic-defining token; Desert's ability is gated to the end of combat step;
+  Twinned Vision's discard belongs to its flashback only and it reads the cast origin;
+  Geothermal Crevice's sacrifice ability is an additional fixed-bundle mana ability.
+  Crypt Rats' X is one ability per X from 1 to 10, each costing X black mana. Learn
+  finds no Lesson outside the game, so it is "you may discard a card to draw a card".
 - E6b, built in `src/eternal_pauper_e6b_v1.rs` and `build_eternal_e6b_v1.rs`: creature
   Auras reuse `AuraCreatureStatic`, and an engine hook multiplies Ancestral Mask's and
   Ethereal Armor's bonus by their enchantment counts. Auras that enchant a land or a

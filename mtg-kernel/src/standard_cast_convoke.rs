@@ -1,4 +1,6 @@
 //! Explicit convoker subset selection. The ordinary mana solver pays the remainder.
+//! Teamwork (Crossover Collaboration) reuses the selection: its creatures pay
+//! no mana, and their total power must reach the teamwork requirement.
 use super::*;
 use spell_costs_v1::SpellManaPaymentV1;
 pub(super) fn active(state: &GameState, p: &PendingCast) -> bool {
@@ -9,7 +11,97 @@ pub(super) fn active(state: &GameState, p: &PendingCast) -> bool {
                 alt.components
                     .iter()
                     .any(|c| matches!(c, CostComponent::ConvokeMana(_)))
+                    || matches!(alt.condition, card_def::AltCostCondition::TeamworkV1(_))
             })
+}
+/// The teamwork requirement of a cast for its teamwork alternative cost.
+fn teamwork(state: &GameState, p: &PendingCast) -> Option<u8> {
+    if p.cast_mode != Some(CastMode::Alternative) {
+        return None;
+    }
+    match card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize]
+        .alt_cost?
+        .condition
+    {
+        card_def::AltCostCondition::TeamworkV1(power) => Some(power),
+        _ => None,
+    }
+}
+/// The untapped creatures `player` controls, which teamwork may tap.
+pub(super) fn teamwork_candidates(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let o = state.objects.get(id);
+            o.controller == player
+                && o.zone == Zone::Battlefield
+                && !o.tapped
+                && object_has_type(state, id, CardType::Creature)
+        })
+        .collect()
+}
+/// The teamwork payment tapping exactly `chosen`.
+fn teamwork_payment(
+    state: &GameState,
+    p: &PendingCast,
+    chosen: &[EffectObjectBinding],
+) -> Option<SpellManaPaymentV1> {
+    let def = &card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize];
+    let s = spell_costs_v1::selected_spell_mana_costs_for_source_v1(
+        p.spell,
+        def,
+        (
+            CastMethodV4::Alternative,
+            p.kicked == Some(true),
+            p.mode_chosen.unwrap_or(0),
+        ),
+        &p.targets_chosen,
+        p.controller,
+        state,
+    )?;
+    let modifiers = spell_cost_generic_modifiers_v1(state, s.types, p.controller);
+    let objects = chosen.iter().map(|b| b.object).collect::<Vec<_>>();
+    s.teamwork_payment(
+        p.x_value.unwrap_or(0),
+        p.controller,
+        state,
+        modifiers,
+        &[],
+        &objects,
+    )
+}
+/// Whether `prefix` extends to a payable teamwork selection.
+fn teamwork_can_complete(
+    state: &GameState,
+    p: &PendingCast,
+    prefix: &[EffectObjectBinding],
+    power: u8,
+) -> bool {
+    let chosen = prefix.iter().map(|b| b.object).collect::<Vec<_>>();
+    let candidates = teamwork_candidates(state, p.controller)
+        .into_iter()
+        .filter(|id| !chosen.contains(id) && effective_power(state, *id) > 0)
+        .collect::<Vec<_>>();
+    let plan = |objects: &[ObjectId]| {
+        let bindings = pool(state, p)
+            .into_iter()
+            .filter(|b| objects.contains(&b.object))
+            .collect::<Vec<_>>();
+        if bindings.len() != objects.len() {
+            return None;
+        }
+        teamwork_payment(state, p, &bindings)
+    };
+    spell_costs_v1::teamwork_search(
+        &candidates,
+        &mut chosen.clone(),
+        i64::from(power),
+        &plan,
+        state,
+    )
+    .is_some()
 }
 fn selected(
     state: &GameState,
@@ -78,6 +170,17 @@ pub(super) fn payment(
 ) -> Option<SpellManaPaymentV1> {
     if chosen.is_empty() {
         return None;
+    }
+    if teamwork(state, p).is_some() {
+        let live = pool(state, p);
+        if chosen
+            .iter()
+            .enumerate()
+            .any(|(i, b)| !live.contains(b) || chosen[..i].contains(b))
+        {
+            return None;
+        }
+        return teamwork_payment(state, p, chosen);
     }
     let (pips, generic, creature_spell) = cost(state, p)?;
     let live = pool(state, p);
@@ -163,6 +266,9 @@ pub(super) fn payment(
     })
 }
 fn can_complete(state: &GameState, p: &PendingCast, prefix: &[EffectObjectBinding]) -> bool {
+    if let Some(power) = teamwork(state, p) {
+        return teamwork_can_complete(state, p, prefix, power);
+    }
     let Some((pips, generic, _)) = cost(state, p) else {
         return false;
     };
@@ -236,13 +342,18 @@ fn candidates(state: &GameState, p: &PendingCast) -> Vec<ObjectId> {
         .collect()
 }
 pub(super) fn decision(state: &GameState, p: &PendingCast) -> Decision {
-    let (pips, generic, _) = cost(state, p).expect("validated convoke cost");
+    let max_targets = if teamwork(state, p).is_some() {
+        pool(state, p).len()
+    } else {
+        let (pips, generic, _) = cost(state, p).expect("validated convoke cost");
+        pips.len() + generic as usize
+    };
     Decision::ChooseEffectTargets {
         player: p.controller,
         source: p.spell,
         selected_count: p.convoke_chosen.len() as u16,
         min_targets: 1,
-        max_targets: u16::try_from(pips.len() + generic as usize).unwrap_or(u16::MAX),
+        max_targets: u16::try_from(max_targets).unwrap_or(u16::MAX),
         legal_targets: candidates(state, p)
             .into_iter()
             .map(Target::Object)

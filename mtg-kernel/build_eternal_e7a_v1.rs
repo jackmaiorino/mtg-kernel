@@ -307,7 +307,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Curie, Emergent Intelligence" => &CURIE,
         "Arena of Glory" => &ARENA_OF_GLORY,
         "Gaea's Will" => &GAEAS_WILL,
-        _ => &[],
+        _ => super::build_eternal_e8b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -367,7 +367,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
         ),
         // Its alternative cost is `alt_cost_for` below.
         "Unmask" => spell("TargetSpec::AnyPlayer", "crate::eternal_legacy_e7a_v1::unmask"),
-        _ => return None,
+        _ => return super::build_eternal_e8b_v1::special_for(name),
     })
 }
 
@@ -383,7 +383,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Phyrexian Dreadnought" => &["Keywords::TRAMPLE"],
         "Marit Lage Token" => &["Keywords::FLYING", "Keywords::INDESTRUCTIBLE"],
         "Drone Token" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_e8b_v1::keywords_for(name),
     }
 }
 
@@ -395,7 +395,7 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
         // Chromatic Star: "{1}, {T}, Sacrifice this artifact: Add one mana
         // of any color."
         "Chromatic Star" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapAndSacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
-        _ => "&[]",
+        _ => super::build_eternal_e8b_v1::additional_mana_abilities_for(name),
     }
 }
 
@@ -408,7 +408,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Unmask" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::B)], condition: AltCostCondition::Always })",
         "Pinnacle Emissary" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Hybrid(ManaColor::U, ManaColor::R)], generic: 0, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
         "Kappa Cannoneer" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 5, x_count: 0 })], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_e8b_v1::alt_cost_for(name),
     }
 }
 
@@ -417,7 +417,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Abhorrent Oculus" => "Some(&[CostComponent::ExileOtherCardsFromOwnGraveyard(6)])",
-        _ => "None",
+        _ => super::build_eternal_e8b_v1::additional_cost_for(name),
     }
 }
 
@@ -433,7 +433,7 @@ pub(super) fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_e8b_v1::flashback_for(name),
     }
 }
 
@@ -452,7 +452,7 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
     match name {
         "Skateboard" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::HASTE, other_turn_keywords: Keywords::HASTE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "Shadowspear" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::LIFELINK.0), other_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::LIFELINK.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
-        _ => "None",
+        _ => super::build_eternal_e8b_v1::equipment_for(name),
     }
 }
 
@@ -564,6 +564,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Unmask" => "alt_cost:exile_black_card_from_hand;spell:reveal_hand_choose_nonland_discard",
         "Yavimaya, Cradle of Growth" => "static:each_land_is_a_forest",
         "Drone Token" => "static:can_block_only_flying",
-        _ => "none",
+        _ => super::build_eternal_e8b_v1::trigger_recipe_for(name),
     }
 }

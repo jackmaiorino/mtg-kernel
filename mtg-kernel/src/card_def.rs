@@ -404,6 +404,9 @@ pub enum Subtype {
     /// Phyrexian Dreadnought).
     Eye,
     Dreadnought,
+    /// Appended for the eternal catalog's wave E8b (Crimson Fleet
+    /// Commodore).
+    Ogre,
 }
 
 impl Subtype {
@@ -744,6 +747,8 @@ impl Subtype {
         Subtype::Eye,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Dreadnought,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Ogre,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -853,6 +858,7 @@ impl Subtype {
                     | Subtype::Imp
                     | Subtype::Eye
                     | Subtype::Dreadnought
+                    | Subtype::Ogre
             )
         {
             return true;
@@ -1745,6 +1751,12 @@ pub enum AltCostCondition {
     /// (Lunarch Veteran, `eternal_pauper_e6b_v1`). Appended for the eternal
     /// catalog.
     DisturbV1,
+    /// Teamwork N (Crossover Collaboration): its optional additional cost of
+    /// tapping any number of untapped creatures you control with total
+    /// power N or more, modeled as an alternative cost of the same mana plus
+    /// that tapping. The creatures are chosen through the convoke selection
+    /// (`standard_cast_convoke`). Appended for the eternal catalog.
+    TeamworkV1(u8),
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -2131,6 +2143,9 @@ pub enum DynamicCountDef {
     /// Negative powers contribute before the aggregate is floored at zero.
     ControllerCreatureTotalPower,
     CreaturesAttackedThisTurn,
+    /// One iff a chosen spell target is a tapped battlefield permanent
+    /// (Ride's End). Appended for the eternal catalog.
+    SpellTargetsTappedPermanentV1,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at

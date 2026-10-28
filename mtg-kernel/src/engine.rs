@@ -7179,6 +7179,9 @@ fn alt_cost_condition_met(
                 && player == state.active_player
         }
         card_def::AltCostCondition::DisturbV1 => origin_zone == Zone::Graveyard,
+        // Teamwork's creatures are chosen and checked by the convoke
+        // selection (`standard_cast_convoke`).
+        card_def::AltCostCondition::TeamworkV1(_) => true,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -7819,7 +7822,8 @@ fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> O
     if crate::eternal_pauper_e6b_v1::alternative_skips_additional_cost(
         def,
         pending.cast_mode == Some(CastMode::Alternative),
-    ) {
+    ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(def, pending.is_flashback)
+    {
         return None;
     }
     let _ = pending;
@@ -8129,6 +8133,17 @@ fn normal_cast_reduction_count(
             }
             u32::from(has_subtype && lacks_subtype)
         }
+        card_def::DynamicCountDef::SpellTargetsTappedPermanentV1 => {
+            u32::from(targets.iter().any(|target| {
+                let Target::Object(id) = target else {
+                    return false;
+                };
+                state
+                    .objects
+                    .try_get(*id)
+                    .is_some_and(|object| object.zone == Zone::Battlefield && object.tapped)
+            }))
+        }
         card_def::DynamicCountDef::SpellTargetsTappedCreature => {
             u32::from(targets.iter().any(|target| {
                 let Target::Object(id) = target else {
@@ -8167,6 +8182,7 @@ fn normal_cast_cost_depends_on_targets(def: &card_def::CardDef) -> bool {
         matches!(
             reducer.count,
             card_def::DynamicCountDef::SpellTargetsTappedCreature
+                | card_def::DynamicCountDef::SpellTargetsTappedPermanentV1
         )
     })
 }
@@ -8830,7 +8846,11 @@ fn maximum_payable_x(
     state: &GameState,
 ) -> Option<u8> {
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
-    (0..=u8::MAX).rev().find(|&x| {
+    // Splice onto Arcane: at most the splice cards in hand.
+    let cap =
+        crate::eternal_pauper_e8b_v1::splice_cap(def, pending.spell, pending.controller, state)
+            .unwrap_or(u8::MAX);
+    (0..=cap).rev().find(|&x| {
         pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
             .is_some()
     })
@@ -9670,6 +9690,10 @@ pub(crate) fn available_mana_ability_choices_into(
     let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return;
     };
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_e8b_v1::mana_ability_blocked(state, source) {
+        return;
+    }
     if def
         .mana_ability_def
         .is_some_and(|ability| ability.amount == ManaAbilityAmountDef::EachControlledPermanentColor)
@@ -10070,8 +10094,10 @@ fn activate_mana_ability_for_with_checkpoint(
             }
             Some(colors)
         } else if let ManaAbilityAmountDef::FixedColorsV1(colors) = rich.amount {
-            if additional.is_some()
-                || rich.cost != ManaAbilityCostDef::TapSelf
+            let tap_and_sacrifice = cfg!(feature = "eternal-fixtures")
+                && rich.cost == ManaAbilityCostDef::TapAndSacrificeSelf;
+            if (!tap_and_sacrifice
+                && (additional.is_some() || rich.cost != ManaAbilityCostDef::TapSelf))
                 || rich.controller_damage != 0
                 || rich.max_activations_per_turn.is_some()
             {
@@ -12767,7 +12793,8 @@ pub(crate) fn validate_pending_cast(
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
     // Replicate's payment count is announced and validated like X.
     let replicate = !resolution_cast_v1::free_cast(state, pending.spell)
-        && crate::eternal_cards_v1::replicate_cost(def.name).is_some();
+        && (crate::eternal_cards_v1::replicate_cost(def.name).is_some()
+            || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some());
     let expected_seed_x = if resolution_cast_v1::free_cast(state, pending.spell)
         || (def.cost.x_count == 0
             && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
@@ -18385,6 +18412,13 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 deal_combat_damage(state);
             }
         }
+        // "At end of combat" delayed triggers (the Ring's third ability).
+        #[cfg(feature = "eternal-fixtures")]
+        Step::EndCombat => {
+            if crate::eternal_pauper_e8b_v1::begin_end_of_combat(state) {
+                collect_and_queue_triggers(state);
+            }
+        }
         Step::End => {
             state.engine.exile_play_permissions.retain(|permission| {
                 permission.holder != state.active_player
@@ -19036,6 +19070,11 @@ pub fn object_mana_value(state: &GameState, id: ObjectId) -> u16 {
 /// supertypes; the front face Ojer Axonil is legendary. Ability removal does
 /// not remove a supertype, and face-down objects have no supertypes.
 pub fn effective_supertypes(state: &GameState, id: ObjectId) -> &'static [card_def::Supertype] {
+    // The Ring's first ability: "Your Ring-bearer is legendary".
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(supertypes) = crate::eternal_pauper_e8b_v1::ring_bearer_supertypes(state, id) {
+        return supertypes;
+    }
     let object = state.objects.get(id);
     let def = &card_def::CARD_DEFS[object.card_def as usize];
     if object.v4.face_down_v1.is_some()
@@ -23620,6 +23659,8 @@ fn apply_declare_blockers(
     state.engine.combat.blockers_declared = true;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_v1::note_blockers_declared(state);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_e8b_v1::note_blockers_declared(state);
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())
@@ -24209,7 +24250,8 @@ fn begin_cast_ex(
             || citadel_cast
             || (def.cost.x_count == 0
                 && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
-                && crate::eternal_cards_v1::replicate_cost(def.name).is_none())
+                && crate::eternal_cards_v1::replicate_cost(def.name).is_none()
+                && crate::eternal_pauper_e8b_v1::splice_cost(def).is_none())
         {
             Some(0)
         } else {

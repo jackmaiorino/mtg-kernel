@@ -1136,6 +1136,7 @@ pub(crate) fn activation_allowed(
         && crate::eternal_legacy_e5b_v1::activation_allowed(state, source)
         && crate::eternal_pauper_e6a_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_e5a_v1::statics::activation_allowed(state, source, name)
+        && crate::eternal_pauper_e8b_v1::activation_allowed(state, name, ability_index)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed

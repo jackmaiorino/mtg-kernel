@@ -251,6 +251,8 @@ pub enum StandardTargetV1 {
     /// "Target artifact a player controls and target artifact card in that
     /// player's graveyard" (Goblin Welder).
     ArtifactThenArtifactCardInItsControllersGraveyardV1,
+    /// "Target creature or Vehicle" (Ride's End), any controller.
+    CreatureOrVehicleV1,
 }
 
 impl StandardTargetV1 {
@@ -858,6 +860,10 @@ pub(crate) fn target_matches(
         }
         StandardTargetV1::UpToOneOpponentCreatureV1 => {
             live.controller != controller && has(CardType::Creature)
+        }
+        StandardTargetV1::CreatureOrVehicleV1 => {
+            has(CardType::Creature)
+                || crate::engine::has_effective_subtype(state, object, Subtype::Vehicle)
         }
         // Graveyard filters, answered above.
         StandardTargetV1::ArtifactCardInOwnGraveyardV1

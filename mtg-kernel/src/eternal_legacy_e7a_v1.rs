@@ -1091,7 +1091,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         PINNACLE_EMISSARY => &PINNACLE_EMISSARY_TRIGGERS,
         SKATEBOARD => &SKATEBOARD_TRIGGERS,
         SONG_OF_CREATION => &SONG_OF_CREATION_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_pauper_e8b_v1::triggers_for(name),
     }
 }
 
@@ -1104,6 +1104,10 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to E8b's cards, so they answer first.
+    if let Some(spec) = crate::eternal_pauper_e8b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }
@@ -1119,6 +1123,9 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
 /// Tabernacle's granted trigger and Curie's kept trigger belong to whatever
 /// creature has them.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    if crate::eternal_pauper_e8b_v1::delayed_effect_matches(name, effect) {
+        return true;
+    }
     if name == DRESS_DOWN && *effect == sacrifice_source() {
         return true;
     }
@@ -2621,7 +2628,7 @@ pub(crate) fn apply_entry_counters(state: &mut GameState, object: ObjectId) {
                 entering.push(link);
             }
         }
-        _ => {}
+        _ => crate::eternal_pauper_e8b_v1::apply_entry_counters(state, object),
     }
 }
 
