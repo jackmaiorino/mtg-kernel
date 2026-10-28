@@ -78,7 +78,10 @@ pub struct DenialDrawV1 {
     pub card: ObjectId,
     pub controller: PlayerId,
     pub player: PlayerId,
+    /// The turn's key (a round number outside extra turns) and its active
+    /// player.
     pub turn: u32,
+    pub active: PlayerId,
 }
 
 /// A triggered ability queued by a hook, with its target specification.
@@ -1049,6 +1052,7 @@ pub(crate) fn execute(op: &E9bOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 controller: ctx.controller,
                 player,
                 turn: state.turn_key_v1(),
+                active: state.active_player,
             };
             e9b_state(state).denial_draws.push(record);
         }
@@ -1103,16 +1107,22 @@ pub(crate) fn execute(op: &E9bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             if state.objects.get(target).zone != Zone::Exile {
                 return;
             }
-            // "If you do, Thief of Existence gains ...": the Thief is still a
-            // spell, and the ability belongs to the permanent it becomes.
-            let Some(contract) = ctx.ability_source_contract else {
+            // "If you do, Thief of Existence gains ...": the Thief is usually
+            // still a spell (a cast trigger's source is the spell itself), and
+            // the ability belongs to the permanent it becomes.
+            let thief = ctx.source;
+            let Some(live) = state.objects.try_get(thief) else {
                 return;
             };
-            let grant = ObjectLinkV4 {
-                object: contract.source,
-                zone_change_count: contract.zone_change_count.saturating_add(1),
+            let zone_change_count = match live.zone {
+                Zone::Stack => live.zone_change_count.saturating_add(1),
+                Zone::Battlefield => live.zone_change_count,
+                _ => return,
             };
-            e9b_state(state).thief_grants.push(grant);
+            e9b_state(state).thief_grants.push(ObjectLinkV4 {
+                object: thief,
+                zone_change_count,
+            });
         }
         E9bOpV1::ExileTargetV1 => {
             if let Some(target) = bound_target_in(ctx, state, 0, Zone::Battlefield) {
@@ -1525,13 +1535,14 @@ pub(crate) fn drive(
 fn cascade_exile(state: &mut GameState, continuation: &mut EffectContinuation, path: &[u16]) {
     let player = continuation.ctx.controller;
     let source = continuation.ctx.source;
+    // A cast trigger's source is the spell; after it left the stack, its
+    // last known (printed) mana value.
     let bound = match state.objects.try_get(source) {
         Some(live) if live.zone == Zone::Stack => crate::engine::object_mana_value(state, source),
-        _ => continuation
-            .ctx
-            .ability_source_contract
-            .and_then(|contract| CARD_DEFS.get(contract.card_def as usize))
+        Some(live) => CARD_DEFS
+            .get(live.card_def as usize)
             .map_or(0, |def| def.mana_value),
+        None => 0,
     };
     let mut exiled = Vec::new();
     let mut hit = None;
@@ -1848,15 +1859,16 @@ fn pestilence_triggers(state: &mut GameState) {
 
 /// Arcane Denial: "at the beginning of the next turn's upkeep".
 fn denial_triggers(state: &mut GameState) {
-    let turn = state.turn_key_v1();
+    let (turn, active) = (state.turn_key_v1(), state.active_player);
     let Some(records) = read_state(state).map(|e9b| e9b.denial_draws.clone()) else {
         return;
     };
     if records.is_empty() {
         return;
     }
-    let (due, waiting): (Vec<_>, Vec<_>) =
-        records.into_iter().partition(|record| record.turn != turn);
+    let (due, waiting): (Vec<_>, Vec<_>) = records
+        .into_iter()
+        .partition(|record| (record.turn, record.active) != (turn, active));
     e9b_state(state).denial_draws = waiting;
     for record in due {
         if state.objects.try_get(record.card).is_none() {
