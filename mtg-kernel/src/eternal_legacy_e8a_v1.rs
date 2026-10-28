@@ -1403,17 +1403,19 @@ pub(crate) fn execute(op: &E8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 halt(state, ctx.source);
                 return;
             }
-            // "When you do": a reflexive trigger, which targets.
+            // "When you do": a reflexive trigger, which targets. Paying
+            // commits no event that would make the next trigger collection
+            // read the queue, so it goes straight to the pending triggers.
             if let Some(source) = ctx.ability_source_contract {
-                queue_trigger(
-                    state,
+                let mut pending = crate::eternal_cards_v1::delayed_trigger(
                     source,
                     ctx.controller,
-                    E8aOpV1::DestroyTargetV1,
-                    Some(TargetSpec::StandardV1(
-                        StandardTargetV1::UpToOneOpponentCreatureOrPlaneswalkerV1,
-                    )),
+                    e8a(E8aOpV1::DestroyTargetV1),
                 );
+                pending.target_spec = TargetSpec::StandardV1(
+                    StandardTargetV1::UpToOneOpponentCreatureOrPlaneswalkerV1,
+                );
+                state.engine.pending_triggers.push(pending);
             }
         }
         E8aOpV1::LionSashExileV1 => {
