@@ -11,6 +11,8 @@ pub(crate) fn combat_counters() -> EffectOp {
 }
 
 #[cfg(feature = "limited-fdn-fixtures")]
+// Standard and Eternal catalogs do not load the FDN printing that uses it.
+#[cfg_attr(feature = "standard-magezero-fixtures", allow(dead_code))]
 pub(crate) fn double_counters() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::DoubleAllCountersOnTargets)
 }

@@ -4658,7 +4658,8 @@ fn legal_targets_for_controller_from_source_unframed(
             controller,
             source.map(|source| source.object),
         ) || source.is_some_and(|source| {
-            source.zone == Zone::Stack
+            // A spell on the stack, or a card whose cast is being checked.
+            source.zone != Zone::Battlefield
                 && crate::eternal_cards_v1::e3::protected_from_spell(state, object, source.object)
         }) {
             return false;
@@ -6177,6 +6178,13 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 tap_filtered_permanent_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::TapUntappedControlledPermanentsV1 { count, .. } => {
+                if *count == 0 {
+                    return false;
+                }
+                tap_filtered_permanent_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 reveal_hand_condition_count += 1;
             }
@@ -6271,6 +6279,7 @@ fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
                         | CostComponent::ExileCardFromHandWithColorV1(_)
                         | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
                         | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
+                        | CostComponent::TapUntappedControlledPermanentsV1 { .. }
                 )
         })
 }
@@ -6379,6 +6388,22 @@ fn permanent_matches_return_filter(
                 && object_color_mask(state, object_id) & card_def::mana_color_mask(color) != 0
         }
         PermanentFilterDef::Artifact => object_has_type(state, object_id, CardType::Artifact),
+        PermanentFilterDef::CreatureV1 => object_has_type(state, object_id, CardType::Creature),
+        PermanentFilterDef::TappedCreatureV1 => {
+            object.tapped && object_has_type(state, object_id, CardType::Creature)
+        }
+        PermanentFilterDef::UnblockedAttackingCreatureV1 => {
+            object_has_type(state, object_id, CardType::Creature)
+                && state.engine.combat.blockers_declared
+                && state.engine.combat.attackers.contains(&object_id)
+                && !state
+                    .engine
+                    .combat
+                    .blocked_by
+                    .iter()
+                    .any(|(blocked, _)| *blocked == object_id)
+                && matches!(state.step, Step::DeclareBlockers | Step::CombatDamage)
+        }
     }
 }
 
@@ -6532,6 +6557,10 @@ fn can_pay_components(
             }
             CostComponent::TapUntappedControlledPermanent(filter) => {
                 !tap_permanent_cost_candidates(player, state, *filter, &[]).is_empty()
+            }
+            CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+                tap_permanent_cost_candidates(player, state, *filter, &[]).len()
+                    >= usize::from(*count)
             }
             CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
                 controlled_plus_one_counter_removals(player, state, *amount).is_some()
@@ -6953,6 +6982,25 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
+    let taps_permanents = components.iter().find_map(|component| match component {
+        CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+            Some((usize::from(*count), *filter))
+        }
+        _ => None,
+    });
+    if let Some((needed, filter)) = taps_permanents {
+        let candidates = tap_permanent_cost_candidates(player, state, filter, &[]);
+        let duplicate = object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        if object_cost_chosen.len() != needed
+            || duplicate
+            || object_cost_chosen.iter().any(|id| !candidates.contains(id))
+        {
+            return None;
+        }
+    }
     let craft_material = has_craft_material_cost(components);
     if craft_material
         && (object_cost_chosen.len() != 1
@@ -6973,6 +7021,7 @@ fn validate_cost_component_choices_v1(
         && !returns_unblocked_attacker
         && tap_other_subtype.is_none()
         && tap_filter.is_none()
+        && taps_permanents.is_none()
         && !craft_material
         && crew_requirement(components).is_none()
         && counter_removal_cost(components).is_none()
@@ -6992,6 +7041,7 @@ fn validate_cost_component_choices_v1(
         reserved.extend(object_cost_chosen.iter().copied());
     }
     if tap_filter.is_some()
+        || taps_permanents.is_some()
         || tap_controlled.is_some()
         || craft_material
         || crew_requirement(components).is_some()
@@ -7163,6 +7213,11 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::TapUntappedControlledPermanent(_) => {
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
+            }
+            CostComponent::TapUntappedControlledPermanentsV1 { .. } => {
+                for &object in object_cost_chosen {
+                    event::propose_and_commit(state, ProposedEvent::tap(object));
+                }
             }
             CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*amount));
@@ -7579,6 +7634,14 @@ fn alt_cost_condition_met(
         // Which card was foretold is checked at the quote boundary
         // (`eternal_pauper_e6a_v1::foretell_quote_allowed`).
         card_def::AltCostCondition::ForetoldV1 => origin_zone == Zone::Exile,
+        card_def::AltCostCondition::WebSlingingV1 => origin_zone == Zone::Hand,
+        // "Any time you have priority during the declare blockers step."
+        card_def::AltCostCondition::SneakV1 => {
+            origin_zone == Zone::Hand
+                && state.step == Step::DeclareBlockers
+                && player == state.active_player
+        }
+        card_def::AltCostCondition::DisturbV1 => origin_zone == Zone::Graveyard,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -7844,6 +7907,10 @@ fn craft_material_candidates(
     permanents
         .chain(cards)
         .filter(|id| !already_chosen.iter().any(|binding| binding.object == *id))
+        .filter(|&id| {
+            !cfg!(feature = "eternal-fixtures")
+                || crate::eternal_legacy_e7a_v1::craft_material_allowed(state, source, id)
+        })
         .map(|object| {
             let live = state.objects.get(object);
             EffectObjectBinding {
@@ -7861,7 +7928,20 @@ fn graveyard_exile_cards_needed(
     state: &GameState,
 ) -> u8 {
     if pending.source_contract.cast_method != CastMethodV4::Escape {
-        return 0;
+        // Abhorrent Oculus: "As an additional cost to cast this spell, exile
+        // six cards from your graveyard."
+        if !cfg!(feature = "eternal-fixtures") {
+            return 0;
+        }
+        return def
+            .additional_cost
+            .and_then(|cost| {
+                cost.iter().find_map(|component| match component {
+                    CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => Some(*amount),
+                    _ => None,
+                })
+            })
+            .unwrap_or(0);
     }
     def.escape
         .as_ref()
@@ -8024,13 +8104,17 @@ enum CastSingleObjectCostV1 {
     ReturnPermanent(PermanentFilterDef),
     ExileHandCard(mana::ManaColor),
     ReturnPermanents(PermanentFilterDef, u8),
+    /// A flashback cost that taps `count` matching permanents (Battle
+    /// Screech).
+    TapPermanents(PermanentFilterDef, u8),
 }
 
 impl CastSingleObjectCostV1 {
     /// How many objects the cost takes.
     fn count(self) -> u8 {
         match self {
-            CastSingleObjectCostV1::ReturnPermanents(_, count) => count,
+            CastSingleObjectCostV1::ReturnPermanents(_, count)
+            | CastSingleObjectCostV1::TapPermanents(_, count) => count,
             CastSingleObjectCostV1::ReturnPermanent(_)
             | CastSingleObjectCostV1::ExileHandCard(_) => 1,
         }
@@ -8041,7 +8125,20 @@ fn cast_single_object_cost_needed(
     pending: &PendingCast,
     def: &card_def::CardDef,
 ) -> Option<CastSingleObjectCostV1> {
-    if pending.is_flashback || pending.cast_mode != Some(CastMode::Alternative) {
+    if pending.is_flashback {
+        return def
+            .flashback
+            .as_ref()?
+            .cost
+            .iter()
+            .find_map(|component| match component {
+                CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+                    Some(CastSingleObjectCostV1::TapPermanents(*filter, *count))
+                }
+                _ => None,
+            });
+    }
+    if pending.cast_mode != Some(CastMode::Alternative) {
         return None;
     }
     def.alt_cost?
@@ -8083,6 +8180,12 @@ fn cast_single_object_cost_candidates(
                 .filter(|object| !pending.sacrifice_chosen.contains(object))
                 .collect()
         }
+        CastSingleObjectCostV1::TapPermanents(filter, _) => tap_permanent_cost_candidates(
+            pending.controller,
+            state,
+            filter,
+            &pending.sacrifice_chosen,
+        ),
     }
 }
 
@@ -8167,8 +8270,32 @@ fn controlled_permanent_sacrifice_needed(
     {
         return Some((1, PermanentFilter::Creature));
     }
+    // An alternative cost that sacrifices permanents (Demand Answers).
+    #[cfg(feature = "eternal-fixtures")]
+    if pending.cast_mode == Some(CastMode::Alternative) {
+        if let Some(sacrifice) = def
+            .alt_cost
+            .and_then(|alt| controlled_permanent_sacrifice_in(alt.components))
+        {
+            return Some(sacrifice);
+        }
+    }
     def.additional_cost
         .and_then(controlled_permanent_sacrifice_in)
+}
+
+/// The number of cards `def`'s additional cost discards in `pending`'s
+/// cast. Demand Answers' alternative cost replaces its discard.
+fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> Option<u8> {
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_e6b_v1::alternative_skips_additional_cost(
+        def,
+        pending.cast_mode == Some(CastMode::Alternative),
+    ) {
+        return None;
+    }
+    let _ = pending;
+    def.additional_cost.and_then(discard_count_in)
 }
 
 fn has_chosen_creature_additional_cost(def: &card_def::CardDef) -> bool {
@@ -8350,7 +8477,13 @@ fn spell_cost_generic_modifiers_v1(
         (u32::from(increase), u32::from(reduction))
     };
     #[cfg(not(feature = "standard-magezero-fixtures"))]
-    let (increase, reduction) = (0, 0);
+    let (increase, reduction): (u32, u32) = (0, 0);
+    // Sphere of Resistance: "Spells cost {1} more to cast."
+    let increase = if cfg!(feature = "eternal-fixtures") {
+        increase.saturating_add(crate::eternal_legacy_e7a_v1::spell_tax(state))
+    } else {
+        increase
+    };
     if !(types.contains(&CardType::Instant) || types.contains(&CardType::Sorcery)) {
         return (increase, reduction);
     }
@@ -8828,6 +8961,8 @@ fn pending_cast_form_timing_ok(
     state: &GameState,
 ) -> bool {
     resolution_cast_v1::timing_override(state, pending.spell)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_pauper_e6b_v1::sneak_pending_window(state, pending))
         || (cfg!(feature = "eternal-fixtures")
             && pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
             && types.contains(&CardType::Creature)
@@ -9407,6 +9542,11 @@ fn is_castable_now(
     if crate::eternal_vintage_v1::cast_prohibited(state, player) {
         return false;
     }
+    // Grafdigger's Cage, and Gaea's Will's missing mana cost.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_legacy_e7a_v1::cast_prohibited(state, player, id) {
+        return false;
+    }
     if def.omen.is_some() && supported_omen(def).is_none() {
         return false;
     }
@@ -9593,18 +9733,24 @@ fn is_castable_now(
                 && !main_timing_ok
                 && state.objects.get(id).zone == Zone::Hand
                 && crate::eternal_cards_v1::e3::aluren_flash(state, id);
+            // Sneak: cast from hand for its sneak cost during the declare
+            // blockers step.
+            let sneak_timing = cfg!(feature = "eternal-fixtures")
+                && !main_timing_ok
+                && state.objects.get(id).zone == Zone::Hand
+                && crate::eternal_pauper_e6b_v1::sneak_window(state, id, player);
             let paid_or_free = || {
                 if main_timing_ok {
                     normal_ok() || alt_ok() || free_ok()
                 } else {
-                    free_ok()
+                    free_ok() || (sneak_timing && alt_ok())
                 }
             };
             let main_ok = (state.objects.get(id).zone != Zone::Graveyard
                 || graveyard_permission_zone_change_count(player, id, state).is_some()
                 || greatwurm_cast_v1::allowed(state, id, player)
                 || muldrotha_v1::allowed(state, id, player))
-                && (main_timing_ok || aluren_timing)
+                && (main_timing_ok || aluren_timing || sneak_timing)
                 && ((paid_or_free()
                     && !viable_printed_spell_modes(def, id, player, state).is_empty())
                     || (main_timing_ok && kicked_ok()));
@@ -9830,6 +9976,8 @@ pub(crate) fn active_permission_for(
                 } if granted_turn == state.turn_key_v1() && granted_active_player == state.active_player
             )
             && !crate::standard_cards_v1::exile_cast_group_spent(state, id)
+            && !(cfg!(feature = "eternal-fixtures")
+                && crate::eternal_legacy_e7a_v1::permission_dormant(state, p))
     })
 }
 
@@ -10413,6 +10561,8 @@ fn activate_mana_ability_for_with_checkpoint(
         }
         event::propose_and_commit(state, ProposedEvent::tap(source));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![choice]));
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, source);
         state.engine.priority_passes = [false, false];
         state.engine.mana_ability_activations += 1;
         state.engine.last_mana_ability_activator = Some(player);
@@ -10691,6 +10841,10 @@ fn activate_mana_ability_for_with_checkpoint(
     crate::eternal_vintage_v1::restrict_produced_mana(state, player, source, choice);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
+    #[cfg(feature = "eternal-fixtures")]
+    if state.objects.get(source).tapped {
+        crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, source);
+    }
     if state.objects.get(source).zone_change_count == source_zone_change_count {
         state
             .objects
@@ -10739,6 +10893,14 @@ fn activate_mana_ability_for_with_checkpoint(
 /// creates an activated ability, never uses the stack, and retains priority.
 fn can_turn_face_up(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
     let object = state.objects.get(id);
+    // A manifested creature card turns face up for its mana cost.
+    if cfg!(feature = "eternal-fixtures") {
+        if let Some(cost) = crate::eternal_legacy_e7a_v1::turn_face_up_cost(state, id) {
+            return object.zone == Zone::Battlefield
+                && object.controller == player
+                && mana::can_pay_excluding_sources(&cost, 0, player, state, &[]).is_some();
+        }
+    }
     object.zone == Zone::Battlefield
         && object.controller == player
         && object.v4.face_down_v1.is_some_and(|face| face.disguised)
@@ -10747,7 +10909,21 @@ fn can_turn_face_up(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
         && can_pay_effect_mana(player, &[ManaColor::G], 4, state)
 }
 fn turn_face_up(state: &mut GameState, player: PlayerId, id: ObjectId) -> Result<(), String> {
-    if !can_turn_face_up(state, player, id) || !pay_effect_mana(player, &[ManaColor::G], 4, state) {
+    let manifested_cost = if cfg!(feature = "eternal-fixtures") {
+        crate::eternal_legacy_e7a_v1::turn_face_up_cost(state, id)
+    } else {
+        None
+    };
+    if let Some(cost) = manifested_cost {
+        if !can_turn_face_up(state, player, id) {
+            return Err("turn-face-up cost is not payable".into());
+        }
+        let plan = mana::can_pay_excluding_sources(&cost, 0, player, state, &[])
+            .ok_or("turn-face-up cost is not payable")?;
+        pay_plan(state, player, &plan);
+    } else if !can_turn_face_up(state, player, id)
+        || !pay_effect_mana(player, &[ManaColor::G], 4, state)
+    {
         return Err("turn-face-up cost is not payable".into());
     }
     let object = state.objects.get_mut(id);
@@ -10830,6 +11006,22 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         out.push((id, granted_index));
                     }
                 }
+                // Thespian's Stage keeps its own ability while it is a copy,
+                // one index past the copied definition's printed abilities
+                // (lands carry no Equipment).
+                #[cfg(feature = "eternal-fixtures")]
+                if let Some(retained) =
+                    crate::eternal_legacy_e7a_v1::retained_stage_ability(state, id)
+                {
+                    if let Ok(index) = u8::try_from(def.activated_abilities.len()) {
+                        if !crate::standard_cards_v1::activations_locked(state, id)
+                            && can_pay_activation_components(retained.cost, player, id, state)
+                            && activation_target_prefix_can_complete(id, &retained, &[], state)
+                        {
+                            out.push((id, index));
+                        }
+                    }
+                }
                 if let Some(granted) = crate::fishing_pole_v39::granted_ability(state, id) {
                     let index = def.activated_abilities.len()
                         + usize::from(equipped_granted_activated_ability(state, id).is_some());
@@ -10870,10 +11062,23 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
     out
 }
 
+/// How many lands `player` may play this turn: one, plus each additional
+/// land play an eternal permanent grants (Exploration).
+/// One land play, plus each active Loot's and (Eternal) each additional-land
+/// permanent's extra play.
+fn land_play_limit(state: &GameState, player: PlayerId) -> usize {
+    let additional = if cfg!(feature = "eternal-fixtures") {
+        crate::eternal_legacy_e7a_v1::additional_land_plays(state, player)
+    } else {
+        0
+    };
+    effect::loot_v1::land_allowance(state, player).saturating_add(usize::from(additional))
+}
+
 fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     if player != state.active_player
         || (usize::from(state.players[player.index()].lands_played_this_turn)
-            >= effect::loot_v1::land_allowance(state, player)
+            >= land_play_limit(state, player)
             || state.players[player.index()].lands_played_this_turn == u8::MAX)
         || !matches!(state.step, Step::Main1 | Step::Main2)
         || !state.stack.is_empty()
@@ -10919,6 +11124,13 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     out.extend(crate::eternal_e5a_v1::permissions::extra_land_candidates(
         state, player,
     ));
+    // Icetill Explorer: "You may play lands from your graveyard."
+    #[cfg(feature = "eternal-fixtures")]
+    for id in crate::eternal_legacy_e7a_v1::extra_land_candidates(state, player) {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
     out
 }
 
@@ -13749,7 +13961,7 @@ pub(crate) fn validate_pending_cast(
         }
     }
 
-    let interactive_discard = def.additional_cost.and_then(discard_count_in);
+    let interactive_discard = additional_discard_count(def, pending);
     let seeded_mode = if has_spell_form_choice(def) {
         None
     } else {
@@ -14443,6 +14655,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                         CostKind::ReturnPermanentsToHand
                     }
                     CastSingleObjectCostV1::ExileHandCard(_) => CostKind::ExileFromHandV1,
+                    CastSingleObjectCostV1::TapPermanents(..) => CostKind::TapPermanents,
                 },
                 remaining,
                 candidates,
@@ -14705,7 +14918,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         let add = def.additional_cost.expect(
             "additional_cost_discarded is None only when begin_cast saw an additional_cost",
         );
-        match discard_count_in(add) {
+        let _ = add;
+        match additional_discard_count(def, &pending) {
             Some(n) => {
                 state.engine.pending_discard = Some(PendingDiscard {
                     player: pending.controller,
@@ -20037,9 +20251,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             #[cfg(feature = "eternal-fixtures")]
             let vintage_draw_step = crate::eternal_vintage_v1::begin_draw_step(state, p);
             if !is_first_turn_of_the_game {
-                event::propose_and_commit(state, ProposedEvent::draw(p));
-                #[cfg(feature = "eternal-fixtures")]
-                crate::eternal_cards_v1::note_draw_step_draw(state, p);
+                // Dredge (Life from the Loam): the draw waits for its
+                // player's choice to dredge instead.
+                let dredge = cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_legacy_e7a_v1::defer_draw_step_draw(state, p);
+                if !dredge {
+                    event::propose_and_commit(state, ProposedEvent::draw(p));
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cards_v1::note_draw_step_draw(state, p);
+                }
                 collect_and_queue_triggers(state);
             }
             #[cfg(feature = "eternal-fixtures")]
@@ -21215,6 +21435,13 @@ fn live_plus_one_counter_characteristics(
 /// review: not a parallel mechanism) -- there is no combat- or SBA-specific
 /// shortcut anywhere else that reads power/toughness/keywords directly.
 pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> bool {
+    // Shadowspear: "Permanents your opponents control lose hexproof and
+    // indestructible until end of turn."
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_legacy_e7a_v1::keyword_lost(state, id, kw)
+    {
+        return false;
+    }
     if kw == Keywords::HEXPROOF
         && crate::standard_cards_v1::kaito_is_creature(state, id)
         && crate::continuous_characteristics_v1::grant_survives(
@@ -21803,6 +22030,10 @@ fn static_aura_multiplier(
     aura: ObjectId,
     profile: card_def::AuraCreatureStaticDef,
 ) -> i128 {
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(multiplier) = crate::eternal_pauper_e6b_v1::aura_multiplier(state, aura) {
+        return multiplier;
+    }
     let Some(subtype) = profile.per_controlled_subtype else {
         return 1;
     };
@@ -21937,6 +22168,13 @@ pub(crate) fn resolved_activated_ability(
     if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
         return Some(*ability);
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if usize::from(ability_index) == def.activated_abilities.len() {
+        if let Some(retained) = crate::eternal_legacy_e7a_v1::retained_stage_ability(state, source)
+        {
+            return Some(retained);
+        }
+    }
     let pole_index = def.activated_abilities.len()
         + usize::from(equipped_granted_activated_ability(state, source).is_some());
     if usize::from(ability_index) == pole_index {
@@ -22007,6 +22245,16 @@ fn resolved_stack_activated_ability(
             );
         }
         return Ok(*ability);
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if granted_by.is_none() {
+        if let Some(retained) = crate::eternal_legacy_e7a_v1::retained_stage_ability_on_stack(
+            state,
+            host_contract,
+            ability_index,
+        ) {
+            return Ok(retained);
+        }
     }
     let fishing_grant = granted_by
         .is_some_and(|grant| crate::fishing_pole_v39::selected_definition(grant.card_def));
@@ -22112,6 +22360,12 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_cards_v1::is_everflame(state, id) {
         subtype_ids.push(card_def::Subtype::Equipment.stable_id());
+    }
+    // Yavimaya, Cradle of Growth: "Each land is a Forest in addition to its
+    // other land types."
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_legacy_e7a_v1::is_extra_forest(state, id) {
+        subtype_ids.push(card_def::Subtype::Forest.stable_id());
     }
     subtype_ids.sort_unstable();
     if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()
@@ -23196,6 +23450,16 @@ pub(crate) fn step_without_linked_aura_v1(
             #[cfg(feature = "eternal-fixtures")]
             if crate::eternal_pauper_e6a_v1::is_foretell_action(state, source, index) {
                 crate::eternal_pauper_e6a_v1::foretell(state, p, source)?;
+                collect_and_queue_triggers(state);
+                state.engine.priority_passes = [false, false];
+                state.priority_player = p;
+                return Ok(());
+            }
+            // Arena of Glory's exert mana ability and suspend (Gaea's Will)
+            // never use the stack; their player keeps priority.
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::eternal_legacy_e7a_v1::is_special_activation(state, source, index) {
+                crate::eternal_legacy_e7a_v1::special_activation(state, p, source)?;
                 collect_and_queue_triggers(state);
                 state.engine.priority_passes = [false, false];
                 state.priority_player = p;
@@ -25382,7 +25646,9 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                         trigger::TriggerCondition::ControlledCreatureWithSubtypeAttacks(_)
                     )
                 })
-        });
+        })
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_pauper_e6b_v1::observes_attacks(state));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if cfg!(all(
@@ -26119,7 +26385,7 @@ fn materialize_begin_cast_with_quote_v1(
     // X included; every other resolving instruction casts for free.
     let without_mana_cost = omniscience_cast_v1::free_choice(omniscience_choice)
         || resolution_permission
-        .is_some_and(|permission| permission.card.expected_zone != Zone::Graveyard)
+            .is_some_and(|permission| permission.card.expected_zone != Zone::Graveyard)
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
     // Omniscience and Aluren: a hand cast may skip its mana cost. Aluren's
     // "as though they had flash" applies only to such a cast, so outside
@@ -26390,6 +26656,15 @@ fn finalize_owned_cast(
     let colored_mana_spent = payment.spends_colored_mana(state, pending.controller);
     #[cfg(feature = "eternal-fixtures")]
     let colors_spent = payment.colors_spent(state, pending.controller);
+    // Arena of Glory: a creature spell paid with its exerted mana gains
+    // haste.
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_legacy_e7a_v1::note_restricted_spending(
+        state,
+        pending.controller,
+        pending.spell,
+        payment.restricted_pool_used(),
+    );
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
     let sphinx_lore_cast_v1 = sphinx_lore_cast_v1::record_finalized(state, &pending)?;
@@ -27163,6 +27438,15 @@ fn freeze_activation_source(
             .first()
             .expect("validated named Pole cost has its exact selected grant");
         Some(AbilitySourceContractV4::capture(state, chosen.object))
+    } else if cfg!(feature = "eternal-fixtures")
+        && pending.ability_index as usize
+            == card_def::CARD_DEFS[source.card_def as usize]
+                .activated_abilities
+                .len()
+        && crate::eternal_legacy_e7a_v1::retained_stage_ability(state, pending.source).is_some()
+    {
+        // Thespian's Stage's own ability, kept while it is a copy.
+        None
     } else if pending.ability_index as usize
         == card_def::CARD_DEFS[source.card_def as usize]
             .activated_abilities
@@ -27594,6 +27878,8 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![color]));
         #[cfg(feature = "eternal-fixtures")]
         crate::eternal_e5a_v1::note_tapped_for_mana(state, player, id);
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, id);
     }
     // A multi-yield source (an assembled Urza land) added more than the one
     // mana its own tap paid for. `PaymentPlan::surplus` is exactly the part

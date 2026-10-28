@@ -857,7 +857,7 @@ mod paid {
         }
     }
     #[test]
-    fn genuine_large_trigger_menu_missing_printed_root_refuses_readonly_instead_of_flattening() {
+    fn genuine_large_trigger_menu_with_printed_root_scores_every_order_without_flattening() {
         macro_rules! run {
             ($owner:ident,$from:ident,$input:ident,$validate:ident,$world:ident) => {
                 for actor in [PlayerId::P0, PlayerId::P1] {
@@ -919,11 +919,13 @@ mod paid {
                                 assert!(session.inner.$input(forged, forged.acting_player).is_err());
                                 assert!(session.inner.$validate(forged, forged.acting_player, &binding).is_err());
                             }
-                            assert!(matches!(session.encode(e), Err(Error::UnsupportedPrintedRoot(actual)) if actual == id));
+                            // Horde has a printed root, so the encoder takes the whole
+                            // nine-way order menu; scoring it writes nothing.
+                            assert_eq!(session.encode(e).unwrap().packet.actions.len(), actions.len());
                             assert_eq!(session.inner.$world(), &before);
                             assert_eq!((session.inner.policy_step_count(), session.inner.physical_decision_count()), counts);
-                            // Only the genuine native owner advances after the model
-                            // encoder refused. Each prefix retains its entire binding.
+                            // Only the genuine native owner advances. Each prefix
+                            // retains its entire binding.
                             let index = actions.iter().position(|a| matches!(a,
                                 ActionSemanticV1::ChooseTriggerOrderNext { trigger_index, .. }
                                     if *trigger_index == usize::try_from(8-position).unwrap())).unwrap();

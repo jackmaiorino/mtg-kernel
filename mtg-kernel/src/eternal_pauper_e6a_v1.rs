@@ -714,7 +714,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         OMEN_OF_THE_DEAD => &OMEN_OF_THE_DEAD_TRIGGERS,
         SEWER_VEILLANCE_CAM => &SEWER_VEILLANCE_CAM_TRIGGERS,
         TITHING_BLADE => &TITHING_BLADE_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_pauper_e6b_v1::triggers_for(name),
     }
 }
 
@@ -727,6 +727,10 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to E6b's cards, so they answer first.
+    if let Some(spec) = crate::eternal_pauper_e6b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }
@@ -748,6 +752,9 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
 
 /// Queued and delayed triggers owned by this module's cards.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    if crate::eternal_pauper_e6b_v1::delayed_effect_matches(name, effect) {
+        return true;
+    }
     let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E6aV1(op))) = effect else {
         return false;
     };
@@ -1303,6 +1310,10 @@ pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
 
 /// Fogs: whether a fog this turn prevents `damage`.
 pub(crate) fn prevents_damage(state: &GameState, damage: &DamageProposed) -> bool {
+    // Maze of Ith (wave E7a).
+    if crate::eternal_legacy_e7a_v1::prevents_damage(state, damage) {
+        return true;
+    }
     let Some(e6a) = read_state(state) else {
         return false;
     };

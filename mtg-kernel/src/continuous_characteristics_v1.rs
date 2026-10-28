@@ -53,6 +53,12 @@ pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64
         } else {
             None
         })
+        .chain(if cfg!(feature = "eternal-fixtures") {
+            // Dress Down: "Creatures lose all abilities."
+            crate::eternal_legacy_e7a_v1::removal_timestamp(state, host)
+        } else {
+            None
+        })
         .max()
 }
 

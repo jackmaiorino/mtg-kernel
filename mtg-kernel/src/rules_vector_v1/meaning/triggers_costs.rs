@@ -820,6 +820,13 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             let _ = filter;
             out.cost(CostAtom::TapOthers);
         }
+        CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+            // Taps `count` untapped permanents the payer controls matching
+            // the filter. Vocabulary gap: `TapOthers` carries no count or
+            // class.
+            let _ = (count, filter);
+            out.cost(CostAtom::TapOthers);
+        }
         CostComponent::RevealHandIfNoCardsWithType(card_type) => {
             // Payable only while the payer's hand has no card of the type;
             // paying reveals every card in that hand to both players.

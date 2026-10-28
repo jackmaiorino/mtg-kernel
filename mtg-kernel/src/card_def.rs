@@ -396,6 +396,14 @@ pub enum Subtype {
     Lair,
     Locus,
     Planet,
+    /// Appended for the eternal catalog's Pauper Rakdos Madness and Bogles
+    /// lists (Kitchen Imp, Cartouche of Solidarity's enchantment type).
+    Imp,
+    Cartouche,
+    /// Appended for the eternal catalog's wave E7a (Abhorrent Oculus,
+    /// Phyrexian Dreadnought).
+    Eye,
+    Dreadnought,
     /// Planeswalker type (Vivien Reid), appended after the eternal catalog's
     /// types; Sphinx (Curator of Destinies) is listed above.
     Vivien,
@@ -733,6 +741,12 @@ impl Subtype {
         Subtype::Crab,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Kor,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Imp,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Eye,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Dreadnought,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -946,7 +960,11 @@ impl Subtype {
             180 => Subtype::Lair,
             181 => Subtype::Locus,
             182 => Subtype::Planet,
-            183 => Subtype::Vivien,
+            183 => Subtype::Imp,
+            184 => Subtype::Cartouche,
+            185 => Subtype::Eye,
+            186 => Subtype::Dreadnought,
+            187 => Subtype::Vivien,
             _ => return None,
         })
     }
@@ -1140,6 +1158,10 @@ impl Subtype {
             Subtype::Lair => false,
             Subtype::Locus => false,
             Subtype::Planet => false,
+            Subtype::Imp => true,
+            Subtype::Cartouche => false,
+            Subtype::Eye => true,
+            Subtype::Dreadnought => true,
         }
     }
 
@@ -1223,6 +1245,9 @@ impl Subtype {
                     | Subtype::Scion
                     | Subtype::Crab
                     | Subtype::Kor
+                    | Subtype::Imp
+                    | Subtype::Eye
+                    | Subtype::Dreadnought
             )
         {
             return true;
@@ -1784,6 +1809,16 @@ pub enum PermanentFilterDef {
     /// "return an artifact you control" ETB cost without changing any
     /// existing filter identity.
     Artifact,
+    /// A creature (Ramosian Rally's "tap an untapped creature you
+    /// control"). Appended for the eternal catalog.
+    CreatureV1,
+    /// A tapped creature (web-slinging's "return a tapped creature you
+    /// control to its owner's hand"). Appended for the eternal catalog.
+    TappedCreatureV1,
+    /// An attacking creature no creature blocks (sneak's "return an
+    /// unblocked attacker you control to hand"). Appended for the eternal
+    /// catalog.
+    UnblockedAttackingCreatureV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1972,6 +2007,15 @@ pub enum CostComponent {
         count: u8,
         filter: PermanentFilterDef,
     },
+    /// "Tap three untapped white creatures you control" (Battle Screech's
+    /// flashback): `count` distinct untapped permanents the payer controls
+    /// matching `filter`, chosen one at a time through
+    /// `Decision::ChooseCostTargets`. Creatures tap regardless of summoning
+    /// sickness, since this is not {T}. Appended for the eternal catalog.
+    TapUntappedControlledPermanentsV1 {
+        count: u8,
+        filter: PermanentFilterDef,
+    },
 }
 
 impl CostComponent {
@@ -2108,6 +2152,19 @@ pub enum AltCostCondition {
     /// quote hook in `eternal_pauper_e6a_v1` ties it to the foretold card.
     /// Appended for the eternal catalog.
     ForetoldV1,
+    /// Web-slinging (702.188): cast from hand for this cost, returning a
+    /// tapped creature you control (Spider-Man, Web-Slinger). Appended for
+    /// the eternal catalog.
+    WebSlingingV1,
+    /// Sneak (702.190): cast from hand for this cost during the declare
+    /// blockers step, returning an unblocked attacker you control; the
+    /// permanent enters tapped and attacking (Leonardo, Big Brother,
+    /// `eternal_pauper_e6b_v1`). Appended for the eternal catalog.
+    SneakV1,
+    /// Disturb (702.146): cast from the graveyard transformed for this cost
+    /// (Lunarch Veteran, `eternal_pauper_e6b_v1`). Appended for the eternal
+    /// catalog.
+    DisturbV1,
     /// All effective battlefield creatures, under either controller.
     BattlefieldCreatureCountAtLeast(u16),
 }
@@ -3588,7 +3645,7 @@ mod tests {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn card_db_hash_full_pool_provisional_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x30b0_6c76_c3a3_70a6;
+        const EXPECTED_FDN: u64 = 0x2430_d386_0838_f596;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -3598,7 +3655,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xba7e_cabc_a244_8b3e;
+        const EXPECTED_ETERNAL: u64 = 0x1b16_1470_5cf6_4b64;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

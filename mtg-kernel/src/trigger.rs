@@ -1283,6 +1283,10 @@ pub fn unselected_trigger_modes(
     if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
         return Some(apothecary_stomper_modes());
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(modes) = crate::eternal_pauper_e6b_v1::trigger_modes(card.name, effect) {
+        return Some(modes);
+    }
     if card.name == "Wardens of the Cycle" && *effect == wardens_of_the_cycle_effect() {
         return Some(wardens_of_the_cycle_modes());
     }
@@ -3863,7 +3867,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         | "Undercity Sewers"
         | "Meticulous Archive"
         | "Hedge Maze"
-        | "Thundering Falls" => &CONDUIT_PYLONS_TRIGGERS,
+        | "Thundering Falls"
+        | "Raucous Theater"
+        | "Shadowy Backstreet" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
         "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
@@ -4918,6 +4924,10 @@ fn sba_fixed_point_with_protected_triggers(
         }
 
         changed |= crate::controlled_creature_grants_v1::detach_illegal_nonauras(state);
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            changed |= crate::eternal_pauper_e6b_v1::unattach_protected_equipment(state);
+        }
         // 704.5m: an Aura attached to an illegal object or player, or not
         // attached at all, is put into its owner's graveyard. The current
         // attachment grammar supports creature Auras only and requires both
@@ -4941,6 +4951,25 @@ fn sba_fixed_point_with_protected_triggers(
                     || crate::standard_cards_v1::is_aura(definition))
                 {
                     return Some(id);
+                }
+                #[cfg(feature = "eternal-fixtures")]
+                if aura.v4.attached_to.is_some_and(|link| {
+                    crate::eternal_pauper_e6b_v1::protection_removes_attachment(
+                        state,
+                        id,
+                        link.object,
+                    )
+                }) && (definition.attachment.is_some()
+                    || crate::standard_cards_v1::is_aura(definition))
+                {
+                    return Some(id);
+                }
+                // Animate Dead enchants a creature card in a graveyard until
+                // its entry trigger returns the card.
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_legacy_e7a_v1::aura_waiting(state, id)
+                {
+                    return None;
                 }
                 if crate::standard_cards_v1::is_aura(definition) {
                     // This module's Auras: the enchant restriction includes
@@ -6126,7 +6155,12 @@ fn triggers_from_events(
                         && crate::continuous_characteristics_v1::removal_timestamp(state, id)
                             .is_none())
             {
-                let ward_cost = if obj.v4.face_down_v1.is_some_and(|face| face.disguised) {
+                // Manifest dread's face-down creatures have no ward.
+                let manifested = cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_legacy_e7a_v1::manifested(state, id);
+                let ward_cost = if manifested {
+                    None
+                } else if obj.v4.face_down_v1.is_some_and(|face| face.disguised) {
                     Some(crate::card_def::WardCostDef::Generic(2))
                 } else {
                     card.ward_cost.filter(|cost| match cost {

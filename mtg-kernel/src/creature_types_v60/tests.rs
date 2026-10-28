@@ -70,8 +70,8 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
         }
     }
     assert_eq!(Subtype::Drake.stable_id(), 153);
-    assert_eq!(Subtype::Sphinx.stable_id(), 154);
-    assert_eq!(native_subtype(154), Some(Subtype::Sphinx));
+    assert_eq!(Subtype::Sphinx.stable_id(), 170);
+    assert_eq!(native_subtype(170), Some(Subtype::Sphinx));
     assert_eq!(
         canonical_native_type(Subtype::Sphinx),
         Some(CreatureTypeV60::Sphinx)
@@ -79,13 +79,13 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
     assert_eq!(CreatureTypeV60::Sphinx.choice_index(), 271);
     assert!(!Subtype::CREATURE_TYPES.contains(&Subtype::Sphinx));
     assert!(!Subtype::Sphinx.is_creature_type());
-    assert_eq!(Subtype::Vivien.stable_id(), 155);
-    assert_eq!(native_subtype(155), Some(Subtype::Vivien));
+    assert_eq!(Subtype::Vivien.stable_id(), 187);
+    assert_eq!(native_subtype(187), Some(Subtype::Vivien));
     assert_eq!(canonical_native_type(Subtype::Vivien), None);
-    assert_eq!(noncreature, 34);
-    assert_eq!(canonical.len(), 116);
-    assert!(native_subtype(156).is_none());
-    assert!(Subtype::from_stable_id(156).is_none());
+    assert_eq!(noncreature, 47);
+    assert_eq!(canonical.len(), 135);
+    assert!(native_subtype(188).is_none());
+    assert!(Subtype::from_stable_id(188).is_none());
     assert!(Subtype::from_stable_id(u16::MAX).is_none());
     for (alias, normal, expected) in [
         (Subtype::BirdAllCaps, Subtype::Bird, CreatureTypeV60::Bird),

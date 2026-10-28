@@ -157,6 +157,9 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) own_generic_increase: u32,
     pub(super) delve: bool,
     pub(super) convoke: bool,
+    /// Improvise (Kappa Cannoneer): the convoke payment taps artifacts, each
+    /// for one generic mana.
+    pub(super) improvise: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
     pub(super) replicate: Option<Cost>,
     /// Whether this is a colorless Eldrazi spell, for Eldrazi Temple's
@@ -183,9 +186,10 @@ impl SelectedSpellManaCostsV1 {
             CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
             _ => None,
         };
+        let additional_cost = additional_cost_for_method_v1(definition, method);
         let original_groups = base
             .into_iter()
-            .chain(definition.additional_cost.map(|group| {
+            .chain(additional_cost.map(|group| {
                 if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
                     self.component_groups.last().copied().unwrap_or(group)
                 } else {
@@ -216,10 +220,16 @@ impl SelectedSpellManaCostsV1 {
         } else {
             chosen.to_vec()
         };
-        let additional_owns_objects = definition.additional_cost.is_some()
+        let additional_owns_objects = additional_cost.is_some()
             && original_groups.last().is_some_and(|components| {
                 super::controlled_permanent_sacrifice_in(components).is_some()
                     || super::tap_permanent_filter_in(components).is_some()
+                    // Abhorrent Oculus: "exile six cards from your graveyard"
+                    // as an additional cost of an ordinary cast.
+                    || (cfg!(feature = "eternal-fixtures")
+                        && components.iter().any(|component| {
+                            matches!(component, CostComponent::ExileOtherCardsFromOwnGraveyard(_))
+                        }))
             });
         let mut chosen_by_group = Vec::with_capacity(original_groups.len());
         if base.is_some() {
@@ -229,7 +239,7 @@ impl SelectedSpellManaCostsV1 {
                 ordered_objects.clone()
             });
         }
-        if definition.additional_cost.is_some() {
+        if additional_cost.is_some() {
             chosen_by_group.push(if additional_owns_objects {
                 ordered_objects.clone()
             } else {
@@ -376,6 +386,7 @@ impl SelectedSpellManaCostsV1 {
                     self.tinybones_mana_v72.as_ref(),
                     self.types.contains(&CardType::Artifact),
                     self.colorless_eldrazi,
+                    self.improvise,
                 )?;
             return Some(SpellManaPaymentV1 {
                 mana,
@@ -499,6 +510,8 @@ pub(super) fn selected_spell_mana_costs_v1(
         own_generic_increase: 0,
         delve: false,
         convoke: false,
+        improvise: cfg!(feature = "eternal-fixtures")
+            && crate::eternal_legacy_e7a_v1::improvise_definition(definition.name),
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name),
         colorless_eldrazi: definition.colors.is_empty()
             && definition.subtypes.contains(&card_def::Subtype::Eldrazi),
@@ -573,7 +586,7 @@ pub(super) fn selected_spell_mana_costs_v1(
     if kicked {
         selected.costs.push(definition.kicker_cost?);
     }
-    if let Some(additional) = definition.additional_cost {
+    if let Some(additional) = additional_cost_for_method_v1(definition, method) {
         let additional = if let Some(mana) = super::mandatory_cast_cost_v1::mana_branch(definition)
         {
             let sacrifice = state.engine.pending_cast.as_ref().is_some_and(|pending| {
@@ -596,6 +609,24 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.components(additional);
     }
     Some(selected)
+}
+
+/// A definition's mandatory additional cost for a cast by `method`. Demand
+/// Answers' alternative cost replaces its discard
+/// (`eternal_pauper_e6b_v1::alternative_skips_additional_cost`).
+fn additional_cost_for_method_v1(
+    definition: &card_def::CardDef,
+    method: CastMethodV4,
+) -> Option<&'static [CostComponent]> {
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_e6b_v1::alternative_skips_additional_cost(
+        definition,
+        method == CastMethodV4::Alternative,
+    ) {
+        return None;
+    }
+    let _ = method;
+    definition.additional_cost
 }
 
 /// A definition's flashback cost: printed, or the mana-cost flashback
@@ -950,6 +981,12 @@ fn selected_spell_quote_branch_grant_v1(
     {
         return None;
     }
+    // Sneak and disturb: the costs each card may be cast for.
+    #[cfg(feature = "eternal-fixtures")]
+    if !crate::eternal_pauper_e6b_v1::quote_allowed(state, definition, source, origin_zone, method)
+    {
+        return None;
+    }
     // Foretell: a foretold card is cast only for its foretell cost.
     #[cfg(feature = "eternal-fixtures")]
     if !crate::eternal_pauper_e6a_v1::foretell_quote_allowed(
@@ -1027,6 +1064,10 @@ fn selected_spell_quote_branch_grant_v1(
                     .into_iter()
                     .map(|binding| binding.object)
                     .collect(),
+            )),
+            CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => Some((
+                usize::from(*count),
+                super::tap_permanent_cost_candidates(player, state, *filter, &[]),
             )),
             CostComponent::ExileCardFromHandWithColorV1(color) => Some((
                 1,
@@ -1226,6 +1267,12 @@ impl PreparedSpellPaymentV1 {
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn mana_taps(&self) -> &[(ObjectId, crate::mana::ManaColor)] {
         &self.mana.mana.taps
+    }
+
+    /// The restricted mana units this payment spends, by pool index.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn restricted_pool_used(&self) -> &[usize] {
+        &self.mana.mana.restricted_pool_used
     }
 
     /// Whether this payment spends colored mana (Void Mirror): a source
