@@ -1810,6 +1810,9 @@ pub enum LibraryPickFilterV1 {
     /// A noncreature, nonland card (Thundertrap Trainer). Appended for the
     /// eternal catalog.
     NoncreatureNonlandV1,
+    /// A creature or land card (Once Upon a Time). Appended for the eternal
+    /// catalog's wave E8a.
+    CreatureOrLandV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -16453,6 +16456,10 @@ fn library_partition_matching_prefix(
                     LibraryPickFilterV1::NoncreatureNonlandV1 => {
                         !definition.has_type(CardType::Creature)
                             && !definition.has_type(CardType::Land)
+                    }
+                    LibraryPickFilterV1::CreatureOrLandV1 => {
+                        definition.has_type(CardType::Creature)
+                            || definition.has_type(CardType::Land)
                     }
                 },
             },

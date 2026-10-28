@@ -595,7 +595,7 @@ fn draw(player: PlayerRef, count: u32) -> EffectOp {
     EffectOp::DrawCards { player, count }
 }
 
-fn mill(count: u32) -> EffectOp {
+fn mill(count: u8) -> EffectOp {
     EffectOp::MillCards {
         player: PlayerRef::Controller,
         count,
