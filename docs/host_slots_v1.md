@@ -17,6 +17,23 @@ With `--wait`, the claim queues and starts in arrival order once cores are free.
 
 The command sees `HOST_SLOTS_CLAIM` and `HOST_SLOTS_CORES`. On Windows, spellbench's `usable_cpus()` (`spellbench.arena.machine`) honors the pinned cores, so its throughput planning sizes workers to the claim.
 
+## Backfill: small jobs ahead of a waiting head
+
+The queue is first come, first served, so a head request that does not fit blocks smaller requests behind it while cores sit idle. A request that declares a run time limit may start ahead of the head:
+
+```
+python host_slots_v1.py run --wait --max-seconds 900 --lane LANE --work-id WORK --cores 4 -- COMMAND...
+```
+
+It starts only when all of these hold:
+
+- it fits in the cores free now;
+- it is in the head's class (ordinary or background);
+- no earlier request behind the head is also eligible;
+- it cannot delay the head. The running claims could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with every backfill running. Hosts with more than 12 running claims do not backfill.
+
+The no-delay check does not use durations. Past `--max-seconds`, `status` lists the claim under `backfill` with `overdue: true`; nothing is stopped, suspended or preempted. A request without `--max-seconds` waits its turn as before. The guarantee covers the head at the time of admission: if that head leaves the queue, the next one may wait for backfills already running.
+
 ## Interaction with timed work
 
 Whenever the v1 lock is held and leaves a claim no room, every process in the claim is suspended. It resumes when the room comes back. A lock leaves no room when it has no core declaration, or when its declaration overlaps the claim's cores. A claim that would start under such a lock waits before starting.
@@ -64,6 +81,7 @@ On the compute host, its owner's use comes first. Set `keep_free` so the owner a
 - the timed reservation (lane, work and declared cores, never the token)
 - live claims and their state (`running` or `suspended`)
 - the queue
+- backfilled claims, the head each one started ahead of, and whether it is past its declared limit
 - the free cores
 
 Records whose process has exited are removed as they are read.
