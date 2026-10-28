@@ -69,7 +69,7 @@ fn prior_keeps_a_waiting_ability_source_shuffled_into_the_library() {
         put(&mut state, opp, CARD_DEFS[def as usize].name, Zone::Library);
     }
     let lembas = put(&mut state, opp, "Lembas", Zone::Battlefield);
-    for name in ["Forest", "Mountain", "Island", "Swamp", "Plains"] {
+    for name in ["Forest", "Mountain", "Island", "Swamp", "Counterspell"] {
         put(&mut state, actor, name, Zone::Library);
     }
     put(&mut state, actor, "Lightning Bolt", Zone::Hand);
