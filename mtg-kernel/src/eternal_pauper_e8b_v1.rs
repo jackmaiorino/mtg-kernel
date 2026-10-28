@@ -388,6 +388,19 @@ fn bound_target_in(ctx: &ExecCtx, state: &GameState, index: usize, zone: Zone) -
         .then_some(object)
 }
 
+/// A trigger set off outside any event batch (declaring blockers, the
+/// beginning of the end of combat step), placed directly with the pending
+/// triggers: an empty trigger collection does not read the queue.
+fn push_trigger(
+    state: &mut GameState,
+    source: AbilitySourceContractV4,
+    controller: PlayerId,
+    effect: EffectOp,
+) {
+    let pending = crate::eternal_cards_v1::delayed_trigger(source, controller, effect);
+    state.engine.pending_triggers.push(pending);
+}
+
 fn queue_trigger(
     state: &mut GameState,
     source: AbilitySourceContractV4,
@@ -1348,7 +1361,7 @@ pub(crate) fn note_blockers_declared(state: &mut GameState) {
         let source = AbilitySourceContractV4::capture(state, attacker);
         for blocker in blockers {
             let link = live_link(state, blocker);
-            queue_trigger(
+            push_trigger(
                 state,
                 source,
                 player,
@@ -1374,7 +1387,7 @@ pub(crate) fn begin_end_of_combat(state: &mut GameState) -> bool {
         // The delayed trigger belongs to the Ring-bearer, wherever it is now.
         let mut source = AbilitySourceContractV4::capture(state, record.source.source);
         source.controller = record.controller;
-        queue_trigger(
+        push_trigger(
             state,
             source,
             record.controller,
