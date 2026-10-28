@@ -632,6 +632,27 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
         read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap(),
         w128_bytes
     );
+    // A temporary holding the whole report but its final newline (a write cut
+    // short) parses, yet is not complete: it is removed, and the rerun
+    // publishes without a mismatch.
+    assert!(complete_json_v1(&w128_bytes));
+    let cut = &w128_bytes[..w128_bytes.len() - 1];
+    assert!(serde_json::from_slice::<Value>(cut).is_ok() && !complete_json_v1(cut));
+    let short = root.join("fits/.k1-s1-w128.json.tmp-4294967292");
+    fs::remove_file(fit_path_v1(root, 1, 1, "w128")).unwrap();
+    fs::write(&short, cut).unwrap();
+    let rewritten = fit_chain_stage_v1(loaded, root, &chain, 3, 1).unwrap();
+    assert_eq!(rewritten["fits_written"], json!(1));
+    assert_eq!(
+        rewritten["stale_temporaries_removed"],
+        json!([".k1-s1-w128.json.tmp-4294967292"])
+    );
+    assert_eq!(rewritten["complete_temporaries_compared"], json!([]));
+    assert!(!short.exists() && !mismatch_path_v1(root, 1, 1, "w128").exists());
+    assert_eq!(
+        read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap(),
+        w128_bytes
+    );
     // A complete report that the rerun does not reproduce: the mismatch is
     // recorded durably (the screen is VOID), the earlier report is kept beside
     // it, nothing is published, and the fit is not rerun again.
@@ -770,6 +791,15 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     // evidence): the game was never dispatched, so the record is retained
     // outside the games directory and the game is played.
     fs::write(attempt_path_v1(&games, 7), torn).unwrap();
+    // A write cut just before its final newline parses but is not complete:
+    // it is torn too, and game 4 is played.
+    let mut whole = attempt.clone();
+    whole.plan = chain_schedule_v1(&loaded.config, 1)[4].clone();
+    let whole = json_bytes_v1(&whole).unwrap();
+    let cut = whole[..whole.len() - 1].to_vec();
+    assert!(serde_json::from_slice::<Value>(&cut).is_ok());
+    assert!(complete_json_v1(&whole) && !complete_json_v1(&cut));
+    fs::write(attempt_path_v1(&games, 4), &cut).unwrap();
 
     // A published result from another build is never relabelled as this one's.
     let result_path = result_path_v1(&games, 1, "json");
@@ -791,13 +821,22 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     assert_eq!(lost.failure.as_deref(), Some(UNPUBLISHED_ATTEMPT_V1));
     assert_eq!(
         record.torn_attempts,
-        [TornAttemptV1 {
-            index: 7,
-            bytes: torn.len() as u64,
-            sha256: sha(torn),
-            path: "collect/torn-attempts/k1/torn-attempt-0007.0".into(),
-        }]
+        [
+            TornAttemptV1 {
+                index: 4,
+                bytes: cut.len() as u64,
+                sha256: sha(&cut),
+                path: "collect/torn-attempts/k1/torn-attempt-0004.0".into(),
+            },
+            TornAttemptV1 {
+                index: 7,
+                bytes: torn.len() as u64,
+                sha256: sha(torn),
+                path: "collect/torn-attempts/k1/torn-attempt-0007.0".into(),
+            },
+        ]
     );
+    assert!(record.games[4].natural || record.games[4].terminal.is_some());
     // The evidence survives the games directory's removal.
     assert_eq!(
         read_v1(&root.join("collect/torn-attempts/k1/torn-attempt-0007.0")).unwrap(),

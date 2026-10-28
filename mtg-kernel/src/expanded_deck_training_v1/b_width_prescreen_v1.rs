@@ -40,14 +40,19 @@
 //!   (`fits/k<k>-s<s>-<arm>.refused.json`), which makes the screen VOID; it is
 //!   never rerun. Only publication (I/O) is retried. The first fit invocation
 //!   publishes `fits/FIT-LAUNCH.json` (forward workers, concurrent fits and
-//!   the build), and every later one must use the same settings. A resumed fit
-//!   stage first promotes any interrupted refusal or mismatch publication to
-//!   its record (it is evidence). A report temporary that parses completely
-//!   (a finished report whose publication was interrupted) is kept: the rerun
-//!   must reproduce its bytes, and a difference is recorded durably
-//!   (`fits/k<k>-s<s>-<arm>.mismatch.json`, the earlier report kept beside
-//!   it), which makes the screen VOID (note: a rerun must reproduce the same
-//!   report). Other interrupted publications of earlier processes are removed.
+//!   the build), and every later one must use the same settings. Once it
+//!   exists, a requalification for `fit` must reuse its counts (restrict
+//!   `--candidates` to its `fit_workers` and pass its `forward_workers`), or
+//!   the fit stage refuses. A resumed fit stage first promotes any interrupted
+//!   refusal or mismatch publication to its record (it is evidence, whatever
+//!   its bytes). A complete report temporary (exactly the writer's bytes,
+//!   final newline included: a finished report whose publication was
+//!   interrupted) is kept: the rerun must reproduce its bytes, and a
+//!   difference is recorded durably (`fits/k<k>-s<s>-<arm>.mismatch.json`, the
+//!   earlier report kept beside it), which makes the screen VOID (note: a
+//!   rerun must reproduce the same report). Other interrupted publications of
+//!   earlier processes, an incomplete report among them (even one that
+//!   parses), are removed.
 //!
 //! **One build per run root.** `LAUNCH.json` names the engine commit and the
 //! binary's SHA-256; every later stage refuses another build, and every
@@ -802,6 +807,117 @@ fn json_bytes_v1<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Whether `bytes` are exactly [`json_bytes_v1`]'s output for the value they
+/// hold (the final newline included): the test that a file this driver wrote
+/// is complete. Parsing alone is not: a write cut just before the final
+/// newline still parses.
+fn complete_json_v1(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<OrderedJsonV1>(bytes)
+        .ok()
+        .and_then(|value| json_bytes_v1(&value).ok())
+        .is_some_and(|canonical| canonical == bytes)
+}
+
+/// A JSON value that keeps each object's keys in document order (the crate's
+/// `serde_json::Value` sorts them), so re-serializing a parsed record
+/// reproduces the writer's bytes.
+enum OrderedJsonV1 {
+    Null,
+    Bool(bool),
+    Number(serde_json::Number),
+    String(String),
+    Array(Vec<OrderedJsonV1>),
+    Object(Vec<(String, OrderedJsonV1)>),
+}
+
+impl Serialize for OrderedJsonV1 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        match self {
+            Self::Null => serializer.serialize_unit(),
+            Self::Bool(value) => serializer.serialize_bool(*value),
+            Self::Number(value) => value.serialize(serializer),
+            Self::String(value) => serializer.serialize_str(value),
+            Self::Array(items) => items.serialize(serializer),
+            Self::Object(entries) => {
+                let mut map = serializer.serialize_map(Some(entries.len()))?;
+                for (key, value) in entries {
+                    map.serialize_entry(key, value)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for OrderedJsonV1 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(OrderedJsonVisitorV1)
+    }
+}
+
+struct OrderedJsonVisitorV1;
+
+impl<'de> serde::de::Visitor<'de> for OrderedJsonVisitorV1 {
+    type Value = OrderedJsonV1;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_unit<E>(self) -> Result<OrderedJsonV1, E> {
+        Ok(OrderedJsonV1::Null)
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<OrderedJsonV1, E> {
+        Ok(OrderedJsonV1::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<OrderedJsonV1, E> {
+        Ok(OrderedJsonV1::Number(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<OrderedJsonV1, E> {
+        Ok(OrderedJsonV1::Number(value.into()))
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<OrderedJsonV1, E> {
+        serde_json::Number::from_f64(value)
+            .map(OrderedJsonV1::Number)
+            .ok_or_else(|| E::custom("a non-finite number"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<OrderedJsonV1, E> {
+        Ok(OrderedJsonV1::String(value.to_owned()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<OrderedJsonV1, E> {
+        Ok(OrderedJsonV1::String(value))
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+        self,
+        mut seq: A,
+    ) -> Result<OrderedJsonV1, A::Error> {
+        let mut items = Vec::new();
+        while let Some(item) = seq.next_element()? {
+            items.push(item);
+        }
+        Ok(OrderedJsonV1::Array(items))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(
+        self,
+        mut map: A,
+    ) -> Result<OrderedJsonV1, A::Error> {
+        let mut entries = Vec::new();
+        while let Some(entry) = map.next_entry::<String, OrderedJsonV1>()? {
+            entries.push(entry);
+        }
+        Ok(OrderedJsonV1::Object(entries))
+    }
+}
+
 fn read_v1(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -1284,9 +1400,10 @@ fn result_evidence_v1(games: &Path, index: usize) -> Result<Vec<String>, String>
     Ok(names)
 }
 
-/// An attempt record that does not parse as JSON. If the game has no result
-/// evidence, the record was torn while it was first written, so the game was
-/// never dispatched: the collector dispatches a game only after
+/// An attempt record that is not complete ([`complete_json_v1`]: not exactly
+/// the writer's bytes, final newline included, even if it parses). If the game
+/// has no result evidence, the record was torn while it was first written, so
+/// the game was never dispatched: the collector dispatches a game only after
 /// [`create_new_v1`] has written and synced the whole record (the hook
 /// returns, and the game starts, only after `sync_all`). The torn record is
 /// moved to [`torn_attempts_dir_v1`] (kept as evidence and listed in the
@@ -1304,13 +1421,13 @@ fn set_aside_torn_attempt_v1(
     index: usize,
 ) -> Result<bool, String> {
     let path = attempt_path_v1(games, index);
-    if !path.exists() || serde_json::from_slice::<Value>(&read_v1(&path)?).is_ok() {
+    if !path.exists() || complete_json_v1(&read_v1(&path)?) {
         return Ok(false);
     }
     let evidence = result_evidence_v1(games, index)?;
     if !evidence.is_empty() {
         return Err(format!(
-            "chain {chain} game {index}: the attempt record {} does not parse, but the game has result \
+            "chain {chain} game {index}: the attempt record {} is not complete, but the game has result \
              evidence ({}). The record was damaged after it was written and the game may have been played, so \
              the collection refuses to dispatch it again. An operator must investigate this run root; do not \
              remove the evidence to resume.",
@@ -2623,11 +2740,13 @@ pub(crate) fn mismatch_path_v1(root: &Path, chain: u32, seed: u32, arm: &str) ->
 type RetainedReportsV1 = std::collections::BTreeMap<String, Vec<(String, Vec<u8>)>>;
 
 /// Sorts the interrupted publications in `directory`: a report temporary
-/// (`.k<k>-s<s>-<arm>.json.tmp-<pid>`) that parses completely is a finished
-/// report whose publication was interrupted. It is never deleted here: it is
-/// retained, for the rerun to reproduce. Every other temporary of an earlier
-/// process (an incomplete report, an interrupted `FIT-LAUNCH.json`) is
-/// removed. Returns the retained reports and the removed names.
+/// (`.k<k>-s<s>-<arm>.json.tmp-<pid>`) whose bytes are exactly the writer's
+/// output for the value they hold ([`complete_json_v1`], final newline
+/// included) is a finished report whose publication was interrupted. It is
+/// never deleted here: it is retained, for the rerun to reproduce. Every other
+/// temporary of an earlier process (an incomplete report, even one that
+/// parses, or an interrupted `FIT-LAUNCH.json`) is removed. Returns the
+/// retained reports and the removed names.
 fn sort_fit_temporaries_v1(directory: &Path) -> Result<(RetainedReportsV1, Vec<String>), String> {
     let mut retained = RetainedReportsV1::new();
     let mut removed = Vec::new();
@@ -2656,7 +2775,7 @@ fn sort_fit_temporaries_v1(directory: &Path) -> Result<(RetainedReportsV1, Vec<S
             && !stem.ends_with(".mismatch.json");
         if report {
             let bytes = read_v1(&directory.join(&name))?;
-            if serde_json::from_slice::<Value>(&bytes).is_ok() {
+            if complete_json_v1(&bytes) {
                 retained
                     .entry(stem.to_owned())
                     .or_default()
