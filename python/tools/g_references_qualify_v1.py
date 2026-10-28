@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import gzip
 import json
 import os
 from pathlib import Path
@@ -205,7 +206,10 @@ def scratch(campaign: driver.Campaign, name: str, stop_after: int, out: Path,
     for key in ("ancestry_receipt", "placement_record", "continuation", "qualification_synthetic_block"):
         raw.pop(key, None)
     if synthetic:
+        if stop_after != driver.SYNTHETIC_BLOCK:
+            raise ValueError("the synthetic history block is block 4")
         raw["qualification_synthetic_block"] = stop_after
+    raw["wall_root"] = str(campaign.wall_root())  # one study clock
     path = base / "campaign.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(raw, indent=1), encoding="utf-8")
@@ -241,14 +245,19 @@ def drive_all(pairs: list[tuple[driver.Campaign, str]]) -> None:
             raise RuntimeError(f"{run} did not complete in {campaign.path}: {campaign.run_state(run).get('error')}")
 
 
-def killer(campaign: driver.Campaign, run: str, block: int, at_update: int, record: dict) -> threading.Thread:
-    """Kill the block's first attempt's native process (by its pid, never by name) once it finished at_update updates."""
+def killer(campaign: driver.Campaign, run: str, block: int, at_update: int, path: Path) -> threading.Thread | None:
+    """Kill the block's first attempt's native process (by its pid, never by name) once it finished at_update
+    updates. The evidence is written to ``path`` at once, so a restarted qualification reloads it; a watcher
+    is started only while no evidence exists."""
+    if path.exists():
+        return None
+
     def watch():
         while True:
             entry = campaign.run_state(run)["blocks"].get(str(block), {})
             attempts = entry.get("attempts", [])
             if attempts and attempts[0].get("outcome"):
-                record.setdefault("killed", False)
+                write_json(path, {"killed": False, "first_outcome": attempts[0]["outcome"]})
                 return
             if attempts:
                 started = Path(attempts[0]["root"]) / "started.json"
@@ -256,12 +265,19 @@ def killer(campaign: driver.Campaign, run: str, block: int, at_update: int, reco
                 if started.exists() and done >= at_update:
                     pid = json.loads(started.read_text(encoding="utf-8"))["pid"]
                     os.kill(pid, signal.SIGTERM)
-                    record.update(killed=True, pid=pid, completed_updates=done, epoch=time.time())
+                    write_json(path, {"killed": True, "pid": pid, "completed_updates": done, "epoch": time.time()})
                     return
             time.sleep(1)
     thread = threading.Thread(target=watch, name="interrupt", daemon=True)
     thread.start()
     return thread
+
+
+def killed(thread: threading.Thread | None, path: Path) -> dict:
+    """The kill evidence, after the watcher has finished writing it."""
+    if thread is not None:
+        thread.join(timeout=120)
+    return read(path) if path.exists() else {"killed": False, "first_outcome": None}
 
 
 def checkpoint_identity(item: dict) -> dict:
@@ -372,10 +388,11 @@ def run(campaign_path: Path, plan_path: Path) -> int:
         def item3():
             rerun = scratch(campaign, "interrupt-b002", 2, out)
             seeded(campaign, rerun, "G1", {1: 1})
-            kill = {}
-            killer(rerun, "G1", 2, value["interrupt_at_update"], kill)
+            evidence_path = out / "stages" / "item3-kill.json"
+            watcher = killer(rerun, "G1", 2, value["interrupt_at_update"], evidence_path)
             log(kind="item3-start")
             drive_all([(rerun, "G1")])
+            kill = killed(watcher, evidence_path)
             result = compare(rerun, "G1", 2, end_of(campaign, "G1", 2)) | {"kill": kill}
             result["pass"] = result["identical"] and result["interrupted"] and kill.get("killed") is True
             # Ancestry deletion needs the stricter receipt: equal checkpoint file bytes too (DESIGN section 6).
@@ -408,9 +425,10 @@ def run(campaign_path: Path, plan_path: Path) -> int:
             drive_all([(straight, "G1")])
             broken = scratch(campaign, "synthetic-interrupted", 4, out, synthetic=True)
             seeded(campaign, broken, "G1", synthetic)
-            kill = {}
-            killer(broken, "G1", 4, value["interrupt_at_update"], kill)
+            evidence_path = out / "stages" / "item6-kill.json"
+            watcher = killer(broken, "G1", 4, value["interrupt_at_update"], evidence_path)
             drive_all([(broken, "G1")])
+            kill = killed(watcher, evidence_path)
             attempt = straight.run_state("G1")["blocks"]["4"]["attempts"][-1]
             drawn = sorted({item["opponent"].get("id") for update in read(attempt["config"]["path"])["iterations"]
                             for item in update["episodes"] if item["opponent"]["kind"] == "fixed"})
@@ -491,6 +509,9 @@ def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120
     peak_cold = max(row["cold_bytes"] for row in rows)
     per_block_kept = max(row["retained_bytes"] + row["exposure_bytes"] + row["dispatch_bytes"] for row in rows)
     checkpoint = max(row["checkpoint_bytes"] for row in rows)
+    sample = Path(campaign.run_state("G1")["blocks"]["2"]["final_checkpoint"]["path"])
+    compressed = len(gzip.compress(sample.read_bytes(), compresslevel=9, mtime=0))
+    ancestry = len([end for end in range(1, g.BLOCKS + 1) if not g.is_permanent(end)]) - 2
     configs = [path.stat().st_size for folder in (campaign.state / "configs", campaign.state / "requests")
                if folder.exists() for path in folder.glob("*.json")]
     per_block_config = 2 * max(configs) if configs else 0  # the driver's copy and the launcher's copy
@@ -501,10 +522,15 @@ def record(campaign_path: Path, plan_path: Path, out: Path, cap_bytes: int = 120
                   "records_bytes_study": lineages * g.BLOCKS * per_block_kept,
                   "config_bytes_study": lineages * g.BLOCKS * per_block_config,
                   "checkpoint_bytes_study": lineages * (len(g.PERMANENT_BLOCKS) + 2) * checkpoint,
+                  # Non-permanent ends stay compressed while no byte-identical receipt exists (DESIGN section 6).
+                  "compressed_ancestry_bytes_study": lineages * ancestry * compressed * checkpoint // sample.stat().st_size,
                   "qualification_bytes_kept": tree_bytes(root)}
     projection["study_peak_bytes"] = sum(projection.values())
     value_out = {"schema": RECORD_SCHEMA, "host": campaign.host(), "plan": pin(plan_path),
                  "campaign": pin(campaign_path), "runtime": campaign.raw["runtime"],
+                 "play_imports": {run: item["sha256"] for run, item in campaign.raw["play_imports"].items()},
+                 "block2_checkpoints": {run: campaign.run_state(run)["blocks"]["2"]["final_checkpoint"]["sha256"]
+                                        for run in g.RUNS if campaign.run_state(run)["blocks"].get("2", {}).get("done")},
                  "item1": {"g1_alone_seconds": stamp.get("wave-end-alone", 0) - stamp.get("wave-alone", 0),
                            "eight_seconds": stamp.get("wave-end-eight", 0) - stamp.get("wave-eight", 0),
                            "block_seconds": [{k: row[k] for k in ("run", "block", "seconds")} for row in rows],

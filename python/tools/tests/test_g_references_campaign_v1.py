@@ -238,18 +238,37 @@ class DriverTests(unittest.TestCase):
         self.assertIsNone(self.campaign.admits(2))
         self.assertIn("placement", self.campaign.admits(3))
         runtime = {"path": "r", "sha256": "r" * 64}
+        imports = {run: item["sha256"] for run, item in self.play.items()}
+        block2 = {run: f"{index:064d}" for index, run in enumerate(g.RUNS)}
         record = lambda name, **fields: save(self.root / f"{name}.json", json.dumps(fields).encode())
-        qualification = record("q", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=runtime, **{"pass": True})
-        failed = record("qf", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=runtime, **{"pass": False})
+        qualification = record("q", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=runtime,
+                               play_imports=imports, block2_checkpoints=block2, **{"pass": True})
+        failed = record("qf", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=runtime,
+                        play_imports=imports, block2_checkpoints=block2, **{"pass": False})
         other = record("qo", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=dict(runtime, sha256="o" * 64),
-                       **{"pass": True})
-        good4, good5, bad5 = record("i4", **{"pass": True}), record("i5", **{"pass": True}), record("b5", **{"pass": False})
-        for index, (cited, host, items, admitted) in enumerate((
-                (qualification, "desktop", (good4, good5), True), (failed, "desktop", (good4, good5), False),
-                (qualification, "runpod", (good4, good5), False), (other, "desktop", (good4, good5), False),
-                (qualification, "desktop", (good4, bad5), False), (qualification, "desktop", (good4, None), False))):
+                       play_imports=imports, block2_checkpoints=block2, **{"pass": True})
+        inputs = record("qi", schema=driver.QUALIFICATION_SCHEMA, host="desktop", runtime=runtime,
+                        play_imports=dict(imports, G1="9" * 64), block2_checkpoints=block2, **{"pass": True})
+        four = lambda name, **changes: record(name, **({
+            "schema": driver.ITEM4_SCHEMA, "run": "G1", "passed": True,
+            "runtime_rules": {"value": "resolution-boundary-v1"},
+            "checkpoint": {"recorded": {"sha256": block2["G1"]}},
+            "play_import": {"recorded": {"sha256": imports["G1"]}}} | changes))
+        five = lambda name, **changes: record(name, **({
+            "schema": driver.ITEM5_SCHEMA, "run": "G1", "passed": True, "checkpoint_sha256": block2["G1"],
+            "play_import_sha256": imports["G1"], "games_completed": 1} | changes))
+        good4, good5 = four("i4"), five("i5")
+        cases = ((qualification, "desktop", good4, good5, True), (failed, "desktop", good4, good5, False),
+                 (qualification, "runpod", good4, good5, False), (other, "desktop", good4, good5, False),
+                 (inputs, "desktop", good4, good5, False), (qualification, "desktop", good4, None, False),
+                 (qualification, "desktop", qualification, qualification, False),  # untyped stand-ins
+                 (qualification, "desktop", four("b4", runtime_rules={"value": None}), good5, False),
+                 (qualification, "desktop", four("c4", checkpoint={"recorded": {"sha256": "x" * 64}}), good5, False),
+                 (qualification, "desktop", good4, five("b5", passed=False), False),
+                 (qualification, "desktop", good4, five("c5", play_import_sha256="y" * 64), False))
+        for index, (cited, host, item4, item5, admitted) in enumerate(cases):
             raw["placement_record"] = record(f"p{index}", schema=driver.PLACEMENT_SCHEMA, host=host,
-                                             qualification=cited, item4=items[0], item5=items[1])
+                                             qualification=cited, item4=item4, item5=item5)
             self.write(raw)
             self.assertEqual(self.campaign.admits(3) is None, admitted, index)
         raw["placement_record"] = record("p", schema=driver.PLACEMENT_SCHEMA, host="desktop",
@@ -270,6 +289,8 @@ class DriverTests(unittest.TestCase):
         self.campaign.save_state("G1", {"run": "G1", "status": "running", "blocks": {
             "1": {"attempts": [{"host": "desktop", "seconds": 3000}]}}})
         self.assertEqual(self.campaign.wall_stop(), "study_wall_cap")
+        request = driver.request_for(self.campaign, "G1", {"path": "x", "sha256": "y"}, self.root / "a", self.root / "b")
+        self.assertLessEqual(request["wall_seconds"], 3600 - 600)  # the launcher's timeout ends inside the claim
         clock = driver.WallClock(self.campaign, interval=3600)
         clock.start()
         clock.stop()
@@ -284,6 +305,9 @@ class DriverTests(unittest.TestCase):
         raw.update(stop_after_block=5)
         self.write(raw)
         self.assertIn("placement", self.campaign.admits(4))
+        raw.update(stop_after_block=741, qualification_synthetic_block=741)
+        self.write(raw)
+        self.assertIn("placement", self.campaign.admits(741))
 
     def test_retirement_finishes_a_stopped_pass(self):
         state = self.kept("G1", range(1, 8))

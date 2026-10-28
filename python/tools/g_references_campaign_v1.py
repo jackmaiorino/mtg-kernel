@@ -69,6 +69,9 @@ PLACEMENT_SCHEMA = "g-references-v1/placement"
 QUALIFICATION_SCHEMA = "g-references-v1/qualification"
 CONTINUATION_SCHEMA = "g-references-v1/continuation"
 QUALIFICATION_BLOCKS = 2  # blocks 1 and 2 run under qualification; later blocks need the placement record
+SYNTHETIC_BLOCK = 4  # qualification item 6: block 4's schedule (pool {1, 2}) from block 2's end, in a scratch campaign
+ITEM4_SCHEMA = "g-references-v1/qualification-4"  # the Windows evaluator loads a block-2 checkpoint (collab g_eval.py)
+ITEM5_SCHEMA = "g-references-v1/qualification-5"  # the Spellbench scorer loads it and completes a game
 STUDY_CAP_BYTES = 120 * 10**9  # DESIGN section 6: the study's artifact usage, on either host
 STUDY_WALL_SECONDS = 60 * 3600  # DESIGN section 6: wall hours of training claim time on Jack's PC
 now, pin, sha256_file, write_json, append_jsonl = base.now, base.pin, base.sha256_file, base.write_json, base.append_jsonl
@@ -76,6 +79,26 @@ now, pin, sha256_file, write_json, append_jsonl = base.now, base.pin, base.sha25
 
 def read_pinned(item: dict) -> dict:
     return json.loads(collector.read_bytes_pinned(item))
+
+
+def item_records(placement: dict, checkpoints: dict, imports: dict) -> str | None:
+    """Items 4 and 5: typed passing records of one of the qualified block-2 checkpoints with its lineage's own
+    play import; item 4 under the native runtime profile (AMENDMENT-1.md), item 5 the board's own."""
+    if not placement.get("item4") or not placement.get("item5"):
+        return "the placement record cites no item 4 and item 5 records"
+    four, five = read_pinned(placement["item4"]), read_pinned(placement["item5"])
+    run = four.get("run")
+    if four.get("schema") != ITEM4_SCHEMA or four.get("passed") is not True \
+            or four.get("runtime_rules", {}).get("value") != g.RUNTIME_RULES \
+            or four.get("checkpoint", {}).get("recorded", {}).get("sha256") != checkpoints.get(run) \
+            or four.get("play_import", {}).get("recorded", {}).get("sha256") != imports.get(run):
+        return "the item 4 record is not a passing evaluator load of a qualified block-2 checkpoint"
+    if five.get("schema") != ITEM5_SCHEMA or five.get("passed") is not True \
+            or five.get("checkpoint_sha256") != checkpoints.get(five.get("run")) \
+            or five.get("play_import_sha256") != imports.get(five.get("run")) \
+            or not five.get("games_completed"):
+        return "the item 5 record is not a passing Spellbench load of a qualified block-2 checkpoint"
+    return None
 
 
 class Campaign(base.Campaign):
@@ -101,7 +124,7 @@ class Campaign(base.Campaign):
         set only on a scratch campaign of the qualification tool, which stops at that block).
         """
         synthetic = self.raw.get("qualification_synthetic_block")
-        if synthetic is not None and block == synthetic == self.stop_after:
+        if synthetic is not None and block == synthetic == self.stop_after == SYNTHETIC_BLOCK:
             return None
         if block > QUALIFICATION_BLOCKS:
             item = self.raw.get("placement_record")
@@ -111,13 +134,16 @@ class Campaign(base.Campaign):
             if placement.get("schema") != PLACEMENT_SCHEMA or placement.get("host") != self.host():
                 return "the placement record does not choose this host"
             qualification = read_pinned(placement["qualification"])
+            imports = {run: item["sha256"] for run, item in self.raw["play_imports"].items()}
             if qualification.get("schema") != QUALIFICATION_SCHEMA or qualification.get("pass") is not True \
                     or qualification.get("host") != self.host() \
-                    or qualification.get("runtime", {}).get("sha256") != self.raw["runtime"]["sha256"]:
-                return "the placement record cites no passing qualification of this runtime on this host"
-            for key in ("item4", "item5"):
-                if not placement.get(key) or read_pinned(placement[key]).get("pass") is not True:
-                    return f"the placement record cites no passing qualification {key} record"
+                    or qualification.get("runtime", {}).get("sha256") != self.raw["runtime"]["sha256"] \
+                    or qualification.get("play_imports") != imports:
+                return "the placement record cites no passing qualification of this runtime and these inputs here"
+            checkpoints = qualification.get("block2_checkpoints") or {}
+            reason = item_records(placement, checkpoints, imports)
+            if reason:
+                return reason
         if block > g.STOP_RULE_BLOCK:
             item = self.raw.get("continuation")
             decision = read_pinned(item) if item else {}
@@ -125,20 +151,30 @@ class Campaign(base.Campaign):
                 return "no pinned D_b continuation decision"
         return None
 
+    def wall_root(self) -> Path:
+        """The study clock's folder: ``wall_root`` (a qualification scratch campaign shares its main campaign's),
+        else state/wall."""
+        return Path(self.raw.get("wall_root", self.state / "wall"))
+
     def wall_used(self) -> float:
-        """Claim seconds used by every driver session so far (state/wall/*.json, refreshed each minute)."""
+        """Claim seconds used by every driver session so far (refreshed each minute)."""
         return sum(max(0.0, record["last"] - record["start"])
                    for record in (json.loads(path.read_text(encoding="utf-8"))
-                                  for path in sorted((self.state / "wall").glob("*.json"))))
+                                  for path in sorted(self.wall_root().glob("*.json"))))
+
+    def wall_left(self) -> float | None:
+        """On Jack's PC, the study's remaining claim seconds (RunPod: None, the lease ledger bounds it)."""
+        return None if self.host() == "runpod" else STUDY_WALL_SECONDS - self.wall_used()
 
     def wall_stop(self) -> str | None:
-        """On Jack's PC, None while another block fits the study's 60 wall hours (RunPod: the lease ledger)."""
-        if self.host() == "runpod":
+        """None while another block fits the study's 60 wall hours on Jack's PC (and always on RunPod)."""
+        left = self.wall_left()
+        if left is None:
             return None
         measured = [attempt["seconds"] for name in g.RUNS for entry in self.run_state(name)["blocks"].values()
                     for attempt in entry["attempts"] if attempt.get("host") == self.host() and attempt.get("seconds")]
         estimate = base.ESTIMATE_FACTOR * max(measured) if measured else self.raw["wall_seconds"]
-        return "study_wall_cap" if self.wall_used() + estimate > STUDY_WALL_SECONDS else None
+        return "study_wall_cap" if estimate + base.LEASE_MARGIN_SECONDS > left else None
 
     def placement(self, run: str) -> dict:
         """The lineage's placement: its pack slot (``placement_by_run``), else the shared ``placement``."""
@@ -204,6 +240,9 @@ def request_for(campaign: Campaign, run: str, config_pin: dict, root: Path, cold
                "choice": choice, "choice_verification": verification}
     if lease_seconds is not None:
         request["lease_work_seconds"] = math.ceil(lease_seconds)
+    left = campaign.wall_left()
+    if left is not None:  # the launcher's timeout ends the attempt inside the study's claim time
+        request["wall_seconds"] = max(1, min(raw["wall_seconds"], math.floor(left - base.LEASE_MARGIN_SECONDS)))
     return request
 
 
@@ -622,7 +661,7 @@ class WallClock:
 
     def __init__(self, campaign: Campaign, interval: float = 60):
         self.start_epoch = time.time()
-        self.path = campaign.state / "wall" / f"{int(self.start_epoch)}-{os.getpid()}.json"
+        self.path = campaign.wall_root() / f"{int(self.start_epoch)}-{os.getpid()}.json"
         self.interval, self.done = interval, threading.Event()
         self.thread = threading.Thread(target=self.loop, name="wall-clock", daemon=True)
 

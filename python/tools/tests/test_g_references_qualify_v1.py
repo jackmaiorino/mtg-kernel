@@ -120,6 +120,17 @@ class QualifyTests(unittest.TestCase):
         rerun.save_state("G1", state)
         self.assertFalse(qualify.compare(rerun, "G1", 2, qualify.checkpoint_identity(straight))["interrupted"])
 
+    def test_kill_evidence_survives_a_restart(self):
+        path = self.root / "q" / "stages" / "item3-kill.json"
+        driver.write_json(path, {"killed": True, "pid": 7, "completed_updates": 81})
+        self.assertIsNone(qualify.killer(self.campaign, "G1", 2, 81, path))  # no second watcher
+        self.assertEqual(qualify.killed(None, path)["completed_updates"], 81)
+        self.assertEqual(qualify.killed(None, self.root / "none.json")["killed"], False)
+        with self.assertRaises(ValueError):
+            qualify.scratch(self.campaign, "synthetic", 741, self.root / "q", synthetic=True)
+        copy_ = qualify.scratch(self.campaign, "synthetic", 4, self.root / "q", synthetic=True)
+        self.assertEqual(copy_.wall_root(), self.campaign.wall_root())
+
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):
             qualify.run(self.path, self.root / "plan.json")
