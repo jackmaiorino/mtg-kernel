@@ -52,7 +52,15 @@
 //!   earlier report kept beside it), which makes the screen VOID (note: a
 //!   rerun must reproduce the same report). Other interrupted publications of
 //!   earlier processes, an incomplete report among them (even one that
-//!   parses), are removed.
+//!   parses), are removed. `--scheduler` picks how fits are scheduled; it
+//!   changes no report byte. `per-chain` (the default) runs one chain at a
+//!   time. `cross-chain` runs every selected chain's fits in one queue of
+//!   `fit_workers`, chain by chain and longest first within a chain (w128,
+//!   then w64, then w32), loading a chain's data when its first fit starts and
+//!   dropping it when its last fit ends, with at most three chains resident.
+//!   `FIT-LAUNCH.json` binds the scheduler (`"scheduler"`; absent means
+//!   per-chain), and the fit qualification must be of the same scheduler
+//!   (`qualify-fit --scheduler`, which times a three-chain stage mix).
 //!
 //! **One build per run root.** `LAUNCH.json` names the engine commit and the
 //! binary's SHA-256; every later stage refuses another build, and every
@@ -87,7 +95,9 @@ use crate::native_policy_train_step_v1::{
     Net8W128DimsV1, NetDimsV1,
 };
 use crate::native_policy_value_net_v1::W_MODEL_ARCHITECTURE_VERSION_V1;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Instant;
 
 #[cfg(test)]
@@ -2385,9 +2395,279 @@ fn step0_reports_identical_v1(root: &Path, chain: u32, seeds: &[u32]) -> Result<
     Ok(())
 }
 
-/// `fit`: every missing (seed, arm) report of one chain, `fit_workers` at a
-/// time from one shared read-only record set. Requires the chain's passed
-/// preservation record and `SECTION7.json`.
+/// The fit stage's job scheduler, which `FIT-LAUNCH.json` binds. Neither
+/// changes a report byte: every report is determined by its inputs and the
+/// forward-worker count, never by when or beside which fits it ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FitSchedulerV1 {
+    /// One chain at a time, its fits in seed order, `fit_workers` at a time
+    /// (the first screen's scheduler; a `FIT-LAUNCH.json` without a
+    /// `scheduler` field means this one).
+    PerChain,
+    /// One pool of `fit_workers` over every selected chain's fits, chain by
+    /// chain and, within a chain, longest first (every w128 fit, then w64,
+    /// then w32), with at most [`CROSS_CHAIN_RESIDENT_CHAINS_V1`] chains'
+    /// data in memory.
+    CrossChain,
+}
+
+/// The cross-chain scheduler's name in `FIT-LAUNCH.json` and qualification
+/// records.
+pub(crate) const CROSS_CHAIN_SCHEDULER_V1: &str = "cross-chain-longest-first-v1";
+const PER_CHAIN_SCHEDULER_V1: &str = "per-chain";
+
+/// Chains whose data the cross-chain scheduler holds in memory at once: a
+/// chain is loaded when its first fit starts and dropped when its last fit
+/// ends.
+pub(crate) const CROSS_CHAIN_RESIDENT_CHAINS_V1: usize = 3;
+
+impl FitSchedulerV1 {
+    pub(crate) fn name_v1(self) -> &'static str {
+        match self {
+            Self::PerChain => PER_CHAIN_SCHEDULER_V1,
+            Self::CrossChain => CROSS_CHAIN_SCHEDULER_V1,
+        }
+    }
+
+    pub(crate) fn parse_v1(text: &str) -> Result<Self, String> {
+        match text {
+            PER_CHAIN_SCHEDULER_V1 => Ok(Self::PerChain),
+            "cross-chain" | CROSS_CHAIN_SCHEDULER_V1 => Ok(Self::CrossChain),
+            _ => Err(format!(
+                "unknown fit scheduler {text} (per-chain or cross-chain)"
+            )),
+        }
+    }
+
+    /// The scheduler a record names: an absent field means per-chain.
+    fn of_record_v1(record: &Value) -> Result<Self, String> {
+        match record.get("scheduler") {
+            None => Ok(Self::PerChain),
+            Some(Value::String(name)) => Self::parse_v1(name),
+            Some(other) => Err(format!("invalid scheduler field {other}")),
+        }
+    }
+
+    /// The fit jobs of one chain in this scheduler's order.
+    fn chain_order_v1(self, seeds: &[u32]) -> Vec<(u32, &'static str)> {
+        match self {
+            Self::PerChain => seeds
+                .iter()
+                .flat_map(|&seed| ARM_NAMES_V1.map(|arm| (seed, arm)))
+                .collect(),
+            Self::CrossChain => ["w128", "w64", "w32"]
+                .iter()
+                .flat_map(|&arm| seeds.iter().map(move |&seed| (seed, arm)))
+                .collect(),
+        }
+    }
+}
+
+/// What every fit job of a stage invocation shares.
+struct FitStageV1<'a> {
+    loaded: &'a LoadedConfigV1,
+    root: &'a Path,
+    binary: &'a str,
+    retained: &'a RetainedReportsV1,
+}
+
+/// A chain may be fitted only once `SECTION7.json` records its data and its
+/// preservation record has passed on that data.
+fn check_fit_prerequisites_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+    section7: &Value,
+    chain: u32,
+    data_sha256: &str,
+) -> Result<(), String> {
+    ensure(
+        section7["config_sha256"] == json!(loaded.sha256)
+            && section7["chains"].as_array().is_some_and(|chains| {
+                chains.iter().any(|entry| {
+                    entry["chain"] == json!(chain)
+                        && entry["data_record_sha256"] == json!(data_sha256)
+                })
+            }),
+        "SECTION7.json does not record this chain's data",
+    )?;
+    let preservation: Value =
+        serde_json::from_slice(&read_v1(&preservation_path_v1(root, chain))?).map_err(err)?;
+    ensure(
+        preservation["pass"] == json!(true)
+            && preservation["data_record_sha256"] == json!(data_sha256),
+        "the chain needs a passed preservation record before fitting",
+    )
+}
+
+fn read_section7_v1(root: &Path) -> Result<Value, String> {
+    serde_json::from_slice(&read_v1(&section7_path_v1(root))?)
+        .map_err(|e| format!("SECTION7.json is required before the first fit: {e}"))
+}
+
+impl FitStageV1<'_> {
+    /// Records that a rerun did not reproduce a complete report an earlier run
+    /// left; returns the stage's error.
+    fn record_mismatch_v1(
+        &self,
+        chain: u32,
+        data_sha256: &str,
+        seed: u32,
+        arm: &str,
+        rerun: &[u8],
+    ) -> Result<String, String> {
+        let name = fit_name_v1(chain, seed, arm);
+        let prior = self.retained.get(&name).map_or(&[][..], Vec::as_slice);
+        let record = json!({"schema": MISMATCH_SCHEMA_V1, "config_sha256": self.loaded.sha256,
+            "data_record_sha256": data_sha256, "engine_commit": engine_commit_v1(),
+            "binary_sha256": self.binary, "chain": chain, "seed": seed, "arm": arm,
+            "retained": prior.iter().map(|(name, bytes)| json!({"name": name,
+                "bytes": bytes.len(), "sha256": sha(bytes)})).collect::<Vec<_>>(),
+            "rerun_bytes": rerun.len(), "rerun_sha256": sha(rerun)});
+        write_file_v1(
+            &mismatch_path_v1(self.root, chain, seed, arm),
+            &json_bytes_v1(&record)?,
+            false,
+        )?;
+        Ok(format!(
+            "chain {chain} seed {seed} {arm}: the rerun's report differs from the complete report \
+             an earlier run left; the mismatch is recorded (the screen is VOID) and the earlier \
+             report is kept beside it"
+        ))
+    }
+
+    /// The chain's fits still to run, in `scheduler`'s order. A refusal or
+    /// mismatch record refuses the stage; a published report must be this
+    /// config's and data's, and a complete temporary beside it must hold the
+    /// same bytes.
+    fn plan_chain_v1(
+        &self,
+        chain: u32,
+        data_sha256: &str,
+        scheduler: FitSchedulerV1,
+    ) -> Result<Vec<(u32, &'static str)>, String> {
+        let root = self.root;
+        let mut jobs = Vec::new();
+        for (seed, arm) in scheduler.chain_order_v1(&self.loaded.config.fitting.fitting_seeds) {
+            for (evidence, what) in [
+                (
+                    refusal_path_v1(root, chain, seed, arm),
+                    "a fit-entry refusal",
+                ),
+                (mismatch_path_v1(root, chain, seed, arm), "a rerun mismatch"),
+            ] {
+                ensure(
+                    !evidence.exists(),
+                    &format!(
+                        "{} records {what}: the screen is VOID and the fit is not rerun",
+                        evidence.display()
+                    ),
+                )?;
+            }
+            let path = fit_path_v1(root, chain, seed, arm);
+            if path.exists() {
+                existing_fit_matches_v1(&path, self.loaded, data_sha256)?;
+                let published = read_v1(&path)?;
+                if let Some(prior) = self.retained.get(&fit_name_v1(chain, seed, arm)) {
+                    if prior.iter().any(|(_, bytes)| *bytes != published) {
+                        return Err(self.record_mismatch_v1(
+                            chain,
+                            data_sha256,
+                            seed,
+                            arm,
+                            &published[..],
+                        )?);
+                    }
+                    remove_retained_v1(&root.join("fits"), prior)?;
+                }
+            } else {
+                jobs.push((seed, arm));
+            }
+        }
+        Ok(jobs)
+    }
+
+    /// One fit: its report, published (a rerun must reproduce a complete
+    /// report an earlier run left: a mismatch is VOID), or its entry refusal,
+    /// recorded durably and never retried. Everything up to the report's bytes
+    /// is deterministic; only publication (I/O) may be retried.
+    fn run_job_v1(
+        &self,
+        inputs: &FitInputsV1<'_>,
+        data_sha256: &str,
+        seed: u32,
+        arm: &str,
+    ) -> Result<(), String> {
+        let (root, chain) = (self.root, inputs.chain);
+        let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fit_record_bytes_v1(inputs, seed, arm)
+        }))
+        .unwrap_or_else(|_| Err("the fit panicked".into()));
+        match computed {
+            Ok(bytes) => {
+                let prior = self.retained.get(&fit_name_v1(chain, seed, arm));
+                if let Some(prior) = prior {
+                    if prior.iter().any(|(_, old)| *old != bytes) {
+                        return Err(self.record_mismatch_v1(
+                            chain,
+                            data_sha256,
+                            seed,
+                            arm,
+                            &bytes[..],
+                        )?);
+                    }
+                }
+                write_file_v1(&fit_path_v1(root, chain, seed, arm), &bytes, false)?;
+                if let Some(prior) = prior {
+                    remove_retained_v1(&root.join("fits"), prior)?;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                let refusal = json!({"schema": REFUSAL_SCHEMA_V1,
+                    "config_sha256": self.loaded.sha256, "data_record_sha256": data_sha256,
+                    "engine_commit": engine_commit_v1(), "binary_sha256": self.binary,
+                    "chain": chain, "seed": seed, "arm": arm, "error": error});
+                write_file_v1(
+                    &refusal_path_v1(root, chain, seed, arm),
+                    &json_bytes_v1(&refusal)?,
+                    false,
+                )?;
+                Err(format!(
+                    "chain {chain} seed {seed} {arm}: fit-entry refusal recorded: {error}"
+                ))
+            }
+        }
+    }
+}
+
+/// `fit` for the selected chains under `scheduler`.
+pub(crate) fn fit_stage_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+    chains: &[&PrescreenChainV1],
+    fit_workers: usize,
+    forward_workers: usize,
+    scheduler: FitSchedulerV1,
+) -> Result<Vec<Value>, String> {
+    match scheduler {
+        FitSchedulerV1::PerChain => chains
+            .iter()
+            .map(|chain| fit_chain_stage_v1(loaded, root, chain, fit_workers, forward_workers))
+            .collect(),
+        FitSchedulerV1::CrossChain => Ok(vec![fit_cross_chain_stage_v1(
+            loaded,
+            root,
+            chains,
+            fit_workers,
+            forward_workers,
+            CROSS_CHAIN_RESIDENT_CHAINS_V1,
+        )?]),
+    }
+}
+
+/// `fit` under the per-chain scheduler: every missing (seed, arm) report of
+/// one chain, `fit_workers` at a time from one shared read-only record set.
+/// Requires the chain's passed preservation record and `SECTION7.json`.
 pub(crate) fn fit_chain_stage_v1(
     loaded: &LoadedConfigV1,
     root: &Path,
@@ -2399,159 +2679,44 @@ pub(crate) fn fit_chain_stage_v1(
         (1..=64).contains(&forward_workers),
         "forward workers must be 1 to 64",
     )?;
-    let section7: Value = serde_json::from_slice(&read_v1(&section7_path_v1(root))?)
-        .map_err(|e| format!("SECTION7.json is required before the first fit: {e}"))?;
+    let section7 = read_section7_v1(root)?;
     let data = load_chain_data_v1(loaded, root, chain)?;
     let data_sha256 = sha(&data.record_bytes);
-    ensure(
-        section7["config_sha256"] == json!(loaded.sha256)
-            && section7["chains"].as_array().is_some_and(|chains| {
-                chains.iter().any(|entry| {
-                    entry["chain"] == json!(chain.index)
-                        && entry["data_record_sha256"] == json!(data_sha256)
-                })
-            }),
-        "SECTION7.json does not record this chain's data",
-    )?;
-    let preservation: Value =
-        serde_json::from_slice(&read_v1(&preservation_path_v1(root, chain.index))?).map_err(err)?;
-    ensure(
-        preservation["pass"] == json!(true)
-            && preservation["data_record_sha256"] == json!(data_sha256),
-        "the chain needs a passed preservation record before fitting",
-    )?;
+    check_fit_prerequisites_v1(loaded, root, &section7, chain.index, &data_sha256)?;
     let seeds = &loaded.config.fitting.fitting_seeds;
     let binary = launch_binary_v1(loaded, root)?;
     // The fit stage runs with the settings it started with.
-    ensure_fit_launch_v1(loaded, root, &binary, fit_workers, forward_workers)?;
+    ensure_fit_launch_v1(
+        loaded,
+        root,
+        &binary,
+        fit_workers,
+        forward_workers,
+        FitSchedulerV1::PerChain,
+    )?;
     // An interrupted refusal or mismatch publication is still evidence: it is
     // promoted to its record. A complete report temporary is retained for the
     // rerun comparison; other temporaries are removed.
     let promoted = promote_evidence_temporaries_v1(&root.join("fits"))?;
     let (retained, removed) = sort_fit_temporaries_v1(&root.join("fits"))?;
-    let mismatch_of = |seed: u32, arm: &str, rerun: &[u8]| -> Result<String, String> {
-        let name = fit_name_v1(chain.index, seed, arm);
-        let prior = retained.get(&name).map_or(&[][..], Vec::as_slice);
-        let record = json!({"schema": MISMATCH_SCHEMA_V1, "config_sha256": loaded.sha256,
-            "data_record_sha256": data_sha256, "engine_commit": engine_commit_v1(),
-            "binary_sha256": binary, "chain": chain.index, "seed": seed, "arm": arm,
-            "retained": prior.iter().map(|(name, bytes)| json!({"name": name,
-                "bytes": bytes.len(), "sha256": sha(bytes)})).collect::<Vec<_>>(),
-            "rerun_bytes": rerun.len(), "rerun_sha256": sha(rerun)});
-        write_file_v1(
-            &mismatch_path_v1(root, chain.index, seed, arm),
-            &json_bytes_v1(&record)?,
-            false,
-        )?;
-        Ok(format!(
-            "chain {} seed {seed} {arm}: the rerun's report differs from the complete report an \
-             earlier run left; the mismatch is recorded (the screen is VOID) and the earlier \
-             report is kept beside it",
-            chain.index
-        ))
+    let stage = FitStageV1 {
+        loaded,
+        root,
+        binary: &binary,
+        retained: &retained,
     };
-    let mut jobs = Vec::new();
-    for &seed in seeds {
-        for arm in ARM_NAMES_V1 {
-            for (evidence, what) in [
-                (
-                    refusal_path_v1(root, chain.index, seed, arm),
-                    "a fit-entry refusal",
-                ),
-                (
-                    mismatch_path_v1(root, chain.index, seed, arm),
-                    "a rerun mismatch",
-                ),
-            ] {
-                ensure(
-                    !evidence.exists(),
-                    &format!(
-                        "{} records {what}: the screen is VOID and the fit is not rerun",
-                        evidence.display()
-                    ),
-                )?;
-            }
-            let path = fit_path_v1(root, chain.index, seed, arm);
-            if path.exists() {
-                existing_fit_matches_v1(&path, loaded, &data_sha256)?;
-                // A complete temporary beside a published report must hold the
-                // same bytes.
-                let published = read_v1(&path)?;
-                if let Some(prior) = retained.get(&fit_name_v1(chain.index, seed, arm)) {
-                    if prior.iter().any(|(_, bytes)| *bytes != published) {
-                        return Err(mismatch_of(seed, arm, &published[..])?);
-                    }
-                    remove_retained_v1(&root.join("fits"), prior)?;
-                }
-            } else {
-                jobs.push((seed, arm));
-            }
-        }
-    }
+    let jobs = stage.plan_chain_v1(chain.index, &data_sha256, FitSchedulerV1::PerChain)?;
     let started = Instant::now();
     if !jobs.is_empty() {
-        let parent = load_parent_v1(&loaded.config, &chain.source)?;
-        ensure(
-            parent.state_sha256 == data.record.parent_state_sha256,
-            "the parent differs from the collection's",
-        )?;
-        let snapshot = parent.state.snapshot_v1().map_err(err)?;
-        let parent_state_sha256 = parent.state_sha256.clone();
-        drop(parent);
-        let inputs = FitInputsV1 {
-            loaded,
-            chain: chain.index,
-            data: &data,
-            snapshot: &snapshot,
-            parent_state_sha256: &parent_state_sha256,
-            forward_workers,
-            binary_sha256: &binary,
-        };
+        let state = load_fit_chain_state_v1(loaded, chain, data)?;
+        let inputs = state.inputs_v1(loaded, chain.index, forward_workers, &binary);
         let contexts = vec![(); fit_workers.clamp(1, jobs.len())];
         ordered_parallel_jobs_v1(
             contexts,
             jobs.len(),
             |_, index| {
                 let (seed, arm) = jobs[index];
-                // Everything up to the report's bytes is deterministic: an
-                // error or panic there is an entry refusal, recorded durably
-                // and never retried. Only publication (I/O) may be retried.
-                let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    fit_record_bytes_v1(&inputs, seed, arm)
-                }))
-                .unwrap_or_else(|_| Err("the fit panicked".into()));
-                match computed {
-                    Ok(bytes) => {
-                        // A rerun must reproduce a complete report an earlier
-                        // run left (note: a mismatch is VOID).
-                        let prior = retained.get(&fit_name_v1(chain.index, seed, arm));
-                        if let Some(prior) = prior {
-                            if prior.iter().any(|(_, old)| *old != bytes) {
-                                return Err(mismatch_of(seed, arm, &bytes[..])?);
-                            }
-                        }
-                        write_file_v1(&fit_path_v1(root, chain.index, seed, arm), &bytes, false)?;
-                        if let Some(prior) = prior {
-                            remove_retained_v1(&root.join("fits"), prior)?;
-                        }
-                        Ok(())
-                    }
-                    Err(error) => {
-                        let refusal = json!({"schema": REFUSAL_SCHEMA_V1,
-                            "config_sha256": loaded.sha256, "data_record_sha256": data_sha256,
-                            "engine_commit": engine_commit_v1(), "binary_sha256": binary,
-                            "chain": chain.index, "seed": seed, "arm": arm, "error": error});
-                        write_file_v1(
-                            &refusal_path_v1(root, chain.index, seed, arm),
-                            &json_bytes_v1(&refusal)?,
-                            false,
-                        )?;
-                        Err(format!(
-                            "chain {} seed {seed} {arm}: fit-entry refusal recorded: {error}",
-                            chain.index
-                        ))
-                    }
-                }
+                stage.run_job_v1(&inputs, &data_sha256, seed, arm)
             },
             || (),
         )?;
@@ -2565,22 +2730,412 @@ pub(crate) fn fit_chain_stage_v1(
         "elapsed_seconds": started.elapsed().as_secs_f64()}))
 }
 
+/// What a chain's fits read: its data and its parent's snapshot.
+pub(crate) struct FitChainStateV1 {
+    data: ChainDataV1,
+    snapshot: NativePolicyValueTrainSnapshotV1,
+    parent_state_sha256: String,
+}
+
+impl FitChainStateV1 {
+    fn inputs_v1<'a>(
+        &'a self,
+        loaded: &'a LoadedConfigV1,
+        chain: u32,
+        forward_workers: usize,
+        binary: &'a str,
+    ) -> FitInputsV1<'a> {
+        FitInputsV1 {
+            loaded,
+            chain,
+            data: &self.data,
+            snapshot: &self.snapshot,
+            parent_state_sha256: &self.parent_state_sha256,
+            forward_workers,
+            binary_sha256: binary,
+        }
+    }
+}
+
+/// The chain's fit state, from its verified data and its parent (which must
+/// be the collection's).
+fn load_fit_chain_state_v1(
+    loaded: &LoadedConfigV1,
+    chain: &PrescreenChainV1,
+    data: ChainDataV1,
+) -> Result<FitChainStateV1, String> {
+    let parent = load_parent_v1(&loaded.config, &chain.source)?;
+    ensure(
+        parent.state_sha256 == data.record.parent_state_sha256,
+        "the parent differs from the collection's",
+    )?;
+    let snapshot = parent.state.snapshot_v1().map_err(err)?;
+    Ok(FitChainStateV1 {
+        data,
+        snapshot,
+        parent_state_sha256: parent.state_sha256.clone(),
+    })
+}
+
+/// The cross-chain queue's shared state, behind one lock. A worker takes the
+/// next queued fit only when its chain is resident or a residency slot is
+/// free, and in the same step reserves it, so no fit is ever reserved without
+/// being run. A chain's state is loaded by the first of its fits to start and
+/// dropped when its last fit ends; at most `limit` chains are resident. Every
+/// failure (a load, a fit, a panic, a worker that could not be started) stops
+/// the queue and wakes every waiting worker.
+struct QueueStateV1 {
+    next: usize,
+    slots: BTreeMap<usize, Option<Arc<FitChainStateV1>>>,
+    remaining: Vec<usize>,
+    failure: Option<String>,
+    peak: usize,
+}
+
+/// What a worker does next.
+enum QueueStepV1 {
+    Run(usize, Arc<FitChainStateV1>),
+    Load(usize),
+    Wait,
+    Stop,
+}
+
+struct FitQueueV1 {
+    limit: usize,
+    state: Mutex<QueueStateV1>,
+    changed: Condvar,
+}
+
+impl FitQueueV1 {
+    fn new_v1(limit: usize, jobs_per_chain: Vec<usize>) -> Self {
+        Self {
+            limit: limit.max(1),
+            state: Mutex::new(QueueStateV1 {
+                next: 0,
+                slots: BTreeMap::new(),
+                remaining: jobs_per_chain,
+                failure: None,
+                peak: 0,
+            }),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn lock_v1(&self) -> std::sync::MutexGuard<'_, QueueStateV1> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Stops the queue (the first failure is kept) and wakes every waiter.
+    fn fail_v1(&self, error: String) {
+        let mut guard = self.lock_v1();
+        guard.failure.get_or_insert(error);
+        drop(guard);
+        self.changed.notify_all();
+    }
+
+    /// Ends one fit of `chain`, dropping the chain's state after its last.
+    fn finish_v1(&self, chain: usize) {
+        let mut guard = self.lock_v1();
+        guard.remaining[chain] -= 1;
+        if guard.remaining[chain] == 0 {
+            guard.slots.remove(&chain);
+        }
+        drop(guard);
+        self.changed.notify_all();
+    }
+
+    /// Reserves the next fit for this worker, or says to wait or stop.
+    fn next_step_v1(&self, queue: &[(usize, u32, &str)]) -> QueueStepV1 {
+        let mut guard = self.lock_v1();
+        loop {
+            if guard.failure.is_some() || guard.next >= queue.len() {
+                return QueueStepV1::Stop;
+            }
+            let index = guard.next;
+            let chain = queue[index].0;
+            let step = match guard.slots.get(&chain) {
+                Some(Some(state)) => QueueStepV1::Run(index, Arc::clone(state)),
+                Some(None) => QueueStepV1::Wait,
+                None if guard.slots.len() < self.limit => QueueStepV1::Load(index),
+                None => QueueStepV1::Wait,
+            };
+            match step {
+                QueueStepV1::Wait => {
+                    guard = self
+                        .changed
+                        .wait(guard)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+                QueueStepV1::Load(_) => {
+                    guard.next += 1;
+                    guard.slots.insert(chain, None);
+                    guard.peak = guard.peak.max(guard.slots.len());
+                    return step;
+                }
+                QueueStepV1::Run(..) => {
+                    guard.next += 1;
+                    return step;
+                }
+                QueueStepV1::Stop => return step,
+            }
+        }
+    }
+
+    /// Publishes a loaded chain state (or the load's failure).
+    fn loaded_v1(
+        &self,
+        chain: usize,
+        loaded: Result<FitChainStateV1, String>,
+    ) -> Option<Arc<FitChainStateV1>> {
+        let mut guard = self.lock_v1();
+        let state = match loaded {
+            Ok(state) => {
+                let state = Arc::new(state);
+                guard.slots.insert(chain, Some(Arc::clone(&state)));
+                Some(state)
+            }
+            Err(error) => {
+                guard.slots.remove(&chain);
+                guard.failure.get_or_insert(error);
+                None
+            }
+        };
+        drop(guard);
+        self.changed.notify_all();
+        state
+    }
+
+    /// One worker: takes fits in queue order until the queue is empty or
+    /// stopped. `load` builds a chain's state; `run` runs one fit.
+    fn work_v1(
+        &self,
+        queue: &[(usize, u32, &str)],
+        load: &(dyn Fn(usize) -> Result<FitChainStateV1, String> + Sync),
+        run: &(dyn Fn(usize, &FitChainStateV1) -> Result<(), String> + Sync),
+    ) {
+        loop {
+            let (index, state) = match self.next_step_v1(queue) {
+                QueueStepV1::Stop => return,
+                QueueStepV1::Wait => continue,
+                QueueStepV1::Run(index, state) => (index, state),
+                QueueStepV1::Load(index) => {
+                    let chain = queue[index].0;
+                    let loaded =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load(chain)))
+                            .unwrap_or_else(|_| Err("loading the chain panicked".into()));
+                    match self.loaded_v1(chain, loaded) {
+                        Some(state) => (index, state),
+                        None => return,
+                    }
+                }
+            };
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(index, &state)))
+                    .unwrap_or_else(|_| Err(format!("fit {index} panicked")));
+            drop(state);
+            if let Err(error) = result {
+                self.fail_v1(error);
+            }
+            self.finish_v1(queue[index].0);
+        }
+    }
+
+    /// Runs the queue on `workers` threads. A worker that cannot be started
+    /// stops the queue (`fail_spawn_at` simulates that in tests).
+    fn run_v1(
+        &self,
+        queue: &[(usize, u32, &str)],
+        workers: usize,
+        fail_spawn_at: Option<usize>,
+        load: &(dyn Fn(usize) -> Result<FitChainStateV1, String> + Sync),
+        run: &(dyn Fn(usize, &FitChainStateV1) -> Result<(), String> + Sync),
+    ) -> Result<(), String> {
+        std::thread::scope(|scope| {
+            for worker in 0..workers.max(1) {
+                let spawned = if fail_spawn_at == Some(worker) {
+                    Err(std::io::Error::other("simulated worker start failure"))
+                } else {
+                    std::thread::Builder::new()
+                        .name(format!("prescreen-fit-{worker}"))
+                        .stack_size(8 * 1024 * 1024)
+                        .spawn_scoped(scope, move || self.work_v1(queue, load, run))
+                        .map(|_| ())
+                };
+                if let Err(error) = spawned {
+                    self.fail_v1(format!("fit worker {worker} could not be started: {error}"));
+                    break;
+                }
+            }
+        });
+        match self.lock_v1().failure.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn peak_v1(&self) -> usize {
+        self.lock_v1().peak
+    }
+}
+
+/// `fit` under the cross-chain scheduler: every selected chain's missing
+/// reports in one queue of `fit_workers`, chain by chain and longest first
+/// within a chain. Every chain's prerequisites (`SECTION7.json`, its passed
+/// preservation record, `FIT-LAUNCH.json`) are checked before any fit is
+/// queued. Results, publication, temporaries, refusals and mismatches are per
+/// fit, exactly as under the per-chain scheduler, and so are the reports'
+/// bytes. A chain selected twice is fitted once.
+pub(crate) fn fit_cross_chain_stage_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+    chains: &[&PrescreenChainV1],
+    fit_workers: usize,
+    forward_workers: usize,
+    resident_limit: usize,
+) -> Result<Value, String> {
+    fit_cross_chain_queue_v1(
+        loaded,
+        root,
+        chains,
+        fit_workers,
+        forward_workers,
+        resident_limit,
+        None,
+    )
+}
+
+/// [`fit_cross_chain_stage_v1`], with a simulated worker start failure for
+/// tests.
+pub(crate) fn fit_cross_chain_queue_v1(
+    loaded: &LoadedConfigV1,
+    root: &Path,
+    chains: &[&PrescreenChainV1],
+    fit_workers: usize,
+    forward_workers: usize,
+    resident_limit: usize,
+    fail_spawn_at: Option<usize>,
+) -> Result<Value, String> {
+    ensure(
+        (1..=64).contains(&forward_workers),
+        "forward workers must be 1 to 64",
+    )?;
+    // One (chain, seed, arm) is never queued twice: a repeated chain is
+    // dropped here (the command line refuses one).
+    let mut seen = BTreeSet::new();
+    let chains: Vec<&PrescreenChainV1> = chains
+        .iter()
+        .copied()
+        .filter(|chain| seen.insert(chain.index))
+        .collect();
+    let section7 = read_section7_v1(root)?;
+    // A chain's data record is checked here against SECTION7 and its
+    // preservation record; its full data is loaded (and re-verified against
+    // this record) only when its first fit starts.
+    let mut data_sha256 = Vec::with_capacity(chains.len());
+    for chain in &chains {
+        let digest = sha(&read_v1(&data_path_v1(root, chain.index))?);
+        check_fit_prerequisites_v1(loaded, root, &section7, chain.index, &digest)
+            .map_err(|error| format!("chain {}: {error}", chain.index))?;
+        data_sha256.push(digest);
+    }
+    let seeds = &loaded.config.fitting.fitting_seeds;
+    let binary = launch_binary_v1(loaded, root)?;
+    ensure_fit_launch_v1(
+        loaded,
+        root,
+        &binary,
+        fit_workers,
+        forward_workers,
+        FitSchedulerV1::CrossChain,
+    )?;
+    let promoted = promote_evidence_temporaries_v1(&root.join("fits"))?;
+    let (retained, removed) = sort_fit_temporaries_v1(&root.join("fits"))?;
+    let stage = FitStageV1 {
+        loaded,
+        root,
+        binary: &binary,
+        retained: &retained,
+    };
+    let mut queue = Vec::new();
+    let mut jobs_per_chain = Vec::with_capacity(chains.len());
+    for (position, chain) in chains.iter().enumerate() {
+        let jobs = stage.plan_chain_v1(
+            chain.index,
+            &data_sha256[position],
+            FitSchedulerV1::CrossChain,
+        )?;
+        jobs_per_chain.push(jobs.len());
+        queue.extend(jobs.into_iter().map(|(seed, arm)| (position, seed, arm)));
+    }
+    let started = Instant::now();
+    let pool = FitQueueV1::new_v1(resident_limit, jobs_per_chain.clone());
+    if !queue.is_empty() {
+        let load = |position: usize| -> Result<FitChainStateV1, String> {
+            let chain = chains[position];
+            let data = load_chain_data_v1(loaded, root, chain)?;
+            ensure(
+                sha(&data.record_bytes) == data_sha256[position],
+                "the chain's data record changed during the fit stage",
+            )?;
+            load_fit_chain_state_v1(loaded, chain, data)
+        };
+        let run = |index: usize, state: &FitChainStateV1| -> Result<(), String> {
+            let (position, seed, arm) = queue[index];
+            let inputs = state.inputs_v1(loaded, chains[position].index, forward_workers, &binary);
+            stage.run_job_v1(&inputs, &data_sha256[position], seed, arm)
+        };
+        pool.run_v1(
+            &queue,
+            fit_workers.clamp(1, queue.len()),
+            fail_spawn_at,
+            &load,
+            &run,
+        )?;
+    }
+    for chain in &chains {
+        step0_reports_identical_v1(root, chain.index, seeds)?;
+    }
+    let compared: Vec<&String> = retained.values().flatten().map(|(name, _)| name).collect();
+    let per_chain: Vec<Value> = chains
+        .iter()
+        .zip(&jobs_per_chain)
+        .map(|(chain, &written)| {
+            json!({"chain": chain.index, "fits_written": written,
+                "fits_present": seeds.len() * ARM_NAMES_V1.len()})
+        })
+        .collect();
+    Ok(
+        json!({"scheduler": CROSS_CHAIN_SCHEDULER_V1, "chains": per_chain,
+        "fits_written": queue.len(), "fit_workers": fit_workers,
+        "resident_chains_limit": resident_limit, "resident_chains_peak": pool.peak_v1(),
+        "stale_temporaries_removed": removed, "evidence_temporaries_promoted": promoted,
+        "complete_temporaries_compared": compared,
+        "elapsed_seconds": started.elapsed().as_secs_f64()}),
+    )
+}
+
 /// The fit stage's settings record (`fits/FIT-LAUNCH.json`): published once,
 /// exclusively, when the fit stage first starts, with the settings a report
 /// serializes or that its execution uses (forward workers, concurrent fits)
 /// and the build. Every later fit invocation must use the same settings, so a
-/// requalification cannot change a resumed fit stage.
+/// requalification cannot change a resumed fit stage. The cross-chain
+/// scheduler is bound by a `scheduler` field; a record without one (the
+/// per-chain scheduler, as every root before it was written) keeps its bytes.
 fn ensure_fit_launch_v1(
     loaded: &LoadedConfigV1,
     root: &Path,
     binary: &str,
     fit_workers: usize,
     forward_workers: usize,
+    scheduler: FitSchedulerV1,
 ) -> Result<(), String> {
     let path = fit_launch_path_v1(root);
-    let record = json!({"schema": FIT_LAUNCH_SCHEMA_V1, "config_sha256": loaded.sha256,
+    let mut record = json!({"schema": FIT_LAUNCH_SCHEMA_V1, "config_sha256": loaded.sha256,
         "engine_commit": engine_commit_v1(), "binary_sha256": binary,
         "fit_workers": fit_workers, "forward_workers": forward_workers});
+    if scheduler != FitSchedulerV1::PerChain {
+        record["scheduler"] = json!(scheduler.name_v1());
+    }
     if !path.exists() {
         publish_exclusive_v1(&path, &json_bytes_v1(&record)?)?;
     }
@@ -2589,8 +3144,10 @@ fn ensure_fit_launch_v1(
         existing == record,
         &format!(
             "the fit stage is bound to {} ({existing}); this invocation (fit workers \
-             {fit_workers}, forward workers {forward_workers}) differs, so it is refused",
-            path.display()
+             {fit_workers}, forward workers {forward_workers}, scheduler {}) differs, so it \
+             is refused",
+            path.display(),
+            scheduler.name_v1()
         ),
     )
 }
@@ -2813,10 +3370,15 @@ pub(crate) fn qualify_stage_v1(
     stage: QualifiedStageV1,
     candidates: &[usize],
     forward_workers: usize,
+    scheduler: Option<FitSchedulerV1>,
 ) -> Result<Value, String> {
     ensure(
         !candidates.is_empty() && candidates.iter().all(|&w| (1..=1024).contains(&w)),
         "invalid candidate worker counts",
+    )?;
+    ensure(
+        scheduler.is_none() || stage == QualifiedStageV1::Fit,
+        "--scheduler qualifies the fit stage only",
     )?;
     let config = &loaded.config;
     let chain = &config.chains[0];
@@ -2844,7 +3406,26 @@ pub(crate) fn qualify_stage_v1(
                 .cloned()
                 .collect();
             let generation = config.generation_v1();
-            for &workers in candidates {
+            if let Some(scheduler) = scheduler {
+                for &workers in candidates {
+                    let started = Instant::now();
+                    let completed = qualify_fit_mix_v1(
+                        loaded,
+                        &data,
+                        &holdout,
+                        &snapshot,
+                        &parent.state_sha256,
+                        scheduler,
+                        workers,
+                        forward_workers,
+                    )?;
+                    let seconds = started.elapsed().as_secs_f64();
+                    rows.push(json!({"workers": workers, "completed": completed,
+                        "wall_seconds": seconds,
+                        "per_wall_hour": completed as f64 * 3600.0 / seconds}));
+                }
+            }
+            for &workers in candidates.iter().filter(|_| scheduler.is_none()) {
                 let started = Instant::now();
                 let contexts = vec![(); workers];
                 ordered_parallel_jobs_v1(
@@ -2896,24 +3477,104 @@ pub(crate) fn qualify_stage_v1(
             selected = index;
         }
     }
-    let record = json!({"schema": QUALIFICATION_SCHEMA_V1, "stage": stage.name_v1(),
+    let mut record = json!({"schema": QUALIFICATION_SCHEMA_V1, "stage": stage.name_v1(),
         "host": host_name_v1(), "config_sha256": loaded.sha256,
         "binary_sha256": binary_sha256_v1()?, "engine_commit": engine_commit_v1(),
         "forward_workers": forward_workers, "candidates": rows,
         "selected_workers": rows[selected]["workers"]});
+    if let Some(scheduler) = scheduler {
+        record["scheduler"] = json!(scheduler.name_v1());
+        record["mix"] = json!({"chains": QUALIFY_MIX_CHAINS_V1,
+            "fits_per_chain": config.fitting.fitting_seeds.len() * ARM_NAMES_V1.len(),
+            "steps_per_fit": config.qualification.fit_steps});
+    }
     let path = qualification_path_v1(root, stage);
     write_file_v1(&path, &json_bytes_v1(&record)?, true)?;
     Ok(json!({"qualification": path, "record": record}))
 }
 
+/// qualify-fit's stage mix: virtual chains of every (seed, arm) fit of the
+/// qualification's steps, all from chain 1's records.
+const QUALIFY_MIX_CHAINS_V1: usize = 3;
+
+/// Runs the stage mix the way `scheduler` runs the fit stage (per-chain: one
+/// chain at a time; cross-chain: one queue, longest first within a chain);
+/// returns the completed fit steps.
+#[allow(clippy::too_many_arguments)]
+fn qualify_fit_mix_v1(
+    loaded: &LoadedConfigV1,
+    data: &ChainDataV1,
+    holdout: &[ScreenGameRecordV1],
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+    parent_state_sha256: &str,
+    scheduler: FitSchedulerV1,
+    workers: usize,
+    forward_workers: usize,
+) -> Result<u64, String> {
+    let config = &loaded.config;
+    let q = &config.qualification;
+    let generation = config.generation_v1();
+    let order = scheduler.chain_order_v1(&config.fitting.fitting_seeds);
+    let job = |chain: usize, seed: u32, arm: &str| -> Result<(), String> {
+        let arm_index = ARM_NAMES_V1
+            .iter()
+            .position(|name| *name == arm)
+            .unwrap_or(0);
+        let job_seed = domain_seed_v1(
+            &q.seed_domain,
+            &[chain as u64, seed.into(), arm_index as u64],
+        );
+        let start = arm_start_v1(config, snapshot, parent_state_sha256, arm, job_seed)?;
+        let fit_config = screen_fit_config_v1(
+            &config.fitting,
+            q.fit_steps,
+            q.fit_steps,
+            job_seed,
+            forward_workers,
+        );
+        let games = [data.fit.as_slice(), holdout];
+        match &start.start {
+            ArmStartV1::Narrow(state) => fit_state_v1(state, generation, games, &fit_config)?,
+            ArmStartV1::Wide(state) => fit_state_v1(state, generation, games, &fit_config)?,
+        };
+        Ok(())
+    };
+    match scheduler {
+        FitSchedulerV1::PerChain => {
+            for chain in 0..QUALIFY_MIX_CHAINS_V1 {
+                ordered_parallel_jobs_v1(
+                    vec![(); workers.clamp(1, order.len())],
+                    order.len(),
+                    |_, index| job(chain, order[index].0, order[index].1),
+                    || (),
+                )?;
+            }
+        }
+        FitSchedulerV1::CrossChain => {
+            let queue: Vec<(usize, u32, &str)> = (0..QUALIFY_MIX_CHAINS_V1)
+                .flat_map(|chain| order.iter().map(move |&(seed, arm)| (chain, seed, arm)))
+                .collect();
+            ordered_parallel_jobs_v1(
+                vec![(); workers.clamp(1, queue.len())],
+                queue.len(),
+                |_, index| job(queue[index].0, queue[index].1, queue[index].2),
+                || (),
+            )?;
+        }
+    }
+    Ok((QUALIFY_MIX_CHAINS_V1 * order.len()) as u64 * q.fit_steps)
+}
+
 /// The launch guard: a qualification record of this stage, host, binary and
-/// config whose fastest worker count is the one requested.
+/// config whose fastest worker count is the one requested (and, for `fit`,
+/// whose scheduler is the one requested: a record without one is per-chain).
 pub(crate) fn require_qualification_v1(
     loaded: &LoadedConfigV1,
     path: &Path,
     stage: QualifiedStageV1,
     workers: usize,
     forward_workers: Option<usize>,
+    scheduler: Option<FitSchedulerV1>,
 ) -> Result<Value, String> {
     let record: Value = serde_json::from_slice(&read_v1(path)?).map_err(err)?;
     ensure(
@@ -2932,6 +3593,12 @@ pub(crate) fn require_qualification_v1(
         ensure(
             record["forward_workers"] == json!(forward_workers),
             "the requested forward workers are not the qualified ones",
+        )?;
+    }
+    if let Some(scheduler) = scheduler {
+        ensure(
+            FitSchedulerV1::of_record_v1(&record)? == scheduler,
+            "the requested fit scheduler is not the qualified one",
         )?;
     }
     Ok(json!({"path": path, "sha256": sha(&read_v1(path)?)}))
@@ -3040,7 +3707,29 @@ pub(crate) fn staging_check_stage_v1(
 
 const USAGE_V1: &str = "usage: b_width_prescreen_v1 STAGE --config ABS.json --root ABS_DIR \
 [--chains 1,2,...] [--workers N] [--forward-workers N] [--qualification ABS.json] \
-[--candidates 1,2,...]\nstages: staging-check qualify-collect qualify-fit collect convert preserve fit";
+[--candidates 1,2,...] [--scheduler per-chain|cross-chain]\nstages: staging-check qualify-collect qualify-fit collect convert preserve fit";
+
+/// The chains a stage runs on: `--chains` in its order, each at most once (a
+/// repeated chain is refused for every stage), or every chain.
+pub(crate) fn select_chains_v1<'a>(
+    config: &'a PrescreenConfigV1,
+    indices: Option<&[u32]>,
+) -> Result<Vec<&'a PrescreenChainV1>, String> {
+    let Some(indices) = indices else {
+        return Ok(config.chains.iter().collect());
+    };
+    let mut seen = BTreeSet::new();
+    indices
+        .iter()
+        .map(|&index| {
+            ensure(
+                seen.insert(index),
+                &format!("--chains lists chain {index} more than once"),
+            )?;
+            config.chain_v1(index)
+        })
+        .collect()
+}
 
 fn parse_list_v1<T: std::str::FromStr>(text: &str) -> Result<Vec<T>, String> {
     text.split(',')
@@ -3062,6 +3751,7 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
     let mut forward_workers = 1usize;
     let mut qualification = None;
     let mut candidates: Option<Vec<usize>> = None;
+    let mut scheduler: Option<FitSchedulerV1> = None;
     let mut rest = args[1..].iter();
     while let Some(flag) = rest.next() {
         let value = rest.next().ok_or(USAGE_V1)?;
@@ -3073,6 +3763,7 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
             "--forward-workers" => forward_workers = value.parse::<usize>().map_err(err)?,
             "--qualification" => qualification = Some(PathBuf::from(value)),
             "--candidates" => candidates = Some(parse_list_v1(value)?),
+            "--scheduler" => scheduler = Some(FitSchedulerV1::parse_v1(value)?),
             _ => return Err(USAGE_V1.into()),
         }
     }
@@ -3083,25 +3774,21 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
         "config and root must be absolute",
     )?;
     let loaded = load_config_v1(&config_path)?;
+    let selected = select_chains_v1(&loaded.config, chains.as_deref())?;
     fs::create_dir_all(&root).map_err(err)?;
-    let selected: Vec<&PrescreenChainV1> = match &chains {
-        Some(indices) => indices
-            .iter()
-            .map(|&index| loaded.config.chain_v1(index))
-            .collect::<Result<_, _>>()?,
-        None => loaded.config.chains.iter().collect(),
+    let guard = |stage: QualifiedStageV1,
+                 forward: Option<usize>,
+                 scheduler: Option<FitSchedulerV1>|
+     -> Result<(usize, Value), String> {
+        let workers = workers.ok_or("--workers is required")?;
+        let path = qualification
+            .as_ref()
+            .ok_or("--qualification is required (COMPUTE-POLICY.md)")?;
+        Ok((
+            workers,
+            require_qualification_v1(&loaded, path, stage, workers, forward, scheduler)?,
+        ))
     };
-    let guard =
-        |stage: QualifiedStageV1, forward: Option<usize>| -> Result<(usize, Value), String> {
-            let workers = workers.ok_or("--workers is required")?;
-            let path = qualification
-                .as_ref()
-                .ok_or("--qualification is required (COMPUTE-POLICY.md)")?;
-            Ok((
-                workers,
-                require_qualification_v1(&loaded, path, stage, workers, forward)?,
-            ))
-        };
     let mut results = Vec::new();
     let qualification_record = match stage {
         "staging-check" => {
@@ -3121,11 +3808,12 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
                 stage,
                 &candidates,
                 forward_workers,
+                scheduler,
             )?);
             Value::Null
         }
         "collect" => {
-            let (workers, record) = guard(QualifiedStageV1::Collect, None)?;
+            let (workers, record) = guard(QualifiedStageV1::Collect, None, None)?;
             for chain in &selected {
                 results.push(collect_chain_stage_v1(&loaded, &root, chain, workers)?);
             }
@@ -3141,23 +3829,27 @@ pub fn run_b_width_prescreen_cli_v1(args: &[String]) -> Result<Value, String> {
             Value::Null
         }
         "preserve" => {
-            let (workers, record) = guard(QualifiedStageV1::Fit, None)?;
+            let (workers, record) = guard(QualifiedStageV1::Fit, None, None)?;
             for chain in &selected {
                 results.push(preserve_chain_stage_v1(&loaded, &root, chain, workers)?);
             }
             record
         }
         "fit" => {
-            let (workers, record) = guard(QualifiedStageV1::Fit, Some(forward_workers))?;
-            for chain in &selected {
-                results.push(fit_chain_stage_v1(
-                    &loaded,
-                    &root,
-                    chain,
-                    workers,
-                    forward_workers,
-                )?);
-            }
+            let scheduler = scheduler.unwrap_or(FitSchedulerV1::PerChain);
+            let (workers, record) = guard(
+                QualifiedStageV1::Fit,
+                Some(forward_workers),
+                Some(scheduler),
+            )?;
+            results.extend(fit_stage_v1(
+                &loaded,
+                &root,
+                &selected,
+                workers,
+                forward_workers,
+                scheduler,
+            )?);
             record
         }
         _ => return Err(USAGE_V1.into()),
