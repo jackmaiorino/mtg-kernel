@@ -1,0 +1,143 @@
+"""Missed-forced-win table from `s4a-win-check` rows. Measurement only.
+
+usage: summarize.py ROWS.jsonl... [--labels LABELS.jsonl...] [--json OUT]
+
+Opportunity: one (game, turn) in which at least one focal decision is
+certified a win available this turn; the class and line come from its first
+certified decision. Taken: the focal seat won the game in that turn. Missed:
+otherwise. Oracle and robust estimands are counted separately; a robust
+"none" is certified only through the oracle (a world without a win).
+
+Classes (declared, from the certified line and the focal deck), first match:
+spy_line (the line uses Balustrade Spy), dread_return_outside_spy (Dread
+Return without Spy), rally_elves_kill (focal deck Rally or Elves),
+burn_lethal (focal deck Burn, no attackers declared), combat_lethal
+(attackers declared), other. Decks or classes without events are "not
+measured". Intervals are 95% Wilson.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+from collections import Counter, defaultdict
+from pathlib import Path
+
+CARDS = json.loads((Path(__file__).resolve().parents[2] / "data" / "cards_v1.json").read_text(encoding="utf-8"))["cards"]
+NAME = {i: c["name"] for i, c in enumerate(CARDS)}
+ID = {c["name"]: i for i, c in enumerate(CARDS)}
+
+
+def wilson(k: int, n: int) -> list[float] | None:
+    if n == 0:
+        return None
+    z, p = 1.959964, k / n
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return [round(max(0.0, centre - half), 4), round(min(1.0, centre + half), 4)]
+
+
+def cards_in(line: list[str]) -> set[str]:
+    return {NAME.get(int(i), f"#{i}") for step in line for i in re.findall(r"card_db_id: (\d+)", step)}
+
+
+def attacks(line: list[str]) -> bool:
+    return any(re.search(r"DeclareAttackers \{[^}]*attackers: \[[^\]]", step) for step in line)
+
+
+def classify(line: list[str], deck: str) -> str:
+    names = cards_in(line)
+    if "Balustrade Spy" in names:
+        return "spy_line"
+    if "Dread Return" in names:
+        return "dread_return_outside_spy"
+    if deck in ("Rally", "Elves"):
+        return "rally_elves_kill"
+    if deck == "Burn" and not attacks(line):
+        return "burn_lethal"
+    if attacks(line):
+        return "combat_lethal"
+    return "other"
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("rows", type=Path, nargs="+")
+    parser.add_argument("--labels", type=Path, nargs="*", default=[], help="panel labels.jsonl for the agreement check")
+    parser.add_argument("--json", type=Path)
+    args = parser.parse_args(argv)
+    games, decisions, errors = {}, defaultdict(list), []
+    for path in args.rows:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            if row["kind"] == "game":
+                games[row["id"]] = row
+            elif row["kind"] == "decision":
+                decisions[row["id"]].append(row)
+            else:
+                errors.append(row)
+    panel = {}
+    for path in args.labels:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            panel[row["id"]] = row
+    report = {"games": len(games), "replay_errors": len(errors), "runtime": sorted({json.dumps(g["runtime"]) for g in games.values()})}
+    focal = [d for g in games for d in decisions[g]]
+    spy_taken = set()
+    for estimand in ("oracle", "robust"):
+        verdicts = Counter((d[estimand] or {}).get("verdict", "missing") for d in focal)
+        reasons = Counter((d[estimand] or {}).get("unknown_reason") for d in focal if (d[estimand] or {}).get("verdict") == "unknown")
+        if estimand == "robust":
+            # Robust none is certified only by an oracle refutation.
+            certified = sum(d["robust"] and (d["robust"]["verdict"] == "proven" or d["oracle"]["verdict"] == "refuted") for d in focal)
+        else:
+            certified = sum(d["oracle"]["verdict"] != "unknown" for d in focal)
+        table = defaultdict(lambda: {"available": 0, "taken": 0, "missed": 0, "games_with": set(), "missed_refs": [], "taken_refs": []})
+        for game_id, game in games.items():
+            deck = game["deck_ids"][game["focal"]].split("/")[0]
+            turns = defaultdict(list)
+            for d in decisions[game_id]:
+                if (d[estimand] or {}).get("verdict") == "proven":
+                    turns[d["turn"]].append(d)
+            for turn, rows in sorted(turns.items()):
+                cls = classify(rows[0][estimand]["line"], deck)
+                cell = table[(deck, cls)]
+                cell["available"] += 1
+                cell["games_with"].add(game_id)
+                taken = game["win"] and game["final_turn"] == turn
+                cell["taken" if taken else "missed"] += 1
+                if taken and cls == "spy_line" and estimand == "oracle":
+                    spy_taken.add(game_id)
+                cell["taken_refs" if taken else "missed_refs"].append({"game": game_id, "turn": turn, "decision": rows[0]["index"]})
+        scheduled = Counter(g["deck_ids"][g["focal"]].split("/")[0] for g in games.values())
+        rows = []
+        for (deck, cls), cell in sorted(table.items()):
+            n = scheduled[deck]
+            rows.append({"deck": deck, "class": cls, "scheduled_games": n, "opportunities": cell["available"],
+                         "availability_per_1000_games": round(1000 * len(cell["games_with"]) / n, 1),
+                         "availability_ci": [round(1000 * x, 1) for x in wilson(len(cell["games_with"]), n)],
+                         "taken": cell["taken"], "missed": cell["missed"],
+                         "miss_rate": round(cell["missed"] / cell["available"], 4), "miss_rate_ci": wilson(cell["missed"], cell["available"]),
+                         "missed_per_1000_games": round(1000 * cell["missed"] / n, 1),
+                         "taken_refs": cell["taken_refs"][:20], "missed_refs": cell["missed_refs"][:20]})
+        report[estimand] = {"focal_decisions": len(focal), "verdicts": dict(verdicts), "unknown_reasons": dict(reasons),
+                            "certified_share": round(certified / max(1, len(focal)), 4), "table": rows,
+                            "not_measured": sorted(d for d in scheduled if not any(r["deck"] == d for r in rows))}
+    # Agreement: combo_won games must have a taken spy_line opportunity, and vice versa (oracle).
+    disagree = []
+    for game_id, game in games.items():
+        taken_spy = game_id in spy_taken
+        label = panel.get(game_id, {}).get("combo_won", game["combo_won"])
+        if label != game["combo_won"] or (label and not taken_spy):
+            disagree.append({"game": game_id, "panel_combo_won": label, "replay_combo_won": game["combo_won"], "taken_spy_line": taken_spy})
+    report["label_agreement"] = {"games_with_combo_won": sum(g["combo_won"] for g in games.values()), "disagreements": disagree}
+    text = json.dumps(report, indent=1)
+    if args.json:
+        args.json.write_text(text, encoding="utf-8")
+    print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
