@@ -30,7 +30,8 @@ class QualifyTests(unittest.TestCase):
         raw = {"recipe": g.PREFIX, "lane": "gi", "decks": str(REPO / "data" / "runtime_decks_v1.json"),
                "play_imports": play, "placement": {**slots["G1"], "cpu_affinity": list(range(24))},
                "placement_by_run": slots, "runtime": {"path": "r", "sha256": "r" * 64},
-               "storage": {"accounting_roots": [str(self.root)]}, "wall_seconds": 7200,
+               "storage": {"accounting_roots": [str(self.root)], "max_logical_bytes": 120 * 10**9},
+               "wall_seconds": 7200,
                "choice_pins": str(self.root / "pins.json"), "cold_keep_blocks": 1, "stop_after_block": 2,
                "roots": {name: str(self.root / "campaign" / name)
                          for name in ("state", "cold", "retained", "checkpoints", "exposure", "hot", "doses")}
@@ -39,22 +40,26 @@ class QualifyTests(unittest.TestCase):
         self.path.write_text(json.dumps(raw), encoding="utf-8")
         self.campaign = driver.Campaign(self.path)
 
-    def test_plan_writes_trials_and_a_pack_of_the_eight_slots(self):
+    def test_plan_writes_the_empty_pool_family_and_keeps_the_spec(self):
         inventory = save(self.root / "inventory.json", b"{}")
         spec = {"storage": {"accounting_roots": [str(self.root)]}, "wall_seconds": 3600, "inventory": inventory}
         result = qualify.plan(self.path, spec, self.root / "q")
         value = json.loads(Path(result["path"]).read_text())
-        self.assertEqual(sorted(value["trials"]), ["w1", "w3"])
-        serial = json.loads(Path(value["trials"]["w1"]["path"]).read_text())
+        self.assertEqual(sorted(value["families"]), ["empty-pool"])
+        self.assertEqual(value["spec"], spec)
+        family = value["families"]["empty-pool"]
+        self.assertEqual(sorted(family["trials"]), ["w1", "w3"])
+        serial = json.loads(Path(family["trials"]["w1"]["path"]).read_text())
         self.assertEqual((serial["placement"]["workers"], serial["placement"]["preparation_workers"]), (1, 1))
         self.assertEqual(serial["placement"]["cpu_affinity"], [0, 1, 2])
         self.assertEqual(serial["schedule_family"], "permuted-units-own-history-v1")
         self.assertNotIn("choice", serial)
-        pack = json.loads(Path(value["pack"]["path"]).read_text())
+        pack = json.loads(Path(family["pack"]["path"]).read_text())
         self.assertEqual(len(pack["slots"]), 8)
-        self.assertEqual(pack["base_request"], value["trials"]["w3"])
-        config = json.loads(Path(value["config"]["path"]).read_text())
+        self.assertEqual(pack["base_request"], family["trials"]["w3"])
+        config = json.loads(Path(family["config"]["path"]).read_text())
         self.assertIsNone(config["initial_source"]["checkpoint"])
+        self.assertEqual(g.require_runtime_rules(config), 1620)
         self.assertEqual(value["interrupt_at_update"], 81)
 
     def seed_main(self):
@@ -72,8 +77,12 @@ class QualifyTests(unittest.TestCase):
         self.assertEqual(scratch.stop_after, 4)
         self.assertNotEqual(scratch.state, self.campaign.state)
         self.assertEqual(scratch.raw["choice_pins"], self.campaign.raw["choice_pins"])
-        seeded = qualify.seeded_state(self.campaign, "G1", {1: 1, 2: 2, 3: 2})
-        scratch.save_state("G1", seeded)
+        qualify.seeded(self.campaign, scratch, "G1", {1: 1, 2: 2, 3: 2})
+        state = scratch.run_state("G1")
+        state["blocks"]["4"] = {"attempts": [{"attempt": 1, "outcome": "interrupted"}]}
+        scratch.save_state("G1", state)
+        qualify.seeded(self.campaign, scratch, "G1", {1: 1, 2: 2, 3: 2})  # a restart keeps the scratch attempts
+        self.assertIn("4", scratch.run_state("G1")["blocks"])
         spec = driver.block_spec(scratch, "G1", 4, scratch.run_state("G1"), self.root / "n")
         main = self.campaign.run_state("G1")["blocks"]
         self.assertEqual(spec["start_checkpoint"], main["2"]["final_checkpoint"])
@@ -82,20 +91,34 @@ class QualifyTests(unittest.TestCase):
         drawn = {item["opponent"].get("id") for u in config["iterations"] for item in u["episodes"]}
         self.assertEqual(drawn - {None}, {"G1-history-b001", "G1-history-b002"})
 
-    def test_compare_and_receipt_fields(self):
+    def checkpoint(self, name, trajectory_root, state="s" * 64):
+        value = {"state_sha256": state, "adam_step": 324, "parameters": [1, 2],
+                 "trajectories": [{"path": f"{trajectory_root}/t{i}.json", "sha256": f"{i}" * 64} for i in range(3)]}
+        return save(self.root / f"{name}.json", json.dumps(value).encode())
+
+    def test_identity_ignores_output_paths_but_not_content(self):
+        straight = qualify.checkpoint_identity(self.checkpoint("a", "D:/main"))
+        moved = qualify.checkpoint_identity(self.checkpoint("b", "D:/scratch/x"))
+        self.assertNotEqual(straight["file_sha256"], moved["file_sha256"])
+        self.assertTrue(all(straight[k] == moved[k] for k in qualify.IDENTITY_KEYS))
+        other = qualify.checkpoint_identity(self.checkpoint("c", "D:/main", state="t" * 64))
+        self.assertNotEqual(other["state_sha256"], straight["state_sha256"])
+
+    def test_compare_needs_identity_and_an_interruption(self):
         self.seed_main()
-        straight = qualify.end_of(self.campaign, "G1", 2)
         rerun = qualify.scratch(self.campaign, "interrupt", 2, self.root / "q")
-        state = qualify.seeded_state(self.campaign, "G1", {1: 1})
-        main = self.campaign.run_state("G1")["blocks"]["2"]
-        state["blocks"]["2"] = dict(main, attempts=[{"attempt": 1, "outcome": "interrupted"},
-                                                    {"attempt": 2, "outcome": "complete"}])
+        qualify.seeded(self.campaign, rerun, "G1", {1: 1})
+        straight = self.checkpoint("straight", "D:/main")
+        state = rerun.run_state("G1")
+        state["blocks"]["2"] = {"done": True, "final_checkpoint": self.checkpoint("rerun", "D:/scratch"),
+                                "attempts": [{"attempt": 1, "outcome": "interrupted"},
+                                             {"attempt": 2, "outcome": "complete"}]}
         rerun.save_state("G1", state)
-        result = qualify.compare(rerun, "G1", 2, straight)
-        self.assertTrue(result["byte_identical"] and result["interrupted"])
-        state["blocks"]["2"]["final_state_sha256"] = "f" * 64
+        result = qualify.compare(rerun, "G1", 2, qualify.checkpoint_identity(straight))
+        self.assertTrue(result["identical"] and result["interrupted"])
+        state["blocks"]["2"]["attempts"] = [{"attempt": 1, "outcome": "complete"}]
         rerun.save_state("G1", state)
-        self.assertFalse(qualify.compare(rerun, "G1", 2, straight)["byte_identical"])
+        self.assertFalse(qualify.compare(rerun, "G1", 2, qualify.checkpoint_identity(straight))["interrupted"])
 
     def test_refuses_outside_a_reservation(self):
         with self.assertRaises(SystemExit):

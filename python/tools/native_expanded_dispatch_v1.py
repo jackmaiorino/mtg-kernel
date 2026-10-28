@@ -73,6 +73,28 @@ def inference_shape(source):
     return copy.deepcopy(_INFERENCE_SHAPES[item["sha256"]])
 
 
+def fresh_import_shape(item):
+    """A fresh-initialization ``play_import``'s lineage-independent shape: its schema, the initializer's
+    identity, the model architecture and configuration, the parameter layout and payload size, and the
+    target. Lineage id, seeds and parameter hashes are left out, so sibling fresh lineages of one recipe share
+    it; every byte read is checked against its pin first."""
+    def pinned(pin_):
+        data = Path(pin_["path"]).read_bytes()
+        require(hashlib.sha256(data).hexdigest() == pin_["sha256"], "changed pinned input: " + pin_["path"])
+        return json.loads(data)
+    descriptor = pinned(item)
+    require(descriptor.get("schema") == "mtg-kernel-fresh-initialization-source/v1",
+            "own-history blocks start from a fresh-initialization source")
+    manifest = pinned(descriptor["initialization"])
+    payload = manifest["payload"]
+    return {"schema": descriptor["schema"], "manifest_schema": manifest["schema"],
+            "initializer": {key: manifest["initializer"][key] for key in ("identity", "authority", "seed_derivation")},
+            "model": manifest["model"], "target": manifest["target"],
+            "payload": {key: payload[key] for key in ("bytes", "element_count", "encoding", "layout",
+                                                       "parameter_layout_sha256", "tensor_count")},
+            "parameters": [(row["name"], row["shape"]) for row in manifest["parameters"]]}
+
+
 def runtime_identity(runtime):
     identity = {key: runtime[key] for key in ("engine_commit", "tracked_tree_sha256")} | {
         "binary_sha256": runtime["binary"]["sha256"]}
@@ -150,14 +172,16 @@ def workload(config, kind, keep_seeds=False, family=None):
     block-specific order, and start from admitted weights with the same import,
     feature contract and parameter layout. Everything else stays bound.
 
-    ``family="permuted-units-own-history-v1"`` (a self-play lineage that plays
-    its own earlier checkpoints, collab LANES/g-references-20261028) binds the
-    same, except: blocks may start from a fresh initialization or from any
-    checkpoint of that same import and feature transfer, every named opponent
-    must be a checkpoint of that same import and feature transfer, and a named
-    (``fixed``) assignment counts as one more frozen same-model opponent, like
-    ``initial``. The opponent list therefore grows with the lineage's history
-    inside one family; its size stays bounded by the config's own limits.
+    ``family="permuted-units-own-history-v1"`` (self-play lineages that play
+    their own earlier checkpoints, collab LANES/g-references-20261028) binds the
+    same, except: a block may start from its fresh initialization or from any
+    checkpoint of that import; the import binds by its lineage-independent shape
+    (``fresh_import_shape``), so sibling lineages of one recipe share a family;
+    every named opponent must be a checkpoint of the block's own import and
+    feature transfer, and every named assignment must name a listed opponent.
+    A named assignment binds as ``history``, without its id, so the share of
+    history episodes stays bound while the pool grows; a block whose pool is
+    still empty (``initial`` in that slot) is a second family.
     """
     require(family in SCHEDULE_FAMILIES, "unknown schedule family")
     require(family is None or kind == "training", "schedule families apply to training only")
@@ -188,14 +212,20 @@ def workload(config, kind, keep_seeds=False, family=None):
                 slot.pop("case_id")
         if family == "permuted-units-own-history-v1":
             start = {key: value["initial_source"][key] for key in ("play_import", "feature_transfer")}
-            require(all({key: item["source"].get(key) for key in start} == start
-                        for item in value.get("opponents", [])),
-                    "own-history opponents must share the start's import and feature transfer")
-            value["initial_source"], value["opponents"] = start, "own-history"
+            opponents = value.get("opponents", [])
+            require(all({key: item["source"].get(key) for key in start} == start and item["source"].get("checkpoint")
+                        for item in opponents),
+                    "own-history opponents must be checkpoints of the start's import and feature transfer")
+            names = {item["id"] for item in opponents}
+            require(len(names) == len(opponents), "duplicate own-history opponent ids")
+            value["initial_source"] = {"play_import": fresh_import_shape(start["play_import"]),
+                                       "feature_transfer": start["feature_transfer"]}
+            value["opponents"] = "own-history"
             for update in value["iterations"]:
                 for item in update["episodes"]:
                     if isinstance(item["opponent"], dict) and item["opponent"].get("kind") == "fixed":
-                        item["opponent"] = {"kind": "initial"}
+                        require(item["opponent"].get("id") in names, "own-history assignment names no opponent")
+                        item["opponent"] = {"kind": "history"}
         elif family == "permuted-units-v1":
             value["initial_source"]["checkpoint"] = inference_shape(value["initial_source"])
         if family is not None:

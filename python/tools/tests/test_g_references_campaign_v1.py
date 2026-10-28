@@ -33,7 +33,8 @@ class DriverTests(unittest.TestCase):
                      for index, run in enumerate(g.RUNS, 1)}
         raw = {"recipe": "g-references-v1", "lane": "gi", "decks": str(REPO / "data" / "runtime_decks_v1.json"),
                "play_imports": self.play, "placement": {"host": "desktop", "workers": 8, "preparation_workers": 8},
-               "runtime": {"path": "r", "sha256": "r" * 64}, "storage": {}, "wall_seconds": 10,
+               "runtime": {"path": "r", "sha256": "r" * 64}, "storage": {"max_logical_bytes": 120 * 10**9},
+               "wall_seconds": 10,
                "choice": {"path": "c"}, "choice_verification": {"path": "v"}, "cold_keep_blocks": 1,
                "roots": {name: str(self.root / name) for name in ("state", "cold", "retained", "checkpoints",
                                                                     "exposure", "hot", "doses")} | {"hot_by_run": {}}}
@@ -125,7 +126,8 @@ class DriverTests(unittest.TestCase):
         self.write(raw)
         with self.assertRaises(SystemExit):
             driver.retire(self.campaign, "G1", 7, state)
-        good = save(self.root / "receipt2.json", json.dumps({"schema": driver.RECEIPT_SCHEMA, "byte_identical": True,
+        good = save(self.root / "receipt2.json", json.dumps({"schema": driver.RECEIPT_SCHEMA, "byte_identical": True, "interrupted": True,
+                                                             "recipe": "g-references-v1", "host": "desktop",
                                                              "runtime": "r" * 64}).encode())
         raw["ancestry_receipt"] = good
         self.write(raw)
@@ -224,6 +226,86 @@ class DriverTests(unittest.TestCase):
         self.write(raw)
         with self.assertRaises(SystemExit):
             driver.declared_cores(self.campaign)
+
+    def test_storage_cap_gates_and_wall_clock(self):
+        raw = json.loads(self.path.read_text())
+        raw["storage"]["max_logical_bytes"] = 121 * 10**9
+        with self.assertRaises(SystemExit):
+            self.write(raw)
+        raw["storage"]["max_logical_bytes"] = 100 * 10**9
+        raw["stop_after_block"] = 741
+        self.write(raw)
+        self.assertIsNone(self.campaign.admits(2))
+        self.assertIn("placement", self.campaign.admits(3))
+        qualification = save(self.root / "q.json", json.dumps({"schema": driver.QUALIFICATION_SCHEMA, "host": "desktop",
+                                                                "pass": True}).encode())
+        failed = save(self.root / "qf.json", json.dumps({"schema": driver.QUALIFICATION_SCHEMA, "host": "desktop",
+                                                         "pass": False}).encode())
+        for cited, host, admitted in ((qualification, "desktop", True), (failed, "desktop", False),
+                                      (qualification, "runpod", False)):
+            raw["placement_record"] = save(self.root / f"p-{host}-{admitted}.json", json.dumps(
+                {"schema": driver.PLACEMENT_SCHEMA, "host": host, "qualification": cited}).encode())
+            self.write(raw)
+            self.assertEqual(self.campaign.admits(3) is None, admitted)
+        raw["placement_record"] = save(self.root / "p.json", json.dumps(
+            {"schema": driver.PLACEMENT_SCHEMA, "host": "desktop", "qualification": qualification}).encode())
+        self.write(raw)
+        self.assertIsNone(self.campaign.admits(494))
+        self.assertIn("continuation", self.campaign.admits(495))
+        for decision, admitted in (("stop", False), ("continue", True)):
+            raw["continuation"] = save(self.root / f"c-{decision}.json", json.dumps(
+                {"schema": driver.CONTINUATION_SCHEMA, "decision": decision}).encode())
+            self.write(raw)
+            self.assertEqual(self.campaign.admits(495) is None, admitted)
+        # Claim time across sessions: 59 hours used leaves room for the 10 s estimate, not for 1.25 x 3,000 s.
+        wall = self.campaign.state / "wall"
+        wall.mkdir(parents=True)
+        (wall / "1-1.json").write_text(json.dumps({"start": 0, "last": 59 * 3600}))
+        self.assertIsNone(self.campaign.wall_stop())
+        self.campaign.save_state("G1", {"run": "G1", "status": "running", "blocks": {
+            "1": {"attempts": [{"host": "desktop", "seconds": 3000}]}}})
+        self.assertEqual(self.campaign.wall_stop(), "study_wall_cap")
+        clock = driver.WallClock(self.campaign, interval=3600)
+        clock.start()
+        clock.stop()
+        self.assertEqual(len(list(wall.glob("*.json"))), 2)
+
+    def test_retirement_finishes_a_stopped_pass(self):
+        state = self.kept("G1", range(1, 8))
+        entry = state["blocks"]["3"]
+        raw = Path(entry["final_checkpoint"]["path"])
+        stale = raw.with_name(raw.name + ".gz.partial")
+        stale.write_bytes(b"half")  # a pass stopped while compressing
+        driver.retire(self.campaign, "G1", 7, state)
+        self.assertFalse(stale.exists())
+        self.assertEqual(entry["checkpoint_state"], "compressed")
+        raw.write_bytes(b"left behind")  # a pass stopped after saving the state, before removing the raw file
+        driver.retire(self.campaign, "G1", 7, state)
+        self.assertFalse(raw.exists())
+        good = save(self.root / "receipt.json", json.dumps({"schema": driver.RECEIPT_SCHEMA, "byte_identical": True, "interrupted": True,
+                                                             "recipe": "g-references-v1", "host": "desktop",
+                                                            "runtime": "r" * 64}).encode())
+        raw_campaign = json.loads(self.path.read_text())
+        raw_campaign["ancestry_receipt"] = good
+        self.write(raw_campaign)
+        state["blocks"]["5"]["checkpoint_state"] = "deleting"  # a pass stopped mid-deletion
+        driver.retire(self.campaign, "G1", 7, state)
+        self.assertEqual({state["blocks"][k]["checkpoint_state"] for k in ("3", "5")}, {"deleted"})
+        self.assertEqual(self.campaign.run_state("G1")["blocks"]["5"]["checkpoint_state"], "deleted")
+
+    def test_failed_attempt_keeps_its_records(self):
+        native = self.root / "native-a1"
+        (native / "iterations" / "000000" / "attempt-000000" / "update").mkdir(parents=True)
+        (native / "iterations" / "000000" / "attempt-000000" / "update" / "update.json").write_text("{}")
+        (native / "iterations" / "000000" / "attempt-000000" / "episode-0000.json").write_text("trajectory")
+        (native / "run.json").write_text("{}")
+        attempt = {"attempt": 1, "native": str(native)}
+        driver.discard(self.campaign, "G2", 7, attempt, "test")
+        self.assertFalse(native.exists())
+        kept = json.loads(Path(attempt["failed_records"]["path"]).read_text())["files"]
+        self.assertEqual(sorted(Path(item["to"]).name for item in kept), ["run.json", "update.json"])
+        log = json.loads(self.campaign.prune_log.read_text().splitlines()[-1])
+        self.assertEqual(log["retained_records"], attempt["failed_records"])
 
     def test_status_and_run_labels(self):
         self.assertEqual(len(driver.status_lines(self.campaign)), 8)

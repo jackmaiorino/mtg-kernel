@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import g_references_cloud_v1 as gcloud
 import g_references_v1 as g
@@ -102,8 +103,14 @@ class PackageTests(unittest.TestCase):
 
     def test_production_package_and_refusals(self):
         out = Path(self.temp.name) / "production"
+        placement = {"path": f"/workspace/{ROOT}/campaign/qualification/PLACEMENT.json", "sha256": "d" * 64}
+        with self.assertRaises(ValueError):
+            gcloud.package(self.fixture.spec(mode="production", stop_after_block=494, choice_pins_sha256="c" * 64),
+                           Path(self.temp.name) / "no-placement")
         manifest = gcloud.package(self.fixture.spec(mode="production", stop_after_block=494,
-                                                    choice_pins_sha256="c" * 64), out)
+                                                    choice_pins_sha256="c" * 64, placement_record=placement), out)
+        self.assertIn({"role": "placement_record", **placement}, manifest["volume_inputs"])
+        self.assertEqual(json.loads((out / "campaign.json").read_text())["placement_record"], placement)
         self.assertEqual(manifest["volume_inputs"][0]["path"], f"/workspace/{ROOT}/campaign/qualification/choice-pins.json")
         command = gcloud.driver_command(manifest)
         self.assertEqual(command[1], "launch")
@@ -125,6 +132,16 @@ class LeaseTests(unittest.TestCase):
         cycle.manifest, cycle.before, cycle.result = {"runs": list(runs)}, {}, {}
         cycle.conclude({"runs": runs})
         return cycle.result
+
+    def test_a_state_complete_at_an_earlier_target_is_pending(self):
+        cycle = gcloud.Cycle.__new__(gcloud.Cycle)
+        cycle.manifest = {"stop_after_block": 494}
+        snapshot = {"runs": {"G1": {"status": "complete", "blocks_done": [1, 2]},
+                             "G2": {"status": "complete", "blocks_done": list(range(1, 495))}}}
+        with patch.object(cloud.Cycle, "observe", return_value=snapshot):
+            observed = cycle.observe()
+        self.assertEqual(observed["runs"]["G1"]["status"], "pending")
+        self.assertEqual(observed["runs"]["G2"]["status"], "complete")
 
     def test_statuses(self):
         done = {"status": "complete", "blocks_done": [1, 2]}
@@ -154,11 +171,15 @@ class LeaseTests(unittest.TestCase):
         self.assertAlmostEqual(summary["compute_usd_at_ceiling"], 18.0)
         self.assertAlmostEqual(summary["volume_usd"], 5 / 30 * 200 * 0.07)
         lease = {"created_epoch": 0, "deadline_epoch": 8 * 3600, "rate_ceiling_usd_hour": 1.2}
-        gcloud.require_within_caps(summary, lease)
+        gcloud.require_within_caps(summary, lease, 200)
         with self.assertRaises(ValueError):
-            gcloud.require_within_caps(dict(summary, lease_seconds=55 * 3600), lease)
+            gcloud.require_within_caps(dict(summary, lease_seconds=55 * 3600), lease, 200)
         with self.assertRaises(ValueError):
-            gcloud.require_within_caps(dict(summary, total_usd=52.0), lease)
+            gcloud.require_within_caps(dict(summary, total_usd=52.0), lease, 200)
+        hour = {"created_epoch": 0, "deadline_epoch": 3600, "rate_ceiling_usd_hour": 1.2}
+        gcloud.require_within_caps(dict(summary, total_usd=58.79), hour, 0)
+        with self.assertRaises(ValueError):  # the volume's accrual over the lease counts too
+            gcloud.require_within_caps(dict(summary, total_usd=58.79), hour, 200)
 
 
 if __name__ == "__main__":

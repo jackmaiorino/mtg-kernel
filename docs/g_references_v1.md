@@ -21,7 +21,13 @@ Everything not listed is `nine_deck_baseline_v1.py`'s own code: units, opponent 
 
 ## Launcher family
 
-`native_expanded_dispatch_v1.py` gains the training family `permuted-units-own-history-v1`. It binds what `permuted-units-v1` binds, except that a block may start from a fresh initialization or any checkpoint of the same import and feature transfer, every named opponent must share that import and transfer, and a `fixed` assignment counts like `initial`. One qualification of block 1's first update then covers every block, whatever its history pool.
+`native_expanded_dispatch_v1.py` gains the training family `permuted-units-own-history-v1`. It binds what `permuted-units-v1` binds, with these exceptions:
+- A block may start from its fresh initialization or from any checkpoint of that import.
+- The import binds by its lineage-independent shape: schema, initializer identity, model, target and parameter layout. Sibling lineages of one recipe therefore share a family.
+- Every named opponent must be a checkpoint of the block's own import and feature transfer, and every named assignment must name a listed opponent.
+- A named assignment binds as `history` without its id, so the share of history episodes stays bound while the pool grows.
+
+Blocks with an empty pool (blocks 1 and 2) are one family, and blocks with a pool are another. Each is qualified once.
 
 ## Driver
 
@@ -30,13 +36,26 @@ python -B python/tools/g_references_campaign_v1.py launch --campaign C.json --ru
 python -B python/tools/g_references_campaign_v1.py status --campaign C.json
 ```
 
-- `launch` takes the canonical host reservation with `host_slots_v1.py timed --cores` (the union of the lineages' slots) and detaches its supervisor. The supervisor's stdin, stdout and stderr are `/dev/null` on Linux.
-- Each lineage has its own pack slot (`placement_by_run`). The choice and its verification are read from `choice_pins` before every block, so a refreshed inventory applies from the next block on.
-- Blocks run up to `stop_after_block`. An interrupted block reruns from its starting checkpoint, at most three times. An `invalid` block, or one with non-finite losses, ends the lineage. The baseline's other exposure checks and the block-1 embedding gate are recorded, not a stop.
-- Block ends stay while they are one of the last two, and for good at the permanent ends. Older ends are gzip-compressed, and deleted only once `ancestry_receipt` pins a byte-identical regeneration receipt. Every change is logged in PRUNE with the regeneration recipe.
+- `launch` takes the canonical host reservation with `host_slots_v1.py timed --cores` (the union of the lineages' slots) and detaches its supervisor. On Linux the supervisor's stdin, stdout and stderr are `/dev/null`.
+- Each lineage has its own pack slot (`placement_by_run`). Before every block, the driver reads the choice and the block family's verification from `choice_pins`.
+- Gates before a block starts:
+  - Blocks after 2 need `placement_record`: a placement on this host citing a passing qualification record from this host.
+  - Blocks after 494 need `continuation`, a pinned D_b "continue" decision.
+  - On Jack's PC, the next block must fit the 60 wall hours of claim time (`state/wall/`).
+  - The storage allowance must be at most 120 GB.
+- Blocks run up to `stop_after_block`.
+  - An interrupted block reruns from its starting checkpoint, at most three times.
+  - An `invalid` block, or one with non-finite losses, ends the lineage.
+  - The baseline's other exposure checks and the block-1 embedding gate are recorded, not a stop.
+  - A failed attempt's records (the top-level files and the small per-update records) are copied and hashed before its native tree is pruned.
+- Block ends:
+  - The last two block ends stay, and the permanent ends stay for good.
+  - Older ends are gzip-compressed. They are deleted only once `ancestry_receipt` pins this recipe's interrupted-block regeneration receipt from this host.
+  - Each step saves its state before removing a file, and a restarted pass finishes a half-done step.
+  - Every change is logged in PRUNE with the regeneration recipe.
 - At 247, 494 and 741 the driver writes `doses/G<k>-b<block>.json` with the checkpoint, the lineage's play import and the feature transfer.
-- On a pod the guard's `progress.json` activity advances only when a native update completes or a driver step finishes.
-- `roots.native` puts trajectories on a separate disk (a pod's container disk); the dispatch records, checkpoints and cold archives stay on the volume.
+- On a pod, the guard's `progress.json` activity advances only when a native update completes or a driver step finishes.
+- `roots.native` puts trajectories on a separate disk, a pod's container disk. Dispatch records, checkpoints and cold archives stay on the volume.
 
 ## Qualification
 
@@ -46,14 +65,20 @@ python -B python/tools/g_references_qualify_v1.py launch --campaign C.json --pla
 python -B python/tools/g_references_qualify_v1.py record --campaign C.json --plan Q/plan.json --out Q/QUALIFICATION.json
 ```
 
-The campaign must stop after block 2 and name `choice_pins`. Inside one reservation, `run` does the following:
-1. Launcher trials at 1 worker and at the slot width, then the eight-slot pack, all on G1 block 1's payload.
-2. The choice from the spec's inventory (all three placements, at most 24 hours old), verified with `check-choice`.
-3. G1's blocks 1 and 2 alone, then all eight lineages at once. G1 is rerun in a scratch campaign as the eighth, and its block ends must match.
-4. Block 2 rerun with its native process killed at update 81. It must equal the straight block in checkpoint bytes and state hash; this is the regeneration receipt.
-5. A synthetic block, discarded afterwards: block 4's schedule (pool {1, 2}) from block 2's end, run straight and interrupted.
+The campaign must stop after block 2 and name `choice_pins`. Inside one reservation, `run` does the following, and exits nonzero if any comparison fails:
+1. Empty-pool family evidence:
+   - launcher trials at 1 worker and at the slot width, then the eight-slot pack, on G1 block 1's payload;
+   - the choice, from the spec's inventory (all three placements, at most 24 hours old), with one `check-choice` verification per family.
+2. G1's blocks 1 and 2 alone, then all eight lineages at once. G1 is rerun in a scratch campaign as the eighth, and its block ends must be identical.
+3. Block 2 rerun with its native process killed at update 81. It must be identical to the straight block: the same state hash, Adam step, and checkpoint content once output paths are set aside, as the launcher compares serial and parallel trials. The result is the regeneration receipt.
+4. History family evidence on block 4's schedule (pool {1, 2}) from block 2's end, followed by the choice again over both families.
+5. That synthetic block run straight and interrupted. The two runs must be identical and must draw both history checkpoints. The block is discarded afterwards.
 
-`record` adds bytes per block and the eight-lineage peak against the storage cap, plus the non-natural fraction of blocks 1 and 2.
+`record` adds:
+- item 2: bytes per block, and the eight-lineage peak (qualification leftovers included) against the 120 GB cap;
+- item 7: every dispatched config carries the runtime profile, and a stripped config is refused;
+- the non-natural fraction of blocks 1 and 2;
+- `pass`, true when every check passes.
 
 ## RunPod
 
@@ -64,6 +89,9 @@ python -B python/tools/g_references_cloud_v1.py execute ... --ssh-key KEY --exec
 python -B python/tools/g_references_cloud_v1.py ledger  --leases LEASES --volume-gb 200 --volume-created-epoch E
 ```
 
-The lease cycle, staging, recovery and release are `nine_deck_cloud_v1.py`'s (see `docs/nine_deck_cloud_v1.md`). In `qualification` mode the package carries the inventory and launches the qualification tool. In `production` mode it launches the driver and requires the choice pins on the volume.
+The lease cycle, staging, recovery and release are `nine_deck_cloud_v1.py`'s (see `docs/nine_deck_cloud_v1.md`).
+- `qualification` mode carries the inventory and launches the qualification tool.
+- `production` mode launches the driver. It requires the choice pins and the placement record on the volume.
+- A lineage reported complete through an earlier target, qualification's block 2 or D_b, counts as pending work for a lease with a later target.
 
-Trajectories go to `native_root` on the container disk. The dispatcher keeps a 60 GiB reserve on every root's disk, so the lease preparation sets `container_disk_gb` (new in `prepare_lease.py`, default 40). `execute` refuses a lease that could take the study past 60 USD (compute at the lease's rate ceiling plus the volume charge) or past 60 hours of lease time.
+Trajectories go to `native_root` on the container disk. The dispatcher keeps a 60 GiB reserve on every root's disk, so the lease preparation sets `container_disk_gb` (new in `prepare_lease.py`, default 40). `execute` refuses a lease that could take the study past 60 USD (compute at the lease's rate ceiling, plus the volume charge over the lease) or past 60 hours of lease time.

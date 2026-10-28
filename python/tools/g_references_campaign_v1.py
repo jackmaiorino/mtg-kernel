@@ -65,7 +65,17 @@ FAMILY = "permuted-units-own-history-v1"
 MAX_ATTEMPTS = base.MAX_ATTEMPTS
 DOSE_SCHEMA = "g-references-v1/dose"
 RECEIPT_SCHEMA = "g-references-v1/regeneration-receipt"
+PLACEMENT_SCHEMA = "g-references-v1/placement"
+QUALIFICATION_SCHEMA = "g-references-v1/qualification"
+CONTINUATION_SCHEMA = "g-references-v1/continuation"
+QUALIFICATION_BLOCKS = 2  # blocks 1 and 2 run under qualification; later blocks need the placement record
+STUDY_CAP_BYTES = 120 * 10**9  # DESIGN section 6: the study's artifact usage, on either host
+STUDY_WALL_SECONDS = 60 * 3600  # DESIGN section 6: wall hours of training claim time on Jack's PC
 now, pin, sha256_file, write_json, append_jsonl = base.now, base.pin, base.sha256_file, base.write_json, base.append_jsonl
+
+
+def read_pinned(item: dict) -> dict:
+    return json.loads(collector.read_bytes_pinned(item))
 
 
 class Campaign(base.Campaign):
@@ -77,6 +87,45 @@ class Campaign(base.Campaign):
         self.stop_after = self.raw.get("stop_after_block", g.STOP_RULE_BLOCK)
         if type(self.stop_after) is not int or not 1 <= self.stop_after <= g.BLOCKS:
             raise SystemExit("stop_after_block must be a block number")
+        cap = self.raw["storage"].get("max_logical_bytes")
+        if type(cap) is not int or not 0 < cap <= STUDY_CAP_BYTES:
+            raise SystemExit("the storage allowance must be at most the study's 120 GB")
+
+    def admits(self, block: int) -> str | None:
+        """None when block may run, else why not: past block 2 only on the host the pinned placement record
+        chose from a passing qualification there; past D_b (494) only with a pinned "continue" decision."""
+        if block > QUALIFICATION_BLOCKS:
+            item = self.raw.get("placement_record")
+            if not item:
+                return "no placement record: qualification blocks only"
+            placement = read_pinned(item)
+            if placement.get("schema") != PLACEMENT_SCHEMA or placement.get("host") != self.host():
+                return "the placement record does not choose this host"
+            qualification = read_pinned(placement["qualification"])
+            if qualification.get("schema") != QUALIFICATION_SCHEMA or not qualification.get("pass") \
+                    or qualification.get("host") != self.host():
+                return "the placement record cites no passing qualification on this host"
+        if block > g.STOP_RULE_BLOCK:
+            item = self.raw.get("continuation")
+            decision = read_pinned(item) if item else {}
+            if decision.get("schema") != CONTINUATION_SCHEMA or decision.get("decision") != "continue":
+                return "no pinned D_b continuation decision"
+        return None
+
+    def wall_used(self) -> float:
+        """Claim seconds used by every driver session so far (state/wall/*.json, refreshed each minute)."""
+        return sum(max(0.0, record["last"] - record["start"])
+                   for record in (json.loads(path.read_text(encoding="utf-8"))
+                                  for path in sorted((self.state / "wall").glob("*.json"))))
+
+    def wall_stop(self) -> str | None:
+        """On Jack's PC, None while another block fits the study's 60 wall hours (RunPod: the lease ledger)."""
+        if self.host() == "runpod":
+            return None
+        measured = [attempt["seconds"] for name in g.RUNS for entry in self.run_state(name)["blocks"].values()
+                    for attempt in entry["attempts"] if attempt.get("host") == self.host() and attempt.get("seconds")]
+        estimate = base.ESTIMATE_FACTOR * max(measured) if measured else self.raw["wall_seconds"]
+        return "study_wall_cap" if self.wall_used() + estimate > STUDY_WALL_SECONDS else None
 
     def placement(self, run: str) -> dict:
         """The lineage's placement: its pack slot (``placement_by_run``), else the shared ``placement``."""
@@ -89,14 +138,21 @@ class Campaign(base.Campaign):
         """Native outputs (trajectories, the hot I/O): ``roots.native`` (a pod's container disk), else hot."""
         return Path(self.raw["roots"].get("native", self.hot(run)))
 
-    def choice(self) -> tuple[dict, dict]:
+    def choice(self, config_pin: dict | None = None) -> tuple[dict, dict]:
+        """The choice and the verification of ``workload``'s family. choice_pins holds one choice with a
+        verification per family ({workload digest: pin}): blocks with an empty history pool and blocks with
+        a pool are two families of the launcher's own-history binding."""
         source = self.raw.get("choice_pins")
         if source is None:
             return self.raw["choice"], self.raw["choice_verification"]
         if not Path(source).exists():  # before the choice exists (qualification): the launcher refuses a dispatch
             return None, None
         value = json.loads(Path(source).read_text(encoding="utf-8"))
-        return value["choice"], value["choice_verification"]
+        verification = value["choice_verification"]
+        if isinstance(verification, dict) and "path" not in verification:
+            config = json.loads(collector.read_bytes_pinned(config_pin))
+            verification = verification.get(native_dispatch.workload(config, "training", family=FAMILY))
+        return value["choice"], verification
 
 
 def label(block: int) -> str:
@@ -127,7 +183,7 @@ def block_spec(campaign: Campaign, run: str, block: int, state: dict, native: Pa
 def request_for(campaign: Campaign, run: str, config_pin: dict, root: Path, cold: Path,
                 lease_seconds: float | None = None) -> dict:
     raw = campaign.raw
-    choice, verification = campaign.choice()
+    choice, verification = campaign.choice(config_pin)
     request = {"schema": "native-expanded-cpu-dispatch/v1", "kind": "training", "lane": raw["lane"],
                "runtime": raw["runtime"], "config": config_pin, "root": str(root), "cold_root": str(cold),
                "placement": campaign.placement(run), "storage": raw["storage"], "wall_seconds": raw["wall_seconds"],
@@ -201,12 +257,29 @@ def touch(campaign: Campaign) -> None:
 
 
 def discard(campaign: Campaign, run: str, block: int, attempt: dict, reason: str) -> None:
+    """Prune a failed or interrupted attempt's native tree after keeping its records (the top-level files and
+    the baseline's small per-update records), hashed, under retained/<run>/<block>-a<k>-failed."""
     native = Path(attempt["native"])
     if native.exists():
+        target = campaign.retained / run / f"{label(block)}-a{attempt['attempt']}-failed"
+        kept = []
+        for path in sorted(native.rglob("*")):
+            relative = path.relative_to(native)
+            if path.is_file() and (len(relative.parts) == 1 or path.name in base.SMALL_RECORDS):
+                destination = target / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, destination)
+                digest = sha256_file(path)
+                if sha256_file(destination) != digest:
+                    raise RuntimeError(f"failed-attempt record copy differs: {destination}")
+                kept.append({"from": str(path), "to": str(destination), "sha256": digest})
+        attempt["failed_records"] = write_json(target / "RETAINED.json", {"run": run, "block": block,
+                                                                          "attempt": attempt["attempt"], "files": kept})
         size = sum(p.stat().st_size for p in native.rglob("*") if p.is_file())
         shutil.rmtree(native)
         append_jsonl(campaign.prune_log, {"at": now(), "run": run, "block": block, "attempt": attempt["attempt"],
-                                          "pruned": str(native), "bytes": size, "reason": reason})
+                                          "pruned": str(native), "bytes": size, "reason": reason,
+                                          "retained_records": attempt["failed_records"]})
 
 
 def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
@@ -370,59 +443,77 @@ def receipt(campaign: Campaign) -> dict | None:
     if not item:
         return None
     value = json.loads(collector.read_bytes_pinned(item))
-    if value.get("schema") != RECEIPT_SCHEMA or not value.get("byte_identical"):
-        raise SystemExit("ancestry receipt is not a byte-identical regeneration receipt")
+    accepted = (value.get("schema") == RECEIPT_SCHEMA and value.get("byte_identical") is True
+                and value.get("interrupted") is True and value.get("recipe") == g.PREFIX
+                and value.get("host") == campaign.host())
+    if not accepted:
+        raise SystemExit("ancestry receipt is not this recipe's interrupted-block regeneration receipt on this host")
     if value["runtime"] != campaign.raw["runtime"]["sha256"]:
         raise SystemExit("ancestry receipt was made with another runtime")
     return {"path": item["path"], "sha256": item["sha256"]}
 
 
 def retire(campaign: Campaign, run: str, block: int, state: dict) -> None:
-    """Block ends no longer among the last two and not permanent: compressed, or deleted under a receipt."""
+    """Block ends no longer among the last two and not permanent: compressed, or deleted under a receipt.
+
+    Restart-safe: a step's state is saved before the file it retires is removed, and a pass first finishes
+    any step a stopped driver left half done (a stale partial, a raw file beside its verified copy, a
+    pending deletion)."""
     proof = receipt(campaign)
     for key, entry in sorted(state["blocks"].items(), key=lambda item: int(item[0])):
         end = int(key)
-        if end > block - 2 or g.is_permanent(end) or entry.get("checkpoint_state") not in ("kept", "compressed"):
+        if end > block - 2 or g.is_permanent(end) or entry.get("checkpoint_state") not in ("kept", "compressed", "deleting"):
             continue
         if entry["checkpoint_state"] == "compressed" and proof is None:
+            Path(entry["final_checkpoint"]["path"]).unlink(missing_ok=True)  # the raw file a stopped pass left
             continue
-        retire_one(campaign, run, end, entry, proof)
-        campaign.save_state(run, state)
+        retire_one(campaign, run, end, entry, proof, lambda: campaign.save_state(run, state))
 
 
-def retire_one(campaign: Campaign, run: str, end: int, entry: dict, proof: dict | None) -> None:
+def gunzip_sha256(path: Path) -> str:
+    with gzip.open(path, "rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def retire_one(campaign: Campaign, run: str, end: int, entry: dict, proof: dict | None, save) -> None:
     raw = Path(entry["final_checkpoint"]["path"])
     packed = raw.with_name(raw.name + ".gz")
+    expected = entry["final_checkpoint"]["sha256"]
     nearest = max(block for block in g.PERMANENT_BLOCKS if block <= end)
     regenerate = {"from_permanent_block": nearest, "blocks_to_replay": end - nearest,
                   "configs": f"state/configs/{run}-b{nearest + 1:03d}..b{end:03d}", "runtime": campaign.raw["runtime"]}
-    if entry["checkpoint_state"] == "kept":
-        if proof is None:
-            partial = packed.with_name(packed.name + ".partial")
-            with raw.open("rb") as source, partial.open("xb") as stream,                     gzip.GzipFile(filename="", fileobj=stream, mode="wb", mtime=0) as sink:
-                shutil.copyfileobj(source, sink, 1 << 20)
+    if entry["checkpoint_state"] == "kept" and proof is None:
+        partial = packed.with_name(packed.name + ".partial")
+        partial.unlink(missing_ok=True)
+        if not (packed.exists() and gunzip_sha256(packed) == expected):
+            with raw.open("rb") as source, partial.open("xb") as stream:
+                with gzip.GzipFile(filename="", fileobj=stream, mode="wb", mtime=0) as sink:
+                    shutil.copyfileobj(source, sink, 1 << 20)
             os.replace(partial, packed)
-            with gzip.open(packed, "rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            if digest != entry["final_checkpoint"]["sha256"]:
+            if gunzip_sha256(packed) != expected:
                 raise RuntimeError(f"compressed checkpoint differs: {packed}")
-            size = raw.stat().st_size
-            raw.unlink()
-            entry["checkpoint_state"], entry["compressed_checkpoint"] = "compressed", pin(packed)
-            append_jsonl(campaign.prune_log, {"at": now(), "run": run, "block": end, "compressed": str(raw),
-                                              "bytes": size, "kept": entry["compressed_checkpoint"],
-                                              "checkpoint_sha256": entry["final_checkpoint"]["sha256"],
-                                              "reason": "ancestry of the doses, kept compressed until a "
-                                                        "regeneration receipt exists (ARTIFACT-LAW clause 4)",
-                                              "regenerate": regenerate})
-            return
-        size, path = raw.stat().st_size, raw
-    else:
-        size, path = packed.stat().st_size, packed
-    path.unlink()
+        size = raw.stat().st_size
+        entry["checkpoint_state"], entry["compressed_checkpoint"] = "compressed", pin(packed)
+        save()
+        raw.unlink()
+        append_jsonl(campaign.prune_log, {"at": now(), "run": run, "block": end, "compressed": str(raw),
+                                          "bytes": size, "kept": entry["compressed_checkpoint"],
+                                          "checkpoint_sha256": expected,
+                                          "state_sha256": entry.get("final_state_sha256"),
+                                          "reason": "ancestry of the doses, kept compressed until a "
+                                                    "regeneration receipt exists (ARTIFACT-LAW clause 4)",
+                                          "regenerate": regenerate})
+        return
+    if entry["checkpoint_state"] != "deleting":
+        entry["checkpoint_state"] = "deleting"
+        save()
+    size = sum(path.stat().st_size for path in (raw, packed) if path.exists())
+    raw.unlink(missing_ok=True)
+    packed.unlink(missing_ok=True)
     entry["checkpoint_state"] = "deleted"
-    append_jsonl(campaign.prune_log, {"at": now(), "run": run, "block": end, "pruned": str(path), "bytes": size,
-                                      "checkpoint_sha256": entry["final_checkpoint"]["sha256"],
+    save()
+    append_jsonl(campaign.prune_log, {"at": now(), "run": run, "block": end, "pruned": [str(raw), str(packed)],
+                                      "bytes": size, "checkpoint_sha256": expected,
                                       "state_sha256": entry.get("final_state_sha256"),
                                       "reason": "non-permanent ancestry; byte-identical regeneration receipt pinned",
                                       "receipt": proof, "regenerate": regenerate})
@@ -441,6 +532,12 @@ def drive(campaign: Campaign, run: str) -> None:
             if entry and entry.get("disposition"):
                 state["status"] = "stopped"
                 return
+            if not (entry and entry["attempts"]):  # a started block always finishes or reruns
+                reason = campaign.admits(block) or campaign.wall_stop()
+                if reason:
+                    state["status"], state["stop_reason"] = "stopped", reason
+                    campaign.event(run=run, block=block, kind="gate-stop", reason=reason)
+                    return
             if run_block(campaign, run, block, state) != "complete":
                 state["status"] = "stopped"
                 return
@@ -463,9 +560,13 @@ def run(campaign: Campaign, runs: list[str]) -> int:
     token = os.environ.get(reservations.TOKEN_ENV)
     if not token or reservations.status(token).get("token_fate") != "holds":
         raise SystemExit("the campaign driver runs only inside a held host reservation")
+    clock = None
     if campaign.host() == "runpod":
         campaign.lease = LeaseProgress(campaign)
         campaign.lease.start()
+    else:
+        clock = WallClock(campaign)
+        clock.start()
     threads = [threading.Thread(target=drive, args=(campaign, name), name=name) for name in runs]
     try:
         for thread in threads:
@@ -475,7 +576,36 @@ def run(campaign: Campaign, runs: list[str]) -> int:
     finally:
         if campaign.lease:
             campaign.lease.stop()
+        if clock:
+            clock.stop()
     return 0 if all(campaign.run_state(name)["status"] == "complete" for name in runs) else 1
+
+
+class WallClock:
+    """This session's claim time, state/wall/<start>-<pid>.json {start, last}, refreshed every minute and at exit
+    (a session that dies counts to its last refresh)."""
+
+    def __init__(self, campaign: Campaign, interval: float = 60):
+        self.start_epoch = time.time()
+        self.path = campaign.state / "wall" / f"{int(self.start_epoch)}-{os.getpid()}.json"
+        self.interval, self.done = interval, threading.Event()
+        self.thread = threading.Thread(target=self.loop, name="wall-clock", daemon=True)
+
+    def write(self) -> None:
+        write_json(self.path, {"start": self.start_epoch, "last": time.time(), "pid": os.getpid()})
+
+    def start(self) -> None:
+        self.write()
+        self.thread.start()
+
+    def loop(self) -> None:
+        while not self.done.wait(self.interval):
+            self.write()
+
+    def stop(self) -> None:
+        self.done.set()
+        self.thread.join()
+        self.write()
 
 
 def declared_cores(campaign: Campaign) -> list[str]:

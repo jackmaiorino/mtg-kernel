@@ -290,6 +290,8 @@ def distinct_starts(folders: dict[str, Path], others: dict[str, Path]) -> dict:
         return {"lineage_id": manifest["lineage_id"], "base_seed": manifest["initializer"]["base_seed"],
                 "model_parameter_sha256": manifest["payload"]["model_parameter_sha256"],
                 "parameters_sha256": manifest["payload"]["sha256"]}
+    if sorted(others) != ["A", "B"]:
+        raise ValueError("distinct starts compare the lineages with fresh inits A and B, both named")
     ours = {run: payload(folder) for run, folder in sorted(folders.items())}
     theirs = {name: payload(folder) for name, folder in sorted(others.items())}
     hashes = [row["model_parameter_sha256"] for row in (*ours.values(), *theirs.values())]

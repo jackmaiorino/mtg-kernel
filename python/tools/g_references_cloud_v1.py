@@ -147,11 +147,15 @@ def build_inputs(spec, template, base, bundle, runtime_pin, tooling):
                 "host_slots": {"cores": cloud.cores(union),
                                "tool": {"path": tooling["host_slots"]["path"],
                                         "sha256": tooling["host_slots"]["sha256"]}}}
-    if spec.get("ancestry_receipt"):
-        receipt = spec["ancestry_receipt"]
-        require(is_pin(receipt) and PurePosixPath(receipt["path"]).is_relative_to(base),
-                "the ancestry receipt is a pin on the volume (from the qualification lease)")
-        campaign["ancestry_receipt"] = receipt
+    require(storage["max_logical_bytes"] <= driver.STUDY_CAP_BYTES, "the storage allowance exceeds the study's 120 GB")
+    for key in ("ancestry_receipt", "placement_record", "continuation"):
+        item = spec.get(key)
+        if item:
+            require(is_pin(item) and PurePosixPath(item["path"]).is_relative_to(base),
+                    key + " is a pin on the volume (qualification records, the placement record, the D_b decision)")
+            campaign[key] = item
+    require(spec["mode"] == "qualification" or "placement_record" in campaign,
+            "production needs the placement record on the volume")
     block = spec.get("lease_block_seconds", template.get("lease_block_seconds"))
     if block is not None:
         cloud.native_dispatch.positive(block, "lease block seconds")
@@ -218,7 +222,9 @@ def package(spec_path, output):
                 "hardware": hardware, "campaign": campaign_pin, "runtime": runtime_pin,
                 "runtime_identity": cloud.native_dispatch.runtime_identity(runtime), "tooling": tooling,
                 "volume_inputs": [] if spec["mode"] == "qualification" else
-                [{"role": "choice_pins", "path": campaign["choice_pins"], "sha256": spec["choice_pins_sha256"]}],
+                [{"role": "choice_pins", "path": campaign["choice_pins"], "sha256": spec["choice_pins_sha256"]}]
+                + [{"role": key, **campaign[key]} for key in ("placement_record", "continuation", "ancestry_receipt")
+                   if key in campaign],
                 "production_ready": True, "archives": archives, **extra}
     write(output / "package.json", manifest)
     return manifest
@@ -241,6 +247,16 @@ assert POD_RECOVER != cloud.POD_RECOVER
 
 class Cycle(cloud.Cycle):
     """nine_deck_cloud_v1.Cycle with the G driver (or the qualification tool) and G statuses."""
+
+    def observe(self):
+        """The base observation, with a lineage reported complete only through this package's stop block: a
+        state finished at an earlier target (qualification's block 2, or D_b) is pending work for this lease."""
+        snapshot = super().observe()
+        target = self.manifest["stop_after_block"]
+        for state in snapshot["runs"].values():
+            if state.get("status") == "complete" and max(state.get("blocks_done") or [0]) < target:
+                state["status"] = "pending"
+        return snapshot
 
     def check_volume_inputs(self):
         if self.manifest["mode"] == "production":
@@ -339,10 +355,12 @@ def ledger(root: Path, volume_gb: int, volume_created_epoch: float, now: float |
             "caps": {"usd": CAP_USD, "lease_seconds": CAP_LEASE_SECONDS}}
 
 
-def require_within_caps(summary: dict, lease: dict) -> None:
+def require_within_caps(summary: dict, lease: dict, volume_gb: int) -> None:
+    """The next lease at its full span and rate ceiling, plus the volume's charge over that span, fits both caps."""
     span = lease["deadline_epoch"] - lease["created_epoch"]
     require(summary["lease_seconds"] + span <= CAP_LEASE_SECONDS, "the next lease could cross 60 wall hours of lease time")
-    require(summary["total_usd"] + span / 3600 * lease["rate_ceiling_usd_hour"] <= CAP_USD,
+    volume = span / (30 * 86400) * volume_gb * VOLUME_USD_PER_GB_MONTH
+    require(summary["total_usd"] + span / 3600 * lease["rate_ceiling_usd_hour"] + volume <= CAP_USD,
             "the next lease could cross the study's 60 USD cap")
 
 
@@ -379,7 +397,7 @@ def main(argv=None):
         print(json.dumps(summary))
         return 0
     verified_package(args.package)
-    require_within_caps(summary, read(args.control / "lease" / "lease.json"))
+    require_within_caps(summary, read(args.control / "lease" / "lease.json"), args.volume_gb)
     if args.op == "plan" or not args.execute:
         print(json.dumps(cloud.plan(args.package, args.control, args.external_guard) | {"ledger": summary}))
         return 0
