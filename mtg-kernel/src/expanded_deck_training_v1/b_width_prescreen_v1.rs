@@ -2434,8 +2434,14 @@ pub(crate) fn fit_chain_stage_v1(
     for &seed in seeds {
         for arm in ARM_NAMES_V1 {
             for (evidence, what) in [
-                (refusal_path_v1(root, chain.index, seed, arm), "a fit-entry refusal"),
-                (mismatch_path_v1(root, chain.index, seed, arm), "a rerun mismatch"),
+                (
+                    refusal_path_v1(root, chain.index, seed, arm),
+                    "a fit-entry refusal",
+                ),
+                (
+                    mismatch_path_v1(root, chain.index, seed, arm),
+                    "a rerun mismatch",
+                ),
             ] {
                 ensure(
                     !evidence.exists(),

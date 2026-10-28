@@ -643,7 +643,10 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
     fs::remove_file(fit_path_v1(root, 1, 1, "w32")).unwrap();
     fs::write(&earlier, &forged).unwrap();
     let error = fit_chain_stage_v1(loaded, root, &chain, 3, 1).unwrap_err();
-    assert!(error.contains("differs from the complete report"), "{error}");
+    assert!(
+        error.contains("differs from the complete report"),
+        "{error}"
+    );
     let mismatch: Value =
         serde_json::from_slice(&read_v1(&mismatch_path_v1(root, 1, 1, "w32")).unwrap()).unwrap();
     assert_eq!(mismatch["schema"], json!(MISMATCH_SCHEMA_V1));
