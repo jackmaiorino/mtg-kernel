@@ -967,6 +967,6 @@
  },
  "analyzer": {
   "path": "python/tools/b_width_prescreen_read_v1.py",
-  "sha256": "d29f7833e31f2b76384cf3c30c451a66c000359503daf9ec979ed600625ab593"
+  "sha256": "2ac743b5dc22aa80576259cff68f7f97f40db255859f9fea26ab934238fdd018"
  }
 }
