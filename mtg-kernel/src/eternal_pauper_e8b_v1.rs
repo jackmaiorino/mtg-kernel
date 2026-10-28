@@ -1456,12 +1456,8 @@ fn first_day_triggers(state: &mut GameState, events: &[CommittedEvent]) {
         return;
     }
     for event in events {
-        let CommittedEvent::ZoneChange {
-            object,
-            to: Zone::Battlefield,
-            ..
-        } = *event
-        else {
+        // A permanent card's entry or a token's creation.
+        let Some(object) = crate::trigger::battlefield_entry_object(event) else {
             continue;
         };
         let Some(live) = state.objects.try_get(object) else {

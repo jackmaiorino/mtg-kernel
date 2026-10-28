@@ -1288,6 +1288,15 @@ fn first_day_of_class_counters_and_hastes_creatures_entering_this_turn() {
     settled(&mut state);
     assert_eq!(power_toughness(&state, inspector), (2, 3));
     assert!(keyword(&state, inspector, Keywords::HASTE));
+    // A token entering this turn too: Seize the Storm's Elemental counts
+    // First Day of Class and itself in the graveyard, plus the counter.
+    let storm = put(&mut state, P0, "Seize the Storm", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 4);
+    cast(&mut state, storm, &[]);
+    settled(&mut state);
+    let elemental = named(&state, P0, "Red Elemental Token")[0];
+    assert_eq!(power_toughness(&state, elemental), (3, 3));
+    assert!(keyword(&state, elemental, Keywords::HASTE));
 
     // Learn: discard a card to draw a card.
     let mut state = plains();
