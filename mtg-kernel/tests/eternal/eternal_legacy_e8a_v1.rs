@@ -1548,7 +1548,7 @@ fn wishclaw_talisman_tutors_then_passes_to_the_opponent() {
 
 // ---- Planeswalkers -------------------------------------------------------------------
 
-fn chandra(state: &mut GameState) -> ObjectId {
+fn cast_chandra(state: &mut GameState) -> ObjectId {
     let chandra = put(state, P0, "Chandra, Chill of Compliance", Zone::Hand);
     pool(state, P0, &[ManaColor::U, ManaColor::U], 1);
     cast(state, chandra, &[]);
@@ -1561,7 +1561,7 @@ fn chandra(state: &mut GameState) -> ObjectId {
 fn chandra_surveils_and_keeps_a_noncreature_nonland_card() {
     let mut state = game(&["Lightning Bolt", "Island", "Island"]);
     let bolt = state.players[0].library[0];
-    let chandra = chandra(&mut state);
+    let chandra = cast_chandra(&mut state);
     activate(&mut state, chandra, 0, &[]);
     settle_picking(&mut state, 1, None);
     assert!(hand_contains(&state, P0, bolt));
@@ -1571,7 +1571,7 @@ fn chandra_surveils_and_keeps_a_noncreature_nonland_card() {
 #[test]
 fn chandras_mana_pays_only_for_noncreature_spells() {
     let mut state = islands();
-    let chandra = chandra(&mut state);
+    let chandra = cast_chandra(&mut state);
     let brainstorm = put(&mut state, P0, "Brainstorm", Zone::Hand);
     let delver = put(&mut state, P0, "Delver of Secrets", Zone::Hand);
     activate(&mut state, chandra, 1, &[]);
@@ -1586,7 +1586,7 @@ fn chandras_mana_pays_only_for_noncreature_spells() {
 fn chandra_stuns_with_minus_x_and_her_emblem_draws_on_each_spell() {
     let mut state = islands();
     let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
-    let chandra = chandra(&mut state);
+    let chandra = cast_chandra(&mut state);
     assert!(activatable(&mut state, chandra, 2));
     act(&mut state, Action::ActivateAbility(chandra, 2));
     settle_with(&mut state, |_, decision| match decision {
@@ -1602,7 +1602,7 @@ fn chandra_stuns_with_minus_x_and_her_emblem_draws_on_each_spell() {
     assert_eq!(loyalty(&state, chandra), Some(1));
 
     let mut state = islands();
-    let chandra = chandra(&mut state);
+    let chandra = cast_chandra(&mut state);
     mtg_kernel::planeswalker_v1::change_loyalty(&mut state, chandra, 3);
     activate(&mut state, chandra, 3, &[]);
     settled(&mut state);
