@@ -106,6 +106,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
+/// `s4a-win-check` needs no policy, so `run_v1` calls it before loading one.
+pub(super) fn run_win_check(cfg: &super::CensusConfigV1) -> Result<(), String> {
+    win_check::run(cfg)
+}
+
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
@@ -1681,7 +1686,6 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-root-actions" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
-        "s4a-win-check" => return win_check::run(cfg),
         _ => {}
     }
     let shared = load_shared(cfg)?;
