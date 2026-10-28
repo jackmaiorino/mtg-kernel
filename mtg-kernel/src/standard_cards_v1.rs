@@ -273,6 +273,28 @@ pub enum StandardTargetV1 {
     LandCardInOwnGraveyardV1,
     /// "Up to one target creature with trample or haste" (Minsc & Boo).
     UpToOneCreatureWithTrampleOrHasteV1,
+    /// "Another target permanent" (Flickerwisp). Wave E8a's filters follow
+    /// (`eternal_legacy_e8a_v1::targets`).
+    AnotherPermanentV1,
+    /// "Up to one target artifact or enchantment" (Loran of the Third
+    /// Path).
+    UpToOneArtifactOrEnchantmentV1,
+    /// "Up to one target artifact, creature, or enchantment" (Teferi, Time
+    /// Raveler).
+    UpToOneArtifactCreatureOrEnchantmentV1,
+    /// "Target artifact or creature" (Chandra, Chill of Compliance).
+    ArtifactOrCreatureV1,
+    /// "Up to one target nonbasic land" (White Orchid Phantom).
+    UpToOneNonbasicLandV1,
+    /// "Up to one target nonland, nontoken permanent you don't control with
+    /// mana value N or less" (Skyclave Apparition).
+    UpToOneOpponentNonlandNontokenManaValueAtMostV1(u8),
+    /// "Target opponent and up to one target creature they control" (Cloak
+    /// and Dagger, Entwined).
+    OpponentThenUpToOneTheirCreatureV1,
+    /// "For each opponent, up to one target creature or planeswalker that
+    /// player controls" in a two-player game (Lich's Relic).
+    UpToOneOpponentCreatureOrPlaneswalkerV1,
 }
 
 impl StandardTargetV1 {
@@ -301,6 +323,12 @@ impl StandardTargetV1 {
             Self::UpToOneCreatureOrPlaneswalkerSpellV1
             | Self::UpToOneLandCardInOwnGraveyardV1
             | Self::UpToOneCreatureWithTrampleOrHasteV1 => (1, 0),
+            Self::UpToOneArtifactOrEnchantmentV1
+            | Self::UpToOneArtifactCreatureOrEnchantmentV1
+            | Self::UpToOneNonbasicLandV1
+            | Self::UpToOneOpponentNonlandNontokenManaValueAtMostV1(_)
+            | Self::UpToOneOpponentCreatureOrPlaneswalkerV1 => (1, 0),
+            Self::OpponentThenUpToOneTheirCreatureV1 => (2, 1),
             Self::CreaturesThenNonlandPermanentsV1 {
                 creatures,
                 permanents,
@@ -320,13 +348,17 @@ impl StandardTargetV1 {
         match (self, slot) {
             (Self::PlayerThenArtifactV1 | Self::PlayerThenCreatureV1, 0)
             | (Self::PlayerThenPlayerV1, 0 | 1)
-            | (Self::PlayerThenGraveyardCardsV1, 0) => Some(None),
+            | (Self::PlayerThenGraveyardCardsV1, 0)
+            | (Self::OpponentThenUpToOneTheirCreatureV1, 0) => Some(None),
             (Self::PlayerThenArtifactV1, 1) | (Self::ArtifactThenCreatureV1, 0) => {
                 Some(Some(CardType::Artifact))
             }
-            (Self::PlayerThenCreatureV1 | Self::ArtifactThenCreatureV1, 1) => {
-                Some(Some(CardType::Creature))
-            }
+            (
+                Self::PlayerThenCreatureV1
+                | Self::ArtifactThenCreatureV1
+                | Self::OpponentThenUpToOneTheirCreatureV1,
+                1,
+            ) => Some(Some(CardType::Creature)),
             _ => None,
         }
     }
@@ -589,6 +621,11 @@ pub(crate) fn legal_targets(
     ) {
         return targets;
     }
+    if let Some(targets) = crate::eternal_legacy_e8a_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -769,6 +806,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_legacy_e8a_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -911,6 +953,15 @@ pub(crate) fn target_matches(
         | StandardTargetV1::UpToOneLandCardInOwnGraveyardV1
         | StandardTargetV1::LandCardInOwnGraveyardV1
         | StandardTargetV1::UpToOneCreatureWithTrampleOrHasteV1 => false,
+        // Answered by `eternal_legacy_e8a_v1::targets` above.
+        StandardTargetV1::AnotherPermanentV1
+        | StandardTargetV1::UpToOneArtifactOrEnchantmentV1
+        | StandardTargetV1::UpToOneArtifactCreatureOrEnchantmentV1
+        | StandardTargetV1::ArtifactOrCreatureV1
+        | StandardTargetV1::UpToOneNonbasicLandV1
+        | StandardTargetV1::UpToOneOpponentNonlandNontokenManaValueAtMostV1(_)
+        | StandardTargetV1::OpponentThenUpToOneTheirCreatureV1
+        | StandardTargetV1::UpToOneOpponentCreatureOrPlaneswalkerV1 => false,
     }
 }
 
@@ -3287,6 +3338,10 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
         let leonardo = crate::eternal_pauper_e6b_v1::controlled_boost(state, object);
         boost.0 += leonardo.0;
         boost.1 += leonardo.1;
+        // Dark Matter Manipulator, Wight of the Reliquary, Lion Sash.
+        let e8a = crate::eternal_legacy_e8a_v1::statics::controlled_boost(state, object);
+        boost.0 += e8a.0;
+        boost.1 += e8a.1;
     }
     boost
 }
@@ -3683,7 +3738,8 @@ pub(crate) fn graveyard_cast_granted_without_retrace(
                     object,
                     holder,
                     zone_change_count,
-                )))
+                )
+                || crate::eternal_legacy_e8a_v1::statics::hogaak_permission(state, object, holder)))
 }
 
 /// The graveyard cast grants other than Lurrus of the Dream-Den's.

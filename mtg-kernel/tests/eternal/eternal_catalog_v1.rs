@@ -17,7 +17,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 73] = [
+const PLAYABLE: [(&str, &str); 83] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -93,6 +93,25 @@ const PLAYABLE: [(&str, &str); 73] = [
     ("legacy", "legacy-mardu-energy"),
     ("legacy", "legacy-affinity-stompy"),
     ("legacy", "legacy-lands"),
+    (
+        "legacy",
+        "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    ),
+    ("legacy", "legacy-hogaak-moonshadow"),
+    ("legacy", "legacy-jeskai-control"),
+    ("legacy", "legacy-beseech-storm"),
+    (
+        "legacy",
+        "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce",
+    ),
+    (
+        "legacy",
+        "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    ),
+    ("legacy", "legacy-reanimator"),
+    ("legacy", "legacy-dimir-control"),
+    ("legacy", "legacy-azorius-control"),
+    ("legacy", "legacy-8-cast"),
     ("vintage", "vintage-jewel-shops"),
     ("vintage", "vintage-mono-white-initiative"),
     ("vintage", "vintage-esper-lurrus-control"),
@@ -293,9 +312,12 @@ fn is_companion_action(action: &Value) -> bool {
     let s = &action["semantic"];
     s["action_kind"] == "activate_ability"
         && s["source"]["zone"] == serde_json::to_value(mtg_kernel::state::Zone::Exile).unwrap()
-        && s["source"]["card_db_id"]
-            .as_u64()
-            .is_some_and(|id| CARD_DEFS[id as usize].name == "Lurrus of the Dream-Den")
+        && s["source"]["card_db_id"].as_u64().is_some_and(|id| {
+            matches!(
+                CARD_DEFS[id as usize].name,
+                "Lurrus of the Dream-Den" | "Yorion, Sky Nomad"
+            )
+        })
 }
 
 /// Whether the public session can follow this action. Policy observation v5

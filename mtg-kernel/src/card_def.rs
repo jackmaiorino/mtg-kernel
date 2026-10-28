@@ -1789,6 +1789,9 @@ pub enum AltCostCondition {
     /// end step (Ragavan, `eternal_vintage_e7b_v1`). Appended for the
     /// eternal catalog.
     DashV1,
+    /// "If this spell is the first spell you've cast this game" (Once Upon a
+    /// Time, `eternal_legacy_e8a_v1`). Appended for the eternal catalog.
+    FirstSpellThisGameV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -2061,6 +2064,9 @@ pub enum ManaSpendRestrictionDef {
     /// abilities of colorless Eldrazi" (Eldrazi Temple). Appended for the
     /// eternal catalog.
     ColorlessEldraziSpellV1,
+    /// "Spend this mana only to cast a noncreature spell" (Chandra, Chill of
+    /// Compliance). Appended for the eternal catalog.
+    NoncreatureSpellV1,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a

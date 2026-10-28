@@ -734,6 +734,14 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         | S::LandCardInOwnGraveyardV1 => typed(CardType::Land),
         S::InstantOrSorceryCardInAGraveyardV1 => ObjF::AnyCard,
         S::UpToOneCreatureWithTrampleOrHasteV1 => creature(),
+        S::AnotherPermanentV1
+        | S::UpToOneArtifactOrEnchantmentV1
+        | S::UpToOneArtifactCreatureOrEnchantmentV1
+        | S::ArtifactOrCreatureV1 => ObjF::Permanent,
+        S::UpToOneNonbasicLandV1 => typed(CardType::Land),
+        S::UpToOneOpponentNonlandNontokenManaValueAtMostV1(_) => ObjF::NonlandPermanent,
+        S::OpponentThenUpToOneTheirCreatureV1 => ObjF::PlayerOrPermanent,
+        S::UpToOneOpponentCreatureOrPlaneswalkerV1 => ObjF::Permanent,
     }
 }
 
@@ -761,7 +769,12 @@ pub(super) fn standard_target_origin(
         | S::TappedOpponentCreature
         | S::OpponentSpellOrNonlandPermanentV1
         | S::UpToOneOpponentCreatureV1
-        | S::OpponentPermanentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        | S::OpponentPermanentV1
+        | S::UpToOneOpponentNonlandNontokenManaValueAtMostV1(_)
+        | S::OpponentThenUpToOneTheirCreatureV1
+        | S::UpToOneOpponentCreatureOrPlaneswalkerV1 => {
+            (Some(ZoneF::Battlefield), Some(RelF::Opponent))
+        }
         S::LandCardInAGraveyardV1 | S::InstantOrSorceryCardInAGraveyardV1 => {
             (Some(ZoneF::Graveyard), None)
         }
@@ -795,6 +808,11 @@ pub(super) fn standard_target_origin(
         | S::ArtifactThenArtifactCardInItsControllersGraveyardV1
         | S::NonlandPermanentManaValueAtMostV1(_)
         | S::UpToOneCreatureWithTrampleOrHasteV1
+        | S::AnotherPermanentV1
+        | S::UpToOneArtifactOrEnchantmentV1
+        | S::UpToOneArtifactCreatureOrEnchantmentV1
+        | S::ArtifactOrCreatureV1
+        | S::UpToOneNonbasicLandV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -1054,6 +1072,58 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.target(TargetAtom::UpTo);
             // The trample or haste refinement has no facet.
             out.atoms.push(Atom::Opaque);
+        }
+        S::AnotherPermanentV1 => {
+            object(out, ObjF::Permanent, relation, zone);
+            // Source exclusion.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOneArtifactOrEnchantmentV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, typed(CardType::Enchantment), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::UpToOneArtifactCreatureOrEnchantmentV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Enchantment), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::ArtifactOrCreatureV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, creature(), relation, zone);
+        }
+        S::UpToOneNonbasicLandV1 => {
+            object(out, typed(CardType::Land), relation, zone);
+            out.target(TargetAtom::UpTo);
+            // The nonbasic refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOneOpponentNonlandNontokenManaValueAtMostV1(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: ObjF::NonlandPermanent,
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+            out.target(TargetAtom::UpTo);
+            // The nontoken refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::OpponentThenUpToOneTheirCreatureV1 => {
+            out.target(TargetAtom::PlayerOpponent);
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+            // "They control" ties the creature to the chosen opponent.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOneOpponentCreatureOrPlaneswalkerV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Planeswalker), relation, zone);
+            out.target(TargetAtom::UpTo);
         }
     }
 }

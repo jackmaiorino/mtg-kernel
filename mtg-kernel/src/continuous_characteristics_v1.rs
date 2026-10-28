@@ -58,6 +58,12 @@ pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64
         } else {
             None
         })
+        .chain(if cfg!(feature = "eternal-fixtures") {
+            // Harbinger of the Seas: nonbasic lands are Islands (305.7).
+            crate::eternal_legacy_e8a_v1::statics::removal_timestamp(state, host)
+        } else {
+            None
+        })
         .max()
 }
 

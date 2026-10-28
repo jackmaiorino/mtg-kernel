@@ -1038,6 +1038,12 @@ pub(crate) fn has_type_override(
     {
         return Some(answer);
     }
+    // Lion Sash isn't a creature while attached (wave E8a).
+    if let Some(answer) =
+        crate::eternal_legacy_e8a_v1::statics::has_type_override(state, object, card_type)
+    {
+        return Some(answer);
+    }
     let eternal = state.eternal_v1.as_ref()?;
     let vintage = &eternal.vintage;
     if vintage.karn_animated.is_empty() && vintage.robots.is_empty() && vintage.copies.is_empty() {
@@ -1137,6 +1143,12 @@ pub(crate) fn activation_allowed(
         && crate::eternal_pauper_e6a_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_e5a_v1::statics::activation_allowed(state, source, name)
         && crate::eternal_vintage_e7b_v1::statics::activation_allowed(state, source, name)
+        && crate::eternal_legacy_e8a_v1::statics::activation_allowed(
+            state,
+            source,
+            name,
+            ability_index,
+        )
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
@@ -1636,6 +1648,7 @@ pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
     active_named(state, object, MANA_VAULT)
         || active_named(state, object, TIME_VAULT)
         || crate::eternal_e5a_v1::statics::prevents_untap_step(state, object)
+        || crate::eternal_legacy_e8a_v1::statics::prevents_untap_step(state, object)
 }
 
 /// Applies a Time Vault skip to the turn about to begin for the now-active

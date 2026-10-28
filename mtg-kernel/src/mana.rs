@@ -252,6 +252,7 @@ fn spell_floating_pool(
     legendary_spell: bool,
     artifact_spell: bool,
     colorless_eldrazi_spell: bool,
+    noncreature_spell: bool,
 ) -> [u8; 6] {
     let mut pool = state.players[player.index()].mana_pool;
     for unit in &state.players[player.index()].restricted_mana_pool.0 {
@@ -261,6 +262,7 @@ fn spell_floating_pool(
             legendary_spell,
             artifact_spell,
             colorless_eldrazi_spell,
+            noncreature_spell,
         ) {
             pool[unit.color.pool_index()] = pool[unit.color.pool_index()].saturating_add(1);
         }
@@ -268,6 +270,7 @@ fn spell_floating_pool(
     pool
 }
 
+#[allow(clippy::too_many_arguments)]
 fn separate_restricted_spending(
     plan: &mut PaymentPlan,
     state: &GameState,
@@ -276,6 +279,7 @@ fn separate_restricted_spending(
     legendary_spell: bool,
     artifact_spell: bool,
     colorless_eldrazi_spell: bool,
+    noncreature_spell: bool,
 ) {
     {
         for (index, unit) in state.players[player.index()]
@@ -290,6 +294,7 @@ fn separate_restricted_spending(
                 legendary_spell,
                 artifact_spell,
                 colorless_eldrazi_spell,
+                noncreature_spell,
             ) {
                 continue;
             }
@@ -361,7 +366,7 @@ pub fn can_pay_spell(
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = spell_floating_pool(state, player, creature_spell, false, false, false);
+    let pool = spell_floating_pool(state, player, creature_spell, false, false, false, false);
     let mut plan = solve(cost, x_value, pool, &sources).filter(|plan| {
         life_payment_affordable(plan.life_paid, state.players[player.index()].life)
     })?;
@@ -370,6 +375,7 @@ pub fn can_pay_spell(
         state,
         player,
         creature_spell,
+        false,
         false,
         false,
         false,
@@ -399,7 +405,7 @@ pub(crate) fn can_pay_owned_from_sources(
     state: &GameState,
     sources: &[ManaSource],
 ) -> Option<PaymentPlan> {
-    let pool = spell_floating_pool(state, player, false, false, false, false);
+    let pool = spell_floating_pool(state, player, false, false, false, false, false);
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
@@ -414,7 +420,7 @@ pub(crate) fn can_pay_owned_from_sources(
     {
         return None;
     }
-    separate_restricted_spending(&mut plan, state, player, false, false, false, false);
+    separate_restricted_spending(&mut plan, state, player, false, false, false, false, false);
     life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
@@ -541,6 +547,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
     .into_iter()
     .filter(|source| !excluded.contains(&source.id))
     .collect::<Vec<_>>();
+    // Chandra, Chill of Compliance's mana pays only noncreature spells.
     let pool = spell_floating_pool(
         state,
         player,
@@ -548,6 +555,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
         legendary_spell,
         artifact_spell,
         colorless_eldrazi_spell,
+        !creature_spell,
     );
 
     let mut plan = PaymentPlan::default();
@@ -574,6 +582,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
         legendary_spell,
         artifact_spell,
         colorless_eldrazi_spell,
+        !creature_spell,
     );
     let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
     (total_life == 0 || total_life <= i64::from(state.players[player.index()].life)).then_some(plan)
@@ -692,7 +701,15 @@ pub(crate) fn plan_spell_mana_total_with_tappers_v1(
         sources.push(source);
     }
     let mut plan = PaymentPlan::default();
-    let mut pool = spell_floating_pool(state, player, creature_spell, false, false, false);
+    let mut pool = spell_floating_pool(
+        state,
+        player,
+        creature_spell,
+        false,
+        false,
+        false,
+        !creature_spell,
+    );
     let mut used = vec![false; sources.len()];
     if !solve_pips_with_life_budget_v1(
         pips,
@@ -726,6 +743,7 @@ pub(crate) fn plan_spell_mana_total_with_tappers_v1(
         false,
         false,
         false,
+        !creature_spell,
     );
     Some((plan, convoked))
 }
@@ -835,6 +853,7 @@ fn restriction_permits(
     legendary_spell: bool,
     artifact_spell: bool,
     colorless_eldrazi_spell: bool,
+    noncreature_spell: bool,
 ) -> bool {
     match restriction {
         crate::card_def::ManaSpendRestrictionDef::Unrestricted => true,
@@ -849,6 +868,7 @@ fn restriction_permits(
         crate::card_def::ManaSpendRestrictionDef::ColorlessEldraziSpellV1 => {
             colorless_eldrazi_spell
         }
+        crate::card_def::ManaSpendRestrictionDef::NoncreatureSpellV1 => noncreature_spell,
     }
 }
 
@@ -916,6 +936,7 @@ fn gather_sources_for_spell_restrictions_v1(
                         legendary_spell,
                         artifact_spell,
                         colorless_eldrazi_spell,
+                        false,
                     )
                 };
                 if !permitted {
@@ -965,11 +986,11 @@ pub fn can_pay_excluding_sources(
     let mut plan = solve(
         cost,
         x_value,
-        spell_floating_pool(state, player, false, false, false, false),
+        spell_floating_pool(state, player, false, false, false, false, false),
         &sources,
     )
     .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))?;
-    separate_restricted_spending(&mut plan, state, player, false, false, false, false);
+    separate_restricted_spending(&mut plan, state, player, false, false, false, false, false);
     Some(plan)
 }
 

@@ -417,7 +417,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Abhorrent Oculus" => "Some(&[CostComponent::ExileOtherCardsFromOwnGraveyard(6)])",
-        _ => "None",
+        _ => super::build_eternal_e8a_v1::additional_cost_for(name),
     }
 }
 
@@ -452,7 +452,7 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
     match name {
         "Skateboard" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::HASTE, other_turn_keywords: Keywords::HASTE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "Shadowspear" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::LIFELINK.0), other_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::LIFELINK.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
-        _ => "None",
+        _ => super::build_eternal_e8a_v1::equipment_for(name),
     }
 }
 
@@ -468,7 +468,7 @@ pub(super) fn ward_cost_for(name: &str) -> &'static str {
 /// Lands whose only printed ability is a static the runtime applies (The
 /// Tabernacle at Pendrell Vale's granted upkeep trigger).
 pub(super) fn static_only_land(name: &str) -> bool {
-    name == "The Tabernacle at Pendrell Vale"
+    name == "The Tabernacle at Pendrell Vale" || super::build_eternal_e8a_v1::static_only_land(name)
 }
 
 /// The tokens keep their printed names.

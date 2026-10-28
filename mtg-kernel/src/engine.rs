@@ -7279,6 +7279,12 @@ fn alt_cost_condition_met(
             state.players[player.opponent().index()].spells_cast_this_turn >= 3
         }
         card_def::AltCostCondition::DashV1 => origin_zone == Zone::Hand,
+        // Once Upon a Time: "If this spell is the first spell you've cast
+        // this game".
+        card_def::AltCostCondition::FirstSpellThisGameV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_legacy_e8a_v1::first_spell_this_game(state, player)
+        }
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -8621,9 +8627,19 @@ fn cast_form_timing_ok(
     player: PlayerId,
     state: &GameState,
 ) -> bool {
+    // Teferi, Time Raveler: "Each opponent can cast spells only any time
+    // they could cast a sorcery."
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_legacy_e8a_v1::statics::sorcery_timing_only(state, player)
+    {
+        return sorcery_speed_timing_ok(player, state);
+    }
     spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
         || (!types.contains(&CardType::Land) && controller_can_cast_with_flash_v1(player, state))
+        || (cfg!(feature = "eternal-fixtures")
+            && types.contains(&CardType::Sorcery)
+            && crate::eternal_legacy_e8a_v1::statics::sorceries_have_flash(state, player))
         || sorcery_speed_timing_ok(player, state)
 }
 
@@ -8633,6 +8649,22 @@ fn pending_cast_form_timing_ok(
     pending: &PendingCast,
     state: &GameState,
 ) -> bool {
+    let sorcery_timing = pending.controller == state.active_player
+        && pending.controller == state.priority_player
+        && matches!(state.step, Step::Main1 | Step::Main2)
+        && state.stack.len() == 1
+        && state
+            .stack
+            .last()
+            .is_some_and(|item| item.source == pending.spell);
+    // Teferi, Time Raveler: "Each opponent can cast spells only any time
+    // they could cast a sorcery."
+    if cfg!(feature = "eternal-fixtures")
+        && !resolution_cast_v1::timing_override(state, pending.spell)
+        && crate::eternal_legacy_e8a_v1::statics::sorcery_timing_only(state, pending.controller)
+    {
+        return sorcery_timing;
+    }
     resolution_cast_v1::timing_override(state, pending.spell)
         || (cfg!(feature = "eternal-fixtures")
             && crate::eternal_pauper_e6b_v1::sneak_pending_window(state, pending))
@@ -8644,14 +8676,13 @@ fn pending_cast_form_timing_ok(
         || keywords.has(Keywords::FLASH)
         || (!types.contains(&CardType::Land)
             && controller_can_cast_with_flash_v1(pending.controller, state))
-        || (pending.controller == state.active_player
-            && pending.controller == state.priority_player
-            && matches!(state.step, Step::Main1 | Step::Main2)
-            && state.stack.len() == 1
-            && state
-                .stack
-                .last()
-                .is_some_and(|item| item.source == pending.spell))
+        || (cfg!(feature = "eternal-fixtures")
+            && types.contains(&CardType::Sorcery)
+            && crate::eternal_legacy_e8a_v1::statics::sorceries_have_flash(
+                state,
+                pending.controller,
+            ))
+        || sorcery_timing
 }
 
 /// Spell forms that remain both target-completable and payable after the
@@ -9140,6 +9171,13 @@ fn is_castable_now(
     // Grafdigger's Cage, and Gaea's Will's missing mana cost.
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_legacy_e7a_v1::cast_prohibited(state, player, id) {
+        return false;
+    }
+    // Teferi, Time Raveler: an opponent casts spells only at sorcery speed.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_legacy_e8a_v1::statics::sorcery_timing_only(state, player)
+        && !sorcery_speed_timing_ok(player, state)
+    {
         return false;
     }
     if def.omen.is_some() && supported_omen(def).is_none() {
@@ -10588,6 +10626,17 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         {
                             out.push((id, index));
                         }
+                    }
+                }
+                // Rain of Filth (eternal wave E8a): its lands have
+                // "Sacrifice this land: Add {B}." one index past their
+                // printed abilities.
+                #[cfg(feature = "eternal-fixtures")]
+                if let Some(index) =
+                    crate::eternal_legacy_e8a_v1::statics::rain_ability_index(state, id)
+                {
+                    if state.objects.get(id).controller == player {
+                        out.push((id, index));
                     }
                 }
                 // Agatha's Soul Cauldron's granted abilities follow
@@ -20364,6 +20413,15 @@ pub(crate) fn resolved_activated_ability(
         {
             return Some(granted);
         }
+        if crate::eternal_legacy_e8a_v1::statics::rain_ability_index(state, source)
+            == Some(ability_index)
+        {
+            if let Some(granted) =
+                crate::eternal_legacy_e8a_v1::statics::granted_rain_ability(state, source)
+            {
+                return Some(granted);
+            }
+        }
     }
     let pole_index = def.activated_abilities.len()
         + usize::from(equipped_granted_activated_ability(state, source).is_some());
@@ -20552,6 +20610,9 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     }
     subtype_ids.sort_unstable();
     subtype_ids.dedup();
+    // Harbinger of the Seas: "Nonbasic lands are Islands."
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_legacy_e8a_v1::statics::adjust_subtypes(state, id, &mut subtype_ids);
     subtype_ids
 }
 
@@ -21546,6 +21607,16 @@ pub(crate) fn step_without_linked_aura_v1(
             #[cfg(feature = "eternal-fixtures")]
             if crate::eternal_pauper_e6a_v1::is_foretell_action(state, source, index) {
                 crate::eternal_pauper_e6a_v1::foretell(state, p, source)?;
+                collect_and_queue_triggers(state);
+                state.engine.priority_passes = [false, false];
+                state.priority_player = p;
+                return Ok(());
+            }
+            // Rain of Filth's granted mana ability never uses the stack; its
+            // player keeps priority.
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::eternal_legacy_e8a_v1::statics::is_special_activation(state, source, index) {
+                crate::eternal_legacy_e8a_v1::statics::special_activation(state, p, source)?;
                 collect_and_queue_triggers(state);
                 state.engine.priority_passes = [false, false];
                 state.priority_player = p;
@@ -25483,6 +25554,13 @@ fn push_paid_activation(
             pending.ability_index as usize,
         );
     }
+    // Wishclaw Talisman's wish counter (eternal wave E8a).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_legacy_e8a_v1::statics::activation_paid(
+        state,
+        pending.source,
+        pending.ability_index,
+    );
     let ability = &frozen.ability;
     let granted_by = frozen.granted_by;
     let source = state.objects.get(pending.source);

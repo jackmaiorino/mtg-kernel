@@ -308,6 +308,12 @@ pub(crate) fn katilda_mana_colors(
                 colors.push(color);
             }
         }
+        // Harbinger of the Seas' Islands; Valgavoth's Lair's chosen color.
+        for color in crate::eternal_legacy_e8a_v1::statics::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
         if !colors.is_empty() {
             return colors;
         }

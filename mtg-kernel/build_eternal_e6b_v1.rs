@@ -314,7 +314,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
 pub(super) fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
     match name {
         "Idyllic Grange" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Plains, minimum_count: 3 })",
-        _ => "None",
+        _ => super::build_eternal_e8a_v1::enters_battlefield_tapped_unless_for(name),
     }
 }
 
