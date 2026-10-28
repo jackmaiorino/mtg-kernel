@@ -18,7 +18,7 @@ use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
 use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_match_v1::{
     deal_pair_v1, play_game_v1, DeckFileV1, GameLimitsV1, GameOutcomeV1, LimitedBeliefV1,
-    PolicySpecV1, LIMITED_MATCH_SCHEMA_V1,
+    PolicySpecV1, RulesAdmissionV1, SessionKindV1, LIMITED_MATCH_SCHEMA_V1,
 };
 use mtg_kernel::KERNEL_VERSION;
 use serde_json::json;
@@ -141,18 +141,31 @@ fn read_deck(dir: &Path, name: &str) -> Result<DeckFileV1, String> {
     serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Resolved Full-only decks of one split (None or "all": every row), in pool order.
+/// `-session prepared` (default: Full cards, every consumer contract),
+/// `rules-only` (Full plus admitted Partial cards, no consumer contract) or
+/// `rules-only-all` (every executable card; diagnostics only).
+fn session_kind(flags: &Flags) -> Result<SessionKindV1, String> {
+    match flags.opt("session").unwrap_or("prepared") {
+        "prepared" => Ok(SessionKindV1::PreparedV57),
+        "rules-only" => Ok(SessionKindV1::RulesOnly(RulesAdmissionV1::Admitted)),
+        "rules-only-all" => Ok(SessionKindV1::RulesOnly(RulesAdmissionV1::AllExecutable)),
+        other => Err(format!("unknown -session {other:?}")),
+    }
+}
+
+/// Decks of one split (None or "all": every row) that `kind` can play, in pool order.
 fn playable(
     dir: &Path,
     pool: &Path,
     split: Option<&str>,
+    kind: SessionKindV1,
 ) -> Result<Vec<(String, Vec<u16>)>, String> {
     let mut out = Vec::new();
     for (deck, row_split) in read_pool(pool)? {
         if split.is_some_and(|s| s != "all" && s != row_split) {
             continue;
         }
-        if let Ok(cards) = read_deck(dir, &deck).and_then(|d| d.resolve()) {
+        if let Ok(cards) = read_deck(dir, &deck).and_then(|d| d.resolve_for(kind)) {
             out.push((deck, cards));
         }
     }
@@ -160,7 +173,8 @@ fn playable(
 }
 
 fn coverage(flags: &Flags) -> Result<(), String> {
-    flags.check_known(&["decks", "pool", "out"])?;
+    flags.check_known(&["decks", "pool", "out", "session"])?;
+    let kind = session_kind(flags)?;
     let dir = PathBuf::from(flags.get("decks")?);
     let rows = read_pool(Path::new(flags.get("pool")?))?;
     let mut cards = BTreeSet::new();
@@ -174,7 +188,7 @@ fn coverage(flags: &Flags) -> Result<(), String> {
                 continue;
             }
         };
-        let missing = file.unsupported();
+        let missing = file.unsupported_for(kind);
         for row in &file.cards {
             cards.insert(row.name.clone());
         }
@@ -185,7 +199,7 @@ fn coverage(flags: &Flags) -> Result<(), String> {
             }
         }
         if missing.is_empty() {
-            match file.resolve() {
+            match file.resolve_for(kind) {
                 Ok(_) => supported.push(deck.clone()),
                 Err(_) => failed += 1,
             }
@@ -219,6 +233,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         "seed",
         "pairs",
         "first-pair",
+        "session",
         "workers",
         "a",
         "b",
@@ -242,6 +257,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         max_turns: flags.num("max-turns", Some(100))?,
         max_decisions: flags.num("max-decisions", Some(20_000))?,
         full_validation: flags.switches.contains("full-validation"),
+        session: session_kind(flags)?,
     };
     let out = PathBuf::from(flags.get("out")?);
     let legs: u64 = if spec_a == spec_b || flags.switches.contains("single") {
@@ -250,7 +266,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         2
     };
 
-    let decks = playable(&dir, &pool, Some(&split))?;
+    let decks = playable(&dir, &pool, Some(&split), limits.session)?;
     let mut belief_overlap = 0usize;
     let belief = if policies.iter().any(PolicySpecV1::needs_belief) {
         let belief_split = flags.opt("belief-split").unwrap_or("train");
@@ -261,7 +277,12 @@ fn play(flags: &Flags) -> Result<(), String> {
         }
         let belief_dir = flags.opt("belief-decks").map_or(dir.clone(), PathBuf::from);
         let belief_pool = flags.opt("belief-pool").map_or(pool.clone(), PathBuf::from);
-        let corpus = playable(&belief_dir, &belief_pool, Some(belief_split))?;
+        let corpus = playable(
+            &belief_dir,
+            &belief_pool,
+            Some(belief_split),
+            limits.session,
+        )?;
         if corpus.is_empty() {
             return Err("the belief corpus has no playable deck".into());
         }
@@ -363,6 +384,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         "games_per_hour": if wall_s > 0.0 { jobs.len() as f64 / wall_s * 3600.0 } else { 0.0 },
         "workers": workers,
         "full_validation": limits.full_validation,
+        "session": format!("{:?}", limits.session),
     });
     let summary_path = format!("{}.summary.json", out.display());
     fs::write(
