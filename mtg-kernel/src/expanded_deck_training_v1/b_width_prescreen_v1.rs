@@ -1092,7 +1092,7 @@ pub(crate) struct CollectionRecordV1 {
     pub(crate) store_bytes: u64,
     pub(crate) games: Vec<CollectedGameEntryV1>,
     /// Torn attempt records a resumed collection set aside (games never
-    /// dispatched).
+    /// dispatched), retained under `collect/torn-attempts/k<chain>/`.
     pub(crate) torn_attempts: Vec<TornAttemptV1>,
 }
 
@@ -1226,57 +1226,116 @@ fn resumed_game_v1(
     Ok(Some(result))
 }
 
-/// A torn attempt record that a resumed collection set aside.
+/// A torn attempt record that a resumed collection set aside, retained at
+/// `path` (relative to the run root).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TornAttemptV1 {
     pub(crate) index: usize,
     pub(crate) bytes: u64,
     pub(crate) sha256: String,
+    pub(crate) path: String,
 }
 
 fn torn_attempt_prefix_v1(index: usize) -> String {
     format!("torn-attempt-{index:04}.")
 }
 
-/// An attempt record that does not parse as JSON was torn while it was being
-/// written, so its game was never dispatched: the collector dispatches a game
-/// only after [`create_new_v1`] has written and synced the whole record (the
-/// hook returns, and the game starts, only after `sync_all`). The torn record
-/// is moved aside (`torn-attempt-<index>.<n>`, kept as evidence and listed in
-/// the collection record) and the game counts as not attempted, which is not a
-/// retry: it never started. Returns whether a record was set aside.
-fn set_aside_torn_attempt_v1(games: &Path, index: usize) -> Result<bool, String> {
+/// Where a chain's torn attempt records are retained:
+/// `collect/torn-attempts/k<chain>/`, outside the games directory (removed
+/// once the chain's collection is written) and outside `collect/k<chain>/`
+/// (which appears whole when the collection is written).
+fn torn_attempts_dir_v1(root: &Path, chain: u32) -> PathBuf {
+    root.join("collect")
+        .join("torn-attempts")
+        .join(format!("k{chain}"))
+}
+
+/// The game's result evidence in `games`: its result record, its store bytes,
+/// or an interrupted publication of either (`.result-<index>.*.tmp-<pid>`).
+fn result_evidence_v1(games: &Path, index: usize) -> Result<Vec<String>, String> {
+    let prefixes = [format!("result-{index:04}."), format!(".result-{index:04}.")];
+    let mut names = Vec::new();
+    for entry in fs::read_dir(games).map_err(err)? {
+        let name = entry.map_err(err)?.file_name().to_string_lossy().into_owned();
+        if prefixes.iter().any(|prefix| name.starts_with(prefix.as_str())) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// An attempt record that does not parse as JSON. If the game has no result
+/// evidence, the record was torn while it was first written, so the game was
+/// never dispatched: the collector dispatches a game only after
+/// [`create_new_v1`] has written and synced the whole record (the hook
+/// returns, and the game starts, only after `sync_all`). The torn record is
+/// moved to [`torn_attempts_dir_v1`] (kept as evidence and listed in the
+/// collection record) and the game counts as not attempted, which is not a
+/// retry: it never started.
+///
+/// That proof covers an interrupted initial write only. If any result evidence
+/// exists, the record was damaged after it was written (the game may have been
+/// played), so the collection refuses instead of dispatching the game again.
+/// Returns whether a record was set aside.
+fn set_aside_torn_attempt_v1(
+    root: &Path,
+    games: &Path,
+    chain: u32,
+    index: usize,
+) -> Result<bool, String> {
     let path = attempt_path_v1(games, index);
     if !path.exists() || serde_json::from_slice::<Value>(&read_v1(&path)?).is_ok() {
         return Ok(false);
     }
+    let evidence = result_evidence_v1(games, index)?;
+    if !evidence.is_empty() {
+        return Err(format!(
+            "chain {chain} game {index}: the attempt record {} does not parse, but the game has result \
+             evidence ({}). The record was damaged after it was written and the game may have been played, so \
+             the collection refuses to dispatch it again. An operator must investigate this run root; do not \
+             remove the evidence to resume.",
+            path.display(),
+            evidence.join(", ")
+        ));
+    }
+    let retained = torn_attempts_dir_v1(root, chain);
+    fs::create_dir_all(&retained).map_err(err)?;
     let target = (0..)
-        .map(|n| games.join(format!("{}{n}", torn_attempt_prefix_v1(index))))
+        .map(|n| retained.join(format!("{}{n}", torn_attempt_prefix_v1(index))))
         .find(|candidate| !candidate.exists())
         .expect("an unused name");
     fs::rename(&path, &target).map_err(err)?;
     Ok(true)
 }
 
-/// Every torn attempt record set aside in `games`, by game index.
-fn torn_attempts_v1(games: &Path, games_count: usize) -> Result<Vec<TornAttemptV1>, String> {
+/// Every torn attempt record retained for a chain, by game index.
+fn torn_attempts_v1(
+    root: &Path,
+    chain: u32,
+    games_count: usize,
+) -> Result<Vec<TornAttemptV1>, String> {
+    let retained = torn_attempts_dir_v1(root, chain);
+    if !retained.exists() {
+        return Ok(Vec::new());
+    }
+    let mut all = Vec::new();
+    for entry in fs::read_dir(&retained).map_err(err)? {
+        all.push(entry.map_err(err)?.file_name().to_string_lossy().into_owned());
+    }
     let mut torn = Vec::new();
     for index in 0..games_count {
         let prefix = torn_attempt_prefix_v1(index);
-        let mut names: Vec<String> = fs::read_dir(games)
-            .map_err(err)?
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with(&prefix))
-            .collect();
+        let mut names: Vec<&String> = all.iter().filter(|name| name.starts_with(&prefix)).collect();
         names.sort();
         for name in names {
-            let bytes = read_v1(&games.join(&name))?;
+            let bytes = read_v1(&retained.join(name))?;
             torn.push(TornAttemptV1 {
                 index,
                 bytes: bytes.len() as u64,
                 sha256: sha(&bytes),
+                path: format!("collect/torn-attempts/k{chain}/{name}"),
             });
         }
     }
@@ -1336,10 +1395,11 @@ pub(crate) fn collect_chain_limited_v1(
     let parent = load_parent_v1(config, &chain.source)?;
     let plans = chain_schedule_v1(config, chain.index);
     fs::create_dir_all(&games).map_err(err)?;
-    // A resumed collection sets aside torn attempt records (never dispatched)
-    // and reuses only this config's and this build's games.
+    // A resumed collection sets aside torn attempt records (never dispatched;
+    // a damaged record with result evidence refuses) and reuses only this
+    // config's and this build's games.
     for (index, plan) in plans.iter().enumerate() {
-        set_aside_torn_attempt_v1(&games, index)?;
+        set_aside_torn_attempt_v1(root, &games, chain.index, index)?;
         resumed_game_v1(loaded, &games, index, plan, &binary)?;
     }
     let unattempted: Vec<usize> = (0..plans.len())
@@ -1438,7 +1498,7 @@ pub(crate) fn collect_chain_limited_v1(
         };
         entries.push(entry);
     }
-    let torn_attempts = torn_attempts_v1(&games, entries.len())?;
+    let torn_attempts = torn_attempts_v1(root, chain.index, entries.len())?;
     let record = CollectionRecordV1 {
         schema: COLLECTION_SCHEMA_V1.into(),
         config_sha256: loaded.sha256.clone(),

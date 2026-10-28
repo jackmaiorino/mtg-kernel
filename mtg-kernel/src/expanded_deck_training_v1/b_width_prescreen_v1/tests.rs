@@ -692,10 +692,29 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     .unwrap();
     assert!(create_new_v1(&attempt_path_v1(&games, 5), b"{}").is_err());
     fs::write(games.join(".result-0006.json.tmp-1"), b"{").unwrap();
-    // A crash while writing game 6's attempt record left it torn: the game was
-    // never dispatched, so the record is set aside and the game is played.
     let torn = b"{\n  \"schema\": \"mtg-kernel-b-width-prescreen-game-at";
-    fs::write(attempt_path_v1(&games, 6), torn).unwrap();
+    // An attempt record that does not parse while the game has result
+    // evidence (a published result, or here an interrupted result
+    // publication) was damaged after it was written: the collection refuses
+    // and dispatches nothing.
+    let damaged_original = read_v1(&attempt_path_v1(&games, 0)).unwrap();
+    for (index, evidence) in [(6, ".result-0006.json.tmp-1"), (0, "result-0000.json")] {
+        fs::write(attempt_path_v1(&games, index), torn).unwrap();
+        let error = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap_err();
+        assert!(
+            error.contains("result evidence") && error.contains(evidence),
+            "{error}"
+        );
+        assert_eq!(read_v1(&attempt_path_v1(&games, index)).unwrap(), torn);
+        assert!(!torn_attempts_dir_v1(root, 1).exists());
+        assert!(!result_path_v1(&games, 3, "json").exists());
+    }
+    fs::remove_file(attempt_path_v1(&games, 6)).unwrap();
+    fs::write(attempt_path_v1(&games, 0), &damaged_original).unwrap();
+    // A crash while writing game 7's attempt record left it torn (no result
+    // evidence): the game was never dispatched, so the record is retained
+    // outside the games directory and the game is played.
+    fs::write(attempt_path_v1(&games, 7), torn).unwrap();
 
     // A published result from another build is never relabelled as this one's.
     let result_path = result_path_v1(&games, 1, "json");
@@ -718,12 +737,18 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     assert_eq!(
         record.torn_attempts,
         [TornAttemptV1 {
-            index: 6,
+            index: 7,
             bytes: torn.len() as u64,
             sha256: sha(torn),
+            path: "collect/torn-attempts/k1/torn-attempt-0007.0".into(),
         }]
     );
-    assert!(record.games[6].natural || record.games[6].terminal.is_some());
+    // The evidence survives the games directory's removal.
+    assert_eq!(
+        read_v1(&root.join("collect/torn-attempts/k1/torn-attempt-0007.0")).unwrap(),
+        torn
+    );
+    assert!(record.games[7].natural || record.games[7].terminal.is_some());
     for (index, bytes) in published.iter().enumerate() {
         let result: GameResultV1 = serde_json::from_slice(bytes).unwrap();
         assert_eq!(record.games[index].terminal, result.terminal);
