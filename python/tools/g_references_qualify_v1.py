@@ -66,6 +66,11 @@ import native_expanded_dispatch_v1 as dispatch
 
 TOOLS = Path(__file__).resolve().parent
 PLAN_SCHEMA = "g-references-v1/qualification-plan"
+# A qualification run starts only with this much of the study's claim time left on Jack's PC (it runs at the
+# study's start, with all 60 hours left). It takes about an hour; the per-trial and per-pack bounds below
+# keep each launch inside the claim time, and detached trials released late by a pack's busy retries end
+# within their own timeouts, hours inside this margin.
+QUALIFICATION_CLAIM_SECONDS = 24 * 3600
 RECORD_SCHEMA = driver.QUALIFICATION_SCHEMA
 CHOICE = dispatch.CHOICE
 POLL_SECONDS = 10
@@ -391,6 +396,9 @@ def run(campaign_path: Path, plan_path: Path) -> int:
             campaign.lease.touch()
 
     clock = None
+    left = campaign.wall_left()
+    if left is not None and left < QUALIFICATION_CLAIM_SECONDS:
+        raise SystemExit("study_wall_cap: qualification needs 24 claim hours left on Jack's PC")
     if campaign.host() == "runpod":
         campaign.lease = driver.LeaseProgress(campaign)
         campaign.lease.start()

@@ -178,6 +178,16 @@ class QualifyTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             qualify.run(self.path, self.root / "plan.json")
 
+    def test_refuses_to_start_with_under_24_claim_hours_left(self):
+        inventory = save(self.root / "inventory.json", b"{}")
+        spec = {"storage": {"accounting_roots": [str(self.root)]}, "wall_seconds": 3600, "inventory": inventory}
+        plan_pin = qualify.plan(self.path, spec, self.root / "q")
+        wall = self.campaign.wall_root()
+        wall.mkdir(parents=True)
+        (wall / "1-1.json").write_text(json.dumps({"start": 0, "last": 37 * 3600}))
+        with patch.object(qualify.reservations, "status", return_value={"token_fate": "holds"}),                 patch.dict(qualify.os.environ, {qualify.reservations.TOKEN_ENV: "t"}),                 self.assertRaisesRegex(SystemExit, "24 claim hours"):
+            qualify.run(self.path, Path(plan_pin["path"]))
+
 
 if __name__ == "__main__":
     unittest.main()
