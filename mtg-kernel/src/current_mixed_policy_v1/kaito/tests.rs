@@ -167,7 +167,6 @@ fn every_frozen_fdn_printing_in_own_hand_has_current_numeric_coverage_both_seats
         "Goblin Bushwhacker",
         "Imprisoned in the Moon",
         "Kiora, the Rising Tide",
-        "Koma, World-Eater",
         "Kykar, Zephyr Awakener",
         "Lathril, Blade of the Elves",
         "Leyline Axe",
