@@ -352,14 +352,14 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Lunarch Veteran" => "Some(TransformFaceDef { name: \"Luminous Phantom\", types: &[CardType::Creature], subtypes: &[Subtype::Spirit, Subtype::Cleric], colors: &[ManaColor::W], power: Some(1), toughness: Some(1), keywords: Keywords::FLYING })",
-        _ => "None",
+        _ => super::build_eternal_e9a_v1::transform_face_for(name),
     }
 }
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Lunarch Veteran" => Some("Luminous Phantom"),
-        _ => None,
+        _ => super::build_eternal_e9a_v1::transform_face_name_for(name),
     }
 }
 

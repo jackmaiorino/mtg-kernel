@@ -762,6 +762,9 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_legacy_e8a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    if let Some(spec) = crate::eternal_legacy_e9a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     if !own_trigger_effect(name, effect) {
         return None;
     }
@@ -788,6 +791,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     if crate::eternal_legacy_e7a_v1::delayed_effect_matches(name, effect)
         || crate::eternal_vintage_e7b_v1::delayed_effect_matches(name, effect)
         || crate::eternal_legacy_e8a_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_legacy_e9a_v1::delayed_effect_matches(name, effect)
     {
         return true;
     }
@@ -1496,7 +1500,9 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
 /// The colors Benevolent Blessings attached to `host` give it protection
 /// from, as a color mask.
 fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
-    attached_named(state, host, BENEVOLENT_BLESSING).fold(0, |mask, blessing| {
+    // Sejiri Steppe's protection until end of turn (wave E9a).
+    let granted = crate::eternal_legacy_e9a_v1::statics::protection_mask(state, host);
+    attached_named(state, host, BENEVOLENT_BLESSING).fold(granted, |mask, blessing| {
         mask | state
             .objects
             .get(blessing)
@@ -1540,6 +1546,10 @@ pub(crate) fn protection_removes_attachment(
 ) -> bool {
     let colors = crate::engine::object_color_mask(state, attachment);
     let controller = state.objects.get(attachment).controller;
+    // Sejiri Steppe's protection removes every attachment of that color.
+    if crate::eternal_legacy_e9a_v1::statics::protection_mask(state, host) & colors & 0x1f != 0 {
+        return true;
+    }
     attached_named(state, host, BENEVOLENT_BLESSING).any(|blessing| {
         let live = state.objects.get(blessing);
         live.controller != controller
@@ -1649,6 +1659,8 @@ pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<Ma
 pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
     // Hickory Woodlot and Sandstone Needle remove a depletion counter.
     crate::eternal_pauper_e8b_v1::after_tapped_for_mana(state, land);
+    // Eumidian Hatchery gets a hatchling counter (wave E9a).
+    crate::eternal_legacy_e9a_v1::statics::after_tapped_for_mana(state, land);
     if state.objects.get(land).zone != Zone::Battlefield {
         return;
     }

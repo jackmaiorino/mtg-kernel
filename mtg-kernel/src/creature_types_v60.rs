@@ -605,6 +605,11 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Wrenn => None,
         Subtype::Hamster => Some(CreatureTypeV60::Hamster),
         Subtype::Ogre => Some(CreatureTypeV60::Ogre),
+        Subtype::Barbarian => Some(CreatureTypeV60::Barbarian),
+        Subtype::Villain => Some(CreatureTypeV60::Villain),
+        Subtype::Nomad => Some(CreatureTypeV60::Nomad),
+        Subtype::Scarecrow => Some(CreatureTypeV60::Scarecrow),
+        Subtype::Peasant => Some(CreatureTypeV60::Peasant),
     }
 }
 

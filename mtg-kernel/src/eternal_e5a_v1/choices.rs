@@ -143,8 +143,10 @@ pub(crate) fn drive(
             ))
         }
         E5aOpV1::UginSearchV1 => {
+            // Painter's Servant colors every card (wave E9a).
+            let painted = crate::eternal_legacy_e9a_v1::statics::painter_mask(state) != 0;
             let cards = library_cards(state, player, |def| {
-                def.colors.is_empty() && !def.has_type(CardType::Land) && !def.is_token
+                !painted && def.colors.is_empty() && !def.has_type(CardType::Land) && !def.is_token
             });
             if cards.is_empty() {
                 shuffle(state, player)?;

@@ -29,6 +29,7 @@ mod build_eternal_e7a_v1;
 mod build_eternal_e7b_v1;
 mod build_eternal_e8a_v1;
 mod build_eternal_e8b_v1;
+mod build_eternal_e9a_v1;
 mod build_eternal_lurrus_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -3318,6 +3319,11 @@ enum PermanentFilterRecipe {
     Desert,
     /// A controlled nonland permanent (Bolas's Citadel).
     Nonland,
+    /// Another controlled artifact or creature (Broadside Bombardiers'
+    /// boast).
+    AnotherArtifactOrCreature,
+    /// A controlled Forest or Plains (Knight of the Reliquary).
+    ForestOrPlains,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6537,6 +6543,10 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Land => "PermanentFilter::Land",
         PermanentFilterRecipe::Desert => "PermanentFilter::DesertV1",
         PermanentFilterRecipe::Nonland => "PermanentFilter::NonlandV1",
+        PermanentFilterRecipe::AnotherArtifactOrCreature => {
+            "PermanentFilter::AnotherArtifactOrCreatureV1"
+        }
+        PermanentFilterRecipe::ForestOrPlains => "PermanentFilter::ForestOrPlainsV1",
     }
 }
 
@@ -6551,6 +6561,8 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Land => "land",
         PermanentFilterRecipe::Desert => "desert",
         PermanentFilterRecipe::Nonland => "nonland",
+        PermanentFilterRecipe::AnotherArtifactOrCreature => "another_artifact_or_creature",
+        PermanentFilterRecipe::ForestOrPlains => "forest_or_plains",
     }
 }
 
@@ -11453,6 +11465,11 @@ fn subtype_variant(t: &str) -> &'static str {
         "Eye" => "Subtype::Eye",
         "Dreadnought" => "Subtype::Dreadnought",
         "Ogre" => "Subtype::Ogre",
+        "Barbarian" => "Subtype::Barbarian",
+        "Villain" => "Subtype::Villain",
+        "Nomad" => "Subtype::Nomad",
+        "Scarecrow" => "Subtype::Scarecrow",
+        "Peasant" => "Subtype::Peasant",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

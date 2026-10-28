@@ -1216,7 +1216,7 @@ pub(crate) fn drive(
 /// "The Ring tempts you" (701.54): the Ring gains its next ability, and the
 /// controller chooses a creature they control as their Ring-bearer. `true`
 /// when that choice was staged.
-fn ring_tempts(
+pub(crate) fn ring_tempts(
     state: &mut GameState,
     continuation: &mut EffectContinuation,
     path: Vec<u16>,

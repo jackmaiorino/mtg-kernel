@@ -755,6 +755,11 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::UpToOneOpponentNonlandNontokenManaValueAtMostV1(_) => ObjF::NonlandPermanent,
         S::OpponentThenUpToOneTheirCreatureV1 => ObjF::PlayerOrPermanent,
         S::UpToOneOpponentCreatureOrPlaneswalkerV1 => ObjF::Permanent,
+        S::DividedFourDamageCreaturesOrPlaneswalkersV1 | S::DividedXDamageUpToTwoV1 => {
+            ObjF::Permanent
+        }
+        S::UpToOnePlayerV1 => ObjF::PlayerOrPermanent,
+        S::UpToOnePermanentCardDiedThisTurnV1 => ObjF::AnyCard,
     }
 }
 
@@ -771,6 +776,7 @@ pub(super) fn standard_target_origin(
         S::CardInAGraveyard
         | S::CreatureCardPutIntoGraveyardThisTurnV1
         | S::PlayerThenGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
+        S::UpToOnePermanentCardDiedThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
         | S::UpToOneControlledCreatureV1
@@ -807,6 +813,9 @@ pub(super) fn standard_target_origin(
         | S::TriggeredAbilityOrColorlessSpellV1 => (Some(ZoneF::Stack), None),
         S::AnotherNonlandPermanent
         | S::UpToEightCreaturesOrPlaneswalkersV74
+        | S::DividedFourDamageCreaturesOrPlaneswalkersV1
+        | S::DividedXDamageUpToTwoV1
+        | S::UpToOnePlayerV1
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1
         | S::UpToTwoAnyTargets
@@ -852,6 +861,20 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1 => {
             // The old facet vocabulary does not encode this union or land override.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::DividedFourDamageCreaturesOrPlaneswalkersV1 | S::DividedXDamageUpToTwoV1 => {
+            // Vocabulary gap: divided damage and repeated picks have no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOnePlayerV1 => {
+            out.target(TargetAtom::UpTo);
+            // Vocabulary gap: a lone player target has no facet here.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOnePermanentCardDiedThisTurnV1 => {
+            out.target(TargetAtom::UpTo);
+            // Exact current-turn departure needs a successor.
             out.atoms.push(Atom::Opaque);
         }
         S::CreatureCardPutIntoGraveyardThisTurnV1 => {

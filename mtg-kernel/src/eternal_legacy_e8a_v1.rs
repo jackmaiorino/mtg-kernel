@@ -1138,7 +1138,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         THOUGHT_MONITOR => &THOUGHT_MONITOR_TRIGGERS,
         WHITE_ORCHID_PHANTOM => &WHITE_ORCHID_TRIGGERS,
         YORION => &YORION_TRIGGERS,
-        _ => &[],
+        // Wave E9a names disjoint cards.
+        _ => crate::eternal_legacy_e9a_v1::triggers_for(name),
     }
 }
 

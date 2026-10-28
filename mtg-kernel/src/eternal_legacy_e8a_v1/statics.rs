@@ -94,31 +94,51 @@ fn harbinger_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
         .max()
 }
 
-/// Harbinger of the Seas: "Nonbasic lands are Islands." (305.7: such a
-/// land loses its land types and all abilities from its rules text and has
-/// "{T}: Add {U}.") The removal's timestamp for a nonbasic land.
-pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
-    harbinger_timestamp(state, object)
+/// The land type a nonbasic land has under Harbinger of the Seas
+/// ("Nonbasic lands are Islands.") or wave E9a's Blood Moon and Magus of the
+/// Moon ("Nonbasic lands are Mountains."), the later effect winning
+/// (613.7), with that effect's timestamp and the color of the mana ability
+/// it gives.
+fn land_type_setter(state: &GameState, object: ObjectId) -> Option<(u64, Subtype, ManaColor)> {
+    let islands = harbinger_timestamp(state, object)
+        .map(|timestamp| (timestamp, Subtype::Island, ManaColor::U));
+    let mountains = crate::eternal_legacy_e9a_v1::statics::moon_timestamp(state, object)
+        .map(|timestamp| (timestamp, Subtype::Mountain, ManaColor::R));
+    match (islands, mountains) {
+        (Some(islands), Some(mountains)) => Some(if mountains.0 > islands.0 {
+            mountains
+        } else {
+            islands
+        }),
+        (islands, mountains) => islands.or(mountains),
+    }
 }
 
-/// Harbinger of the Seas: a nonbasic land's land types become Island.
-/// Other subtypes (Dryad Arbor's Dryad) stay.
+/// Harbinger of the Seas and the moons (305.7: such a land loses its land
+/// types and all abilities from its rules text and has "{T}: Add {U}." or
+/// "{T}: Add {R}.") The removal's timestamp for a nonbasic land.
+pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
+    land_type_setter(state, object).map(|(timestamp, _, _)| timestamp)
+}
+
+/// Harbinger of the Seas and the moons: a nonbasic land's land types become
+/// Island or Mountain. Other subtypes (Dryad Arbor's Dryad) stay.
 pub(crate) fn adjust_subtypes(state: &GameState, object: ObjectId, subtype_ids: &mut Vec<u16>) {
-    if harbinger_timestamp(state, object).is_none() {
+    let Some((_, land_type, _)) = land_type_setter(state, object) else {
         return;
-    }
+    };
     subtype_ids.retain(|&id| LAND_TYPES.iter().all(|land| land.stable_id() != id));
-    subtype_ids.push(Subtype::Island.stable_id());
+    subtype_ids.push(land_type.stable_id());
     subtype_ids.sort_unstable();
     subtype_ids.dedup();
 }
 
 /// Mana abilities this module grants: a nonbasic land under Harbinger of
-/// the Seas has "{T}: Add {U}."; Valgavoth's Lair has "{T}: Add one mana of
-/// the chosen color."
+/// the Seas has "{T}: Add {U}." (under a moon, "{T}: Add {R}."); Valgavoth's
+/// Lair has "{T}: Add one mana of the chosen color."
 pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
-    if harbinger_timestamp(state, object).is_some() {
-        return vec![ManaColor::U];
+    if let Some((_, _, color)) = land_type_setter(state, object) {
+        return vec![color];
     }
     if active_named(state, object, VALGAVOTHS_LAIR) {
         if let Some(color) = state.objects.get(object).v4.chosen_color {

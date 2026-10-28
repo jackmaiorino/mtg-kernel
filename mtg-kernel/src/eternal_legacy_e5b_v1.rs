@@ -389,7 +389,9 @@ fn controlled_permanents(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
 }
 
 fn is_colorless(state: &GameState, object: ObjectId) -> bool {
+    // Painter's Servant colors every card, spell and permanent (wave E9a).
     state.objects.get(object).v4.effective_color_mask == 0
+        && crate::eternal_legacy_e9a_v1::statics::painter_mask(state) == 0
 }
 
 /// The resolving ability's source, if it is still the incarnation that
@@ -1447,7 +1449,9 @@ pub(crate) fn spell_cost_reduction(
     definition: &CardDef,
     player: PlayerId,
 ) -> u32 {
-    let colorless = definition.colors.is_empty();
+    // Painter's Servant colors every spell (wave E9a).
+    let colorless = definition.colors.is_empty()
+        && crate::eternal_legacy_e9a_v1::statics::painter_mask(state) == 0;
     let mut reduction = 0;
     if colorless && definition.subtypes.contains(&Subtype::Eldrazi) {
         reduction += 2 * active_permanents(state, EYE_OF_UGIN, Some(player)).count() as u32;
@@ -2308,7 +2312,11 @@ fn controls_other_red_permanent(state: &GameState, player: PlayerId, source: Obj
     controlled_permanents(state, player)
         .into_iter()
         .any(|object| {
-            object != source && state.objects.get(object).v4.effective_color_mask & red != 0
+            object != source
+                && (state.objects.get(object).v4.effective_color_mask
+                    | crate::eternal_legacy_e9a_v1::statics::painter_mask(state))
+                    & red
+                    != 0
         })
 }
 

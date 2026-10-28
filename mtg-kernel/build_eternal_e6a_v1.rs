@@ -284,7 +284,7 @@ pub(super) fn additional_cost_for(name: &str) -> &'static str {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Prohibit" => Some("{2}"),
-        _ => None,
+        _ => super::build_eternal_e9a_v1::kicker_cost_for(name),
     }
 }
 

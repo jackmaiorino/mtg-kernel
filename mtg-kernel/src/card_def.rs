@@ -421,6 +421,14 @@ pub enum Subtype {
     /// Appended for the eternal catalog's wave E8b (Crimson Fleet
     /// Commodore).
     Ogre,
+    /// Appended for the eternal catalog's wave E9a (Caves of Chaos
+    /// Adventurer, Loki, God of Mischief, Nomads en-Kor, Painter's Servant
+    /// and Samwise the Stouthearted).
+    Barbarian,
+    Villain,
+    Nomad,
+    Scarecrow,
+    Peasant,
 }
 
 impl Subtype {
@@ -769,6 +777,16 @@ impl Subtype {
         Subtype::Hamster,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Ogre,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Barbarian,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Villain,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Nomad,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Scarecrow,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Peasant,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -995,6 +1013,11 @@ impl Subtype {
             193 => Subtype::Hamster,
             194 => Subtype::Vivien,
             195 => Subtype::Ogre,
+            196 => Subtype::Barbarian,
+            197 => Subtype::Villain,
+            198 => Subtype::Nomad,
+            199 => Subtype::Scarecrow,
+            200 => Subtype::Peasant,
             _ => return None,
         })
     }
@@ -1200,6 +1223,11 @@ impl Subtype {
             Subtype::Wrenn => false,
             Subtype::Hamster => true,
             Subtype::Ogre => true,
+            Subtype::Barbarian => true,
+            Subtype::Villain => true,
+            Subtype::Nomad => true,
+            Subtype::Scarecrow => true,
+            Subtype::Peasant => true,
         }
     }
 
@@ -1290,6 +1318,11 @@ impl Subtype {
                     | Subtype::Snake
                     | Subtype::Hamster
                     | Subtype::Ogre
+                    | Subtype::Barbarian
+                    | Subtype::Villain
+                    | Subtype::Nomad
+                    | Subtype::Scarecrow
+                    | Subtype::Peasant
             )
         {
             return true;
@@ -1895,6 +1928,12 @@ pub enum PermanentFilter {
     NonlandV1,
     /// A controlled permanent with this effective subtype, excluding the cost source.
     AnotherWithSubtype(Subtype),
+    /// A controlled artifact or creature other than the cost source
+    /// (Broadside Bombardiers' boast). Appended for the eternal catalog.
+    AnotherArtifactOrCreatureV1,
+    /// A controlled Forest or Plains (Knight of the Reliquary). Appended for
+    /// the eternal catalog.
+    ForestOrPlainsV1,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -2420,6 +2459,9 @@ pub enum DynamicValueDef {
     /// number of Urza's lands the evaluating controller controls.
     /// Appended for the eternal catalog.
     UrzasLandsIfMetalcraftV1,
+    /// Undermountain Adventurer: 2, or 6 once the evaluating controller has
+    /// completed a dungeon. Appended for the eternal catalog.
+    SixIfDungeonCompletedElseTwoV1,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's

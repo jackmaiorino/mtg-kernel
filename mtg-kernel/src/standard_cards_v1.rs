@@ -343,11 +343,27 @@ pub enum StandardTargetV1 {
     /// "For each opponent, up to one target creature or planeswalker that
     /// player controls" in a two-player game (Lich's Relic).
     UpToOneOpponentCreatureOrPlaneswalkerV1,
+    /// "4 damage divided as you choose among any number of target creatures
+    /// and/or planeswalkers" (Fury): four picks, one point of damage each,
+    /// and a creature may be picked again. Wave E9a's filters follow
+    /// (`eternal_legacy_e9a_v1::targets`).
+    DividedFourDamageCreaturesOrPlaneswalkersV1,
+    /// "X damage divided as you choose among up to two target creatures
+    /// and/or planeswalkers" (Shatterskull Smashing).
+    DividedXDamageUpToTwoV1,
+    /// "Up to one target player" (Endurance).
+    UpToOnePlayerV1,
+    /// "Up to one target permanent card in your graveyard that was put there
+    /// from the battlefield this turn" (Samwise the Stouthearted).
+    UpToOnePermanentCardDiedThisTurnV1,
 }
 
 impl StandardTargetV1 {
     /// How many targets this filter takes, and how many at least.
     pub(crate) fn counts(self) -> (u8, u8) {
+        if let Some(counts) = crate::eternal_legacy_e9a_v1::targets::counts(self) {
+            return counts;
+        }
         match self {
             Self::UpToTwoAnyTargets
             | Self::UpToTwoControlledCreatures
@@ -452,7 +468,8 @@ impl StandardTargetV1 {
             (Self::PlayerThenArtifactV1 | Self::PlayerThenCreatureV1, 0)
             | (Self::PlayerThenPlayerV1, 0 | 1)
             | (Self::PlayerThenGraveyardCardsV1, 0)
-            | (Self::OpponentThenUpToOneTheirCreatureV1, 0) => Some(None),
+            | (Self::OpponentThenUpToOneTheirCreatureV1, 0)
+            | (Self::UpToOnePlayerV1, 0) => Some(None),
             (Self::PlayerThenArtifactV1, 1) | (Self::ArtifactThenCreatureV1, 0) => {
                 Some(Some(CardType::Artifact))
             }
@@ -485,6 +502,7 @@ impl StandardTargetV1 {
                 | Self::CreatureCardInAGraveyardV1
                 | Self::UpToThreeLandCardsInOwnGraveyardV1
         ) || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
+            || crate::eternal_legacy_e9a_v1::targets::in_graveyard(self)
     }
 
     /// Wave E7a's filters (`eternal_legacy_e7a_v1`).
@@ -699,7 +717,9 @@ fn stack_spell_matches(
         StandardTargetV1::SpellWithSingleTargetV1 => item.targets.len() == 1,
         StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => item.controller != controller,
         StandardTargetV1::TriggeredAbilityOrColorlessSpellV1 => {
+            // Painter's Servant colors every spell (eternal wave E9a).
             state.objects.get(source).v4.effective_color_mask == 0
+                && crate::eternal_legacy_e9a_v1::statics::painter_mask(state) == 0
         }
         _ => false,
     }
@@ -728,6 +748,11 @@ pub(crate) fn legal_targets(
     if let Some(targets) = crate::eternal_legacy_e8a_v1::targets::legal_targets(
         target, controller, source, prefix, state,
     ) {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_legacy_e9a_v1::targets::legal_targets(target, controller, prefix, state)
+    {
         return targets;
     }
     if target.per_slot() {
@@ -932,6 +957,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_legacy_e9a_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1109,6 +1139,11 @@ pub(crate) fn target_matches(
         | StandardTargetV1::UpToOneOpponentNonlandNontokenManaValueAtMostV1(_)
         | StandardTargetV1::OpponentThenUpToOneTheirCreatureV1
         | StandardTargetV1::UpToOneOpponentCreatureOrPlaneswalkerV1 => false,
+        // Answered by `eternal_legacy_e9a_v1::targets` above.
+        StandardTargetV1::DividedFourDamageCreaturesOrPlaneswalkersV1
+        | StandardTargetV1::DividedXDamageUpToTwoV1
+        | StandardTargetV1::UpToOnePlayerV1
+        | StandardTargetV1::UpToOnePermanentCardDiedThisTurnV1 => false,
     }
 }
 
@@ -3078,6 +3113,9 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
         if let Some(minimum) = crate::eternal_e5a_v1::choices::minimum_x(def.name, targets, state) {
             return minimum;
         }
+        if let Some(minimum) = crate::eternal_legacy_e9a_v1::statics::minimum_x(def.name, targets) {
+            return minimum;
+        }
     }
     match (def.name, targets.first()) {
         (BLUE_SUNS_TWILIGHT, Some(Target::Object(object))) if def.cost.x_count != 0 => {
@@ -3646,6 +3684,10 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
         let e8a = crate::eternal_legacy_e8a_v1::statics::controlled_boost(state, object);
         boost.0 += e8a.0;
         boost.1 += e8a.1;
+        // Knight of the Reliquary, Elvish Reclaimer.
+        let e9a = crate::eternal_legacy_e9a_v1::statics::controlled_boost(state, object);
+        boost.0 += e9a.0;
+        boost.1 += e9a.1;
     }
     boost
 }

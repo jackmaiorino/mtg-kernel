@@ -340,7 +340,7 @@ pub(super) fn conditional_tap_yield_for(name: &str) -> &'static str {
         // Its two colorless abilities, offered as one adding the larger
         // amount (`eternal_e5a_v1::statics::urzas_workshop_yield`).
         "Urza's Workshop" => "Some(DynamicValueDef::UrzasLandsIfMetalcraftV1)",
-        _ => "None",
+        _ => super::build_eternal_e9a_v1::conditional_tap_yield_for(name),
     }
 }
 
@@ -348,7 +348,7 @@ pub(super) fn conditional_tap_yield_program_for(name: &str) -> Option<&'static s
     match name {
         "Grim Monolith" => Some("mana_ability_add_grim_monolith"),
         "Urza's Workshop" => Some("mana_ability_add_urzas_workshop"),
-        _ => None,
+        _ => super::build_eternal_e9a_v1::conditional_tap_yield_program_for(name),
     }
 }
 
