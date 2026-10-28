@@ -17,6 +17,17 @@ npm run test:browser
 
 Without a materialized demo pack, import a viewer JSON file. Local imports are validated in a browser worker and never uploaded. Imported JSON uses text cards because it does not grant access to companion assets. Curated hosted packs include locally served card art. Space toggles playback; arrow keys step decisions. Seeking pauses and cancels pending motion.
 
+## Misplay review
+
+A local review session lists several recordings and lets a reviewer flag the featured model's decisions:
+
+```sh
+npm run build
+python ../python/tools/viewer_review_server_v1.py --games GAMES_DIR --flags FLAGS.jsonl --open
+```
+
+`GAMES_DIR` holds recordings plus `index.json` (`[{id, file, title, subtitle}]`). The server binds 127.0.0.1, serves `demo/manifest.json` with each recording's SHA-256 and a `review` marker, and appends one JSON line per flag. In review mode the studio shows a game list, skips decisions with a single legal move or belonging to the opponent (S toggles), jumps to a turn (T), and flags the current decision with M, a category key 1-6 (tactical/combat, sequencing, mana, card or board misread, strategic, other), an optional note and Enter. A flag record carries the game, decision id and index, turn, phase, category, note, the played move, the model's favorite, its top five choices with probabilities and its value estimate. Re-flagging a decision appends a newer record; Remove appends one with `removed: true`.
+
 ## Recording contract
 
 `mtg-kernel-viewer-recording/v1` contains full before/after snapshots, a fixed seat, stable object identifiers, engine-ordered legal actions, executed selections, optional policy/search diagnostics, and authored bookmarks. `src/recording.ts` is its executable public contract. Unknown fields and versions are rejected, including extra private fields. Preserve the historical fixture in compatibility tests when adding adapters.
