@@ -3719,7 +3719,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         | "Undercity Sewers"
         | "Meticulous Archive"
         | "Hedge Maze"
-        | "Thundering Falls" => &CONDUIT_PYLONS_TRIGGERS,
+        | "Thundering Falls"
+        | "Raucous Theater"
+        | "Shadowy Backstreet" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
         "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
@@ -4665,6 +4667,13 @@ fn sba_fixed_point_with_protected_triggers(
                     || crate::standard_cards_v1::is_aura(definition))
                 {
                     return Some(id);
+                }
+                // Animate Dead enchants a creature card in a graveyard until
+                // its entry trigger returns the card.
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_legacy_e7a_v1::aura_waiting(state, id)
+                {
+                    return None;
                 }
                 if crate::standard_cards_v1::is_aura(definition) {
                     // This module's Auras: the enchant restriction includes
@@ -5655,7 +5664,12 @@ fn triggers_from_events(
                         && crate::continuous_characteristics_v1::removal_timestamp(state, id)
                             .is_none())
             {
-                let ward_cost = if obj.v4.face_down_v1.is_some_and(|face| face.disguised) {
+                // Manifest dread's face-down creatures have no ward.
+                let manifested = cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_legacy_e7a_v1::manifested(state, id);
+                let ward_cost = if manifested {
+                    None
+                } else if obj.v4.face_down_v1.is_some_and(|face| face.disguised) {
                     Some(crate::card_def::WardCostDef::Generic(2))
                 } else {
                     card.ward_cost.filter(|cost| match cost {

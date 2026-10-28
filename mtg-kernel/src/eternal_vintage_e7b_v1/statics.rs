@@ -20,6 +20,7 @@ const CRUCIBLE_OF_WORLDS: &str = "Crucible of Worlds";
 const KARN_ARGENT_DEFENDER: &str = "Karn, Argent Defender";
 const LODESTONE_GOLEM: &str = "Lodestone Golem";
 const PHYREXIAN_REVOKER: &str = "Phyrexian Revoker";
+const SPHERE_OF_RESISTANCE: &str = "Sphere of Resistance";
 const SERUM_POWDER: &str = "Serum Powder";
 const STONECOIL_SERPENT: &str = "Stonecoil Serpent";
 const THORN_OF_AMETHYST: &str = "Thorn of Amethyst";
@@ -72,11 +73,13 @@ pub(crate) fn end_mulligans(state: &mut GameState) {
 
 // ---- Spell taxes --------------------------------------------------------------------
 
-/// Thorn of Amethyst: "Noncreature spells cost {1} more to cast." Lodestone
+/// Sphere of Resistance (wave E7a): "Spells cost {1} more to cast." Thorn
+/// of Amethyst: "Noncreature spells cost {1} more to cast." Lodestone
 /// Golem: "Nonartifact spells cost {1} more to cast." The generic increase
 /// for a spell with `types`, whoever casts it.
 pub(crate) fn spell_tax(state: &GameState, types: &[CardType]) -> u32 {
-    let mut increase = 0u32;
+    let mut increase = u32::try_from(active_permanents(state, SPHERE_OF_RESISTANCE, None).count())
+        .unwrap_or(u32::MAX);
     if !types.contains(&CardType::Creature) {
         increase = increase.saturating_add(
             u32::try_from(active_permanents(state, THORN_OF_AMETHYST, None).count())

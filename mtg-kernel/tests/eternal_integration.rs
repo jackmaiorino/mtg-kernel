@@ -8,6 +8,8 @@ mod eternal_legacy_e2_v1;
 mod eternal_legacy_e3_v1;
 #[path = "eternal/eternal_legacy_e5b_v1.rs"]
 mod eternal_legacy_e5b_v1;
+#[path = "eternal/eternal_legacy_e7a_v1.rs"]
+mod eternal_legacy_e7a_v1;
 #[path = "eternal/eternal_pauper_e1_v1.rs"]
 mod eternal_pauper_e1_v1;
 #[path = "eternal/eternal_pauper_e6a_v1.rs"]

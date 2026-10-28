@@ -400,6 +400,10 @@ pub enum Subtype {
     /// lists (Kitchen Imp, Cartouche of Solidarity's enchantment type).
     Imp,
     Cartouche,
+    /// Appended for the eternal catalog's wave E7a (Abhorrent Oculus,
+    /// Phyrexian Dreadnought).
+    Eye,
+    Dreadnought,
     /// Appended for the eternal catalog's wave E7b: planeswalker types (Dack
     /// Fayden, Minsc & Boo, Wrenn and Six), creature types (Grief and
     /// Subtlety's Incarnation, Stonecoil Serpent, the Boo token's Hamster)
@@ -748,6 +752,10 @@ impl Subtype {
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Imp,
         #[cfg(feature = "eternal-fixtures")]
+        Subtype::Eye,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Dreadnought,
+        #[cfg(feature = "eternal-fixtures")]
         Subtype::Incarnation,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Snake,
@@ -860,6 +868,8 @@ impl Subtype {
                     | Subtype::Crab
                     | Subtype::Kor
                     | Subtype::Imp
+                    | Subtype::Eye
+                    | Subtype::Dreadnought
                     | Subtype::Incarnation
                     | Subtype::Snake
                     | Subtype::Hamster
@@ -3244,7 +3254,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xab50_e847_d118_cdde;
+        const EXPECTED_ETERNAL: u64 = 0x1b16_1470_5cf6_4b64;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

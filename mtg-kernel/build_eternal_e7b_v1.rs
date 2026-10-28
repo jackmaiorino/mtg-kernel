@@ -148,7 +148,7 @@ const DEATHRITE_SHAMAN: [ActivatedAbilityRecipe; 3] = [
     instant(
         &[ManaCost("{G}"), Tap],
         program("crate::eternal_vintage_e7b_v1::deathrite_gain"),
-        "StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureCardInAnyGraveyardV1)",
+        "StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureCardInAGraveyardV1)",
     ),
 ];
 

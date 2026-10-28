@@ -1310,6 +1310,10 @@ pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
 
 /// Fogs: whether a fog this turn prevents `damage`.
 pub(crate) fn prevents_damage(state: &GameState, damage: &DamageProposed) -> bool {
+    // Maze of Ith (wave E7a).
+    if crate::eternal_legacy_e7a_v1::prevents_damage(state, damage) {
+        return true;
+    }
     let Some(e6a) = read_state(state) else {
         return false;
     };

@@ -18,7 +18,6 @@ pub(crate) fn owns(target: StandardTargetV1) -> bool {
             | S::UpToOneCreatureOrPlaneswalkerSpellV1
             | S::LandCardInAGraveyardV1
             | S::InstantOrSorceryCardInAGraveyardV1
-            | S::CreatureCardInAnyGraveyardV1
             | S::UpToOneLandCardInOwnGraveyardV1
             | S::LandCardInOwnGraveyardV1
             | S::UpToOneCreatureWithTrampleOrHasteV1
@@ -32,7 +31,6 @@ pub(crate) fn in_graveyard(target: StandardTargetV1) -> bool {
         target,
         S::LandCardInAGraveyardV1
             | S::InstantOrSorceryCardInAGraveyardV1
-            | S::CreatureCardInAnyGraveyardV1
             | S::UpToOneLandCardInOwnGraveyardV1
             | S::LandCardInOwnGraveyardV1
     )
@@ -80,7 +78,6 @@ pub(crate) fn target_matches(
         S::InstantOrSorceryCardInAGraveyardV1 => {
             card && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
         }
-        S::CreatureCardInAnyGraveyardV1 => card && def.has_type(CardType::Creature),
         S::UpToOneLandCardInOwnGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             card && live.owner == controller && def.has_type(CardType::Land)
         }

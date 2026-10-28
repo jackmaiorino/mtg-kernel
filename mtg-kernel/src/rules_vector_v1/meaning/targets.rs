@@ -720,6 +720,12 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => ObjF::Permanent,
         S::ForestV1 => typed(CardType::Land),
         S::UpToOneOpponentCreatureV1 => creature(),
+        S::ArtifactCardInOwnGraveyardV1 | S::ArtifactCardInOwnGraveyardManaValueAtMostV1(_) => {
+            typed(CardType::Artifact)
+        }
+        S::CreatureCardInAGraveyardV1 => creature(),
+        S::UpToThreeLandCardsInOwnGraveyardV1 => typed(CardType::Land),
+        S::ArtifactThenArtifactCardInItsControllersGraveyardV1 => typed(CardType::Artifact),
         S::NonlandPermanentManaValueAtMostV1(_) => ObjF::NonlandPermanent,
         S::OpponentPermanentV1 => ObjF::Permanent,
         S::AnyNumberOfSpellsV1 | S::UpToOneCreatureOrPlaneswalkerSpellV1 => ObjF::Spell,
@@ -727,7 +733,6 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         | S::UpToOneLandCardInOwnGraveyardV1
         | S::LandCardInOwnGraveyardV1 => typed(CardType::Land),
         S::InstantOrSorceryCardInAGraveyardV1 => ObjF::AnyCard,
-        S::CreatureCardInAnyGraveyardV1 => creature(),
         S::UpToOneCreatureWithTrampleOrHasteV1 => creature(),
     }
 }
@@ -737,7 +742,11 @@ pub(super) fn standard_target_origin(
 ) -> (Option<ZoneF>, Option<RelF>) {
     use crate::standard_cards_v1::StandardTargetV1 as S;
     match filter {
-        S::InstantOrSorceryCardInOwnGraveyard => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::InstantOrSorceryCardInOwnGraveyard
+        | S::ArtifactCardInOwnGraveyardV1
+        | S::ArtifactCardInOwnGraveyardManaValueAtMostV1(_)
+        | S::UpToThreeLandCardsInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::CreatureCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
         S::CardInAGraveyard | S::PlayerThenGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
@@ -753,9 +762,9 @@ pub(super) fn standard_target_origin(
         | S::OpponentSpellOrNonlandPermanentV1
         | S::UpToOneOpponentCreatureV1
         | S::OpponentPermanentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
-        S::LandCardInAGraveyardV1
-        | S::InstantOrSorceryCardInAGraveyardV1
-        | S::CreatureCardInAnyGraveyardV1 => (Some(ZoneF::Graveyard), None),
+        S::LandCardInAGraveyardV1 | S::InstantOrSorceryCardInAGraveyardV1 => {
+            (Some(ZoneF::Graveyard), None)
+        }
         S::UpToOneLandCardInOwnGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             (Some(ZoneF::Graveyard), Some(RelF::You))
         }
@@ -783,6 +792,7 @@ pub(super) fn standard_target_origin(
         | S::UpToOneColoredPermanentV1
         | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
         | S::ForestV1
+        | S::ArtifactThenArtifactCardInItsControllersGraveyardV1
         | S::NonlandPermanentManaValueAtMostV1(_)
         | S::UpToOneCreatureWithTrampleOrHasteV1
         | S::CrewedSourceThisTurn => {
@@ -982,6 +992,31 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             out.target(TargetAtom::UpTo);
         }
+        S::ArtifactCardInOwnGraveyardV1 | S::CreatureCardInAGraveyardV1 => {
+            object(out, standard_target_obj(filter), relation, zone);
+        }
+        S::ArtifactCardInOwnGraveyardManaValueAtMostV1(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: typed(CardType::Artifact),
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+        }
+        S::UpToThreeLandCardsInOwnGraveyardV1 => {
+            object(out, typed(CardType::Land), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+        }
+        S::ArtifactThenArtifactCardInItsControllersGraveyardV1 => {
+            object(out, typed(CardType::Artifact), None, zone);
+            object(out, typed(CardType::Artifact), None, ZoneF::Graveyard);
+            out.target(TargetAtom::MultipleTargets);
+            // "That player's graveyard" has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
         S::NonlandPermanentManaValueAtMostV1(maximum) => {
             out.target(TargetAtom::Object {
                 obj: ObjF::NonlandPermanent,
@@ -992,10 +1027,7 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
                 excludes: None,
             });
         }
-        S::OpponentPermanentV1
-        | S::LandCardInAGraveyardV1
-        | S::CreatureCardInAnyGraveyardV1
-        | S::LandCardInOwnGraveyardV1 => {
+        S::OpponentPermanentV1 | S::LandCardInAGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             object(out, standard_target_obj(filter), relation, zone);
         }
         S::InstantOrSorceryCardInAGraveyardV1 => {

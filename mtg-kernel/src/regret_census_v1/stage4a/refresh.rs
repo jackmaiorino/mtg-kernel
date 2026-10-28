@@ -539,11 +539,14 @@ impl Searches<'_> {
 }
 
 /// Recording only (mtg-kernel#380): the search's sampler counts with their
-/// rejection kinds, and its longest run of consecutive rejections (the
-/// `MAX_CONSECUTIVE_REJECTIONS` stop fires when a run reaches that limit).
+/// rejection kinds, its longest run of consecutive rejections (the
+/// `MAX_CONSECUTIVE_REJECTIONS` stop fires when a run reaches that limit),
+/// and the inner encoder errors behind its `SampleBoundaryEncodingFailed`
+/// rejections.
 fn add_rejections(record: &mut Value, sel: &Selection) {
     record["sampler"] = sel.sampler.json();
     record["longest_rejection_run"] = json!(sel.rejection_run.longest);
+    record["boundary_encoding_failures"] = sel.sampler.boundary_encoding.json();
 }
 
 /// One arm's guide from the anchor. Returns the arm record.
@@ -1364,16 +1367,73 @@ pub(super) mod tests {
             json!({"ok":2,"rejected":5,"kinds":{"DeckPrior":1,"SampleBoundaryChanged":4}})
         );
         assert_eq!(record["longest_rejection_run"], 3);
-        // Only the two fields are added.
+        assert_eq!(
+            record["boundary_encoding_failures"],
+            json!({"kinds":{},"other":0})
+        );
+        // Only the three fields are added.
         let fields = record.as_object_mut().unwrap();
         fields.remove("sampler");
         fields.remove("longest_rejection_run");
+        fields.remove("boundary_encoding_failures");
         assert_eq!(record, before);
         // A search with no rejections records an empty run.
         let mut clean = json!({});
         add_rejections(&mut clean, &Selection::default());
         assert_eq!(clean["longest_rejection_run"], 0);
         assert_eq!(clean["sampler"], json!({"ok":0,"rejected":0,"kinds":{}}));
+        assert_eq!(
+            clean["boundary_encoding_failures"],
+            json!({"kinds":{},"other":0})
+        );
+    }
+
+    #[test]
+    fn search_records_carry_bounded_boundary_encoding_failures() {
+        use super::super::arms::MAX_BOUNDARY_ENCODING_KINDS;
+        let mut sel = Selection::default();
+        let kind = "SampleBoundaryEncodingFailed";
+        for (inner, detail) in [
+            ("action_slice:HiddenActionReference", "first a"),
+            ("action_slice:HiddenActionReference", "second a"),
+            ("scoring:InvalidReference", "first b"),
+        ] {
+            sel.sampler.rejected += 1;
+            *sel.sampler.kinds.entry(kind.into()).or_default() += 1;
+            sel.sampler.boundary_encoding.add(inner, detail);
+            sel.rejection_run.reject();
+        }
+        let mut record = json!({});
+        add_rejections(&mut record, &sel);
+        // #383's field keeps its kind and count.
+        assert_eq!(
+            record["sampler"],
+            json!({"ok":0,"rejected":3,"kinds":{"SampleBoundaryEncodingFailed":3}})
+        );
+        assert_eq!(
+            record["boundary_encoding_failures"],
+            json!({"kinds":{
+                "action_slice:HiddenActionReference":{"count":2,"first":"first a"},
+                "scoring:InvalidReference":{"count":1,"first":"first b"}},"other":0})
+        );
+        // Distinct kinds are capped; later new kinds count in `other`, and
+        // already recorded kinds keep counting.
+        for i in 0..MAX_BOUNDARY_ENCODING_KINDS + 3 {
+            sel.sampler
+                .boundary_encoding
+                .add(&format!("stage:K{i:02}"), "x");
+        }
+        sel.sampler
+            .boundary_encoding
+            .add("scoring:InvalidReference", "later");
+        let failures = sel.sampler.boundary_encoding.json();
+        let kinds = failures["kinds"].as_object().unwrap();
+        assert_eq!(kinds.len(), MAX_BOUNDARY_ENCODING_KINDS);
+        assert_eq!(failures["other"], 5);
+        assert_eq!(
+            kinds["scoring:InvalidReference"],
+            json!({"count":2,"first":"first b"})
+        );
     }
 
     #[test]

@@ -19,13 +19,16 @@ use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameState, Target, Zone};
 
+/// Life from the Loam (wave E7a): "Dredge 3".
+const LIFE_FROM_THE_LOAM: &str = "Life from the Loam";
+
 /// A card's dredge number.
 pub(crate) fn dredge_count(name: &str) -> Option<u8> {
     match name {
         GOLGARI_GRAVE_TROLL => Some(6),
         STINKWEED_IMP => Some(5),
         GOLGARI_THUG => Some(4),
-        SHAMBLING_SHELL => Some(3),
+        SHAMBLING_SHELL | LIFE_FROM_THE_LOAM => Some(3),
         _ => None,
     }
 }

@@ -36,6 +36,7 @@ pub(crate) const FLUSTERSTORM: &str = "Flusterstorm";
 pub(crate) const THASSAS_ORACLE: &str = "Thassa's Oracle";
 pub(crate) const BRAIN_FREEZE: &str = "Brain Freeze";
 pub(crate) const TENDRILS_OF_AGONY: &str = "Tendrils of Agony";
+pub(crate) const GALVANIC_RELAY: &str = "Galvanic Relay";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -273,6 +274,8 @@ pub enum E3ChoiceKindV1 {
     /// A choice owned by the Pauper Bogles, white aggro and Rakdos Madness
     /// lists' module (`eternal_pauper_e6b_v1`).
     E6bV1(crate::eternal_pauper_e6b_v1::E6bChoiceV1),
+    /// A wave E7a choice (`eternal_legacy_e7a_v1`).
+    E7aV1(crate::eternal_legacy_e7a_v1::E7aChoiceV1),
     /// A choice owned by the Vintage graveyard and tempo lists' module
     /// (`eternal_vintage_e7b_v1`).
     E7bV1(crate::eternal_vintage_e7b_v1::E7bChoiceV1),
@@ -306,6 +309,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::E6bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::E7aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         if let E3ChoiceKindV1::E7bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
@@ -329,6 +335,7 @@ impl E3ChoiceV1 {
         match &self.kind {
             E3ChoiceKindV1::DoomsdayV1 => true,
             E3ChoiceKindV1::E5aV1(kind) => kind.library_search(),
+            E3ChoiceKindV1::E7aV1(kind) => kind.library_search(),
             _ => false,
         }
     }
@@ -338,6 +345,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E5bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E6aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E6bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::E7aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E7bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
@@ -384,6 +392,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E5bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E6aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E6bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::E7aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E7bV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
@@ -623,6 +632,13 @@ pub(crate) fn finish_selection(
         E3ChoiceKindV1::E5aV1(kind) => {
             crate::eternal_e5a_v1::choices::finish(state, continuation, choice, kind, bindings)
         }
+        E3ChoiceKindV1::E7aV1(kind) => crate::eternal_legacy_e7a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
     }
 }
 
@@ -910,6 +926,9 @@ pub(crate) fn drive(
         }
         EternalOpV1::E6bV1(op) => {
             crate::eternal_pauper_e6b_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::E7aV1(op) => {
+            crate::eternal_legacy_e7a_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::E7bV1(op) => {
             crate::eternal_vintage_e7b_v1::drive(state, continuation, op, path)
@@ -1382,6 +1401,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_legacy_e5b_v1::pending_decision(state) {
         return Some(decision);
     }
+    // Mox Diamond's discard.
+    if let Some(decision) = crate::eternal_legacy_e7a_v1::entry_choice_decision(state) {
+        return Some(decision);
+    }
     if let Some(entering) = live_springs_entry(state) {
         let player = state.objects.get(entering.object).controller;
         // Option 1 pays 3 life, which a player with less cannot pay (119.4).
@@ -1444,6 +1467,9 @@ pub(crate) fn entry_choice_pending(state: &GameState) -> bool {
 pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<(), String> {
     if crate::eternal_legacy_e5b_v1::pending_decision(state).is_some() {
         crate::eternal_legacy_e5b_v1::answer_pending_decision(state, option)?;
+        return Ok(());
+    }
+    if crate::eternal_legacy_e7a_v1::answer_entry_choice(state, option)? {
         return Ok(());
     }
     if let Some(entering) = live_springs_entry(state) {
@@ -1614,7 +1640,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY => &FLUSTERSTORM_TRIGGERS,
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
@@ -1628,9 +1654,8 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     match name {
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
-        | TENDRILS_OF_AGONY | THASSAS_ORACLE | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => {
-            Some(TargetSpec::None)
-        }
+        | TENDRILS_OF_AGONY | GALVANIC_RELAY | THASSAS_ORACLE | EMRAKUL | ATRAXA
+        | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -1986,7 +2011,10 @@ pub fn personal_tutor() -> EffectOp {
 
 /// Cards with Storm in this module.
 pub(crate) fn has_storm(name: &str) -> bool {
-    name == FLUSTERSTORM || name == BRAIN_FREEZE || name == TENDRILS_OF_AGONY
+    name == FLUSTERSTORM
+        || name == BRAIN_FREEZE
+        || name == TENDRILS_OF_AGONY
+        || name == GALVANIC_RELAY
 }
 
 /// Whether a Storm trigger copies a targeted spell, whose copies may choose
@@ -2172,7 +2200,7 @@ pub(crate) fn delayed_triggers(
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY => {
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => {
             matches!(effect, EffectOp::CreateStormCopies { .. })
         }
         dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),
@@ -2432,11 +2460,19 @@ fn shuffle_graveyard_into_library() -> EffectOp {
 pub(crate) fn protected_from_spell(state: &GameState, object: ObjectId, source: ObjectId) -> bool {
     printed_battlefield_source(state, object, EMRAKUL)
         && state.objects.try_get(source).is_some_and(|live| {
-            live.zone == Zone::Stack
+            (live.zone == Zone::Stack
                 && state
                     .stack
                     .iter()
-                    .any(|item| item.kind == StackItemKind::Spell && item.source == source)
+                    .any(|item| item.kind == StackItemKind::Spell && item.source == source))
+                // A nonland card about to be cast: its targets are checked
+                // before it becomes a spell (castability).
+                || (matches!(
+                    live.zone,
+                    Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Library
+                ) && crate::card_def::CARD_DEFS
+                    .get(usize::from(live.card_def))
+                    .is_some_and(|def| !def.is_land))
         })
         && crate::engine::object_color_mask(state, source) != 0
 }

@@ -43,7 +43,16 @@ fn cost(state: &GameState, p: &PendingCast) -> Option<(Vec<mana::Pip>, u32, bool
         .saturating_sub(reduction.saturating_add(s.own_generic_reduction));
     Some((pips, generic, s.types.contains(&CardType::Creature)))
 }
+/// Improvise (Kappa Cannoneer) taps artifacts, each for one generic mana.
+fn improvises(state: &GameState, p: &PendingCast) -> bool {
+    cfg!(feature = "eternal-fixtures") && crate::eternal_legacy_e7a_v1::improvises(state, p.spell)
+}
 fn pool(state: &GameState, p: &PendingCast) -> Vec<EffectObjectBinding> {
+    let tapper = if improvises(state, p) {
+        CardType::Artifact
+    } else {
+        CardType::Creature
+    };
     state.players[p.controller.index()]
         .battlefield
         .iter()
@@ -53,7 +62,7 @@ fn pool(state: &GameState, p: &PendingCast) -> Vec<EffectObjectBinding> {
             (o.controller == p.controller
                 && o.zone == Zone::Battlefield
                 && !o.tapped
-                && object_has_type(state, id, CardType::Creature))
+                && object_has_type(state, id, tapper))
             .then_some(EffectObjectBinding {
                 object: id,
                 expected_zone: Zone::Battlefield,
@@ -102,7 +111,11 @@ pub(super) fn payment(
                 0,
             );
         }
-        let colors = object_color_mask(state, chosen[i].object);
+        let colors = if improvises(state, p) {
+            0
+        } else {
+            object_color_mask(state, chosen[i].object)
+        };
         for (j, pip) in pips.iter().enumerate() {
             if matches!(pip, mana::Pip::Colored(c) if colors & card_def::mana_color_mask(*c) != 0) {
                 let mut rest = pips.clone();

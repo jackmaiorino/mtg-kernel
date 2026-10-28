@@ -79,7 +79,8 @@ reserved.
 | E6a | Pauper Tron, Esper, Dimir and 4c Affinity, Esper Ephemerate, Mono-Blue Faeries, Mardu Synthesizer (and Azorius Gates): Abjure, Ancient Den, Archaeomancer, Behold the Multiverse, Bender's Waterskin, Bramble Wurm, Brinebarrow Intruder, Crop Rotation, Cryoshatter, Dispatch, Energy Refractor, Ephemerate, Ethereal Haze, Gearseeker Serpent, Ghostly Flicker, Glacial Floodplain, Grim Bauble, Hard Evidence, Kor Skyfisher, Moment's Peace, Mulldrifter, Mystical Teachings, Omen of the Dead, Prohibit, Prophetic Prism, Razortide Bridge, Remote Isle, Rustvale Bridge, Sewer-veillance Cam, Shattered Landscape, Stream of Thought, Tangle, Tangled Islet, Tithing Blade, Union of the Third Path | 35 and a token | Pauper 53.5% to 69.0% |
 | E5a | Vintage Raker Shops, Oath of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy Mystic Forge, and with E5b's cards Legacy Eldrazi and Tron: Mystic Forge, Bolas's Citadel, Yawgmoth's Will, Chalice of the Void, Sensei's Divining Top, Oath of Druids, Oko, Ugin, Kozilek's Command, Talon Gates of Madara and the rest of the lists | 28 and a token | Vintage 62.3% to 80.0%, Legacy 49.4% to 59.6% (after E5b) |
 | E6b | Pauper Bogles, White Aggro, Rakdos Madness, Boros Moxite, Mono-White Aggro, Snacker Gates and Boros Synthesizer (and Azorius Faeries): Abundant Growth, Alms of the Vein, Ancestral Mask, Angelic Gift, Armadillo Cloak, Asgardian Citadel, Ash Barrens, Battle Screech, Benevolent Blessing, Boros Garrison, Bushwhack, Cartouche of Solidarity, Cliffgate, Dawnbringer Cleric, Demand Answers, Eagles of the North, Ethereal Armor, Fortress Kin-Guard, Gladecover Scout, Greatsword of Tyr, Guardians' Pledge, Heliod's Pilgrim, Idyllic Grange, Jagged Barrens, Kitchen Imp, Leonardo, Lunarch Veteran, Malevolent Rumble, Mana Tithe, Manor Gate, Martyr's Soul, Pursue the Past, Raffine's Informant, Ragged Short Spear, Rakdos Carnarium, Ramosian Rally, Rancor, Salt Road Packbeast, Search Party Captain, Sheltering Landscape, Silhana Ledgewalker, Slippery Bogle, Spider-Man, Spirit Link, Thraben Inspector, Utopia Sprawl, Vampire's Kiss, Wind-Scarred Crag | 48 and three tokens | Pauper 69.0% to 80.5% |
-| E7b | Vintage Dredge, Counter-Vine, Blue Tempo, Lurrus DRS, Doomsday and RUG Control, and the artifact cards of Stiflenought, Sphere Shops and Sultai Psychic Frog: Abrupt Decay, Assassin's Trophy, Avatar of Burgeoning Echoes, Basking Rootwalla, Bayou, Bazaar of Baghdad, Blazing Rootwalla, Carnivorous Cultivator, Chain of Vapor, Collector Ouphe, Commandeer, Creeping Chill, Crucible of Worlds, Dack Fayden, Deathrite Shaman, Demonic Consultation, Golgari Grave-Troll, Golgari Thug, Golos, Grief, Hollow One, Ichorid, Karn, Argent Defender, Kishla Skimmer, Lodestone Golem, Master of Death, Mindbreak Trap, Minsc & Boo, Narcomoeba, Noxious Revival, Phyrexian Revoker, Prized Amalgam, Ragavan, Serum Powder, Shambling Shell, Silversmote Ghoul, Squee, Stinkweed Imp, Stonecoil Serpent, Subtlety, Thorn of Amethyst, Torpor Orb, Uro, Vengevine, Wrenn and Six | 45, two tokens and Enroot | Vintage 80.0% to 91.6% (Stiflenought, Sphere Shops and Sultai Psychic Frog follow E7a) |
+| E7a | Legacy Sewer-Cam combo, Rakdos Reanimator, The Epic Storm, Stiflenought, Mardu Energy, Affinity Stompy and Lands: Abhorrent Oculus, Animate Dead, Arena of Glory, Archon of Cruelty, Badlands, Blast Zone, Burning Wish, Cabal Therapy, Chromatic Star, Curie, Dark Depths, Dress Down, Echo of Eons, Emry, Exploration, Gaea's Will, Galvanic Relay, Gamble, Ghost Quarter, Goblin Engineer, Goblin Welder, Grafdigger's Cage, Griselbrand, Icetill Explorer, Kappa Cannoneer, Legion Extruder, Life from the Loam, Maze of Ith, Memory Guardian, Mox Diamond, Patchwork Automaton, Phyrexian Dragon Engine, Phyrexian Dreadnought, Pinnacle Emissary, Raucous Theater, Reanimate, Shadowspear, Shadowy Backstreet, Shallow Grave, Silent Clearing, Skateboard, Song of Creation, Sphere of Resistance, Taiga, The Tabernacle at Pendrell Vale, Thespian's Stage, Unmask, Verdant Catacombs, Wooded Foothills, Yavimaya | 50 and two tokens | Legacy 59.6% to 73.4% |
+| E7b | Vintage Dredge, Counter-Vine, Blue Tempo, Lurrus DRS, Doomsday and RUG Control, and the artifact cards of Stiflenought, Sphere Shops and Sultai Psychic Frog: Abrupt Decay, Assassin's Trophy, Avatar of Burgeoning Echoes, Basking Rootwalla, Bayou, Bazaar of Baghdad, Blazing Rootwalla, Carnivorous Cultivator, Chain of Vapor, Collector Ouphe, Commandeer, Creeping Chill, Crucible of Worlds, Dack Fayden, Deathrite Shaman, Demonic Consultation, Golgari Grave-Troll, Golgari Thug, Golos, Grief, Hollow One, Ichorid, Karn, Argent Defender, Kishla Skimmer, Lodestone Golem, Master of Death, Mindbreak Trap, Minsc & Boo, Narcomoeba, Noxious Revival, Phyrexian Revoker, Prized Amalgam, Ragavan, Serum Powder, Shambling Shell, Silversmote Ghoul, Squee, Stinkweed Imp, Stonecoil Serpent, Subtlety, Thorn of Amethyst, Torpor Orb, Uro, Vengevine, Wrenn and Six | 45, two tokens and Enroot | Vintage 80.0% to 95.4% after E7a |
 | E5 | Pauper to 90%, Legacy and Vintage to 75%, then sideboards | about 350 | |
 
 ## Rules primitives
@@ -197,6 +198,28 @@ New, each built once in the first wave that needs it:
   shapes: sacrificing a blue permanent (`PermanentFilter::BlueV1`), an instant-or-flash
   library search (`LibraryCardFilter::InstantOrFlashV1`) and Stream of Thought's choice
   of up to four graveyard cards to shuffle back (`E3ChoiceKindV1::E6aV1`).
+- E7a, built in `src/eternal_legacy_e7a_v1.rs` and `build_eternal_e7a_v1.rs`: land
+  play limits and graveyard land plays (Exploration, Icetill Explorer, Song of Creation)
+  are engine hooks, as are Sphere of Resistance's spell tax, Grafdigger's Cage's entry
+  replacement and cast prohibition, Maze of Ith's two-way combat damage prevention,
+  Shadowspear's keyword loss, Dress Down's removal timestamp and Yavimaya's granted
+  Forest type and {G}. "Becomes a copy" of a battlefield permanent swaps the card
+  definition and keeps a copy record that reverts before the permanent leaves;
+  Thespian's Stage keeps its own ability one past the copied ability list, and Curie
+  keeps its draw trigger. Dark Depths' ice counters live in module state and its state
+  trigger is pushed directly to the pending triggers. Animate Dead enters enchanting a
+  graveyard card (an SBA exemption) and its entry trigger returns and attaches it.
+  Life from the Loam's dredge 3 is E7b's dredge (`eternal_vintage_e7b_v1::dredge`), and
+  Sphere of Resistance's tax shares E7b's spell-tax hook; Mox Diamond's land discard is
+  an entry-choice decision, just after it enters. Suspend (Gaea's
+  Will) and Arena of Glory's exert mana are no-stack actions offered as ability 0;
+  Arena's {R}{R} goes to the restricted pool so a creature spell paid with it gains
+  haste. Manifest dread puts a face-down 2/2 without ward. Improvise is the convoke
+  payment over artifacts paying generic mana only. Blast Zone's X is one ability per X
+  from 0 to 7. Burning Wish finds nothing outside the game. Cabal Therapy names a card
+  by first letter, then name. Resolution choices (Ghost Quarter, Gamble, Goblin
+  Engineer, Archon of Cruelty, Phyrexian Dreadnought, manifest dread) use
+  `E3ChoiceKindV1::E7aV1`.
 - E5a, built in `src/eternal_e5a_v1.rs` (with `choices`, `permissions`, `phasing`,
   `statics` and `triggers` submodules) and `build_eternal_e5a_v1.rs`: casting the top
   card of the library is a new cast route (`SpellCastRouteV4::LibraryPermissionV1`,
