@@ -25,9 +25,10 @@ never changes what it means. It keeps its own records beside it, under
   arrival order as cores free up. `submit` starts a detached waiting `run`
   and returns at once.
 - Backfill: a request that declares `--max-seconds S` may start before the
-  queue head when it fits in free cores now and cannot delay the head, under
-  every order in which the running claims could end (at most 12 claims, and
-  never while a timed reservation is held). Only the first such request
+  queue head when it fits in free cores now (never a background claim's) and
+  cannot delay the head, under every order in which the live claims could end
+  (at most 12 claims, never while a timed reservation is held, and only when
+  the head was queued under the current config). Only the first such request
   behind the head starts, and only in the head's class (ordinary or
   background). S is at most 30 days. Past S, `status` flags it overdue;
   nothing is ever preempted.
@@ -643,10 +644,7 @@ def _pool(record: dict) -> list[int] | None:
 def _head_start(config: dict, timed: dict, claims: list[dict], head: dict) -> tuple[set, set] | None:
     """The cores head's own admission would take with these claims, and the background claims' cores
     among them (an ordinary head waits for those to suspend), or None when it cannot start."""
-    # A ticket without the background field comes from a launcher that predates it, whose admission
-    # counts every claim; the field is never omitted by this version.
-    counts_background = "background" not in head or bool(head["background"])
-    room = available(config, timed, claims, background=counts_background, core_pool=_pool(head))
+    room = available(config, timed, claims, background=bool(head.get("background", False)), core_pool=_pool(head))
     if len(room) < head["cores_wanted"]:
         return None
     chosen = set(room[:head["cores_wanted"]])
@@ -657,11 +655,13 @@ def _head_start(config: dict, timed: dict, claims: list[dict], head: dict) -> tu
 def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, ticket: dict) -> list[int] | None:
     """Cores ticket may take ahead of head without delaying it, or None.
 
-    The running claims may end in any order, so every subset of them is tried: whenever ending a
-    subset would let the head start with no backfills, it must still start with every backfill
-    (existing ones and this one) running, without waiting on more background cores. Durations play
-    no part in that check. A held timed reservation may end or change at any time, so no backfill
-    starts while one is held."""
+    The live claims, backfills included, may end in any order, so every subset of them is tried:
+    whenever ending a subset would let the head start with no backfills, it must still start with the
+    remaining backfills and this one running, without waiting on more background cores. Durations play
+    no part in that check. A backfill never takes a background claim's cores, so it never suspends one.
+    Scope: the guarantee covers claims ending. A timed reservation outranks the queue and may block any
+    cores at any time, so no backfill starts while one is held, and none can be proof against one
+    acquired later."""
     background = bool(ticket.get("background", False))
     if (_max_seconds(ticket) is None or background != bool(head.get("background", False)) or timed["held"]
             or len(claims) > BACKFILL_MAX_RUNNING):
@@ -670,15 +670,13 @@ def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, t
     for value in (wanted, head_wanted):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             return None
-    room = available(config, timed, claims, background=background, core_pool=_pool(ticket))
+    room = available(config, timed, claims, core_pool=_pool(ticket))
     if len(room) < wanted:
         return None
     cores = sorted(room[:wanted])
     candidate = {"cores": cores, "background": background, "backfill": True}
-    running = [claim for claim in claims if not claim.get("backfill")]
-    for mask in range(1 << len(running)):
-        ended = {id(claim) for bit, claim in enumerate(running) if mask >> bit & 1}
-        rest = [claim for claim in claims if id(claim) not in ended]
+    for mask in range(1 << len(claims)):
+        rest = [claim for bit, claim in enumerate(claims) if not mask >> bit & 1]
         without = _head_start(config, timed, [claim for claim in rest if not claim.get("backfill")], head)
         if without is None:
             continue
@@ -688,10 +686,18 @@ def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, t
     return cores
 
 
+def config_digest(config: dict) -> str:
+    return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def backfill_admits(config: dict, timed: dict, claims: list[dict], tickets: list[dict],
                     claim_id: str) -> list[int] | None:
     """Cores for claim_id to start before the queue head, or None. Called under the admission mutex with
-    tickets in admission order. Only the first eligible ticket behind the head may start."""
+    tickets in admission order and the current config. Only the first eligible ticket behind the head
+    may start. The head admits with the config it read before queueing, so nothing backfills unless its
+    ticket records that same config (a ticket from an older launcher records none)."""
+    if not tickets or tickets[0].get("config_sha256") != config_digest(config):
+        return None
     for ticket in tickets[1:]:
         cores = _backfill_cores(config, timed, claims, tickets[0], ticket)
         if cores is not None:
@@ -924,7 +930,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     ticket = slots_dir() / f"queue-{queue_class}{time.time_ns():020d}-{claim_id}.json"
     claim = slots_dir() / f"claim-{claim_id}.json"
     deadline = None if wait_timeout is None else time.monotonic() + wait_timeout
-    request = {**base, "cores_wanted": cores_wanted, "enqueued_at": now_utc()}
+    request = {**base, "cores_wanted": cores_wanted, "enqueued_at": now_utc(), "config_sha256": config_digest(config)}
     if max_seconds is not None:
         request["max_seconds"] = max_seconds
     with Mutex():
@@ -944,7 +950,12 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                         ticket.unlink()
                         break
                 elif max_seconds is not None and len(tickets) > 1:
-                    cores = backfill_admits(config, timed_state(), live_claims(), tickets, claim_id)
+                    try:
+                        current = load_config()
+                    except ValueError:  # an unreadable edit: no backfill until it is fixed
+                        current = None
+                    cores = None if current is None else backfill_admits(current, timed_state(), live_claims(),
+                                                                          tickets, claim_id)
                     if cores is not None:
                         started = datetime.now(timezone.utc)
                         backfill = {"backfill": True, "max_seconds": max_seconds, "head_id": tickets[0]["id"],
