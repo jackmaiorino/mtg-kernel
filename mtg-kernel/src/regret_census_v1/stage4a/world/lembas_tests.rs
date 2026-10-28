@@ -21,7 +21,7 @@ fn pinned_slots(state: &GameState, actor: PlayerId) -> Vec<ObjectId> {
 /// unknown slots.
 fn assert_samples_keep_pinned(session: &FastActorSessionV1, actor: PlayerId, seeds: u64) {
     let prior = all_decks();
-    let pinned = pinned_slots(&session.game_state(), actor);
+    let pinned = pinned_slots(session.game_state(), actor);
     assert!(!pinned.is_empty(), "fixture must exercise a pinned slot");
     let mut relabeled = false;
     for seed in 1..=seeds {
@@ -41,7 +41,7 @@ fn assert_samples_keep_pinned(session: &FastActorSessionV1, actor: PlayerId, see
             assert_eq!(sampled.name, root.name);
             assert_eq!(sampled.zone_change_count, root.zone_change_count);
         }
-        relabeled |= unknown_slots(&session.game_state(), actor, actor.opponent())
+        relabeled |= unknown_slots(session.game_state(), actor, actor.opponent())
             .iter()
             .any(|&id| {
                 world.world.game_state().objects.get(id).card_def
