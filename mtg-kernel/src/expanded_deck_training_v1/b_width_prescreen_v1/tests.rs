@@ -718,6 +718,33 @@ fn a_seed_at_or_above_two_to_the_63_plays() {
     assert!(games[0].terminal.as_ref().unwrap().policy_step_count > 0);
 }
 
+/// A whole writer output is complete whatever its numbers' spellings: an
+/// `f32` that the formatter spells differently as `f64` (1e-6) keeps a record
+/// complete, while the same bytes without their final newline, or with
+/// anything after it, are not.
+#[test]
+fn completeness_is_structural_not_a_reserialization() {
+    #[derive(Serialize)]
+    struct Fields {
+        loss: f32,
+    }
+    assert_ne!(
+        serde_json::to_string(&1e-6f32).unwrap(),
+        serde_json::to_string(&1e-6f64).unwrap()
+    );
+    let bytes = json_bytes_v1(&Fields { loss: 1e-6 }).unwrap();
+    let reparsed: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_ne!(json_bytes_v1(&reparsed).unwrap(), bytes);
+    assert!(complete_json_v1(&bytes));
+    assert!(!complete_json_v1(&bytes[..bytes.len() - 1]));
+    let mut trailing = bytes.clone();
+    trailing.push(b'\n');
+    assert!(!complete_json_v1(&trailing));
+    for torn in [&b""[..], &b"\n"[..], &b"{\n  \"loss\": 0.0000\n"[..]] {
+        assert!(!complete_json_v1(torn));
+    }
+}
+
 #[test]
 fn temporary_names_are_only_interrupted_publications() {
     assert!(is_temporary_name_v1(".k1-s1-w64.json.tmp-123"));
