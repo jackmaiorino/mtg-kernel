@@ -824,7 +824,11 @@ fn origin_digest_matches(recorded: &str, state: &GameState) -> bool {
 }
 
 /// Runs `run` as code before origin digest v2 did: every new digest is v1.
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn with_origin_v1_for_test<T>(run: impl FnOnce() -> T) -> T {
     let previous = ORIGIN_V1.with(|v1| v1.replace(true));
     let result = run();
@@ -833,7 +837,11 @@ pub(crate) fn with_origin_v1_for_test<T>(run: impl FnOnce() -> T) -> T {
 }
 
 /// The v1 and v2 origin digests of `state`.
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn origin_digests_for_test(state: &GameState) -> (String, String) {
     (origin_digest_v1(state), origin_digest_v2(state))
 }
