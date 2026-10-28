@@ -864,10 +864,13 @@ class BackfillAdmissionTests(unittest.TestCase):
             "head_id": "f" * 32, "deadline_at": "2026-01-01T00:00:00.000+00:00"})
         slots.write_json(self.host / f"TESTHOST.slots/claim-{'1' * 32}.json", {
             **base, "id": "1" * 32, "cores": [CPUS[0]]})  # a record from before backfill: not a backfill
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{'2' * 32}.json", {
+            **base, "id": "2" * 32, "cores": [CPUS[0]], "backfill": True, "max_seconds": 600.0,
+            "head_id": "f" * 32, "deadline_at": "9999-01-01T00:00:00.000+00:00"})
         status = slots.status()
-        self.assertEqual([(b["id"], b["overdue"], b["head_id"]) for b in status["backfill"]],
-                         [("e" * 32, True, "f" * 32)])
-        self.assertEqual(len(status["claims"]), 2)  # flagged, never removed or stopped
+        self.assertEqual(sorted((b["id"], b["overdue"], b["head_id"]) for b in status["backfill"]),
+                         [("2" * 32, False, "f" * 32), ("e" * 32, True, "f" * 32)])
+        self.assertEqual(len(status["claims"]), 3)  # flagged, never removed or stopped
 
 
 class BackfillProcessTests(unittest.TestCase):
