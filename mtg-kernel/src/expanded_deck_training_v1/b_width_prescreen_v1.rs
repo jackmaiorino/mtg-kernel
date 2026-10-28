@@ -1254,11 +1254,21 @@ fn torn_attempts_dir_v1(root: &Path, chain: u32) -> PathBuf {
 /// The game's result evidence in `games`: its result record, its store bytes,
 /// or an interrupted publication of either (`.result-<index>.*.tmp-<pid>`).
 fn result_evidence_v1(games: &Path, index: usize) -> Result<Vec<String>, String> {
-    let prefixes = [format!("result-{index:04}."), format!(".result-{index:04}.")];
+    let prefixes = [
+        format!("result-{index:04}."),
+        format!(".result-{index:04}."),
+    ];
     let mut names = Vec::new();
     for entry in fs::read_dir(games).map_err(err)? {
-        let name = entry.map_err(err)?.file_name().to_string_lossy().into_owned();
-        if prefixes.iter().any(|prefix| name.starts_with(prefix.as_str())) {
+        let name = entry
+            .map_err(err)?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        if prefixes
+            .iter()
+            .any(|prefix| name.starts_with(prefix.as_str()))
+        {
             names.push(name);
         }
     }
@@ -1322,12 +1332,21 @@ fn torn_attempts_v1(
     }
     let mut all = Vec::new();
     for entry in fs::read_dir(&retained).map_err(err)? {
-        all.push(entry.map_err(err)?.file_name().to_string_lossy().into_owned());
+        all.push(
+            entry
+                .map_err(err)?
+                .file_name()
+                .to_string_lossy()
+                .into_owned(),
+        );
     }
     let mut torn = Vec::new();
     for index in 0..games_count {
         let prefix = torn_attempt_prefix_v1(index);
-        let mut names: Vec<&String> = all.iter().filter(|name| name.starts_with(&prefix)).collect();
+        let mut names: Vec<&String> = all
+            .iter()
+            .filter(|name| name.starts_with(&prefix))
+            .collect();
         names.sort();
         for name in names {
             let bytes = read_v1(&retained.join(name))?;
