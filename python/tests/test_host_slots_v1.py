@@ -825,16 +825,27 @@ class BackfillAdmissionTests(unittest.TestCase):
         gone.wait()  # its ticket is reaped when read, so the new request can then enter
         slots.write_json(self.host / "TESTHOST.slots" / ahead, {"id": "e" * 32, "pid": gone.pid, "creation_time": 1,
                                                                 "cores_wanted": 1})
-        for queue_class in ("", "z-"):
-            name = slots._ticket_path(queue_class, "f" * 32).name
-            self.assertGreater(name.removeprefix("queue-").removeprefix("z-"), ahead.removeprefix("queue-"))
+        background = f"queue-z-{time.time_ns() + 2 * 10**12:020d}-{'d' * 32}.json"
+        slots.write_json(self.host / "TESTHOST.slots" / background, {"id": "d" * 32, "pid": gone.pid,
+                                                                     "creation_time": 1, "cores_wanted": 1})
+        for queue_class in ("", "z-"):  # after every ticket, ordinary or background
+            stamp = slots._ticket_path(queue_class, "f" * 32).name.removeprefix("queue-").removeprefix("z-")
+            self.assertGreater(stamp, background.removeprefix("queue-z-"))
         seen = []
-        real = slots.write_json
-        with patch.object(slots, "write_json", side_effect=lambda path, value: (
-                seen.append(Path(path).name), real(path, value))[1]),                 patch.object(slots, "_run_claimed", return_value=0):
+        real_path, real_write = slots._ticket_path, slots.write_json
+
+        def named_under_the_mutex(*args):
+            seen.append((self.host / "TESTHOST.slots" / ".mutex").is_dir())
+            return real_path(*args)
+        published = []
+        with patch.object(slots, "_ticket_path", side_effect=named_under_the_mutex), \
+                patch.object(slots, "write_json", side_effect=lambda path, value: (
+                    published.append(Path(path).name), real_write(path, value))[1]), \
+                patch.object(slots, "_run_claimed", return_value=0):
             slots.run("probe", "late", 1, ["unused"], claim_id="f" * 32, wait=True)
-        published = [name for name in seen if name.startswith("queue-")][0]
-        self.assertGreater(published, ahead)
+        self.assertEqual(seen, [True])
+        ticket = [name for name in published if name.startswith("queue-")][0]
+        self.assertGreater(ticket.removeprefix("queue-"), background.removeprefix("queue-z-"))
 
     def test_ordinary_claim_records_are_unchanged(self):
         seen = []
