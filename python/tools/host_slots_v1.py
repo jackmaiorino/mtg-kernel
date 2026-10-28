@@ -29,8 +29,8 @@ never changes what it means. It keeps its own records beside it, under
   cannot delay the head, under every order in which the live claims could end
   (at most 12 claims, never while a timed reservation is held, and only when
   the head was queued under the current config). Only the first such request
-  behind the head starts, and only in the head's class (ordinary or
-  background). S is at most 30 days. Past S, `status` flags it overdue;
+  behind the head starts, and only ordinary requests behind an ordinary
+  head. S is at most 30 days. Past S, `status` flags it overdue;
   nothing is ever preempted.
 - `status` prints the timed reservation (lane, work and declared cores),
   the claims, the queue and the free cores. It never prints the token.
@@ -659,12 +659,15 @@ def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, t
     whenever ending a subset would let the head start with no backfills, it must still start with the
     remaining backfills and this one running, without waiting on more background cores. Durations play
     no part in that check. A backfill never takes a background claim's cores, so it never suspends one.
+    Only ordinary requests backfill, behind an ordinary head: later ordinary requests overtake a
+    background head, so its proof would not hold. Ending a backfill only adds non-background cores to
+    the head's choices, so including backfills in the enumeration never refuses more; it is kept so the
+    proof does not depend on that argument.
     Scope: the guarantee covers claims ending. A timed reservation outranks the queue and may block any
     cores at any time, so no backfill starts while one is held, and none can be proof against one
     acquired later."""
-    background = bool(ticket.get("background", False))
-    if (_max_seconds(ticket) is None or background != bool(head.get("background", False)) or timed["held"]
-            or len(claims) > BACKFILL_MAX_RUNNING):
+    if (_max_seconds(ticket) is None or ticket.get("background", False) or head.get("background", False)
+            or timed["held"] or len(claims) > BACKFILL_MAX_RUNNING):
         return None
     wanted, head_wanted = ticket.get("cores_wanted"), head.get("cores_wanted")
     for value in (wanted, head_wanted):
@@ -674,7 +677,7 @@ def _backfill_cores(config: dict, timed: dict, claims: list[dict], head: dict, t
     if len(room) < wanted:
         return None
     cores = sorted(room[:wanted])
-    candidate = {"cores": cores, "background": background, "backfill": True}
+    candidate = {"cores": cores, "background": False, "backfill": True}
     for mask in range(1 << len(claims)):
         rest = [claim for bit, claim in enumerate(claims) if not mask >> bit & 1]
         without = _head_start(config, timed, [claim for claim in rest if not claim.get("backfill")], head)

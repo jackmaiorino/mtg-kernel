@@ -689,13 +689,14 @@ class BackfillPolicyTests(unittest.TestCase):
         assert admits(config8(), FREE, claims, [head, ticket("t", 2)], "t") is None
         assert admits(config8(), FREE, claims, [head, ticket("t", 1)], "t") == [1]
 
-    def test_backfill_stays_in_the_head_class(self):
+    def test_only_ordinary_requests_backfill_behind_an_ordinary_head(self):
         claims = [{"cores": [7, 6, 5, 4, 3, 2]}]
         head = ticket("head", 4, None)
+        assert admits(config8(), FREE, claims, [head, ticket("t", 2)], "t") == [0, 1]
         assert admits(config8(), FREE, claims, [head, ticket("t", 2, background=True)], "t") is None
+        # review r3: later ordinary requests overtake a background head, so it is never backfilled around
         background_head = ticket("head", 4, None, background=True)
-        assert admits(config8(), FREE, claims, [background_head, ticket("t", 2, background=True)],
-                                     "t") == [0, 1]
+        assert admits(config8(), FREE, claims, [background_head, ticket("t", 2, background=True)], "t") is None
         # an ordinary head ignores background claims, exactly as its own admission does, but a backfill
         # never takes their cores (it would suspend them)
         claims = [{"cores": [7, 6, 5, 4, 3, 2]}, {"cores": [1], "background": True}]

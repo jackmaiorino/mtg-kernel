@@ -28,7 +28,7 @@ python host_slots_v1.py run --wait --max-seconds 900 --lane LANE --work-id WORK 
 It starts only when all of these hold:
 
 - it fits in the cores free now, without taking any background claim's cores (it never suspends CI work);
-- it is in the head's class (ordinary or background), and the head was queued under the current per-host config (requests from launchers older than backfill are never jumped);
+- it and the head are both ordinary requests (later ordinary requests overtake a background head, so its protection could not hold), and the head was queued under the current per-host config (requests from launchers older than backfill are never jumped);
 - no earlier request behind the head is also eligible;
 - no timed reservation is held, and the host has at most 12 live claims (backfills and background claims included);
 - it cannot delay the head. The live claims, backfills included, could end in any order, so every subset of them is checked: whenever ending that subset would let the head start with no backfills, the head must still start with the remaining backfills running, and an ordinary head must not need any background claim's cores that it would not have needed anyway (it would wait for them to suspend).
