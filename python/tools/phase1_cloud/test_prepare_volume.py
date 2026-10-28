@@ -60,6 +60,18 @@ class TemplateTests(unittest.TestCase):
             with self.subTest(bad_size=bad_size), self.assertRaises(ValueError):
                 pv.build_template('phase1-volume-test', bad_size)
 
+    def test_study_volume_needs_a_stated_reason(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(ValueError):
+                pv.prepare(spec(size_gb=200), Path(temporary) / 'no-reason', now=NOW)
+            with self.assertRaises(ValueError):
+                pv.prepare(spec(size_gb=200, size_reason='  '), Path(temporary) / 'blank', now=NOW)
+            result = pv.prepare(spec(size_gb=200, size_reason='G(i): 60 GiB reserve plus peak'),
+                                Path(temporary) / 'study', now=NOW)
+            self.assertEqual((result['size_gb'], result['size_reason']), (200, 'G(i): 60 GiB reserve plus peak'))
+            with self.assertRaises(ValueError):
+                pv.prepare(spec(size_gb=251, size_reason='too big'), Path(temporary) / 'big', now=NOW)
+
     def test_template_accepts_boundary_sizes(self):
         pv.build_template('phase1-volume-test', 1)
         pv.build_template('phase1-volume-test', pv.VOLUME_SIZE_GB_CAP)
