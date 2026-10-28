@@ -12,23 +12,28 @@ The checks run in the note's section 6 order (data, the 48-hour wall cap, attrit
 preservation, numerical validity, sensitivity control, decision). Any failure makes the read VOID; an invalid
 analysis is never "not funded".
 
-Inputs: every file under the root's record folders, LAUNCH.json, and each parent's pinned files (the checkpoint,
-the import and the import's direct pins) are read in full and hashed before the analysis, which consumes exactly
-those bytes; the read's fingerprint is built from those hashes, and every input is hashed again before
-publication (any change refuses).
+Inputs: the required inputs (LAUNCH.json, SECTION7.json, each chain's data, collection, store and preservation
+records, each fit's report or refusal, the torn attempt records each collection record lists, and each parent's
+pinned files: the checkpoint, the import and the import's direct pins, discovered from the import's own hashed
+bytes) plus every other file found under the root's record folders are read in full and hashed before the
+analysis, which consumes exactly those bytes. A required input that is absent refuses; so does any file or folder
+that cannot be listed or read. The read's fingerprint is built from those hashes, SECTION7.json's must be the one
+section 7 records, and every input is inventoried and hashed again before publication (any change refuses).
 
 The read is bound to the run root: it is written once to ``<root>/READ.json`` (``--out`` only exports a copy), and
 any later run on the same root is refused unless ``--rerender`` re-renders that read from identical inputs, at its
 recorded read time, to the same read (every field but ``root``, so a moved copy of the root re-renders too). An
-exclusive lock, ``<root>/.READ.lock``, serializes runs on a root. The read is written in full to a temporary file
-in the root, synced, and published by a hard link that never replaces an existing READ.json, so a crash leaves no
-read or a complete one; the run root's volume must support hard links (NTFS, POSIX file systems), and the analyzer
+exclusive lock, ``<root>/.READ.lock``, serializes the runs that may publish a read; a re-render writes nothing in
+the root, takes no lock and so also runs from a read-only copy. The read is written in full to a temporary file in
+the root, synced, and published by a hard link that never replaces an existing READ.json, so a crash leaves no read
+or a complete one; the run root's volume must support hard links (NTFS, POSIX file systems), and the analyzer
 refuses rather than fall back to a replacing rename. A later run that finds a complete unpublished read (a crash
 between writing and publishing) re-renders it at its recorded read time and publishes it only if the inputs and the
 bytes are the same, so there are never two completed reads to choose between. A temporary that cannot be read
 refuses the run and is kept; one that was read in full and is not a whole read is removed.
 
-Exit status: 0 when a read (any verdict) was written or re-rendered, 2 when the analyzer refused to run.
+Exit status: 0 when a read (any verdict) was written or re-rendered (a lock or export that could not be completed
+after publication is reported as a warning), 2 when the analyzer refused to run.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ import json
 import math
 import os
 import re
+import stat
 import struct
 import sys
 import time
@@ -66,6 +72,9 @@ CONSTRUCTIONS = {"w64": "identity", "w128": "net8-to-net8w128-function-preservin
 TEMPORARY = re.compile(r"^\.(.+)\.tmp-(\d+)$")
 # This analyzer's own unpublished read.
 READ_TEMPORARY = re.compile(r"^\.READ\.json\.tmp-\d+$")
+# The fingerprint's value for a folder under the record folders (its files are listed by their own paths).
+DIRECTORY = "directory"
+SECTION7_REFUSAL = "data/SECTION7.json does not have the SHA-256 section 7 records; nothing was read"
 MASK64 = (1 << 64) - 1
 CONFIG_KEYS = {
     "": {"schema", "note", "input_generation", "feature_contract_digest", "feature_encoding_digest", "decks",
@@ -184,6 +193,51 @@ def hash_input(path: Path) -> str:
     return digest.hexdigest()
 
 
+def scan_directory(directory: Path) -> list:
+    """A directory's entries, sorted by name. Any listing error refuses: a scan never skips what it cannot read."""
+    try:
+        with os.scandir(directory) as iterator:
+            return sorted(iterator, key=lambda entry: entry.name)
+    except OSError as error:
+        raise Refused(f"{directory} cannot be listed: {error}") from None
+
+
+def path_kind(path: Path) -> str | None:
+    """``"file"``, ``"directory"``, or None if nothing is there. Any other error, or another kind of entry,
+    refuses."""
+    try:
+        mode = os.stat(path).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError as error:
+        raise Refused(f"{path} cannot be examined: {error}") from None
+    if stat.S_ISREG(mode):
+        return "file"
+    if stat.S_ISDIR(mode):
+        return "directory"
+    raise Refused(f"{path} is neither a file nor a folder")
+
+
+def walk_folder(root: Path, directory: Path, found: dict[str, Path | None]) -> None:
+    """Every entry under ``directory``, by root-relative label: a file by its path, a folder (label ending in
+    ``/``) as None. Any error, or an entry that is neither a regular file nor a folder, refuses."""
+    for entry in scan_directory(directory):
+        path = Path(entry.path)
+        label = path.relative_to(root).as_posix()
+        try:
+            is_folder = entry.is_dir(follow_symlinks=False)
+            is_file = not is_folder and entry.is_file(follow_symlinks=False)
+        except OSError as error:
+            raise Refused(f"{path} cannot be examined: {error}") from None
+        if is_folder:
+            found[label + "/"] = None
+            walk_folder(root, path, found)
+        elif is_file:
+            found[label] = path
+        else:
+            raise Refused(f"{path} is neither a regular file nor a folder")
+
+
 def check_config(config: dict) -> None:
     for section, keys in CONFIG_KEYS.items():
         actual = config if section == "" else config.get(section)
@@ -245,46 +299,118 @@ def nested_pins(value: object) -> list[dict]:
     return []
 
 
-def source_pins(source: dict) -> list[dict]:
-    """A parent's pinned files, by one stated rule: the checkpoint, the import, and every ``{path, sha256}`` object
-    inside the import document (its direct pins). That is what the engine loads and the driver's staging check
-    verifies. Files those direct pins name in turn (a manifest's historical registry, say) are provenance the
-    engine never opens, so they are neither required, read nor bound."""
-    pins = [source["checkpoint"], source["play_import"]]
-    path = Path(source["play_import"]["path"])
-    if path.is_file():
-        try:
-            pins += nested_pins(json.loads(read_input(path)))
-        except ValueError:
-            pass
-    unique = {}
-    for pin in pins:
-        unique.setdefault(pin["path"], pin)
-    return list(unique.values())
+def direct_pins(import_bytes: bytes) -> list[dict]:
+    """The import's direct pins: every ``{path, sha256}`` object inside the import document. With the checkpoint
+    and the import itself they are what the engine loads and the driver's staging check verifies. Files those
+    direct pins name in turn (a manifest's historical registry, say) are provenance the engine never opens, so they
+    are neither required, read nor bound. An import that does not parse has none (its pinned hash then fails)."""
+    try:
+        return nested_pins(json.loads(import_bytes))
+    except ValueError:
+        return []
+
+
+def torn_attempt_pattern(k: int) -> re.Pattern:
+    """A chain's retained torn attempt record (the driver's ``collect/torn-attempts/k<k>/torn-attempt-<i>.<n>``)."""
+    return re.compile(rf"^collect/torn-attempts/k{k}/torn-attempt-(\d{{4}})\.\d+$")
+
+
+def torn_attempt_paths(collection_bytes: bytes, k: int) -> list[str]:
+    """The retained torn attempt records a chain's collection record lists (well-formed paths only; anything else
+    is the data check's to reject)."""
+    try:
+        value = json.loads(collection_bytes)
+    except ValueError:
+        return []
+    rows = value.get("torn_attempts") if isinstance(value, dict) else None
+    if not isinstance(rows, list):
+        return []
+    pattern = torn_attempt_pattern(k)
+    return [row["path"] for row in rows
+            if isinstance(row, dict) and isinstance(row.get("path"), str) and pattern.match(row["path"])]
 
 
 class Inventory:
-    """Every file a read binds: each file under the root's record folders (by root-relative path), LAUNCH.json,
-    and every parent's pinned files (by absolute path)."""
+    """Every file a read binds, enumerated without skipping anything: the required inputs, built explicitly (the
+    run's records, each fit's report or refusal, the torn attempt records each collection record lists, and each
+    parent's checkpoint, import and direct pins, the pins discovered from the import's own hashed bytes), and every
+    other file or folder found under the root's record folders. A required input that is absent, or anything that
+    cannot be listed or read, refuses."""
 
     def __init__(self, config: dict, root: Path) -> None:
-        self.paths: dict[str, Path] = {}
+        discovered: dict[str, Path | None] = {}
         for folder in RECORD_FOLDERS:
-            directory = root / folder
-            if directory.is_dir():
-                for path in sorted(directory.rglob("*")):
-                    if path.is_file():
-                        self.paths[path.relative_to(root).as_posix()] = path
-        if (root / "LAUNCH.json").is_file():
-            self.paths["LAUNCH.json"] = root / "LAUNCH.json"
+            kind = path_kind(root / folder)
+            if kind == "directory":
+                walk_folder(root, root / folder, discovered)
+            elif kind == "file":
+                raise Refused(f"{root / folder} is not a folder")
+        required: dict[str, Path] = {}
+        missing: list[str] = []
+        # Files read whole here (imports and collection records): their hashes are of these very bytes, and what
+        # they name is derived from the same bytes.
+        self.digests: dict[str, str] = {}
+        self.pins: dict[int, list[dict]] = {}
+        import_pins: dict[str, list[dict]] = {}
+
+        def need(label: str, path: Path) -> bool:
+            if path_kind(path) == "file":
+                required[label] = path
+                return True
+            missing.append(label)
+            return False
+
+        def read_whole(label: str, path: Path) -> bytes:
+            data = read_input(path)
+            self.digests[label] = sha256_bytes(data)
+            return data
+
+        need("LAUNCH.json", root / "LAUNCH.json")
+        need("data/SECTION7.json", root / "data" / "SECTION7.json")
         for chain in config["chains"]:
-            for pin in source_pins(chain["source"]):
-                if Path(pin["path"]).is_file():
-                    self.paths[pin["path"]] = Path(pin["path"])
+            k = chain["index"]
+            for relative in (f"data/k{k}.json", f"collect/k{k}/games.bin", f"preserve/k{k}.json"):
+                need(relative, root / relative)
+            relative = f"collect/k{k}/collection.json"
+            if need(relative, root / relative):
+                for torn in torn_attempt_paths(read_whole(relative, root / relative), k):
+                    need(torn, root / torn)
+            for s in config["fitting"]["fitting_seeds"]:
+                for arm in ARMS:
+                    name = f"k{k}-s{s}-{arm}"
+                    forms = [label for label in discovered if label in (f"fits/{name}.json",
+                                                                         f"fits/{name}.refused.json")
+                             or (label.startswith(f"fits/.{name}.refused.json.tmp-")
+                                 and TEMPORARY.match(label[len("fits/"):]))]
+                    for label in forms:
+                        need(label, root / label)
+                    if not forms:
+                        missing.append(f"fits/{name}.json")
+            source = chain["source"]
+            pins = [source["checkpoint"], source["play_import"]]
+            path = source["play_import"]["path"]
+            if need(path, Path(path)):
+                if path not in import_pins:
+                    import_pins[path] = direct_pins(read_whole(path, Path(path)))
+                pins += import_pins[path]
+            unique: dict[str, dict] = {}
+            for pin in pins:
+                unique.setdefault(pin["path"], pin)
+            self.pins[k] = list(unique.values())
+            for pin in self.pins[k]:
+                need(pin["path"], Path(pin["path"]))
+        if missing:
+            # A premature run (a stage unfinished), a host without the parents, or a lost file is not a data
+            # outcome: refuse without writing anything.
+            missing = list(dict.fromkeys(missing))
+            raise Refused(f"{len(missing)} expected inputs are missing, so nothing was read: "
+                          + ", ".join(missing[:20]))
+        self.paths: dict[str, Path | None] = {**discovered, **required}
 
     def hashes(self) -> dict[str, str]:
-        """Every bound file's SHA-256, each read in full; any I/O error refuses."""
-        return {label: hash_input(path) for label, path in sorted(self.paths.items())}
+        """Every bound file's SHA-256, each read in full (any I/O error refuses), and each folder's marker."""
+        return {label: DIRECTORY if path is None else self.digests.get(label) or hash_input(path)
+                for label, path in sorted(self.paths.items())}
 
 
 def fingerprint(config_sha256: str, analyzer_sha256: str, section7_sha256: str, hashes: dict[str, str]) -> str:
@@ -346,7 +472,32 @@ def pair_weighted_loss(errors: dict[str, float], pair_games: dict[tuple[int, int
     return sum(sum(errors[game] for game in games) / len(games) for games in pair_games.values()) / len(pair_games)
 
 
-def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict) -> dict[int, dict]:
+def check_torn_attempts(k: int, collection: dict, inputs: Inputs) -> None:
+    """A chain's retained torn attempt records (attempt records a crash tore while they were first written; the
+    driver set them aside and played those games normally). They are audit evidence, not analysis inputs: the
+    files under ``collect/torn-attempts/k<k>/`` must be exactly the ones the collection record lists, with its
+    sizes and hashes."""
+    rows = collection.get("torn_attempts")
+    require(isinstance(rows, list), "data", f"chain {k}: the collection record has no torn attempt list")
+    pattern = torn_attempt_pattern(k)
+    listed = []
+    for row in rows:
+        path = row.get("path") if isinstance(row, dict) else None
+        match = pattern.match(path) if isinstance(path, str) else None
+        require(match is not None and row.get("index") == int(match.group(1)), "data",
+                f"chain {k}: torn attempt entry {row!r} is not a retained record of its game")
+        data = inputs.read_bytes(path, "data")
+        require(len(data) == row.get("bytes") and sha256_bytes(data) == row.get("sha256"), "data",
+                f"chain {k}: {path} differs from its collection record entry")
+        listed.append(path)
+    prefix = f"collect/torn-attempts/k{k}/"
+    present = sorted(label for label in inputs.hashes if label.startswith(prefix) and label != prefix)
+    require(present == sorted(listed) and len(listed) == len(set(listed)), "data",
+            {"chain": k, "torn_attempts_listed": sorted(listed), "torn_attempts_present": present})
+
+
+def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict,
+               pins: dict[int, list[dict]]) -> dict[int, dict]:
     """Section 6.1, reading the pinned bytes themselves: the parents and their imports, each chain's store, its
     collection and data records, and section 7."""
     chains = [chain["index"] for chain in config["chains"]]
@@ -367,7 +518,7 @@ def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict)
         k = chain["index"]
         entry = frozen[k]
         source = chain["source"]
-        for pin in source_pins(source):
+        for pin in pins[k]:
             inputs.read_pin(pin, "data", f"chain {k} parent, import or import input")
         record, record_bytes = inputs.read(f"data/k{k}.json", "data")
         collection, collection_bytes = inputs.read(f"collect/k{k}/collection.json", "data")
@@ -383,6 +534,7 @@ def check_data(config: dict, config_sha256: str, inputs: Inputs, section7: dict)
                 and collection.get("chain") == k, "data", f"chain {k}: collection record is not this config's")
         require((collection.get("engine_commit"), collection.get("binary_sha256")) == build, "data",
                 f"chain {k}: collection built by another engine build")
+        check_torn_attempts(k, collection, inputs)
         require(parent == record["parent_checkpoint_sha256"] == entry["parent_checkpoint_sha256"]
                 == collection["source"]["checkpoint"]["sha256"], "data", f"chain {k}: parent hash differs")
         require(collection["parent_state_sha256"] == record["parent_state_sha256"], "data",
@@ -467,8 +619,8 @@ def check_wall_cap(config: dict, config_sha256: str, inputs: Inputs, section7: d
     return {"launched_at_unix": launch["launched_at_unix"], "elapsed_hours": elapsed / 3600.0}
 
 
-def analyze(config: dict, config_sha256: str, root: Path, read_at: float,
-            hashes: dict[str, str]) -> tuple[dict, dict]:
+def analyze(config: dict, config_sha256: str, root: Path, read_at: float, hashes: dict[str, str],
+            pins: dict[int, list[dict]]) -> tuple[dict, dict]:
     """Returns (read body without verdict fields, input file hashes); raises Void on a failed check."""
     inputs = Inputs(root, hashes)
     checks: list[dict] = []
@@ -482,7 +634,7 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float,
     build = (section7.get("engine_commit"), section7.get("binary_sha256"))
 
     # 1. Data.
-    chain_data = check_data(config, config_sha256, inputs, section7)
+    chain_data = check_data(config, config_sha256, inputs, section7, pins)
     data = {k: chain_data[k]["record"] for k in chains}
     data_sha = {k: chain_data[k]["sha256"] for k in chains}
     checks.append({"check": "data", "pass": True})
@@ -528,8 +680,10 @@ def analyze(config: dict, config_sha256: str, root: Path, read_at: float,
 
     # 3. Fits.
     expected = {f"k{k}-s{s}-{arm}.json" for k in chains for s in seeds for arm in ARMS}
-    # The fits folder's files as the inventory recorded them (bound to the fingerprint).
-    present = sorted(label[len("fits/"):] for label in hashes if label.startswith("fits/") and label.count("/") == 1)
+    # The fits folder's entries as the inventory recorded them (bound to the fingerprint). A folder inside it
+    # (named with a trailing "/") is never a report: it is unexpected.
+    present = sorted({name.split("/")[0] + ("/" if "/" in name else "")
+                      for name in (label[len("fits/"):] for label in hashes if label.startswith("fits/"))})
     temporaries = [name for name in present if TEMPORARY.match(name)]
     reports = [name for name in present if name not in temporaries]
     # A refusal file, or an interrupted refusal publication, is an entry refusal: VOID.
@@ -812,12 +966,12 @@ def verdict_of(config: dict, body: dict) -> tuple[str, str]:
 
 
 def render(config: dict, config_sha256: str, analyzer_sha256: str, root: Path, section7_sha256: str,
-           read_at: float, hashes: dict[str, str]) -> dict:
+           read_at: float, hashes: dict[str, str], pins: dict[int, list[dict]]) -> dict:
     """The read of the inputs whose SHA-256s are ``hashes`` (the analysis consumes exactly those bytes)."""
     read: dict = {"schema": READ_SCHEMA, "analyzer_sha256": analyzer_sha256, "config_sha256": config_sha256,
                   "section7_sha256": section7_sha256, "root": str(root), "read_at_unix": read_at}
     try:
-        body, files = analyze(config, config_sha256, root, read_at, hashes)
+        body, files = analyze(config, config_sha256, root, read_at, hashes, pins)
     except (Void, KeyError, TypeError, AttributeError, IndexError, ValueError, ZeroDivisionError) as error:
         void = error if isinstance(error, Void) else Void("malformed_input", f"{type(error).__name__}: {error}")
         read.update({"verdict": "VOID", "void_check": void.check, "void_detail": void.detail,
@@ -897,13 +1051,15 @@ def publish_temporary(temporary: Path, canonical: Path) -> None:
 
 
 def unpublished_reads(root: Path) -> tuple[list[tuple[Path, bytes, dict]], list[Path]]:
-    """Reads a crashed run left unpublished in the root: (complete, incomplete) temporary files. Each is read in
-    full first; one that cannot be read refuses the run and is kept. A complete one is a whole read in this
-    analyzer's exact output form; only a fully read file that is not one is incomplete."""
+    """Reads a crashed run left unpublished in the root: (complete, incomplete) temporary files. The root is listed
+    without skipping anything (a listing error refuses), and each temporary is read in full first; one that cannot
+    be read refuses the run and is kept. A complete one is a whole read in this analyzer's exact output form; only a
+    fully read file that is not one is incomplete."""
     complete, incomplete = [], []
-    for path in sorted(root.glob(f".{READ_NAME}.tmp-*")):
-        if not READ_TEMPORARY.match(path.name):
+    for entry in scan_directory(root):
+        if not READ_TEMPORARY.match(entry.name):
             continue
+        path = Path(entry.path)
         data = read_input(path)
         try:
             value = json.loads(data)
@@ -924,34 +1080,6 @@ def without_root(data: bytes) -> bytes:
     return read_bytes(value)
 
 
-def missing_inputs(config: dict, root: Path) -> list[str]:
-    """Every expected input that does not exist: LAUNCH.json, each chain's data, collection, store and
-    preservation records, each parent's pinned files (``source_pins``), and for every (chain, seed, arm) its
-    report, its refusal file or an interrupted refusal publication."""
-    missing = []
-
-    def need(path: Path, label: str) -> None:
-        if not path.is_file():
-            missing.append(label)
-
-    need(root / "LAUNCH.json", "LAUNCH.json")
-    fits = root / "fits"
-    for chain in config["chains"]:
-        k = chain["index"]
-        for relative in (f"data/k{k}.json", f"collect/k{k}/collection.json", f"collect/k{k}/games.bin",
-                         f"preserve/k{k}.json"):
-            need(root / relative, relative)
-        for pin in source_pins(chain["source"]):
-            need(Path(pin["path"]), pin["path"])
-        for s in config["fitting"]["fitting_seeds"]:
-            for arm in ARMS:
-                name = f"k{k}-s{s}-{arm}"
-                if not ((fits / f"{name}.json").is_file() or (fits / f"{name}.refused.json").is_file()
-                        or any(fits.glob(f".{name}.refused.json.tmp-*"))):
-                    missing.append(f"fits/{name}.json")
-    return list(dict.fromkeys(missing))
-
-
 def inside(path: Path, folder: Path) -> bool:
     try:
         path.relative_to(folder)
@@ -967,7 +1095,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--section7-sha256", required=True, help="SHA-256 of data/SECTION7.json from the note")
     parser.add_argument("--out", type=Path, help="also export the read to this path (outside the record folders)")
     parser.add_argument("--rerender", action="store_true",
-                        help="re-render the root's existing read from identical inputs; it must reproduce its bytes")
+                        help="re-render the root's existing read from identical inputs; it must reproduce its bytes "
+                             "(takes no lock and writes nothing in the root, so it runs from a read-only copy)")
     arguments = parser.parse_args(argv)
     try:
         config_bytes = arguments.config.read_bytes()
@@ -979,20 +1108,29 @@ def main(argv: list[str] | None = None) -> int:
         config_sha256 = sha256_bytes(config_bytes)
         root = arguments.root.resolve()
         section7 = root / "data" / "SECTION7.json"
-        if not section7.is_file() or sha256_bytes(read_input(section7)) != arguments.section7_sha256:
-            raise Refused("data/SECTION7.json does not have the SHA-256 section 7 records; nothing was read")
+        # An early check, so a wrong hash refuses before anything else; the inventory's own hash of SECTION7.json
+        # (the bytes the analysis consumes) is checked again below.
+        if path_kind(section7) != "file" or sha256_bytes(read_input(section7)) != arguments.section7_sha256:
+            raise Refused(SECTION7_REFUSAL)
         canonical = root / READ_NAME
         out = arguments.out.resolve() if arguments.out else None
         if out is not None and any(inside(out, root / folder) for folder in RECORD_FOLDERS):
             raise Refused("--out must not be inside the root's record folders")
         if out == canonical:
             out = None
-        lock = acquire_lock(root)
-        try:
-            summary = read_locked(config, config_sha256, analyzer_sha256, root, arguments.section7_sha256,
-                                  canonical, out, arguments.rerender)
-        finally:
-            lock.unlink()
+        if arguments.rerender:
+            # A re-render writes nothing in the root: no lock, so it also runs from a read-only copy.
+            summary = read_root(config, config_sha256, analyzer_sha256, root, arguments.section7_sha256,
+                                canonical, out, True)
+        else:
+            lock = acquire_lock(root)
+            try:
+                summary = read_root(config, config_sha256, analyzer_sha256, root, arguments.section7_sha256,
+                                    canonical, out, False)
+            finally:
+                warning = release_lock(lock)
+                if warning:
+                    print(warning, file=sys.stderr)
     except (Refused, OSError, ValueError, KeyError, TypeError) as error:
         print(f"b width prescreen read refused: {error}", file=sys.stderr)
         return 2
@@ -1003,93 +1141,133 @@ def main(argv: list[str] | None = None) -> int:
 def acquire_lock(root: Path) -> Path:
     """The run root's exclusive analyzer lock, ``<root>/.READ.lock``, held from before recovery, rendering and
     publication until the run exits, so no two runs can both complete a read. If it exists the run refuses and
-    leaves it. Removing a lock left by a crashed run is an operator step: first confirm that no analyzer process
-    is running on this root."""
+    leaves it. If this run created it but cannot initialize it, it removes that lock (never one that was already
+    there). Removing a lock left by a crashed run is an operator step: first confirm that no analyzer process is
+    running on this root."""
     lock = root / LOCK_NAME
     try:
-        with open(lock, "xb") as handle:
-            handle.write(json.dumps({"pid": os.getpid(), "started_at_unix": time.time()}).encode("utf-8"))
-            handle.flush()
-            os.fsync(handle.fileno())
+        handle = open(lock, "xb")
     except FileExistsError:
         raise Refused(f"{lock} exists: another analyzer holds this root, or one exited without releasing it. "
                       "Remove it only after confirming that no analyzer process is running on this root.") from None
+    try:
+        with handle:
+            handle.write(json.dumps({"pid": os.getpid(), "started_at_unix": time.time()}).encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException as error:
+        warning = release_lock(lock)
+        if isinstance(error, OSError):
+            raise Refused(f"{lock} could not be initialized: {error}" + (f"; {warning}" if warning else "")) from None
+        raise
     return lock
 
 
-def verify_unchanged(config: dict, root: Path, hashes: dict[str, str]) -> None:
-    """Re-hashes every bound input; any change since the inventory refuses (nothing is written)."""
-    if Inventory(config, root).hashes() != hashes:
+def release_lock(lock: Path) -> str | None:
+    """Removes this run's lock. Returns a warning naming the lock if it could not be removed."""
+    try:
+        os.unlink(lock)
+    except OSError as error:
+        return (f"warning: {lock} could not be removed ({error}). This run has ended and holds it no longer: "
+                "remove it before the next run on this root.")
+    return None
+
+
+def verify_unchanged(config: dict, root: Path, hashes: dict[str, str], pins: dict[int, list[dict]]) -> None:
+    """Inventories and re-hashes every bound input; any change since the first inventory refuses (nothing is
+    written), and so does a required input that has since disappeared."""
+    inventory = Inventory(config, root)
+    if inventory.hashes() != hashes or inventory.pins != pins:
         raise Refused("an input changed while the read was rendered; nothing was written")
 
 
-def read_locked(config: dict, config_sha256: str, analyzer_sha256: str, root: Path, section7_sha256: str,
-                canonical: Path, out: Path | None, rerender: bool) -> dict:
-    """The read, under the root's lock. Returns the printed summary."""
-    if canonical.exists() and not rerender:
-        raise Refused(f"{canonical} exists: this run root has been read (use --rerender only to re-render it)")
-    missing = missing_inputs(config, root)
-    if missing:
-        # A premature run (a stage unfinished), a host without the parents, or a lost file is not a data outcome:
-        # refuse without writing anything.
-        raise Refused(f"{len(missing)} expected inputs are missing, so nothing was read: " + ", ".join(missing[:20]))
-    # Every bound input is read in full and hashed before the analysis; the analysis consumes exactly those bytes.
-    hashes = Inventory(config, root).hashes()
-    current = fingerprint(config_sha256, analyzer_sha256, section7_sha256, hashes)
+def export(out: Path | None, data: bytes) -> None:
+    """Writes the read's ``--out`` copy (a copy that exists must hold the same bytes)."""
+    if out is None:
+        return
+    if path_kind(out) is not None:
+        if read_input(out) != data:
+            raise Refused(f"{out} holds a different read")
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "xb") as handle:
+        handle.write(data)
+
+
+def exported(summary: dict, out: Path | None, data: bytes) -> dict:
+    """The summary of a published read, after its ``--out`` copy. The read is published either way, so a copy that
+    cannot be written is a warning (a later ``--rerender --out`` writes it), not a refusal."""
+    try:
+        export(out, data)
+    except (Refused, OSError) as error:
+        summary["export_warning"] = f"the read is published, but its --out copy was not written: {error}"
+        print(f"warning: {summary['export_warning']}", file=sys.stderr)
+    return summary
+
+
+def summary_of(read: dict, canonical: Path) -> dict:
+    return {"verdict": read["verdict"], "R": read.get("R"), "interval": read.get("interval"), "read": str(canonical)}
+
+
+def read_root(config: dict, config_sha256: str, analyzer_sha256: str, root: Path, section7_sha256: str,
+              canonical: Path, out: Path | None, rerender: bool) -> dict:
+    """The read (under the root's lock unless it is a re-render). Returns the printed summary."""
+    if rerender and path_kind(canonical) is None:
+        raise Refused("--rerender needs the root's existing read")
     if not rerender:
-        # A run that crashed after writing its read but before publishing it already rendered the read. It is
-        # re-rendered at its recorded read time and published only if the inputs and the bytes are the same, so
-        # there are never two completed reads to choose between. A fully read temporary that is not a whole read
-        # is removed; one that cannot be read refuses the run and is kept.
-        complete, incomplete = unpublished_reads(root)
-        if len(complete) > 1:
-            raise Refused(f"more than one unpublished read in {root}: {[entry[0].name for entry in complete]}")
-        if complete:
-            temporary, previous_bytes, previous = complete[0]
-            if previous.get("inputs_sha256") != current or previous.get("config_sha256") != config_sha256:
-                raise Refused(f"{temporary.name} is an unpublished read of other inputs")
-            rendered = read_bytes(render(config, config_sha256, analyzer_sha256, root, section7_sha256,
-                                         previous["read_at_unix"], hashes))
-            if without_root(rendered) != without_root(previous_bytes):
-                raise Refused(f"{temporary.name} does not re-render from its inputs; nothing was published")
-            verify_unchanged(config, root, hashes)
-            check_hard_links(root)
-            publish_temporary(temporary, canonical)
-            return {"verdict": previous["verdict"], "R": previous.get("R"), "interval": previous.get("interval"),
-                    "read": str(canonical), "published_interrupted_read": temporary.name}
-        for path in incomplete:
-            path.unlink()
-        read_at = int(current_time())
-        if out is not None and out.exists():
+        if path_kind(canonical) is not None:
+            raise Refused(f"{canonical} exists: this run root has been read (use --rerender only to re-render it)")
+        if out is not None and path_kind(out) is not None:
             raise Refused(f"{out} exists")
-    else:
-        if not canonical.exists():
-            raise Refused("--rerender needs the root's existing read")
+    # Every bound input is read in full and hashed before the analysis; the analysis consumes exactly those bytes.
+    inventory = Inventory(config, root)
+    hashes, pins = inventory.hashes(), inventory.pins
+    if hashes["data/SECTION7.json"] != section7_sha256:
+        raise Refused(SECTION7_REFUSAL)
+    current = fingerprint(config_sha256, analyzer_sha256, section7_sha256, hashes)
+    if rerender:
+        # A re-render may run from a moved copy of the root (an archive): every field but the root itself must be
+        # reproduced.
         previous_bytes = read_input(canonical)
         previous = json.loads(previous_bytes)
         if previous.get("inputs_sha256") != current:
             raise Refused("the inputs differ from the existing read's; a re-render needs identical inputs")
-        read_at = previous["read_at_unix"]
-    read = render(config, config_sha256, analyzer_sha256, root, section7_sha256, read_at, hashes)
-    data = read_bytes(read)
-    verify_unchanged(config, root, hashes)
-    if rerender:
-        # A re-render may run from a moved copy of the root (an archive): every field but the root itself must be
-        # reproduced.
+        read = render(config, config_sha256, analyzer_sha256, root, section7_sha256, previous["read_at_unix"],
+                      hashes, pins)
+        data = read_bytes(read)
+        verify_unchanged(config, root, hashes, pins)
         if without_root(previous_bytes) != without_root(data):
             raise Refused("the re-rendered read differs from the existing one; nothing was written")
-    else:
-        publish_read(root, canonical, data)
-    if out is not None:
-        if out.exists():
-            if read_input(out) != data:
-                raise Refused(f"{out} holds a different read")
-        else:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            with open(out, "xb") as handle:
-                handle.write(data)
-    return {"verdict": read["verdict"], "R": read.get("R"), "interval": read.get("interval"),
-            "read": str(canonical)}
+        export(out, data)
+        return summary_of(read, canonical)
+    # A run that crashed after writing its read but before publishing it already rendered the read. It is
+    # re-rendered at its recorded read time and published only if the inputs and the bytes are the same, so there
+    # are never two completed reads to choose between. A fully read temporary that is not a whole read is removed;
+    # one that cannot be read refuses the run and is kept.
+    complete, incomplete = unpublished_reads(root)
+    if len(complete) > 1:
+        raise Refused(f"more than one unpublished read in {root}: {[entry[0].name for entry in complete]}")
+    if complete:
+        temporary, previous_bytes, previous = complete[0]
+        if previous.get("inputs_sha256") != current or previous.get("config_sha256") != config_sha256:
+            raise Refused(f"{temporary.name} is an unpublished read of other inputs")
+        rendered = read_bytes(render(config, config_sha256, analyzer_sha256, root, section7_sha256,
+                                     previous["read_at_unix"], hashes, pins))
+        if without_root(rendered) != without_root(previous_bytes):
+            raise Refused(f"{temporary.name} does not re-render from its inputs; nothing was published")
+        verify_unchanged(config, root, hashes, pins)
+        check_hard_links(root)
+        publish_temporary(temporary, canonical)
+        summary = summary_of(previous, canonical)
+        summary["published_interrupted_read"] = temporary.name
+        return exported(summary, out, previous_bytes)
+    for path in incomplete:
+        path.unlink()
+    read = render(config, config_sha256, analyzer_sha256, root, section7_sha256, int(current_time()), hashes, pins)
+    data = read_bytes(read)
+    verify_unchanged(config, root, hashes, pins)
+    publish_read(root, canonical, data)
+    return exported(summary_of(read, canonical), out, data)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import random
 import shutil
 import sys
@@ -175,7 +176,8 @@ class Tree:
                           "parent_state_sha256": parent_state,
                           "feature_contract_digest": config["feature_contract_digest"],
                           "feature_encoding_digest": config["feature_encoding_digest"],
-                          "store_sha256": sha(store), "store_bytes": len(store), "games": games}
+                          "store_sha256": sha(store), "store_bytes": len(store), "games": games,
+                          "torn_attempts": []}
             collection_bytes = write(self.root / "collect" / f"k{k}" / "collection.json", collection)
             fit_groups = sum(groups_of[g] for g in natural["fit"])
             holdout_groups = sum(groups_of[g] for g in natural["holdout"])
@@ -647,6 +649,26 @@ class AnalyzerTests(unittest.TestCase):
             write(t.path("fits/k3-s2-w32.refused.json"), {"error": "BatchLargerThanFitSet"})
             return t.resign()
 
+        def fits_folder(t: Tree) -> str:
+            (t.path("fits") / "extra").mkdir()
+            return t.resign()
+
+        def fits_nested_report(t: Tree) -> str:
+            (t.path("fits") / "extra").mkdir()
+            (t.path("fits") / "extra" / "k1-s1-w64.json").write_bytes(t.path("fits/k1-s1-w64.json").read_bytes())
+            return t.resign()
+
+        def torn_unlisted(t: Tree) -> str:
+            path = t.path("collect/torn-attempts/k2/torn-attempt-0003.0")
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b'{"schema": "mtg')
+            return t.resign()
+
+        def torn_differs(t: Tree) -> str:
+            relative = self.add_torn_attempt(t)[0]
+            t.path(relative).write_bytes(b'{"schema": "mtg-kernel')
+            return t.resign()
+
         cases = {
             # Data.
             "parent hash recorded differently": ("data", collection_field(
@@ -662,6 +684,8 @@ class AnalyzerTests(unittest.TestCase):
             "store bytes": ("data", store_flip),
             "stored game bytes": ("data", store_resigned),
             "store group count": ("data", group_count),
+            "unlisted torn attempt record": ("data", torn_unlisted),
+            "torn attempt record differs from its entry": ("data", torn_differs),
             "attempted ids": ("data", data_field("attempted", lambda v: {"fit": v["attempted"]["fit"][1:],
                                                                          "holdout": v["attempted"]["holdout"]})),
             "natural plus excluded": ("data", data_field("natural", lambda v: {
@@ -676,6 +700,8 @@ class AnalyzerTests(unittest.TestCase):
             # Fits.
             "report missing but refusal present": ("fits", report_refused),
             "duplicate report": ("fits", extra_file),
+            "folder in the fits folder": ("fits", fits_folder),
+            "report in a fits subfolder": ("fits", fits_nested_report),
             "entry refusal": ("fits", refusal_file),
             "interrupted refusal publication": ("fits", refusal_temporary),
             "fit binary": ("fits", fit_edit("k2-s3-w32.json", lambda v: v.__setitem__("binary_sha256", "0" * 64))),
@@ -897,6 +923,169 @@ class AnalyzerTests(unittest.TestCase):
         self.assertIn("must support hard links", error)
         self.assertEqual(sorted(path.name for path in tree.root.glob(".READ*")), [])
 
+    @staticmethod
+    def add_torn_attempt(tree: Tree, k: int = 2, index: int = 3,
+                         data: bytes = b'{"schema": "mtg') -> tuple[str, bytes]:
+        """Retains a torn attempt record as the driver does and lists it in the chain's collection record (the
+        caller re-signs)."""
+        relative = f"collect/torn-attempts/k{k}/torn-attempt-{index:04}.0"
+        tree.path(relative).parent.mkdir(parents=True, exist_ok=True)
+        tree.path(relative).write_bytes(data)
+        tree.edit(f"collect/k{k}/collection.json", lambda v: v["torn_attempts"].append(
+            {"index": index, "bytes": len(data), "sha256": sha(data), "path": relative}))
+        return relative, data
+
+    def test_torn_attempt_records_are_required_and_bound(self) -> None:
+        tree = self.copy("torn")
+        relative, data = self.add_torn_attempt(tree)
+        section7 = tree.resign()
+        status, read, error = run(tree, section7)
+        self.assertEqual((status, read["verdict"]), (0, "FUND_B"), error)
+        self.assertEqual(read["inputs"][relative], sha(data))
+        # A listed record that is absent is a missing input: refused, not VOID.
+        tree = self.copy("torn-absent")
+        relative, _ = self.add_torn_attempt(tree)
+        section7 = tree.resign()
+        tree.path(relative).unlink()
+        status, read, error = run(tree, section7)
+        self.assertEqual((status, read), (2, None), error)
+        self.assertIn("missing", error)
+        self.assertIn(relative, error)
+
+    def test_listing_errors_are_refused(self) -> None:
+        original = os.scandir
+
+        def unlistable(name: str):
+            def scandir(path):
+                if Path(path).name == name:
+                    raise PermissionError(13, "simulated unlistable folder", str(path))
+                return original(path)
+            return scandir
+
+        # An unlistable record folder or subfolder refuses, even after an early mismatch that would read VOID.
+        for name in ("fits", "k1"):
+            with self.subTest(name):
+                tree = self.copy(f"unlistable-{name}")
+                tree.edit("collect/k2/collection.json", lambda v: v.__setitem__("engine_commit", "f"))
+                section7 = tree.resign()
+                with mock.patch.object(reader.os, "scandir", unlistable(name)):
+                    status, read, error = run(tree, section7)
+                self.assertEqual((status, read), (2, None), error)
+                self.assertIn("cannot be listed", error)
+        # A root that cannot be listed may hide a completed unpublished read: refused, and the temporary is kept.
+        tree = self.copy("unlistable-root")
+        with mock.patch.object(reader, "publish_temporary", side_effect=OSError("simulated crash")):
+            self.assertEqual(run(tree, self.template_section7)[0], 2)
+        temporary = next(tree.root.glob(".READ.json.tmp-*"))
+        kept = temporary.read_bytes()
+        with mock.patch.object(reader.os, "scandir", unlistable(tree.root.name)):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None), error)
+        self.assertIn("cannot be listed", error)
+        self.assertEqual(temporary.read_bytes(), kept)
+
+    def test_section7_is_checked_against_the_inventoried_bytes(self) -> None:
+        tree = self.copy("section7-rewritten")
+        original = reader.Inventory.hashes
+        calls = []
+
+        def hashes(inventory):
+            if not calls:
+                # After the early check and before the inventory, SECTION7.json is rewritten (whitespace only).
+                path = tree.path("data/SECTION7.json")
+                path.write_bytes(path.read_bytes() + b"\n")
+            calls.append(1)
+            return original(inventory)
+
+        with mock.patch.object(reader.Inventory, "hashes", hashes):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None), error)
+        self.assertIn("section 7 records", error)
+
+    def test_import_pins_come_from_the_hashed_import_bytes(self) -> None:
+        tree, section7 = self.fresh("pin-discovery")
+        config_bytes = tree.path("config.json").read_bytes()
+        inventory = reader.Inventory(json.loads(config_bytes), tree.root)
+        self.assertEqual(sorted(pin["path"] for pin in inventory.pins[1]),
+                         sorted(str(tree.path(name)) for name in ("parents/r2-s1-b512.json", "parents/import.json",
+                                                                  "parents/manifest.json", "parents/init.f32le")))
+        # A transient empty import while the inventory reads it discovers no direct pins; the analysis then reads
+        # the real import, whose bytes differ from the inventoried ones: refused, never a read without the pins.
+        original = reader.open_input
+        seen = []
+
+        def opener(path):
+            if Path(path).name == "import.json" and not seen:
+                seen.append(1)
+                return io.BytesIO(b"{}")
+            return original(path)
+
+        with mock.patch.object(reader, "open_input", opener):
+            status, read, error = run(tree, section7)
+        self.assertEqual((status, read), (2, None), error)
+        self.assertIn("changed during the read", error)
+
+    def test_a_required_input_lost_before_or_during_the_read_is_refused(self) -> None:
+        # Before the inventory, after an early mismatch: refused as missing, not VOID.
+        tree = self.copy("lost-before")
+        tree.edit("collect/k1/collection.json", lambda v: v.__setitem__("engine_commit", "f"))
+        section7 = tree.resign()
+        tree.path("preserve/k8.json").unlink()
+        status, read, error = run(tree, section7)
+        self.assertEqual((status, read), (2, None), error)
+        self.assertIn("missing", error)
+        # During a VOID render: the final inventory refuses and nothing is published.
+        tree = self.copy("lost-during")
+        tree.edit("collect/k1/collection.json", lambda v: v.__setitem__("engine_commit", "f"))
+        section7 = tree.resign()
+        original = reader.render
+
+        def render(*arguments, **options):
+            read = original(*arguments, **options)
+            tree.path("preserve/k8.json").unlink()
+            return read
+
+        with mock.patch.object(reader, "render", render):
+            status, read, error = run(tree, section7)
+        self.assertEqual((status, read), (2, None), error)
+        self.assertIn("missing", error)
+        self.assertEqual(list(tree.root.glob(".READ.json.tmp-*")), [])
+
+    def test_a_lock_that_cannot_be_initialized_is_removed(self) -> None:
+        tree = self.copy("lock-init")
+        with mock.patch.object(reader.os, "fsync", side_effect=OSError(5, "simulated sync failure")):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read), (2, None))
+        self.assertIn("could not be initialized", error)
+        self.assertFalse(tree.path(reader.LOCK_NAME).exists())
+        status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read["verdict"]), (0, "FUND_B"), error)
+
+    def test_a_lock_left_after_publication_is_a_warning(self) -> None:
+        tree = self.copy("lock-release")
+        lock = tree.path(reader.LOCK_NAME)
+        original = os.unlink
+
+        def unlink(path, *arguments, **options):
+            if Path(path).name == reader.LOCK_NAME:
+                raise PermissionError(13, "simulated", str(path))
+            return original(path, *arguments, **options)
+
+        with mock.patch.object(reader.os, "unlink", unlink):
+            status, read, error = run(tree, self.template_section7)
+        self.assertEqual((status, read["verdict"]), (0, "FUND_B"), error)
+        self.assertIn("warning", error)
+        self.assertIn(str(lock), error)
+        self.assertNotIn("refused", error)
+        self.assertTrue(lock.exists())
+        # A re-render takes no lock, so it runs with the stale lock in place; a new read is refused until the
+        # operator removes it.
+        status, _, error = run(tree, self.template_section7, "--rerender")
+        self.assertEqual(status, 0, error)
+        status, _, error = run(tree, self.template_section7)
+        self.assertEqual(status, 2)
+        self.assertIn("another analyzer holds this root", error)
+
     def test_an_interrupted_read_publication_never_yields_two_reads(self) -> None:
         # A crash between writing the read and publishing it: the complete temporary file stays, READ.json does
         # not exist.
@@ -907,14 +1096,17 @@ class AnalyzerTests(unittest.TestCase):
         temporaries = list(tree.root.glob(".READ.json.tmp-*"))
         self.assertEqual(len(temporaries), 1)
         rendered = temporaries[0].read_bytes()
-        # The next run publishes that read as is (its read time included) instead of rendering another.
+        # The next run publishes that read as is (its read time included) instead of rendering another, and
+        # writes the --out copy it asks for.
+        export = self.root / "exports" / "recovered.json"
         reader.current_time = lambda: NOW + 600
         try:
-            status, read, error = run(tree, self.template_section7)
+            status, read, error = run(tree, self.template_section7, "--out", str(export))
         finally:
             reader.current_time = lambda: NOW
         self.assertEqual(status, 0, error)
         self.assertEqual(tree.path(reader.READ_NAME).read_bytes(), rendered)
+        self.assertEqual(export.read_bytes(), rendered)
         self.assertEqual(read["read_at_unix"], NOW)
         self.assertEqual(list(tree.root.glob(".READ.json.tmp-*")), [])
         status, _, error = run(tree, self.template_section7)
