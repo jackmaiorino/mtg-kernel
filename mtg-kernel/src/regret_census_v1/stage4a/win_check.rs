@@ -37,6 +37,19 @@ fn result_json(result: &WinSearchResultV1) -> Value {
         "forced_order_collapses": result.forced_order_collapses, "expanded": result.expanded, "line": result.line})
 }
 
+/// EX1 menu stratum: a target choice, else a cast or activation, else other.
+fn stratum(s: &crate::rl_session::FastActorSessionV1) -> &'static str {
+    use crate::rl::ActionSemanticV1 as A;
+    let menu = s.diagnostic_current_action_semantics().unwrap_or_default();
+    if menu.iter().any(|a| matches!(a, A::ChooseTarget { .. } | A::ChooseEffectTarget { .. })) {
+        "target"
+    } else if menu.iter().any(|a| matches!(a, A::CastSpell { .. } | A::ActivateAbility { .. })) {
+        "cast_or_activate"
+    } else {
+        "other"
+    }
+}
+
 /// Deterministic world seeds per job and decision.
 fn world_seeds(id: &str, index: usize, count: u64) -> Vec<u64> {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -69,6 +82,8 @@ fn check_job(job: &LabelJob, bounds: WinSearchBoundsV1, worlds: u64, only: Optio
     let mut meter = Meter::new(u64::MAX);
     let mut focal_decisions = 0u64;
     let mut last_turn = 0u32;
+    // Decisions with two or more legal actions by seat role and menu stratum.
+    let mut strata: std::collections::BTreeMap<String, u64> = Default::default();
     for (i, r) in job.decisions.iter().enumerate() {
         let d = decision(&s).ok_or_else(|| format!("replay ended before decision {i}"))?;
         if d.step != r.step
@@ -81,6 +96,10 @@ fn check_job(job: &LabelJob, bounds: WinSearchBoundsV1, worlds: u64, only: Optio
         last_turn = s.game_state().turn;
         let is_focal = acting(&d) == focal && d.legal_action_count >= 2;
         focal_decisions += u64::from(is_focal);
+        if d.legal_action_count >= 2 {
+            let role = if acting(&d) == focal { "focal" } else { "opponent" };
+            *strata.entry(format!("{role}:{}", stratum(&s))).or_default() += 1;
+        }
         if is_focal && only.is_none_or(|list| list.contains(&i)) {
             let started = std::time::Instant::now();
             let oracle = oracle_win_this_turn_v1(&s, bounds).ok_or("focal decision has no pending decision")?;
@@ -124,7 +143,7 @@ fn check_job(job: &LabelJob, bounds: WinSearchBoundsV1, worlds: u64, only: Optio
     let win = winner == Some(job.focal);
     Ok(json!({"kind": "game", "id": job.id, "focal": job.focal, "runtime": runtime, "deck_ids": job.config.deck_ids,
         "winner": winner, "win": win, "final_turn": s.game_state().turn, "last_decision_turn": last_turn,
-        "decisions": job.decisions.len(), "focal_decisions": focal_decisions, "labels": suffix.json(),
+        "decisions": job.decisions.len(), "focal_decisions": focal_decisions, "strata": strata, "labels": suffix.json(),
         "combo_resolved": suffix.complete(), "combo_won": suffix.complete() && win}))
 }
 
